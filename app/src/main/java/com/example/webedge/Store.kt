@@ -61,6 +61,12 @@ class Store(context: Context) {
         save("history", l)
     }
 
+    fun remove(key: String, url: String) {
+        val l = list(key)
+        l.removeAll { it.url == url }
+        save(key, l)
+    }
+
     fun clearHistory() {
         save("history", emptyList())
     }
