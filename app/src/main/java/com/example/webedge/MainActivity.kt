@@ -21,9 +21,13 @@ import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
@@ -41,7 +45,6 @@ import android.widget.PopupWindow
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
@@ -134,7 +137,7 @@ private const val EDGE_JS = """
 
 class MainActivity : ComponentActivity() {
 
-    private class Panel(val dlg: Dialog, val body: LinearLayout, val buttons: LinearLayout)
+    private class Panel(val dlg: Dialog, val body: LinearLayout, val buttons: LinearLayout, val content: View)
 
     private lateinit var store: Store
     private lateinit var web: WebView
@@ -142,7 +145,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var urlBar: EditText
     private lateinit var bar: LinearLayout
     private lateinit var backBtn: TextView
-    private lateinit var menuBtn: ImageView
+    private lateinit var menuBtn: TextView
     private lateinit var loadingBar: ProgressBar
     private lateinit var topFade: View
     private lateinit var bottomFade: View
@@ -199,6 +202,7 @@ class MainActivity : ComponentActivity() {
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             currentUrl = url
             applyTopColor(null)
+            web.alpha = 0.6f
             if (!urlBar.hasFocus()) showDomain()
             setBarHidden(false)
             updateNav()
@@ -210,10 +214,14 @@ class MainActivity : ComponentActivity() {
             updateNav()
         }
 
-        override fun onPageCommitVisible(view: WebView, url: String) = injectInsets()
+        override fun onPageCommitVisible(view: WebView, url: String) {
+            injectInsets()
+            web.animate().alpha(1f).setDuration(220).start()
+        }
 
         override fun onPageFinished(view: WebView, url: String) {
             injectInsets()
+            web.animate().alpha(1f).setDuration(120).start()
             store.addHistory(view.title ?: "", url)
         }
     }
@@ -264,6 +272,68 @@ class MainActivity : ComponentActivity() {
 
     private fun onOff(b: Boolean): String = if (b) "Bật" else "Tắt"
 
+    // ---------------- Hiệu ứng ----------------
+
+    // Nhấn co lại + rung nhẹ khi nhả tay trong vùng nút
+    @SuppressLint("ClickableViewAccessibility")
+    private fun press(v: View, scale: Float) {
+        v.setOnTouchListener { view, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    view.animate().scaleX(scale).scaleY(scale).setDuration(90).start()
+                }
+                MotionEvent.ACTION_UP -> {
+                    view.animate().scaleX(1f).scaleY(1f).setDuration(180)
+                        .setInterpolator(OvershootInterpolator(2f)).start()
+                    if (ev.x >= 0f && ev.x <= view.width && ev.y >= 0f && ev.y <= view.height) {
+                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    view.animate().scaleX(1f).scaleY(1f).setDuration(180).start()
+                }
+            }
+            false
+        }
+    }
+
+    private var toastView: TextView? = null
+
+    // Thông báo nhỏ dạng viên thuốc: trượt lên, tự rút lại
+    private fun toast(msg: String) {
+        toastView?.let { root.removeView(it) }
+        val t = TextView(this)
+        t.text = msg
+        t.textSize = 14f
+        t.setTextColor(fg)
+        t.background = panelBg(22)
+        t.setPadding(dp(18), dp(10), dp(18), dp(10))
+        val lp = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        )
+        lp.bottomMargin = maxOf(insetBottom, imeBottom) + dp(10) + dp(barH) + dp(14)
+        root.addView(t, lp)
+        toastView = t
+        t.alpha = 0f
+        t.translationY = dp(24).toFloat()
+        t.animate().alpha(1f).translationY(0f).setDuration(220)
+            .setInterpolator(DecelerateInterpolator()).start()
+        t.postDelayed({
+            t.animate().alpha(0f).translationY(dp(16).toFloat()).setDuration(200).withEndAction {
+                root.removeView(t)
+                if (toastView === t) toastView = null
+            }.start()
+        }, 1800L)
+    }
+
+    private fun dismissPanel(p: Panel) {
+        p.content.animate().alpha(0f).scaleX(0.95f).scaleY(0.95f)
+            .translationY(dp(12).toFloat()).setDuration(150)
+            .withEndAction { p.dlg.dismiss() }.start()
+    }
+
     // ---------------- onCreate ----------------
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -303,14 +373,15 @@ class MainActivity : ComponentActivity() {
         backBtn.gravity = Gravity.CENTER
         backBtn.alpha = 0.3f
         backBtn.setOnClickListener { if (web.canGoBack()) web.goBack() }
+        press(backBtn, 0.8f)
 
-        menuBtn = ImageView(this)
-        menuBtn.scaleType = ImageView.ScaleType.CENTER_INSIDE
-        val pad = dp(7)
-        menuBtn.setPadding(pad, pad, pad, pad)
-        menuBtn.setBackgroundResource(ripple())
-        menuBtn.setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
+        menuBtn = TextView(this)
+        menuBtn.text = "⋯"
+        menuBtn.textSize = 20f
+        menuBtn.setTextColor(fg)
+        menuBtn.gravity = Gravity.CENTER
         menuBtn.setOnClickListener { showMenu() }
+        press(menuBtn, 0.8f)
 
         urlBar = EditText(this)
         urlBar.setSingleLine()
@@ -359,6 +430,11 @@ class MainActivity : ComponentActivity() {
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.background = panelBg(28)
         bar.setPadding(dp(4), 0, dp(4), 0)
+        bar.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
+            v.pivotX = (r - l) / 2f
+            v.pivotY = (b - t).toFloat()
+        }
+        bar.setOnClickListener { setBarHidden(false) }
         bar.addView(backBtn, LinearLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.MATCH_PARENT))
         bar.addView(urlBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         bar.addView(menuBtn, LinearLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.MATCH_PARENT))
@@ -409,10 +485,12 @@ class MainActivity : ComponentActivity() {
         upBtn.setImageDrawable(PathIcon(Icons.ARROW_UP, fg))
         upBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
         upBtn.setOnClickListener { web.findNext(false) }
+        press(upBtn, 0.8f)
         val downBtn = ImageView(this)
         downBtn.setImageDrawable(PathIcon(Icons.ARROW_DOWN, fg))
         downBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
         downBtn.setOnClickListener { web.findNext(true) }
+        press(downBtn, 0.8f)
 
         val doneBtn = TextView(this)
         doneBtn.text = "Xong"
@@ -422,6 +500,7 @@ class MainActivity : ComponentActivity() {
         doneBtn.gravity = Gravity.CENTER
         doneBtn.setPadding(dp(10), 0, dp(6), 0)
         doneBtn.setOnClickListener { closeFind() }
+        press(doneBtn, 0.9f)
 
         findBar = LinearLayout(this)
         findBar.orientation = LinearLayout.HORIZONTAL
@@ -462,9 +541,9 @@ class MainActivity : ComponentActivity() {
                     URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
                 )
                 (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
-                Toast.makeText(this, "Đang tải xuống...", Toast.LENGTH_SHORT).show()
+                toast("Đang tải xuống...")
             } catch (e: Exception) {
-                Toast.makeText(this, "Không tải được file này", Toast.LENGTH_SHORT).show()
+                toast("Không tải được file này")
             }
         }
 
@@ -578,18 +657,28 @@ class MainActivity : ComponentActivity() {
         web.evaluateJavascript(EDGE_JS.replace("%INSET%", topCss.toString()), null)
     }
 
+    // "Ẩn" nghĩa là thu gọn: thanh co nhỏ lại, chỉ còn tên miền; chạm hoặc vuốt lên để mở lại
     private fun setBarHidden(hide: Boolean) {
         if (hide && !store.autoHideBar) return
         if (hide == barHidden) return
         barHidden = hide
-        val lp = bar.layoutParams as FrameLayout.LayoutParams
-        val dist = bar.height + lp.bottomMargin + 40 * d
-        bar.animate().translationY(if (hide) dist else 0f).setDuration(220).start()
-        bottomFade.animate().alpha(if (hide) 0f else 1f).setDuration(220).start()
+        val ip = DecelerateInterpolator()
+        bar.animate()
+            .scaleX(if (hide) 0.72f else 1f)
+            .scaleY(if (hide) 0.82f else 1f)
+            .translationY(if (hide) dp(8).toFloat() else 0f)
+            .setDuration(240).setInterpolator(ip).start()
+        backBtn.isClickable = !hide
+        menuBtn.isClickable = !hide
+        backBtn.animate().alpha(if (hide) 0f else backAlpha()).setDuration(180).start()
+        menuBtn.animate().alpha(if (hide) 0f else 1f).setDuration(180).start()
+        bottomFade.animate().alpha(if (hide) 0.35f else 1f).setDuration(240).start()
     }
 
+    private fun backAlpha(): Float = if (web.canGoBack()) 1f else 0.3f
+
     private fun updateNav() {
-        backBtn.alpha = if (web.canGoBack()) 1f else 0.3f
+        backBtn.alpha = if (barHidden) 0f else backAlpha()
     }
 
     // ---------------- Thanh địa chỉ ----------------
@@ -694,6 +783,7 @@ class MainActivity : ComponentActivity() {
                 load(text)
                 leaveEdit()
             }
+            press(row, 0.98f)
             suggestBox.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         }
         suggestBox.visibility = View.VISIBLE
@@ -759,100 +849,67 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // ---------------- Menu Safari iOS 27 Style ----------------
+    // ---------------- Menu ----------------
 
     private fun showMenu() {
         val gapColor = if (isNight) Color.argb(45, 255, 255, 255) else Color.argb(30, 0, 0, 0)
 
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
-        box.background = panelBg(28)
-        box.setPadding(0, dp(10), 0, dp(10))
+        box.background = panelBg(26)
+        box.setPadding(0, dp(8), 0, dp(8))
 
-        val popup = PopupWindow(box, dp(270), ViewGroup.LayoutParams.WRAP_CONTENT, true)
+        val popup = PopupWindow(box, dp(260), ViewGroup.LayoutParams.WRAP_CONTENT, true)
         popup.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         popup.isOutsideTouchable = true
 
         val rp = ripple()
-
-        // Tiêu đề xem trước trang hiện tại phong cách Safari iOS 27
-        val header = LinearLayout(this)
-        header.orientation = LinearLayout.VERTICAL
-        header.setPadding(dp(18), dp(4), dp(18), dp(8))
-        val host = try {
-            Uri.parse(currentUrl).host?.removePrefix("www.")
-        } catch (e: Exception) {
-            null
-        } ?: "Safari Web"
-        val domainTxt = TextView(this)
-        domainTxt.text = "🔒 $host"
-        domainTxt.textSize = 13.5f
-        domainTxt.setTypeface(null, Typeface.BOLD)
-        domainTxt.setTextColor(fg)
-        header.addView(domainTxt)
-
-        val pageTitle = web.title
-        if (!pageTitle.isNullOrBlank()) {
-            val titleTxt = TextView(this)
-            titleTxt.text = pageTitle
-            titleTxt.textSize = 11.5f
-            titleTxt.setTextColor(sub)
-            titleTxt.maxLines = 1
-            titleTxt.ellipsize = TextUtils.TruncateAt.END
-            titleTxt.setPadding(0, dp(2), 0, 0)
-            header.addView(titleTxt)
-        }
-        box.addView(header)
 
         fun cell(row: LinearLayout, label: String, path: String, action: () -> Unit) {
             val c = LinearLayout(this)
             c.orientation = LinearLayout.VERTICAL
             c.gravity = Gravity.CENTER
             c.setBackgroundResource(rp)
-            c.setPadding(dp(4), dp(8), dp(4), dp(8))
-
             val iv = ImageView(this)
             iv.setImageDrawable(PathIcon(path, fg))
-            c.addView(iv, LinearLayout.LayoutParams(dp(22), dp(22)))
-
+            c.addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
             val t = TextView(this)
             t.text = label
-            t.textSize = 11.5f
+            t.textSize = 12f
             t.setTextColor(fg)
             t.gravity = Gravity.CENTER
-            t.setPadding(0, dp(4), 0, 0)
+            t.setPadding(0, dp(5), 0, 0)
             c.addView(t, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
             c.setOnClickListener {
                 popup.dismiss()
                 action()
             }
-            row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            press(c, 0.92f)
+            row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
 
         fun item(label: String, path: String?, action: () -> Unit) {
             val r = LinearLayout(this)
             r.orientation = LinearLayout.HORIZONTAL
             r.gravity = Gravity.CENTER_VERTICAL
-            r.setPadding(dp(20), 0, dp(20), 0)
+            r.setPadding(dp(22), 0, dp(22), 0)
             r.setBackgroundResource(rp)
-
             val t = TextView(this)
             t.text = label
-            t.textSize = 15f
+            t.textSize = 16f
             t.setTextColor(fg)
             r.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
             if (path != null) {
                 val iv = ImageView(this)
                 iv.setImageDrawable(PathIcon(path, fg))
-                r.addView(iv, LinearLayout.LayoutParams(dp(20), dp(20)))
+                r.addView(iv, LinearLayout.LayoutParams(dp(22), dp(22)))
             }
             r.setOnClickListener {
                 popup.dismiss()
                 action()
             }
-            box.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
+            press(r, 0.98f)
+            box.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         }
 
         fun gap() {
@@ -863,10 +920,9 @@ class MainActivity : ComponentActivity() {
 
         val marked = store.isBookmarked(currentUrl)
 
-        // Lưới Quick Actions phong cách Safari iOS 27
         val quick = LinearLayout(this)
         quick.orientation = LinearLayout.HORIZONTAL
-        quick.setPadding(dp(10), 0, dp(10), 0)
+        quick.setPadding(dp(8), 0, dp(8), 0)
         cell(quick, "Chia sẻ", Icons.SHARE) { shareUrl() }
         cell(
             quick,
@@ -874,13 +930,15 @@ class MainActivity : ComponentActivity() {
             if (marked) Icons.BOOKMARK else Icons.BOOKMARK_OUTLINE
         ) { toggleBookmark() }
         cell(quick, "Tải lại", Icons.REFRESH) { web.reload() }
-        cell(quick, "Tìm kiếm", Icons.SEARCH) { openFind() }
-        box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)))
 
         gap()
         item("Dấu trang", Icons.BOOKMARK_OUTLINE) { showList("Dấu trang", "bookmarks") }
-        item("Lịch sử duyệt web", Icons.HISTORY) { showList("Lịch sử", "history") }
+        item("Lịch sử", Icons.HISTORY) { showList("Lịch sử", "history") }
         item("Tải xuống", Icons.DOWNLOAD) { openDownloads() }
+
+        gap()
+        item("Tìm trong trang", Icons.SEARCH) { openFind() }
         item("Trang web máy tính", if (store.desktopMode) Icons.CHECK else null) {
             store.desktopMode = !store.desktopMode
             applyDesktopMode()
@@ -891,18 +949,27 @@ class MainActivity : ComponentActivity() {
         item("Cài đặt", Icons.TUNE) { showSettings() }
 
         val lp = bar.layoutParams as FrameLayout.LayoutParams
+        box.alpha = 0f
+        box.scaleX = 0.8f
+        box.scaleY = 0.8f
         popup.showAtLocation(
             root,
             Gravity.BOTTOM or Gravity.END,
             lp.rightMargin,
             lp.bottomMargin + dp(barH) + dp(8)
         )
+        box.post {
+            box.pivotX = box.width.toFloat()
+            box.pivotY = box.height.toFloat()
+            box.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(260)
+                .setInterpolator(OvershootInterpolator(1.2f)).start()
+        }
     }
 
     private fun toggleBookmark() {
         if (currentUrl.isBlank()) return
         val added = store.toggleBookmark(web.title ?: currentUrl, currentUrl)
-        Toast.makeText(this, if (added) "Đã thêm dấu trang" else "Đã bỏ dấu trang", Toast.LENGTH_SHORT).show()
+        toast(if (added) "Đã thêm dấu trang" else "Đã bỏ dấu trang")
     }
 
     private fun shareUrl() {
@@ -917,7 +984,7 @@ class MainActivity : ComponentActivity() {
         try {
             startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
         } catch (e: Exception) {
-            Toast.makeText(this, "Không mở được danh sách tải xuống", Toast.LENGTH_SHORT).show()
+            toast("Không mở được danh sách tải xuống")
         }
     }
 
@@ -963,15 +1030,21 @@ class MainActivity : ComponentActivity() {
 
         dlg.setContentView(col)
         dlg.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        return Panel(dlg, body, buttons)
+        return Panel(dlg, body, buttons, col)
     }
 
     private fun showPanel(p: Panel) {
+        p.content.alpha = 0f
+        p.content.scaleX = 0.92f
+        p.content.scaleY = 0.92f
+        p.content.translationY = dp(24).toFloat()
         p.dlg.show()
         p.dlg.window?.setLayout(
             (resources.displayMetrics.widthPixels * 0.9f).toInt(),
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
+        p.content.animate().alpha(1f).scaleX(1f).scaleY(1f).translationY(0f)
+            .setDuration(280).setInterpolator(OvershootInterpolator(0.9f)).start()
     }
 
     private fun panelButton(text: String, color: Int, onClick: () -> Unit): TextView {
@@ -982,6 +1055,7 @@ class MainActivity : ComponentActivity() {
         b.setTextColor(color)
         b.setPadding(0, dp(6), 0, dp(6))
         b.setOnClickListener { onClick() }
+        press(b, 0.9f)
         return b
     }
 
@@ -1042,7 +1116,7 @@ class MainActivity : ComponentActivity() {
                 row.addView(u)
 
                 row.setOnClickListener {
-                    p.dlg.dismiss()
+                    dismissPanel(p)
                     load(entry.url)
                 }
                 row.setOnLongClickListener {
@@ -1050,6 +1124,7 @@ class MainActivity : ComponentActivity() {
                     fill()
                     true
                 }
+                press(row, 0.98f)
                 p.body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
         }
@@ -1061,7 +1136,7 @@ class MainActivity : ComponentActivity() {
                 fill()
             }
         } else null
-        addButtons(p, left, panelButton("Đóng", accent) { p.dlg.dismiss() })
+        addButtons(p, left, panelButton("Đóng", accent) { dismissPanel(p) })
         showPanel(p)
     }
 
@@ -1090,6 +1165,7 @@ class MainActivity : ComponentActivity() {
             v.maxWidth = dp(140)
             r.addView(v)
             r.setOnClickListener { onClick(v) }
+            press(r, 0.98f)
             p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
         }
 
@@ -1105,17 +1181,17 @@ class MainActivity : ComponentActivity() {
             web.reload()
             v.text = onOff(store.desktopMode)
         }
-        addRow("Tự ẩn thanh địa chỉ khi cuộn", onOff(store.autoHideBar), fg) { v ->
+        addRow("Thu gọn thanh địa chỉ khi cuộn", onOff(store.autoHideBar), fg) { v ->
             store.autoHideBar = !store.autoHideBar
             if (!store.autoHideBar) setBarHidden(false)
             v.text = onOff(store.autoHideBar)
         }
         addRow("Xóa dữ liệu duyệt web", "", Color.rgb(255, 69, 58)) { _ ->
-            p.dlg.dismiss()
+            dismissPanel(p)
             confirmClear()
         }
 
-        addButtons(p, null, panelButton("Đóng", accent) { p.dlg.dismiss() })
+        addButtons(p, null, panelButton("Đóng", accent) { dismissPanel(p) })
         showPanel(p)
     }
 
@@ -1141,12 +1217,13 @@ class MainActivity : ComponentActivity() {
             }
             r.setOnClickListener {
                 store.searchEngine = i
-                p.dlg.dismiss()
+                dismissPanel(p)
                 done()
             }
+            press(r, 0.98f)
             p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
         }
-        addButtons(p, null, panelButton("Đóng", accent) { p.dlg.dismiss() })
+        addButtons(p, null, panelButton("Đóng", accent) { dismissPanel(p) })
         showPanel(p)
     }
 
@@ -1168,11 +1245,11 @@ class MainActivity : ComponentActivity() {
         p.body.addView(input, lp)
         addButtons(
             p,
-            panelButton("Hủy", accent) { p.dlg.dismiss() },
+            panelButton("Hủy", accent) { dismissPanel(p) },
             panelButton("Lưu", accent) {
                 val t = input.text.toString().trim()
                 if (t.isNotEmpty()) store.homeUrl = toUrl(t)
-                p.dlg.dismiss()
+                dismissPanel(p)
                 done()
             }
         )
@@ -1189,14 +1266,14 @@ class MainActivity : ComponentActivity() {
         p.body.addView(msg)
         addButtons(
             p,
-            panelButton("Hủy", accent) { p.dlg.dismiss() },
+            panelButton("Hủy", accent) { dismissPanel(p) },
             panelButton("Xóa", Color.rgb(255, 69, 58)) {
                 store.clearHistory()
                 CookieManager.getInstance().removeAllCookies(null)
                 WebStorage.getInstance().deleteAllData()
                 web.clearCache(true)
-                p.dlg.dismiss()
-                Toast.makeText(this, "Đã xóa dữ liệu", Toast.LENGTH_SHORT).show()
+                dismissPanel(p)
+                toast("Đã xóa dữ liệu")
             }
         )
         showPanel(p)
