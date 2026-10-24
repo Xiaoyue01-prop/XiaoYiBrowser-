@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var root: FrameLayout
     private lateinit var urlBar: EditText
     private lateinit var bar: LinearLayout
-    private lateinit var progress: ProgressBar
+    private lateinit var loadingBar: ProgressBar
     private lateinit var topFade: View
 
     private var d = 1f
@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+        loadingBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             visibility = View.GONE
         }
@@ -125,8 +125,8 @@ class MainActivity : ComponentActivity() {
             }
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView, newProgress: Int) {
-                    progress.progress = newProgress
-                    progress.visibility = if (newProgress in 1..99) View.VISIBLE else View.GONE
+                    loadingBar.progress = newProgress
+                    loadingBar.visibility = if (newProgress in 1..99) View.VISIBLE else View.GONE
                 }
             }
             // Vuốt xuống thì ẩn thanh, vuốt lên thì hiện lại
@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity() {
             setBackgroundColor(pageColor)
             addView(web, FrameLayout.LayoutParams(-1, -1))
             addView(topFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
-            addView(progress, FrameLayout.LayoutParams(-1, (2 * d).toInt(), Gravity.TOP))
+            addView(loadingBar, FrameLayout.LayoutParams(-1, (2 * d).toInt(), Gravity.TOP))
             addView(bar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         }
         setContentView(root)
@@ -171,7 +171,7 @@ class MainActivity : ComponentActivity() {
 
     private fun applyInsets() {
         (topFade.layoutParams as FrameLayout.LayoutParams).height = insetTop + (16 * d).toInt()
-        (progress.layoutParams as FrameLayout.LayoutParams).topMargin = insetTop
+        (loadingBar.layoutParams as FrameLayout.LayoutParams).topMargin = insetTop
         (bar.layoutParams as FrameLayout.LayoutParams).apply {
             leftMargin = insetLeft + (16 * d).toInt()
             rightMargin = insetRight + (16 * d).toInt()
