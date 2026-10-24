@@ -7,13 +7,13 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
-import android.widget.PopupWindow
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.text.InputType
+import android.util.TypedValue
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -28,8 +28,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.PopupMenu
+import android.widget.PopupWindow
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -55,6 +56,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var menuBtn: TextView
     private lateinit var loadingBar: ProgressBar
     private lateinit var topFade: View
+    private lateinit var bottomFade: View
 
     private var d = 1f
     private var insetTop = 0
@@ -64,6 +66,7 @@ class MainActivity : ComponentActivity() {
     private var imeBottom = 0
     private var barHidden = false
     private var currentUrl = ""
+    private var lastFind = ""
     private var mobileUa = ""
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
 
@@ -140,6 +143,14 @@ class MainActivity : ComponentActivity() {
             GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(fadeStart, fadeEnd)
         )
 
+        // Lớp mờ nhẹ phía dưới để thanh địa chỉ tách khỏi nội dung
+        val botStart = if (night) Color.argb(225, 18, 18, 18) else Color.argb(225, 255, 255, 255)
+        val botEnd = if (night) Color.argb(0, 18, 18, 18) else Color.argb(0, 255, 255, 255)
+        bottomFade = View(this)
+        bottomFade.background = GradientDrawable(
+            GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(botStart, botEnd)
+        )
+
         loadingBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
         loadingBar.max = 100
         loadingBar.visibility = View.GONE
@@ -195,17 +206,16 @@ class MainActivity : ComponentActivity() {
 
         val pill = GradientDrawable()
         pill.cornerRadius = 28 * d
-        pill.setColor(if (night) Color.argb(230, 40, 40, 44) else Color.argb(230, 248, 248, 250))
+        pill.setColor(if (night) Color.argb(245, 38, 38, 42) else Color.argb(245, 250, 250, 252))
         pill.setStroke(
             (1 * d).toInt().coerceAtLeast(1),
-            if (night) Color.argb(60, 255, 255, 255) else Color.argb(40, 0, 0, 0)
+            if (night) Color.argb(70, 255, 255, 255) else Color.argb(50, 0, 0, 0)
         )
 
         bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.background = pill
-        bar.elevation = 6 * d
         bar.setPadding((6 * d).toInt(), 0, (6 * d).toInt(), 0)
         bar.addView(backBtn, LinearLayout.LayoutParams((40 * d).toInt(), ViewGroup.LayoutParams.MATCH_PARENT))
         bar.addView(urlBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
@@ -254,6 +264,7 @@ class MainActivity : ComponentActivity() {
         root.isFocusableInTouchMode = true
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(topFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
+        root.addView(bottomFade, FrameLayout.LayoutParams(-1, 0, Gravity.BOTTOM))
         root.addView(loadingBar, FrameLayout.LayoutParams(-1, (2 * d).toInt(), Gravity.TOP))
         root.addView(bar, FrameLayout.LayoutParams(-1, (44 * d).toInt(), Gravity.BOTTOM))
         setContentView(root)
@@ -286,6 +297,7 @@ class MainActivity : ComponentActivity() {
 
     private fun applyInsets() {
         (topFade.layoutParams as FrameLayout.LayoutParams).height = insetTop + (16 * d).toInt()
+        (bottomFade.layoutParams as FrameLayout.LayoutParams).height = maxOf(insetBottom, imeBottom) + (80 * d).toInt()
         (loadingBar.layoutParams as FrameLayout.LayoutParams).topMargin = insetTop
         val lp = bar.layoutParams as FrameLayout.LayoutParams
         lp.leftMargin = insetLeft + (28 * d).toInt()
@@ -314,6 +326,7 @@ class MainActivity : ComponentActivity() {
         val lp = bar.layoutParams as FrameLayout.LayoutParams
         val dist = bar.height + lp.bottomMargin + 40 * d
         bar.animate().translationY(if (hide) dist else 0f).setDuration(220).start()
+        bottomFade.animate().alpha(if (hide) 0f else 1f).setDuration(220).start()
     }
 
     private fun updateNav() {
@@ -372,149 +385,156 @@ class MainActivity : ComponentActivity() {
     // ---------------- Menu, lịch sử, dấu trang, cài đặt ----------------
 
     private fun showMenu() {
-        var menuPopup: android.widget.PopupWindow? = null
-        val marked = store.isBookmarked(currentUrl)
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = GradientDrawable().apply {
-                setColor(Color.rgb(28, 29, 33))
-                cornerRadius = dp(26).toFloat()
-                setStroke(dp(1), Color.rgb(70, 72, 79))
-            }
-            elevation = dp(18).toFloat()
-        }
-        panel.addView(TextView(this).apply {
-            text = "WebEdge"
-            textSize = 19f
-            setTextColor(Color.WHITE)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-        })
-        panel.addView(TextView(this).apply {
-            text = "Thao tác nhanh"
-            textSize = 12f
-            setTextColor(Color.rgb(174, 176, 185))
-            setPadding(0, dp(3), 0, dp(12))
-        })
-        val quickRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-        }
-        fun quickAction(label: String, symbol: String, action: () -> Unit) {
-            val item = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setPadding(dp(5), dp(10), dp(5), dp(10))
-                background = GradientDrawable().apply {
-                    setColor(Color.rgb(43, 45, 51))
-                    cornerRadius = dp(16).toFloat()
-                }
-                isClickable = true
-                isFocusable = true
-                setOnClickListener {
-                    menuPopup?.dismiss()
-                    action()
-                }
-            }
-            item.addView(TextView(this).apply {
-                text = symbol
-                textSize = 22f
-                gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
-            }, LinearLayout.LayoutParams(-1, -2))
-            item.addView(TextView(this).apply {
-                text = label
-                textSize = 11f
-                gravity = Gravity.CENTER
-                setTextColor(Color.rgb(235, 236, 240))
-                setPadding(0, dp(4), 0, 0)
-            }, LinearLayout.LayoutParams(-1, -2))
-            quickRow.addView(item, LinearLayout.LayoutParams(0, -2, 1f).apply {
-                marginEnd = dp(5)
-                marginStart = dp(5)
-            })
-        }
-        quickAction("Tải lại", "↻") { web.reload() }
-        quickAction(if (marked) "Đã lưu" else "Lưu trang", if (marked) "★" else "☆") {
-            toggleBookmark()
-        }
-        quickAction("Chia sẻ", "↗") { shareUrl() }
-        panel.addView(quickRow)
-        panel.addView(View(this).apply {
-            setBackgroundColor(Color.rgb(64, 66, 73))
-        }, LinearLayout.LayoutParams(-1, dp(1)).apply {
-            topMargin = dp(12)
-            bottomMargin = dp(7)
-        })
-        fun menuRow(symbol: String, label: String, detail: String, action: () -> Unit) {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(10), dp(12), dp(8), dp(12))
-                isClickable = true
-                isFocusable = true
-                val out = android.util.TypedValue()
-                if (theme.resolveAttribute(android.R.attr.selectableItemBackground, out, true) &&
-                    out.resourceId != 0) background = getDrawable(out.resourceId)
-                setOnClickListener {
-                    menuPopup?.dismiss()
-                    action()
-                }
-            }
-            row.addView(TextView(this).apply {
-                text = symbol
-                textSize = 20f
-                gravity = Gravity.CENTER
-                setTextColor(Color.rgb(220, 222, 230))
-            }, LinearLayout.LayoutParams(dp(34), -2))
-            val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            texts.addView(TextView(this).apply {
-                text = label
-                textSize = 15f
-                setTextColor(Color.WHITE)
-            })
-            texts.addView(TextView(this).apply {
-                text = detail
-                textSize = 11f
-                setTextColor(Color.rgb(165, 168, 177))
-                setPadding(0, dp(2), 0, 0)
-            })
-            row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
-            row.addView(TextView(this).apply {
-                text = "›"
-                textSize = 25f
-                setTextColor(Color.rgb(135, 138, 148))
-            })
-            panel.addView(row, LinearLayout.LayoutParams(-1, -2))
-        }
-        menuRow("▣", "Dấu trang", "Các trang đã lưu") {
-            showList("Dấu trang", store.list("bookmarks"), false)
-        }
-        menuRow("◷", "Lịch sử", "Các trang đã truy cập") {
-            showList("Lịch sử", store.list("history"), true)
-        }
-        menuRow("⚙", "Cài đặt", "Tuỳ chỉnh trình duyệt") {
-            showSettings()
-        }
-        val popup = android.widget.PopupWindow(
-            panel, dp(320), ViewGroup.LayoutParams.WRAP_CONTENT, true
-        ).apply {
-            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-            isOutsideTouchable = true
-            elevation = dp(20).toFloat()
-            animationStyle = android.R.style.Animation_Dialog
-        }
-        menuPopup = popup
-        panel.measure(
-            View.MeasureSpec.makeMeasureSpec(dp(320), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        val textColor = if (night) Color.WHITE else Color.BLACK
+        val gapColor = if (night) Color.argb(45, 255, 255, 255) else Color.argb(30, 0, 0, 0)
+
+        val bg = GradientDrawable()
+        bg.cornerRadius = 26 * d
+        bg.setColor(if (night) Color.rgb(38, 38, 42) else Color.rgb(250, 250, 252))
+        bg.setStroke(
+            (1 * d).toInt().coerceAtLeast(1),
+            if (night) Color.argb(70, 255, 255, 255) else Color.argb(50, 0, 0, 0)
         )
-        popup.height = panel.measuredHeight
-        popup.showAsDropDown(menuBtn, 0, dp(8), Gravity.END)
+
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.background = bg
+        box.setPadding(0, (8 * d).toInt(), 0, (8 * d).toInt())
+
+        val popup = PopupWindow(box, (260 * d).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT, true)
+        popup.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        popup.isOutsideTouchable = true
+
+        val tv = TypedValue()
+        theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
+
+        // Nút vuông có biểu tượng ở trên, chữ ở dưới (hàng thao tác nhanh)
+        fun cell(row: LinearLayout, label: String, path: String, action: () -> Unit) {
+            val c = LinearLayout(this)
+            c.orientation = LinearLayout.VERTICAL
+            c.gravity = Gravity.CENTER
+            c.setBackgroundResource(tv.resourceId)
+            val iv = ImageView(this)
+            iv.setImageDrawable(PathIcon(path, textColor))
+            c.addView(iv, LinearLayout.LayoutParams((24 * d).toInt(), (24 * d).toInt()))
+            val t = TextView(this)
+            t.text = label
+            t.textSize = 12f
+            t.setTextColor(textColor)
+            t.gravity = Gravity.CENTER
+            t.setPadding(0, (5 * d).toInt(), 0, 0)
+            c.addView(t, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            c.setOnClickListener {
+                popup.dismiss()
+                action()
+            }
+            row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        }
+
+        // Hàng: chữ bên trái, biểu tượng bên phải (giống menu Safari)
+        fun item(label: String, path: String?, action: () -> Unit) {
+            val r = LinearLayout(this)
+            r.orientation = LinearLayout.HORIZONTAL
+            r.gravity = Gravity.CENTER_VERTICAL
+            r.setPadding((22 * d).toInt(), 0, (22 * d).toInt(), 0)
+            r.setBackgroundResource(tv.resourceId)
+            val t = TextView(this)
+            t.text = label
+            t.textSize = 16f
+            t.setTextColor(textColor)
+            r.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (path != null) {
+                val iv = ImageView(this)
+                iv.setImageDrawable(PathIcon(path, textColor))
+                r.addView(iv, LinearLayout.LayoutParams((22 * d).toInt(), (22 * d).toInt()))
+            }
+            r.setOnClickListener {
+                popup.dismiss()
+                action()
+            }
+            box.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (48 * d).toInt()))
+        }
+
+        fun gap() {
+            val g = View(this)
+            g.setBackgroundColor(gapColor)
+            box.addView(g, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (6 * d).toInt()))
+        }
+
+        val marked = store.isBookmarked(currentUrl)
+
+        val quick = LinearLayout(this)
+        quick.orientation = LinearLayout.HORIZONTAL
+        quick.setPadding((8 * d).toInt(), 0, (8 * d).toInt(), 0)
+        cell(quick, "Chia sẻ", Icons.SHARE) { shareUrl() }
+        cell(
+            quick,
+            if (marked) "Bỏ lưu" else "Lưu trang",
+            if (marked) Icons.BOOKMARK else Icons.BOOKMARK_OUTLINE
+        ) { toggleBookmark() }
+        cell(quick, "Tải lại", Icons.REFRESH) { web.reload() }
+        box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (70 * d).toInt()))
+
+        gap()
+        item("Dấu trang", Icons.BOOKMARK_OUTLINE) { showList("Dấu trang", store.list("bookmarks"), false) }
+        item("Lịch sử", Icons.HISTORY) { showList("Lịch sử", store.list("history"), true) }
+        item("Tải xuống", Icons.DOWNLOAD) { openDownloads() }
+
+        gap()
+        item("Tìm trong trang", Icons.SEARCH) { findInPage() }
+        item("Trang web máy tính", if (store.desktopMode) Icons.CHECK else null) {
+            store.desktopMode = !store.desktopMode
+            applyDesktopMode()
+            web.reload()
+        }
+
+        gap()
+        item("Cài đặt", Icons.TUNE) { showSettings() }
+
+        val lp = bar.layoutParams as FrameLayout.LayoutParams
+        popup.showAtLocation(
+            root,
+            Gravity.BOTTOM or Gravity.END,
+            lp.rightMargin,
+            lp.bottomMargin + (44 * d).toInt() + (8 * d).toInt()
+        )
     }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density + 0.5f).toInt()
+    private fun openDownloads() {
+        try {
+            startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Không mở được danh sách tải xuống", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun findInPage() {
+        val input = EditText(this)
+        input.setSingleLine()
+        input.hint = "Nhập từ cần tìm"
+        val dlg = AlertDialog.Builder(this)
+            .setTitle("Tìm trong trang")
+            .setView(input)
+            .setPositiveButton("Tiếp", null)
+            .setNegativeButton("Đóng") { _, _ -> web.clearMatches() }
+            .create()
+        dlg.setOnShowListener {
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val q = input.text.toString()
+                if (q.isNotEmpty()) {
+                    if (q != lastFind) {
+                        lastFind = q
+                        web.findAllAsync(q)
+                    } else {
+                        web.findNext(true)
+                    }
+                }
+            }
+        }
+        dlg.show()
+    }
 
     private fun toggleBookmark() {
         if (currentUrl.isBlank()) return
