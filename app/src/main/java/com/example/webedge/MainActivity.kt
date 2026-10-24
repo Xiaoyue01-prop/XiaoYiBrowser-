@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var urlBar: EditText
     private lateinit var bar: LinearLayout
     private lateinit var backBtn: TextView
-    private lateinit var menuBtn: TextView
+    private lateinit var menuBtn: ImageView
     private lateinit var loadingBar: ProgressBar
     private lateinit var topFade: View
     private lateinit var bottomFade: View
@@ -304,11 +304,12 @@ class MainActivity : ComponentActivity() {
         backBtn.alpha = 0.3f
         backBtn.setOnClickListener { if (web.canGoBack()) web.goBack() }
 
-        menuBtn = TextView(this)
-        menuBtn.text = "⋯"
-        menuBtn.textSize = 20f
-        menuBtn.setTextColor(fg)
-        menuBtn.gravity = Gravity.CENTER
+        menuBtn = ImageView(this)
+        menuBtn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+        val pad = dp(7)
+        menuBtn.setPadding(pad, pad, pad, pad)
+        menuBtn.setBackgroundResource(ripple())
+        menuBtn.setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
         menuBtn.setOnClickListener { showMenu() }
 
         urlBar = EditText(this)
@@ -758,65 +759,100 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // ---------------- Menu ----------------
+    // ---------------- Menu Safari iOS 27 Style ----------------
 
     private fun showMenu() {
         val gapColor = if (isNight) Color.argb(45, 255, 255, 255) else Color.argb(30, 0, 0, 0)
 
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
-        box.background = panelBg(26)
-        box.setPadding(0, dp(8), 0, dp(8))
+        box.background = panelBg(28)
+        box.setPadding(0, dp(10), 0, dp(10))
 
-        val popup = PopupWindow(box, dp(260), ViewGroup.LayoutParams.WRAP_CONTENT, true)
+        val popup = PopupWindow(box, dp(270), ViewGroup.LayoutParams.WRAP_CONTENT, true)
         popup.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         popup.isOutsideTouchable = true
 
         val rp = ripple()
+
+        // Tiêu đề xem trước trang hiện tại phong cách Safari iOS 27
+        val header = LinearLayout(this)
+        header.orientation = LinearLayout.VERTICAL
+        header.setPadding(dp(18), dp(4), dp(18), dp(8))
+        val host = try {
+            Uri.parse(currentUrl).host?.removePrefix("www.")
+        } catch (e: Exception) {
+            null
+        } ?: "Safari Web"
+        val domainTxt = TextView(this)
+        domainTxt.text = "🔒 $host"
+        domainTxt.textSize = 13.5f
+        domainTxt.setTypeface(null, Typeface.BOLD)
+        domainTxt.setTextColor(fg)
+        header.addView(domainTxt)
+
+        val pageTitle = web.title
+        if (!pageTitle.isNullOrBlank()) {
+            val titleTxt = TextView(this)
+            titleTxt.text = pageTitle
+            titleTxt.textSize = 11.5f
+            titleTxt.setTextColor(sub)
+            titleTxt.maxLines = 1
+            titleTxt.ellipsize = TextUtils.TruncateAt.END
+            titleTxt.setPadding(0, dp(2), 0, 0)
+            header.addView(titleTxt)
+        }
+        box.addView(header)
 
         fun cell(row: LinearLayout, label: String, path: String, action: () -> Unit) {
             val c = LinearLayout(this)
             c.orientation = LinearLayout.VERTICAL
             c.gravity = Gravity.CENTER
             c.setBackgroundResource(rp)
+            c.setPadding(dp(4), dp(8), dp(4), dp(8))
+
             val iv = ImageView(this)
             iv.setImageDrawable(PathIcon(path, fg))
-            c.addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
+            c.addView(iv, LinearLayout.LayoutParams(dp(22), dp(22)))
+
             val t = TextView(this)
             t.text = label
-            t.textSize = 12f
+            t.textSize = 11.5f
             t.setTextColor(fg)
             t.gravity = Gravity.CENTER
-            t.setPadding(0, dp(5), 0, 0)
+            t.setPadding(0, dp(4), 0, 0)
             c.addView(t, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
             c.setOnClickListener {
                 popup.dismiss()
                 action()
             }
-            row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
 
         fun item(label: String, path: String?, action: () -> Unit) {
             val r = LinearLayout(this)
             r.orientation = LinearLayout.HORIZONTAL
             r.gravity = Gravity.CENTER_VERTICAL
-            r.setPadding(dp(22), 0, dp(22), 0)
+            r.setPadding(dp(20), 0, dp(20), 0)
             r.setBackgroundResource(rp)
+
             val t = TextView(this)
             t.text = label
-            t.textSize = 16f
+            t.textSize = 15f
             t.setTextColor(fg)
             r.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
             if (path != null) {
                 val iv = ImageView(this)
                 iv.setImageDrawable(PathIcon(path, fg))
-                r.addView(iv, LinearLayout.LayoutParams(dp(22), dp(22)))
+                r.addView(iv, LinearLayout.LayoutParams(dp(20), dp(20)))
             }
             r.setOnClickListener {
                 popup.dismiss()
                 action()
             }
-            box.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+            box.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
         }
 
         fun gap() {
@@ -827,9 +863,10 @@ class MainActivity : ComponentActivity() {
 
         val marked = store.isBookmarked(currentUrl)
 
+        // Lưới Quick Actions phong cách Safari iOS 27
         val quick = LinearLayout(this)
         quick.orientation = LinearLayout.HORIZONTAL
-        quick.setPadding(dp(8), 0, dp(8), 0)
+        quick.setPadding(dp(10), 0, dp(10), 0)
         cell(quick, "Chia sẻ", Icons.SHARE) { shareUrl() }
         cell(
             quick,
@@ -837,15 +874,13 @@ class MainActivity : ComponentActivity() {
             if (marked) Icons.BOOKMARK else Icons.BOOKMARK_OUTLINE
         ) { toggleBookmark() }
         cell(quick, "Tải lại", Icons.REFRESH) { web.reload() }
-        box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)))
+        cell(quick, "Tìm kiếm", Icons.SEARCH) { openFind() }
+        box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         gap()
         item("Dấu trang", Icons.BOOKMARK_OUTLINE) { showList("Dấu trang", "bookmarks") }
-        item("Lịch sử", Icons.HISTORY) { showList("Lịch sử", "history") }
+        item("Lịch sử duyệt web", Icons.HISTORY) { showList("Lịch sử", "history") }
         item("Tải xuống", Icons.DOWNLOAD) { openDownloads() }
-
-        gap()
-        item("Tìm trong trang", Icons.SEARCH) { openFind() }
         item("Trang web máy tính", if (store.desktopMode) Icons.CHECK else null) {
             store.desktopMode = !store.desktopMode
             applyDesktopMode()
