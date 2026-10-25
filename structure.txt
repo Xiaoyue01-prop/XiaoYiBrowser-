@@ -1,0 +1,12 @@
+./build.gradle.kts
+./settings.gradle.kts
+./.github/workflows/build.yml
+./app/build.gradle.kts
+./app/src/main/java/com/example/webedge/MainActivity.kt
+./app/src/main/java/com/example/webedge/Store.kt
+./app/src/main/java/com/example/webedge/Icons.kt
+./app/src/main/java/com/example/webedge/PillProgress.kt
+./app/src/main/res/values/themes.xml
+./app/src/main/AndroidManifest.xml
+./gradle.properties
+./structure.txt
