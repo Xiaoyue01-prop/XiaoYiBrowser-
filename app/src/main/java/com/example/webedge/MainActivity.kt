@@ -184,7 +184,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var menuBtn: ImageView
     private lateinit var reloadBtn: ImageView
     private lateinit var urlPill: LinearLayout
-    private lateinit var loadingBar: ProgressBar
+    private lateinit var pillProgress: PillProgress
     private lateinit var topFade: View
     private lateinit var bottomFade: View
     private lateinit var fadeDrawable: GradientDrawable
@@ -269,8 +269,7 @@ class MainActivity : ComponentActivity() {
 
     private val chromeClient = object : WebChromeClient() {
         override fun onProgressChanged(view: WebView, newProgress: Int) {
-            loadingBar.progress = newProgress
-            loadingBar.visibility = if (newProgress in 1..99) View.VISIBLE else View.GONE
+            pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
         }
 
         override fun onShowFileChooser(
@@ -397,9 +396,7 @@ class MainActivity : ComponentActivity() {
         bottomFade = View(this)
         bottomFade.background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(botStart, botEnd))
 
-        loadingBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
-        loadingBar.max = 100
-        loadingBar.visibility = View.GONE
+        pillProgress = PillProgress(accent, 2.5f * d)
 
         // --- Thanh địa chỉ gọn: [‹]  tên miền  [⋯] ---
         backBtn = ImageView(this)
@@ -472,9 +469,11 @@ class MainActivity : ComponentActivity() {
         urlPill.gravity = Gravity.CENTER_VERTICAL
         urlPill.background = panelBg(28)
         urlPill.setPadding(dp(8), 0, dp(8), 0)
+        urlPill.overlay.add(pillProgress)
         urlPill.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
             v.pivotX = (r - l) / 2f
             v.pivotY = (b - t).toFloat()
+            pillProgress.setBounds(0, 0, r - l, b - t)
         }
         urlPill.setOnClickListener { setBarHidden(false) }
         urlPill.addView(View(this), LinearLayout.LayoutParams(dp(26), 1))
@@ -615,7 +614,6 @@ class MainActivity : ComponentActivity() {
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(topFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
         root.addView(bottomFade, FrameLayout.LayoutParams(-1, 0, Gravity.BOTTOM))
-        root.addView(loadingBar, FrameLayout.LayoutParams(-1, dp(2), Gravity.TOP))
         root.addView(suggestBox, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         root.addView(bar, FrameLayout.LayoutParams(-1, dp(barH), Gravity.BOTTOM))
         root.addView(findBar, FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM))
@@ -671,7 +669,6 @@ class MainActivity : ComponentActivity() {
 
         (bottomFade.layoutParams as FrameLayout.LayoutParams).height =
             maxOf(insetBottom, imeBottom) + dp(80)
-        (loadingBar.layoutParams as FrameLayout.LayoutParams).topMargin = insetTop
 
         val webLp = web.layoutParams as FrameLayout.LayoutParams
         webLp.topMargin = if (store.edgeMode) 0 else insetTop
