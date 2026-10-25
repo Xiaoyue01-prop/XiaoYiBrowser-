@@ -310,6 +310,19 @@ class MainActivity : ComponentActivity() {
         return g
     }
 
+    private fun glassBg(radiusDp: Int): GradientDrawable {
+        val g = GradientDrawable()
+        g.cornerRadius = radiusDp * d
+        // Nen trong mo kieu kinh
+        g.setColor(if (isNight) Color.argb(180, 30, 30, 35) else Color.argb(180, 255, 255, 255))
+        // Vien sang mong tao cam giac "canh kinh"
+        g.setStroke(
+            (1 * d).toInt().coerceAtLeast(1),
+            if (isNight) Color.argb(90, 255, 255, 255) else Color.argb(70, 255, 255, 255)
+        )
+        return g
+    }
+
     private fun onOff(b: Boolean): String = if (b) "Bật" else "Tắt"
 
     // ---------------- Hiệu ứng ----------------
@@ -467,7 +480,7 @@ class MainActivity : ComponentActivity() {
         urlPill = LinearLayout(this)
         urlPill.orientation = LinearLayout.HORIZONTAL
         urlPill.gravity = Gravity.CENTER_VERTICAL
-        urlPill.background = panelBg(28)
+        urlPill.background = glassBg(28)
         urlPill.setPadding(dp(8), 0, dp(8), 0)
         urlPill.overlay.add(pillProgress)
         urlPill.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
@@ -557,7 +570,7 @@ class MainActivity : ComponentActivity() {
         findBar = LinearLayout(this)
         findBar.orientation = LinearLayout.HORIZONTAL
         findBar.gravity = Gravity.CENTER_VERTICAL
-        findBar.background = panelBg(28)
+        findBar.background = glassBg(28)
         findBar.setPadding(dp(18), 0, dp(10), 0)
         findBar.visibility = View.GONE
         findBar.addView(findInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
