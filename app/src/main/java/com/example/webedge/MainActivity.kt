@@ -299,17 +299,6 @@ class MainActivity : ComponentActivity() {
         return tv.resourceId
     }
 
-    private fun panelBg(radiusDp: Int): GradientDrawable {
-        val g = GradientDrawable()
-        g.cornerRadius = radiusDp * d
-        g.setColor(if (isNight) Color.rgb(38, 38, 42) else Color.rgb(250, 250, 252))
-        g.setStroke(
-            (1 * d).toInt().coerceAtLeast(1),
-            if (isNight) Color.argb(70, 255, 255, 255) else Color.argb(50, 0, 0, 0)
-        )
-        return g
-    }
-
     private fun glassBg(radiusDp: Int): GradientDrawable {
         val g = GradientDrawable()
         g.cornerRadius = radiusDp * d
@@ -359,7 +348,7 @@ class MainActivity : ComponentActivity() {
         t.text = msg
         t.textSize = 14f
         t.setTextColor(fg)
-        t.background = panelBg(22)
+        t.background = GlassDrawables.create(22, d, isNight)
         t.setPadding(dp(18), dp(10), dp(18), dp(10))
         val lp = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -415,7 +404,7 @@ class MainActivity : ComponentActivity() {
         backBtn = ImageView(this)
         backBtn.setImageDrawable(PathIcon(Icons.ARROW_BACK, fg))
         backBtn.setPadding(dp(11), dp(11), dp(11), dp(11))
-        backBtn.background = panelBg(20)
+        backBtn.background = GlassDrawables.create(20, d, isNight)
         backBtn.alpha = 0.3f
         backBtn.setOnClickListener { if (web.canGoBack()) web.goBack() }
         press(backBtn, 0.85f)
@@ -423,7 +412,7 @@ class MainActivity : ComponentActivity() {
         menuBtn = ImageView(this)
         menuBtn.setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
         menuBtn.setPadding(dp(10), dp(10), dp(10), dp(10))
-        menuBtn.background = panelBg(20)
+        menuBtn.background = GlassDrawables.create(20, d, isNight)
         menuBtn.setOnClickListener { openMenu() }
         press(menuBtn, 0.85f)
 
