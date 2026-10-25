@@ -1434,7 +1434,7 @@ class MainActivity : ComponentActivity() {
             onForward = { if (web.canGoForward()) web.goForward() },
             onHome = { load(store.homeUrl) }
         )
-        orbController.alignWith(backBtn)
+        orbController?.alignWith(backBtn)
         backBtn.visibility = View.INVISIBLE
         backBtn.setOnClickListener(null)
     }
