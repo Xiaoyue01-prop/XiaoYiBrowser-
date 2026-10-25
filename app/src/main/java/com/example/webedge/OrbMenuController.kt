@@ -100,6 +100,17 @@ class OrbMenuController(
             subBtns.forEach { it.alpha = anchorAlpha }
         }
         
+        // === UX FIX: Disable click khi Pill ẩn đi ===
+        // Chỉ cho phép chạm vào Orb khi thanh Pill hiện rõ (alpha > 0.3)
+        val threshold = 0.3f
+        val isInteractable = anchorAlpha > threshold
+        mainBtn.isClickable = isInteractable
+        mainBtn.isEnabled = isInteractable
+        if (!isInteractable && isExpanded) {
+            // Pill đang ẩn mà menu vẫn mở -> tự động thu gọn
+            collapse()
+        }
+        
         // Cập nhật vị trí mainBtn (chỉ khi thực sự thay đổi để tiết kiệm CPU)
         val mParams = mainBtn.layoutParams as FrameLayout.LayoutParams
         if (mParams.leftMargin != x || mParams.topMargin != y) {
@@ -123,6 +134,9 @@ class OrbMenuController(
     }
 
     fun toggle() {
+        // Chặn mở menu nếu thanh Pill đang ẩn (tránh UX lạ)
+        val anchorAlpha = anchorView?.alpha ?: 1f
+        if (!isExpanded && anchorAlpha < 0.3f) return
         if (isExpanded) collapse() else expand()
     }
 
