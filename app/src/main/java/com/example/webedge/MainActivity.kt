@@ -542,12 +542,17 @@ class MainActivity : ComponentActivity() {
         web = WebView(this)
         web.setBackgroundColor(pageColor)
         val ws = web.settings
-        // Do not let WebView algorithmically darken sites: it can turn dark headlines
-        // nearly black on pages whose background is already dark (e.g. VnExpress).
+        // Prevent WebView from automatically darkening website content.
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             ws.forceDark = WebSettings.FORCE_DARK_OFF
         }
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
+
+        if (androidx.webkit.WebViewFeature.isFeatureSupported(
+                androidx.webkit.WebViewFeature.ALGORITHMIC_DARKENING
+            )
+        ) {
+            androidx.webkit.WebSettingsCompat
+                .setAlgorithmicDarkeningAllowed(ws, false)
         }
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
@@ -699,8 +704,8 @@ class MainActivity : ComponentActivity() {
         barHidden = hide
         val ip = DecelerateInterpolator()
         urlPill.animate()
-            .scaleX(if (hide) 0.56f else 1f)
-            .scaleY(if (hide) 0.595f else 1f)
+            .scaleX(if (hide) 0.70f else 1f)
+            .scaleY(1f)
             .translationY(0f)
             .setDuration(240).setInterpolator(ip).start()
         backBtn.isClickable = !hide
