@@ -76,9 +76,9 @@ object GlassSystem {
         }
 
         val overlayColor = if (isNight) {
-            Color.argb(142, 28, 28, 32)
+            Color.argb(85, 28, 28, 32)
         } else {
-            Color.argb(150, 255, 255, 255)
+            Color.argb(90, 255, 255, 255)
         }
 
         return BlurView(context).apply {
