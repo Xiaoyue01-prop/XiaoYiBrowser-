@@ -31,12 +31,10 @@ class PathIcon(pathData: String, color: Int) : Drawable() {
     } catch (e: Exception) {
         null
     }
-
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = color
         style = Paint.Style.FILL
     }
-
     override fun draw(canvas: Canvas) {
         val p = path ?: return
         val b = bounds
@@ -48,13 +46,8 @@ class PathIcon(pathData: String, color: Int) : Drawable() {
         canvas.drawPath(p, paint)
         canvas.restore()
     }
-
     override fun setAlpha(alpha: Int) { paint.alpha = alpha }
-
-    override fun setColorFilter(colorFilter: ColorFilter?) {
-        paint.colorFilter = colorFilter
-    }
-
+    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
     @Suppress("OVERRIDE_DEPRECATION")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
