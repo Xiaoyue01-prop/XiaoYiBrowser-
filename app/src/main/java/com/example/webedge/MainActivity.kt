@@ -57,7 +57,10 @@ import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import org.json.JSONArray
+
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -512,11 +515,23 @@ class MainActivity : ComponentActivity() {
         val ws = web.settings
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ws.forceDark = WebSettings.FORCE_DARK_OFF
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ws.isAlgorithmicDarkeningAllowed = false
+        ws.databaseEnabled = true
+        // Tắt cưỡng chế Dark Mode từ mọi cấp độ (hệ thống, WebSettings, AndroidX WebKit)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ws.forceDark = WebSettings.FORCE_DARK_OFF
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ws.isAlgorithmicDarkeningAllowed = false
+            }
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
+                WebSettingsCompat.setForceDark(ws, WebSettingsCompat.FORCE_DARK_OFF)
+            }
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+                WebSettingsCompat.setAlgorithmicDarkeningAllowed(ws, false)
+            }
+        } catch (e: Exception) {
+            // Không hỗ trợ hoặc ngoại lệ thì bỏ qua an toàn
         }
         mobileUa = ws.userAgentString.replace("; wv", "")
         applyDesktopMode()
@@ -652,11 +667,20 @@ class MainActivity : ComponentActivity() {
 
     // Đệm thêm đáy trang để nội dung không bị thanh công cụ đáy che khuất khi cuộn hết trang
     private fun injectInsets() {
-        val bottomCss = (insetBottom / d).toInt() + barH + 36
-        val js = "(function(){var s=document.getElementById('__edge_insets');" +
-            "if(!s){s=document.createElement('style');s.id='__edge_insets';" +
-            "(document.head||document.documentElement).appendChild(s);}" +
-            "s.textContent='body{padding-bottom:${bottomCss}px!important;}';})();"
+        val bottomCss = (maxOf(insetBottom, imeBottom) / d).toInt() + barH + 42
+        val js = """
+        (function(){
+            try {
+                var s = document.getElementById('__edge_insets');
+                if (!s) {
+                    s = document.createElement('style');
+                    s.id = '__edge_insets';
+                    (document.head || document.documentElement).appendChild(s);
+                }
+                s.textContent = 'html, body, #wrapper, .body_mobile, main, [role="main"], article, footer { padding-bottom: ${bottomCss}px !important; margin-bottom: 0px !important; }';
+            } catch (e) {}
+        })();
+        """.trimIndent()
         web.evaluateJavascript(js, null)
     }
 
@@ -1354,6 +1378,30 @@ class MainActivity : ComponentActivity() {
             }
         )
         showPanel(p)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        d = resources.displayMetrics.density
+        isNight = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        fg = if (isNight) Color.WHITE else Color.BLACK
+        sub = if (isNight) Color.argb(150, 255, 255, 255) else Color.argb(140, 0, 0, 0)
+        applyInsets()
+        web.post {
+            web.invalidate()
+            web.requestLayout()
+            injectInsets()
+        }
+    }
+
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        applyInsets()
+        web.post {
+            web.invalidate()
+            web.requestLayout()
+            injectInsets()
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
