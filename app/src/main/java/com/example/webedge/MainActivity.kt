@@ -1,6 +1,7 @@
 package com.example.webedge
 
 import com.example.webedge.GlassDrawables
+import com.example.webedge.Theme
 
 import android.annotation.SuppressLint
 import android.app.Dialog
@@ -199,8 +200,8 @@ class MainActivity : ComponentActivity() {
     private var isNight = false
     private var fg = Color.BLACK
     private var sub = Color.GRAY
-    private val accent = Color.rgb(10, 132, 255)
-    private val barH = 40
+    private val accent = Theme.ACCENT_BLUE
+    private val BOTTOM_BAR_HEIGHT_DP = 40
 
     private var insetTop = 0
     private var insetBottom = 0
@@ -345,7 +346,7 @@ class MainActivity : ComponentActivity() {
             ViewGroup.LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         )
-        lp.bottomMargin = maxOf(insetBottom, imeBottom) + dp(10) + dp(barH) + dp(14)
+        lp.bottomMargin = maxOf(insetBottom, imeBottom) + dp(10) + dp(BOTTOM_BAR_HEIGHT_DP) + dp(14)
         root.addView(t, lp)
         toastView = t
         t.alpha = 0f
@@ -372,13 +373,13 @@ class MainActivity : ComponentActivity() {
         isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
         fg = if (isNight) Color.WHITE else Color.BLACK
-        sub = if (isNight) Color.argb(150, 255, 255, 255) else Color.argb(140, 0, 0, 0)
-        val pageColor = if (isNight) Color.rgb(18, 18, 18) else Color.WHITE
+        sub = Theme.subColor(isNight)
+        val pageColor = Theme.pageColor(isNight)
         pageBg = Color.WHITE
 
         // Lớp mờ dần dưới thanh trạng thái (khi trang không có thanh menu cố định)
-        val fadeStart = if (isNight) Color.argb(200, 0, 0, 0) else Color.argb(200, 255, 255, 255)
-        val fadeEnd = if (isNight) Color.argb(0, 0, 0, 0) else Color.argb(0, 255, 255, 255)
+        val fadeStart = Theme.fadeStart(isNight)
+        val fadeEnd = Theme.fadeEnd(isNight)
         fadeDrawable = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(fadeStart, fadeEnd))
         topFade = View(this)
         topFade.background = fadeDrawable
@@ -477,11 +478,11 @@ class MainActivity : ComponentActivity() {
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.clipChildren = false
-        bar.addView(backBtn, LinearLayout.LayoutParams(dp(barH), dp(barH)))
+        bar.addView(backBtn, LinearLayout.LayoutParams(dp(BOTTOM_BAR_HEIGHT_DP), dp(BOTTOM_BAR_HEIGHT_DP)))
         val pillLp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
         pillLp.setMargins(dp(8), 0, dp(8), 0)
         bar.addView(urlPill, pillLp)
-        bar.addView(menuBtn, LinearLayout.LayoutParams(dp(barH), dp(barH)))
+        bar.addView(menuBtn, LinearLayout.LayoutParams(dp(BOTTOM_BAR_HEIGHT_DP), dp(BOTTOM_BAR_HEIGHT_DP)))
 
         // --- Danh sách gợi ý tìm kiếm (hiện phía trên thanh địa chỉ) ---
         suggestBox = LinearLayout(this)
@@ -607,7 +608,7 @@ class MainActivity : ComponentActivity() {
         root.addView(topFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
         root.addView(bottomFade, FrameLayout.LayoutParams(-1, 0, Gravity.BOTTOM))
         root.addView(suggestBox, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-        root.addView(bar, FrameLayout.LayoutParams(-1, dp(barH), Gravity.BOTTOM))
+        root.addView(bar, FrameLayout.LayoutParams(-1, dp(BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM))
         root.addView(findBar, FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM))
         setContentView(root)
         setupOrbMenu()
@@ -658,7 +659,7 @@ class MainActivity : ComponentActivity() {
         val sugLp = suggestBox.layoutParams as FrameLayout.LayoutParams
         sugLp.leftMargin = insetLeft + dp(16)
         sugLp.rightMargin = insetRight + dp(16)
-        sugLp.bottomMargin = bottom + dp(barH) + dp(8)
+        sugLp.bottomMargin = bottom + dp(BOTTOM_BAR_HEIGHT_DP) + dp(8)
 
         (bottomFade.layoutParams as FrameLayout.LayoutParams).height =
             maxOf(insetBottom, imeBottom) + dp(80)
@@ -989,7 +990,7 @@ class MainActivity : ComponentActivity() {
         layer.setPadding(0, insetTop + dp(12), 0, 0)
         val lp = card.layoutParams as FrameLayout.LayoutParams
         lp.rightMargin = insetRight + dp(14)
-        lp.bottomMargin = maxOf(insetBottom, imeBottom) + dp(10) + dp(barH) + dp(8)
+        lp.bottomMargin = maxOf(insetBottom, imeBottom) + dp(10) + dp(BOTTOM_BAR_HEIGHT_DP) + dp(8)
         card.layoutParams = lp
     }
 
@@ -1010,7 +1011,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showMainPage(animate: Boolean = true) {
-        val gapColor = if (isNight) Color.argb(45, 255, 255, 255) else Color.argb(30, 0, 0, 0)
+        val gapColor = Theme.gapColor(isNight)
         val rp = ripple()
 
         val box = LinearLayout(this)
@@ -1329,7 +1330,7 @@ class MainActivity : ComponentActivity() {
             if (!store.autoHideBar) setBarHidden(false)
             showSettings()
         }
-        addRow("Xóa dữ liệu duyệt web", "", Color.rgb(255, 69, 58)) { confirmClear() }
+        addRow("Xóa dữ liệu duyệt web", "", Theme.DANGER_RED) { confirmClear() }
 
         addButtons(p, null, panelButton("Xong", accent) { closeMenu() })
         showPanel(p)
@@ -1405,7 +1406,7 @@ class MainActivity : ComponentActivity() {
         addButtons(
             p,
             panelButton("Hủy", accent) { showSettings() },
-            panelButton("Xóa", Color.rgb(255, 69, 58)) {
+            panelButton("Xóa", Theme.DANGER_RED) {
                 store.clearHistory()
                 CookieManager.getInstance().removeAllCookies(null)
                 WebStorage.getInstance().deleteAllData()
@@ -1429,7 +1430,7 @@ class MainActivity : ComponentActivity() {
             d = d,
             isNight = isNight,
             fg = fg,
-            barH = barH,
+            BOTTOM_BAR_HEIGHT_DP = BOTTOM_BAR_HEIGHT_DP,
             onBack = { if (web.canGoBack()) web.goBack() },
             onForward = { if (web.canGoForward()) web.goForward() },
             onHome = { load(store.homeUrl) }

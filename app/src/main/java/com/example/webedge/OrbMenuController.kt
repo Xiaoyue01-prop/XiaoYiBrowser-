@@ -51,12 +51,12 @@ class OrbMenuController(
     private val d: Float,
     private val isNight: Boolean,
     private val fg: Int,
-    private val barH: Int,   // Chiều cao thanh Pill (= kích thước nút 3 chấm)
+    private val BOTTOM_BAR_HEIGHT_DP: Int,   // Chiều cao thanh Pill (= kích thước nút 3 chấm)
     private val onBack: () -> Unit,
     private val onForward: () -> Unit,
     private val onHome: () -> Unit
 ) {
-    // Nút chính: Icon vòng nhẫn HarmonyOS, kích thước = barH (ngang bằng nút 3 chấm)
+    // Nút chính: Icon vòng nhẫn HarmonyOS, kích thước = BOTTOM_BAR_HEIGHT_DP (ngang bằng nút 3 chấm)
     private val mainBtn: ImageView = ImageView(rootLayout.context).apply {
         setImageDrawable(RingIcon(fg))
         setPadding(dp(8), dp(8), dp(8), dp(8))
@@ -70,8 +70,8 @@ class OrbMenuController(
     private var preDrawListener: ViewTreeObserver.OnPreDrawListener? = null
 
     init {
-        // Nút chính: kích thước = barH (đồng bộ với nút 3 chấm)
-        val mainParams = FrameLayout.LayoutParams(dp(barH), dp(barH)).apply {
+        // Nút chính: kích thước = BOTTOM_BAR_HEIGHT_DP (đồng bộ với nút 3 chấm)
+        val mainParams = FrameLayout.LayoutParams(dp(BOTTOM_BAR_HEIGHT_DP), dp(BOTTOM_BAR_HEIGHT_DP)).apply {
             gravity = Gravity.BOTTOM or Gravity.START
             bottomMargin = dp(16)
             leftMargin = dp(16)
