@@ -38,10 +38,6 @@ object Icons {
         "M7.41,8.59L12,13.17l4.59,-4.58L18,10l-6,6 -6,-6 1.41,-1.41z"
     const val TUNE =
         "M3,17v2h6v-2L3,17zM3,5v2h10L13,5L3,5zM13,21v-2h8v-2h-8v-2h-2v6h2zM7,9v2L3,11v2h4v2h2L9,9L7,9zM21,13v-2L11,11v2h10zM15,9h2L17,7h4L21,5h-4L17,3h-2v6z"
-    const val CLOSE =
-        "M19,6.41L17.59,5 12,10.59 6.41,5 5,6.41 10.59,12 5,17.59 6.41,19 12,13.41 17.59,19 19,17.59 13.41,12z"
-    const val NORTH_WEST =
-        "M5,15h2V8.41L18.59,20 20,18.59 8.41,7H15V5H5v10z"
 }
 
 // Vẽ một biểu tượng từ dữ liệu đường vẽ, tự co giãn theo kích thước view

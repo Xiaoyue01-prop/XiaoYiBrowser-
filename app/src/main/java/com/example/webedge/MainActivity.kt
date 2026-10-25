@@ -15,7 +15,6 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.os.Build
 import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
@@ -37,7 +36,6 @@ import android.webkit.JavascriptInterface
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
-import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -57,10 +55,7 @@ import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.webkit.WebSettingsCompat
-import androidx.webkit.WebViewFeature
 import org.json.JSONArray
-
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -68,16 +63,17 @@ import java.net.URLEncoder
 private const val DESKTOP_UA =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
-// Script chạy trong trang: đẩy thanh menu cố định (fixed/sticky) ở đầu trang xuống dưới thanh trạng thái,
-// và báo màu của thanh đó về app để tô dải thanh trạng thái liền mạch.
+// Script chạy trong trang. Chế độ tràn viền: đẩy thanh menu cố định ở đầu trang xuống dưới thanh trạng thái
+// (hoặc chừa chỗ cho lớp phủ toàn màn hình) và báo màu thanh đó về app để tô dải thanh trạng thái.
+// Chế độ thường: chỉ đọc màu mép trên của trang.
 private const val EDGE_JS = """
 (function(){
   window.__edgeInset = %INSET%;
+  window.__edgeMode = %MODE%;
   if (window.__edgeStarted) { if (window.__edgeRun) window.__edgeRun(); return; }
   window.__edgeStarted = true;
   var last = '';
-  function opaqueBg(el){
-    var c = getComputedStyle(el).backgroundColor;
+  function rgbOf(c){
     var m = c && c.match(/rgba?\(([^)]+)\)/);
     if (!m) return null;
     var p = m[1].split(',').map(function(x){ return parseFloat(x); });
@@ -85,12 +81,17 @@ private const val EDGE_JS = """
     if (a < 0.85) return null;
     return p;
   }
+  function bgOf(el){ return rgbOf(getComputedStyle(el).backgroundColor); }
   function pinned(el){
     while (el && el !== document.documentElement && el !== document.body) {
       var s = getComputedStyle(el).position;
       if (s === 'fixed' || s === 'sticky') return el;
       el = el.parentElement;
     }
+    return null;
+  }
+  function climb(el){
+    for (; el; el = el.parentElement) { var c = bgOf(el); if (c) return c; }
     return null;
   }
   function report(v){
@@ -101,23 +102,24 @@ private const val EDGE_JS = """
       else { var p = v.split(','); EdgeBridge.setTopColor(Math.round(+p[0]), Math.round(+p[1]), Math.round(+p[2])); }
     } catch (e) {}
   }
-  function run(){
-    var tc = document.querySelector('meta[name="theme-color"]');
-    if (tc && tc.content) {
-      var d = document.createElement('div');
-      d.style.color = tc.content;
-      document.body.appendChild(d);
-      var cs = window.getComputedStyle(d).color;
-      document.body.removeChild(d);
-      var m = cs && cs.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-      if (m) {
-        report(m[1] + ',' + m[2] + ',' + m[3]);
-        return;
-      }
+  function runTop(){
+    if (!document.elementsFromPoint) return;
+    var w = window.innerWidth, color = null;
+    var stack = document.elementsFromPoint(w * 0.5, 2);
+    for (var j = 0; j < stack.length && !color; j++) {
+      if (pinned(stack[j])) { color = climb(stack[j]); }
     }
+    if (!color) {
+      if ((window.scrollY || 0) > 2) { return; }
+      color = stack.length ? climb(stack[0]) : null;
+    }
+    if (!color) { color = climb(document.body) || climb(document.documentElement); }
+    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
+  }
+  function runEdge(){
     var I = window.__edgeInset || 0;
     if (!I || !document.elementsFromPoint) return;
-    var y = I + 2, w = window.innerWidth, hit = null, color = null;
+    var y = I + 2, w = window.innerWidth, hit = null, big = false, color = null;
     var xs = [0.5, 0.15, 0.85];
     for (var i = 0; i < xs.length && !hit; i++) {
       var stack = document.elementsFromPoint(w * xs[i], y);
@@ -125,20 +127,28 @@ private const val EDGE_JS = """
         var f = pinned(stack[j]);
         if (!f) continue;
         var r = f.getBoundingClientRect();
-        if (r.top <= y && r.height < window.innerHeight * 0.45 && r.width > w * 0.6) {
+        if (r.top <= y && r.width > w * 0.6) {
           hit = f;
-          for (var e = stack[j]; e; e = e.parentElement) {
-            var c = opaqueBg(e);
-            if (c) { color = c; break; }
-          }
+          big = r.height >= window.innerHeight * 0.45;
+          color = climb(stack[j]);
         }
       }
     }
     if (!hit) { report('none'); return; }
-    var top = parseFloat(getComputedStyle(hit).top);
-    if (!isNaN(top) && top < I - 0.5) { hit.style.setProperty('top', I + 'px', 'important'); }
-    if (color) { report(color[0] + ',' + color[1] + ',' + color[2]); } else { report('none'); }
+    if (big) {
+      if (!hit.getAttribute('data-edge-pad')) {
+        hit.setAttribute('data-edge-pad', '1');
+        var cs = getComputedStyle(hit);
+        hit.style.setProperty('box-sizing', 'border-box', 'important');
+        hit.style.setProperty('padding-top', ((parseFloat(cs.paddingTop) || 0) + I) + 'px', 'important');
+      }
+    } else {
+      var top = parseFloat(getComputedStyle(hit).top);
+      if (!isNaN(top) && top < I - 0.5) { hit.style.setProperty('top', I + 'px', 'important'); }
+    }
+    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
   }
+  function run(){ if (window.__edgeMode) { runEdge(); } else { runTop(); } }
   var t = null;
   function sched(){ if (t) return; t = setTimeout(function(){ t = null; run(); }, 180); }
   window.__edgeRun = run;
@@ -168,18 +178,17 @@ class MainActivity : ComponentActivity() {
     private lateinit var store: Store
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
-    private lateinit var topFade: View
-    private lateinit var bottomFade: View
-    private lateinit var fadeDrawable: GradientDrawable
     private lateinit var urlBar: EditText
     private lateinit var bar: LinearLayout
     private lateinit var backBtn: ImageView
     private lateinit var menuBtn: ImageView
     private lateinit var reloadBtn: ImageView
-    private lateinit var clearBtn: ImageView
+    private lateinit var urlPill: LinearLayout
     private lateinit var loadingBar: ProgressBar
+    private lateinit var topFade: View
+    private lateinit var bottomFade: View
+    private lateinit var fadeDrawable: GradientDrawable
     private lateinit var suggestBox: LinearLayout
-    private lateinit var suggestScroll: ScrollView
     private lateinit var findBar: LinearLayout
     private lateinit var findInput: EditText
     private lateinit var findCount: TextView
@@ -189,7 +198,7 @@ class MainActivity : ComponentActivity() {
     private var fg = Color.BLACK
     private var sub = Color.GRAY
     private val accent = Color.rgb(10, 132, 255)
-    private val barH = 44
+    private val barH = 40
 
     private var insetTop = 0
     private var insetBottom = 0
@@ -198,6 +207,7 @@ class MainActivity : ComponentActivity() {
     private var imeBottom = 0
 
     private var barHidden = false
+    private var pageBg = Color.WHITE
     private var menuLayer: FrameLayout? = null
     private var menuCard: FrameLayout? = null
     private var menuBackAction: (() -> Unit)? = null
@@ -233,11 +243,10 @@ class MainActivity : ComponentActivity() {
     private val client = object : WebViewClient() {
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             currentUrl = url
-            applyTopColor(null)
+            web.alpha = 0.6f
             if (!urlBar.hasFocus()) showDomain()
             setBarHidden(false)
             updateNav()
-            updatePillButtons()
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
@@ -248,10 +257,12 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageCommitVisible(view: WebView, url: String) {
             injectInsets()
+            web.animate().alpha(1f).setDuration(220).start()
         }
 
         override fun onPageFinished(view: WebView, url: String) {
             injectInsets()
+            web.animate().alpha(1f).setDuration(120).start()
             store.addHistory(view.title ?: "", url)
         }
     }
@@ -371,16 +382,18 @@ class MainActivity : ComponentActivity() {
             Configuration.UI_MODE_NIGHT_YES
         fg = if (isNight) Color.WHITE else Color.BLACK
         sub = if (isNight) Color.argb(150, 255, 255, 255) else Color.argb(140, 0, 0, 0)
-        // Dải gradient trên: mờ dần dưới thanh trạng thái hoặc đổi màu theo header trang web
+        val pageColor = if (isNight) Color.rgb(18, 18, 18) else Color.WHITE
+        pageBg = Color.WHITE
+
+        // Lớp mờ dần dưới thanh trạng thái (khi trang không có thanh menu cố định)
         val fadeStart = if (isNight) Color.argb(200, 0, 0, 0) else Color.argb(200, 255, 255, 255)
         val fadeEnd = if (isNight) Color.argb(0, 0, 0, 0) else Color.argb(0, 255, 255, 255)
         fadeDrawable = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(fadeStart, fadeEnd))
         topFade = View(this)
         topFade.background = fadeDrawable
 
-        // Dải gradient dưới: mờ dần ở đáy màn hình giúp thanh viên thuốc nổi bật, nội dung web cuộn vào êm ái
-        val botStart = if (isNight) Color.argb(230, 20, 20, 22) else Color.argb(230, 255, 255, 255)
-        val botEnd = if (isNight) Color.argb(0, 20, 20, 22) else Color.argb(0, 255, 255, 255)
+        val botStart = Color.argb(if (isNight) 90 else 40, 0, 0, 0)
+        val botEnd = Color.argb(0, 0, 0, 0)
         bottomFade = View(this)
         bottomFade.background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(botStart, botEnd))
 
@@ -388,17 +401,19 @@ class MainActivity : ComponentActivity() {
         loadingBar.max = 100
         loadingBar.visibility = View.GONE
 
-        // --- Thanh địa chỉ dạng viên thuốc liền mạch: [‹]  tên miền  [x] [↺]  [⋯] ---
+        // --- Thanh địa chỉ gọn: [‹]  tên miền  [⋯] ---
         backBtn = ImageView(this)
         backBtn.setImageDrawable(PathIcon(Icons.ARROW_BACK, fg))
-        backBtn.setPadding(dp(9), dp(9), dp(9), dp(9))
+        backBtn.setPadding(dp(11), dp(11), dp(11), dp(11))
+        backBtn.background = panelBg(20)
         backBtn.alpha = 0.3f
         backBtn.setOnClickListener { if (web.canGoBack()) web.goBack() }
         press(backBtn, 0.85f)
 
         menuBtn = ImageView(this)
         menuBtn.setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
-        menuBtn.setPadding(dp(9), dp(9), dp(9), dp(9))
+        menuBtn.setPadding(dp(10), dp(10), dp(10), dp(10))
+        menuBtn.background = panelBg(20)
         menuBtn.setOnClickListener { openMenu() }
         press(menuBtn, 0.85f)
 
@@ -407,16 +422,6 @@ class MainActivity : ComponentActivity() {
         reloadBtn.setPadding(dp(5), dp(5), dp(5), dp(5))
         reloadBtn.setOnClickListener { web.reload() }
         press(reloadBtn, 0.8f)
-
-        clearBtn = ImageView(this)
-        clearBtn.setImageDrawable(PathIcon(Icons.CLOSE, sub))
-        clearBtn.setPadding(dp(5), dp(5), dp(5), dp(5))
-        clearBtn.visibility = View.GONE
-        clearBtn.setOnClickListener {
-            urlBar.setText("")
-            hideSuggestions()
-        }
-        press(clearBtn, 0.8f)
 
         urlBar = EditText(this)
         urlBar.setSingleLine()
@@ -428,7 +433,7 @@ class MainActivity : ComponentActivity() {
         urlBar.gravity = Gravity.CENTER
         urlBar.minHeight = 0
         urlBar.minimumHeight = 0
-        urlBar.setPadding(dp(4), 0, dp(4), 0)
+        urlBar.setPadding(0, 0, 0, 0)
         urlBar.inputType = InputType.TYPE_TEXT_VARIATION_URI
         urlBar.imeOptions = EditorInfo.IME_ACTION_GO
         urlBar.setBackgroundColor(Color.TRANSPARENT)
@@ -438,12 +443,13 @@ class MainActivity : ComponentActivity() {
                 urlBar.gravity = Gravity.START or Gravity.CENTER_VERTICAL
                 setUrlText(currentUrl)
                 urlBar.post { urlBar.selectAll() }
+                updateBarVisibility()
             } else {
                 urlBar.gravity = Gravity.CENTER
                 hideSuggestions()
                 showDomain()
+                updateBarVisibility()
             }
-            updatePillButtons()
         }
         urlBar.setOnEditorActionListener { v, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO) {
@@ -456,38 +462,42 @@ class MainActivity : ComponentActivity() {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
-                updatePillButtons()
                 if (programmatic || !urlBar.hasFocus()) return
                 scheduleSuggest(s?.toString() ?: "")
             }
         })
 
-        // Thanh viên thuốc liền mạch hoàn chỉnh, bo tròn hoàn hảo không bị lẹm
+        urlPill = LinearLayout(this)
+        urlPill.orientation = LinearLayout.HORIZONTAL
+        urlPill.gravity = Gravity.CENTER_VERTICAL
+        urlPill.background = panelBg(28)
+        urlPill.setPadding(dp(8), 0, dp(8), 0)
+        urlPill.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
+            v.pivotX = (r - l) / 2f
+            v.pivotY = (b - t).toFloat()
+        }
+        urlPill.setOnClickListener { setBarHidden(false) }
+        urlPill.addView(View(this), LinearLayout.LayoutParams(dp(26), 1))
+        urlPill.addView(urlBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        urlPill.addView(reloadBtn, LinearLayout.LayoutParams(dp(26), dp(26)))
+
+        // Thanh dưới gồm 3 phần rời nhau: nút quay lại tròn, ô địa chỉ, nút ba chấm tròn
         bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
-        bar.background = panelBg(28)
-        bar.setPadding(dp(6), 0, dp(6), 0)
-        bar.addView(backBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
-        bar.addView(urlBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        bar.addView(clearBtn, LinearLayout.LayoutParams(dp(28), dp(28)))
-        bar.addView(reloadBtn, LinearLayout.LayoutParams(dp(28), dp(28)))
-        bar.addView(menuBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
+        bar.clipChildren = false
+        bar.addView(backBtn, LinearLayout.LayoutParams(dp(barH), dp(barH)))
+        val pillLp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+        pillLp.setMargins(dp(8), 0, dp(8), 0)
+        bar.addView(urlPill, pillLp)
+        bar.addView(menuBtn, LinearLayout.LayoutParams(dp(barH), dp(barH)))
 
-        // --- Danh sách gợi ý tìm kiếm bọc trong ScrollView ---
+        // --- Danh sách gợi ý tìm kiếm (hiện phía trên thanh địa chỉ) ---
         suggestBox = LinearLayout(this)
         suggestBox.orientation = LinearLayout.VERTICAL
+        suggestBox.background = panelBg(22)
         suggestBox.setPadding(0, dp(6), 0, dp(6))
-
-        suggestScroll = ScrollView(this)
-        suggestScroll.isVerticalScrollBarEnabled = false
-        suggestScroll.overScrollMode = View.OVER_SCROLL_NEVER
-        suggestScroll.background = panelBg(22)
-        suggestScroll.visibility = View.GONE
-        suggestScroll.addView(
-            suggestBox,
-            ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        )
+        suggestBox.visibility = View.GONE
 
         // --- Thanh tìm trong trang (thay thế thanh địa chỉ khi đang tìm) ---
         findInput = EditText(this)
@@ -559,29 +569,10 @@ class MainActivity : ComponentActivity() {
 
         // --- WebView ---
         web = WebView(this)
-        // Luôn giữ canvas trắng để các trang web tiêu chuẩn (như VnExpress, Google...) hiển thị chuẩn xác không bị loang đen
         web.setBackgroundColor(Color.WHITE)
         val ws = web.settings
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
-        ws.databaseEnabled = true
-        // Tắt cưỡng chế Dark Mode từ mọi cấp độ (hệ thống, WebSettings, AndroidX WebKit)
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ws.forceDark = WebSettings.FORCE_DARK_OFF
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                ws.isAlgorithmicDarkeningAllowed = false
-            }
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
-                WebSettingsCompat.setForceDark(ws, WebSettingsCompat.FORCE_DARK_OFF)
-            }
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-                WebSettingsCompat.setAlgorithmicDarkeningAllowed(ws, false)
-            }
-        } catch (e: Exception) {
-            // Không hỗ trợ hoặc ngoại lệ thì bỏ qua an toàn
-        }
         mobileUa = ws.userAgentString.replace("; wv", "")
         applyDesktopMode()
         web.webViewClient = client
@@ -618,14 +609,14 @@ class MainActivity : ComponentActivity() {
         }
 
         root = FrameLayout(this)
-        root.setBackgroundColor(if (isNight) Color.rgb(24, 24, 26) else Color.WHITE)
+        root.setBackgroundColor(pageColor)
         root.isFocusable = true
         root.isFocusableInTouchMode = true
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(topFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
         root.addView(bottomFade, FrameLayout.LayoutParams(-1, 0, Gravity.BOTTOM))
         root.addView(loadingBar, FrameLayout.LayoutParams(-1, dp(2), Gravity.TOP))
-        root.addView(suggestScroll, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        root.addView(suggestBox, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         root.addView(bar, FrameLayout.LayoutParams(-1, dp(barH), Gravity.BOTTOM))
         root.addView(findBar, FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM))
         setContentView(root)
@@ -658,20 +649,14 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) web.loadUrl(store.homeUrl) else web.restoreState(savedInstanceState)
     }
 
-    // ---------------- Insets / thanh trạng thái / gradient tràn viền ----------------
+    // ---------------- Insets / thanh trạng thái ----------------
 
     private fun applyInsets() {
-        val bottom = maxOf(insetBottom, imeBottom) + dp(16)
+        val bottom = maxOf(insetBottom, imeBottom) + dp(10)
 
-        // Web phủ trọn vẹn toàn màn hình EdgeToEdge
-        val webLp = web.layoutParams as FrameLayout.LayoutParams
-        webLp.topMargin = 0
-        web.layoutParams = webLp
-
-        // Thanh viên thuốc nổi cân đối, khoảng cách an toàn rộng rãi phía trên vạch điều hướng
         val barLp = bar.layoutParams as FrameLayout.LayoutParams
-        barLp.leftMargin = insetLeft + dp(30)
-        barLp.rightMargin = insetRight + dp(30)
+        barLp.leftMargin = insetLeft + dp(14)
+        barLp.rightMargin = insetRight + dp(14)
         barLp.bottomMargin = bottom
 
         val findLp = findBar.layoutParams as FrameLayout.LayoutParams
@@ -679,80 +664,104 @@ class MainActivity : ComponentActivity() {
         findLp.rightMargin = insetRight + dp(16)
         findLp.bottomMargin = bottom
 
-        val sugLp = suggestScroll.layoutParams as FrameLayout.LayoutParams
+        val sugLp = suggestBox.layoutParams as FrameLayout.LayoutParams
         sugLp.leftMargin = insetLeft + dp(16)
         sugLp.rightMargin = insetRight + dp(16)
         sugLp.bottomMargin = bottom + dp(barH) + dp(8)
 
-        // Dải gradient dưới che phủ êm ái mép đáy màn hình
         (bottomFade.layoutParams as FrameLayout.LayoutParams).height =
-            maxOf(insetBottom, imeBottom) + dp(92)
+            maxOf(insetBottom, imeBottom) + dp(80)
         (loadingBar.layoutParams as FrameLayout.LayoutParams).topMargin = insetTop
 
+        val webLp = web.layoutParams as FrameLayout.LayoutParams
+        webLp.topMargin = if (store.edgeMode) 0 else insetTop
+        webLp.bottomMargin = imeBottom
+        web.layoutParams = webLp
+
         updateTopFade()
+        updateBarVisibility()
         layoutMenu()
         root.requestLayout()
         injectInsets()
     }
 
+    // Dải thanh trạng thái: tràn viền thì dùng lớp mờ (hoặc màu thanh menu của trang nếu có),
+    // không tràn viền thì luôn là màu đặc theo mép trên của trang
     private fun updateTopFade() {
-        val c = solidTop
         val lp = topFade.layoutParams as FrameLayout.LayoutParams
-        if (c != null) {
-            topFade.setBackgroundColor(c)
-            lp.height = insetTop
-        } else {
+        val c = solidTop
+        val lightBar: Boolean
+        if (store.edgeMode && c == null) {
             topFade.background = fadeDrawable
             lp.height = insetTop + dp(16)
+            lightBar = !isNight
+        } else {
+            val col = c ?: pageBg
+            topFade.setBackgroundColor(col)
+            lp.height = insetTop
+            lightBar = ColorUtils.calculateLuminance(col) > 0.5
         }
         topFade.requestLayout()
+        WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = lightBar
     }
 
-    // Tô dải thanh trạng thái theo màu trang web hoặc màu mặc định
+    // Tô dải thanh trạng thái theo màu thanh menu của trang; null = dùng lớp mờ mặc định
     private fun applyTopColor(c: Int?) {
         if (c == solidTop) return
         solidTop = c
         updateTopFade()
-        val ctrl = WindowCompat.getInsetsController(window, root)
-        ctrl.isAppearanceLightStatusBars = if (c != null) ColorUtils.calculateLuminance(c) > 0.5 else !isNight
     }
 
-    // Đệm thêm đầu và đáy trang để nội dung không bị che khuất và đồng bộ màu header
+    // Chừa chỗ đầu/cuối trang cho các thanh và chạy script xử lý thanh menu cố định
     private fun injectInsets() {
-        val topCss = (insetTop / d).toInt()
-        val bottomCss = (insetBottom / d).toInt() + barH + 36
+        val edge = store.edgeMode
+        val topCss = if (edge) (insetTop / d).toInt() else 0
+        val bottomCss = (insetBottom / d).toInt() + 64
+        val rule = (if (edge) "padding-top:" + topCss + "px!important;" else "") +
+            "padding-bottom:" + bottomCss + "px!important;box-sizing:border-box!important"
         val js = "(function(){var s=document.getElementById('__edge');" +
             "if(!s){s=document.createElement('style');s.id='__edge';" +
             "(document.head||document.documentElement).appendChild(s);}" +
-            "s.textContent='html, body, #wrapper, .body_mobile, main, [role=\"main\"], article, footer { padding-top:${topCss}px!important;" +
-            "padding-bottom:${bottomCss}px!important;box-sizing:border-box!important}';})();"
+            "s.textContent='html{" + rule + "}';})();"
         web.evaluateJavascript(js, null)
-        web.evaluateJavascript(EDGE_JS.replace("%INSET%", topCss.toString()), null)
+        web.evaluateJavascript(
+            EDGE_JS.replace("%INSET%", (insetTop / d).toInt().toString())
+                .replace("%MODE%", if (edge) "1" else "0"),
+            null
+        )
     }
 
-    // Vuốt xuống thì ẩn thanh viên thuốc hoàn toàn, vuốt lên thì trượt lại vào vị trí
+    // "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi; chạm hoặc vuốt lên để mở lại
     private fun setBarHidden(hide: Boolean) {
         if (hide && !store.autoHideBar) return
         if (hide == barHidden) return
         barHidden = hide
-        val lp = bar.layoutParams as FrameLayout.LayoutParams
-        val dist = bar.height + lp.bottomMargin + 40 * d
-        bar.animate()
-            .translationY(if (hide) dist else 0f)
-            .alpha(if (hide) 0f else 1f)
-            .setDuration(220)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
-        bottomFade.animate()
-            .alpha(if (hide) 0f else 1f)
-            .setDuration(220)
-            .start()
+        val ip = DecelerateInterpolator()
+        urlPill.animate()
+            .scaleX(if (hide) 0.58f else 1f)
+            .scaleY(if (hide) 0.62f else 1f)
+            .setDuration(240).setInterpolator(ip).start()
+        urlBar.animate()
+            .scaleX(if (hide) 1.2f else 1f)
+            .scaleY(if (hide) 1.2f else 1f)
+            .setDuration(240).setInterpolator(ip).start()
+        backBtn.isClickable = !hide
+        menuBtn.isClickable = !hide
+        reloadBtn.isClickable = !hide
+        backBtn.animate().alpha(if (hide) 0f else backAlpha())
+            .scaleX(if (hide) 0.5f else 1f).scaleY(if (hide) 0.5f else 1f).setDuration(200).start()
+        menuBtn.animate().alpha(if (hide) 0f else 1f)
+            .scaleX(if (hide) 0.5f else 1f).scaleY(if (hide) 0.5f else 1f).setDuration(200).start()
+        reloadBtn.animate().alpha(if (hide) 0f else 1f).setDuration(200).start()
+        bottomFade.animate().alpha(if (hide) 0.35f else 1f).setDuration(240).start()
     }
 
-    private fun updatePillButtons() {
-        val showClear = urlBar.hasFocus() && !urlBar.text.isNullOrEmpty()
-        clearBtn.visibility = if (showClear) View.VISIBLE else View.GONE
-        reloadBtn.visibility = if (showClear) View.GONE else View.VISIBLE
+    // Ẩn thanh địa chỉ khi đang gõ trong ô nhập của trang (tránh che nội dung), hoặc khi đang tìm trong trang
+    private fun updateBarVisibility() {
+        val findOn = findBar.visibility == View.VISIBLE
+        val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
+        bar.visibility = if (findOn || pageTyping) View.GONE else View.VISIBLE
+        bottomFade.visibility = if (pageTyping) View.GONE else View.VISIBLE
     }
 
     private fun backAlpha(): Float = if (web.canGoBack()) 1f else 0.3f
@@ -838,7 +847,7 @@ class MainActivity : ComponentActivity() {
     private fun showSuggestions(items: List<String>) {
         suggestBox.removeAllViews()
         if (items.isEmpty()) {
-            suggestScroll.visibility = View.GONE
+            suggestBox.visibility = View.GONE
             return
         }
         val rp = ripple()
@@ -846,34 +855,19 @@ class MainActivity : ComponentActivity() {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
             row.gravity = Gravity.CENTER_VERTICAL
-            row.setPadding(dp(16), 0, dp(10), 0)
+            row.setPadding(dp(18), 0, dp(18), 0)
             row.setBackgroundResource(rp)
-
             val ic = ImageView(this)
             ic.setImageDrawable(PathIcon(Icons.SEARCH, sub))
             row.addView(ic, LinearLayout.LayoutParams(dp(18), dp(18)))
-
             val t = TextView(this)
             t.text = text
             t.textSize = 15f
             t.setTextColor(fg)
             t.setSingleLine()
             t.ellipsize = TextUtils.TruncateAt.END
-            t.setPadding(dp(12), 0, dp(6), 0)
+            t.setPadding(dp(12), 0, 0, 0)
             row.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-            val fillBtn = ImageView(this)
-            fillBtn.setImageDrawable(PathIcon(Icons.NORTH_WEST, sub))
-            fillBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
-            fillBtn.setOnClickListener {
-                setUrlText(text)
-                urlBar.setSelection(text.length)
-                scheduleSuggest(text)
-                updatePillButtons()
-            }
-            press(fillBtn, 0.8f)
-            row.addView(fillBtn, LinearLayout.LayoutParams(dp(30), dp(30)))
-
             row.setOnClickListener {
                 load(text)
                 leaveEdit()
@@ -881,21 +875,21 @@ class MainActivity : ComponentActivity() {
             press(row, 0.98f)
             suggestBox.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         }
-        suggestScroll.visibility = View.VISIBLE
+        suggestBox.visibility = View.VISIBLE
     }
 
     private fun hideSuggestions() {
         suggestToken++
         suggestRunnable?.let { handler.removeCallbacks(it) }
-        suggestScroll.visibility = View.GONE
+        suggestBox.visibility = View.GONE
         suggestBox.removeAllViews()
     }
 
     // ---------------- Tìm trong trang ----------------
 
     private fun openFind() {
-        bar.visibility = View.GONE
         findBar.visibility = View.VISIBLE
+        updateBarVisibility()
         findInput.requestFocus()
         WindowCompat.getInsetsController(window, findInput).show(WindowInsetsCompat.Type.ime())
     }
@@ -904,7 +898,7 @@ class MainActivity : ComponentActivity() {
         web.clearMatches()
         findInput.setText("")
         findBar.visibility = View.GONE
-        bar.visibility = View.VISIBLE
+        updateBarVisibility()
         root.requestFocus()
         WindowCompat.getInsetsController(window, findInput).hide(WindowInsetsCompat.Type.ime())
     }
@@ -1329,6 +1323,12 @@ class MainActivity : ComponentActivity() {
             web.reload()
             showSettings()
         }
+        addRow("Tràn viền nội dung (thử nghiệm)", onOff(store.edgeMode), fg) {
+            store.edgeMode = !store.edgeMode
+            applyInsets()
+            web.reload()
+            showSettings()
+        }
         addRow("Thu gọn thanh địa chỉ khi cuộn", onOff(store.autoHideBar), fg) {
             store.autoHideBar = !store.autoHideBar
             if (!store.autoHideBar) setBarHidden(false)
@@ -1420,30 +1420,6 @@ class MainActivity : ComponentActivity() {
             }
         )
         showPanel(p)
-    }
-
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        d = resources.displayMetrics.density
-        isNight = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        fg = if (isNight) Color.WHITE else Color.BLACK
-        sub = if (isNight) Color.argb(150, 255, 255, 255) else Color.argb(140, 0, 0, 0)
-        applyInsets()
-        web.post {
-            web.invalidate()
-            web.requestLayout()
-            injectInsets()
-        }
-    }
-
-    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
-        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
-        applyInsets()
-        web.post {
-            web.invalidate()
-            web.requestLayout()
-            injectInsets()
-        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
