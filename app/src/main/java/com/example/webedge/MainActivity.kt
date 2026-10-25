@@ -186,6 +186,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var backBtn: ImageView
     private lateinit var menuBtn: ImageView
     private lateinit var reloadBtn: ImageView
+    private lateinit var tabBtn: ImageView
+    private lateinit var tabManager: TabManager
     private lateinit var urlPill: LinearLayout
     private lateinit var pillProgress: PillProgress
     private lateinit var topFade: View
@@ -268,6 +270,8 @@ class MainActivity : ComponentActivity() {
             injectInsets()
             web.animate().alpha(1f).setDuration(120).start()
             store.addHistory(view.title ?: "", url)
+            tabManager.updateActive(url, view.title ?: url)
+            updateTabBadge()
         }
     }
 
@@ -369,6 +373,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         store = Store(this)
+        tabManager = TabManager()
+        tabManager.setOnChangeListener { updateTabBadge() }
         d = resources.displayMetrics.density
         isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
@@ -412,6 +418,12 @@ class MainActivity : ComponentActivity() {
         reloadBtn.setPadding(dp(5), dp(5), dp(5), dp(5))
         reloadBtn.setOnClickListener { web.reload() }
         press(reloadBtn, 0.8f)
+        // === Nút Multi-tab (đối xứng với reloadBtn) ===
+        tabBtn = ImageView(this)
+        tabBtn.setImageDrawable(PathIcon(Icons.TABS, fg))
+        tabBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
+        tabBtn.setOnClickListener { openTabSwitcher() }
+        press(tabBtn, 0.8f)
 
         urlBar = EditText(this)
         urlBar.setSingleLine()
@@ -469,9 +481,9 @@ class MainActivity : ComponentActivity() {
             pillProgress.setBounds(0, 0, r - l, b - t)
         }
         urlPill.setOnClickListener { setBarHidden(false) }
-        urlPill.addView(View(this), LinearLayout.LayoutParams(dp(26), 1))
+        urlPill.addView(tabBtn, LinearLayout.LayoutParams(dp(32), dp(32)))
         urlPill.addView(urlBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        urlPill.addView(reloadBtn, LinearLayout.LayoutParams(dp(26), dp(26)))
+        urlPill.addView(reloadBtn, LinearLayout.LayoutParams(dp(32), dp(32)))
 
         // Thanh dưới gồm 3 phần rời nhau: nút quay lại tròn, ô địa chỉ, nút ba chấm tròn
         bar = LinearLayout(this)
@@ -1477,5 +1489,166 @@ class MainActivity : ComponentActivity() {
         
         super.onDestroy()
     }
+
+
+    // ==========================================
+    // MULTI-TAB: Badge + Tab Switcher
+    // ==========================================
+    private class BadgeDrawable(
+        private val count: Int,
+        private val bgColor: Int,
+        private val textColor: Int,
+        private val d: Float
+    ) : android.graphics.drawable.Drawable() {
+        private val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = bgColor }
+        private val textPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = textColor
+            textAlign = android.graphics.Paint.Align.CENTER
+            textSize = 10 * d
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        override fun draw(canvas: android.graphics.Canvas) {
+            val b = bounds
+            if (b.width() <= 0 || b.height() <= 0) return
+            val cx = b.exactCenterX()
+            val cy = b.exactCenterY()
+            val r = minOf(b.width(), b.height()) / 2f
+            canvas.drawCircle(cx, cy, r, bgPaint)
+            val text = if (count > 99) "99+" else count.toString()
+            val y = cy - (textPaint.descent() + textPaint.ascent()) / 2f
+            canvas.drawText(text, cx, y, textPaint)
+        }
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(cf: android.graphics.ColorFilter?) {}
+        @Suppress("OVERRIDE_DEPRECATION")
+        override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+    }
+
+    private fun updateTabBadge() {
+        val count = tabManager.count()
+        val base = PathIcon(Icons.TABS, fg)
+        if (count <= 1) {
+            tabBtn.setImageDrawable(base)
+            return
+        }
+        val badgeColor = if (isNight) Color.rgb(50, 140, 255) else Color.rgb(10, 132, 255)
+        val textColor = if (isNight) Color.BLACK else Color.WHITE
+        val layer = android.graphics.drawable.LayerDrawable(arrayOf(
+            base,
+            BadgeDrawable(count, badgeColor, textColor, d)
+        ))
+        layer.setLayerInset(1, dp(14), 0, 0, dp(14))
+        tabBtn.setImageDrawable(layer)
+    }
+
+    private fun openTabSwitcher() {
+        val popup = Dialog(this, android.R.style.Theme_Translucent_NoTitleBar)
+        popup.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val container = FrameLayout(this)
+        container.setBackgroundColor(Color.argb(180, 0, 0, 0))
+        container.setOnClickListener { popup.dismiss() }
+
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.background = glassBg(24)
+        card.isClickable = true
+
+        val header = TextView(this)
+        header.text = "Tabs (${tabManager.count()})"
+        header.textSize = 18f
+        header.setTypeface(null, Typeface.BOLD)
+        header.setTextColor(fg)
+        header.setPadding(dp(22), dp(14), dp(22), dp(10))
+        card.addView(header)
+
+        val scroll = ScrollView(this)
+        val list = LinearLayout(this)
+        list.orientation = LinearLayout.VERTICAL
+        scroll.addView(list)
+
+        for (tab in tabManager.getAll()) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+            row.setPadding(dp(16), dp(12), dp(10), dp(12))
+            row.setBackgroundResource(ripple())
+
+            val info = LinearLayout(this)
+            info.orientation = LinearLayout.VERTICAL
+            val t = TextView(this)
+            t.text = tab.title.ifBlank { tab.url.ifBlank { "Tab mới" } }
+            t.textSize = 15f
+            t.setTextColor(fg)
+            t.setSingleLine()
+            info.addView(t)
+            val u = TextView(this)
+            u.text = shortUrl(tab.url).ifBlank { store.homeUrl }
+            u.textSize = 12f
+            u.setTextColor(sub)
+            u.setSingleLine()
+            info.addView(u)
+
+            row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+            if (tab.isActive) {
+                val check = ImageView(this)
+                check.setImageDrawable(PathIcon(Icons.CHECK, accent))
+                row.addView(check, LinearLayout.LayoutParams(dp(28), dp(28)))
+            } else {
+                val close = ImageView(this)
+                close.setImageDrawable(PathIcon(Icons.CLOSE, sub))
+                close.setPadding(dp(6), dp(6), dp(6), dp(6))
+                close.setOnClickListener {
+                    tabManager.close(tab.id)
+                    popup.dismiss()
+                    val active = tabManager.getActive()
+                    if (active != null) load(active.url.ifBlank { store.homeUrl })
+                    openTabSwitcher()
+                }
+                row.addView(close, LinearLayout.LayoutParams(dp(34), dp(34)))
+            }
+
+            row.setOnClickListener {
+                if (!tab.isActive) {
+                    tabManager.switchTo(tab.id)
+                    load(tab.url.ifBlank { store.homeUrl })
+                }
+                popup.dismiss()
+            }
+
+            list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+
+        card.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            minOf(dp(400), resources.displayMetrics.heightPixels / 2)
+        ))
+
+        val addBtn = TextView(this)
+        addBtn.text = "+ Tab mới"
+        addBtn.textSize = 15f
+        addBtn.setTypeface(null, Typeface.BOLD)
+        addBtn.setTextColor(accent)
+        addBtn.gravity = Gravity.CENTER
+        addBtn.setPadding(dp(22), dp(14), dp(22), dp(14))
+        addBtn.setBackgroundResource(ripple())
+        addBtn.setOnClickListener {
+            tabManager.addNew(url = store.homeUrl, title = "Tab mới")
+            load(store.homeUrl)
+            popup.dismiss()
+        }
+        card.addView(addBtn)
+
+        val lp = FrameLayout.LayoutParams(
+            minOf(dp(340), resources.displayMetrics.widthPixels - dp(40)),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER
+        )
+        container.addView(card, lp)
+        popup.setContentView(container)
+        popup.show()
+    }
+
 
 }
