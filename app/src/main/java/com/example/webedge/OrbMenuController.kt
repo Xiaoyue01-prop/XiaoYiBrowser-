@@ -213,4 +213,36 @@ class OrbMenuController(
                 .start()
         }
     }
+
+    /**
+     * Cleanup để tránh memory leak khi Activity bị destroy.
+     * Gỡ OnPreDrawListener và các references.
+     */
+    fun destroy() {
+        // Gỡ listener khỏi ViewTreeObserver
+        anchorView?.viewTreeObserver?.let { vto ->
+            preDrawListener?.let { listener ->
+                if (vto.isAlive) {
+                    try { vto.removeOnPreDrawListener(listener) } catch (e: Exception) {}
+                }
+            }
+        }
+        preDrawListener = null
+        anchorView = null
+        
+        // Thu gọn menu nếu đang mở
+        if (isExpanded) {
+            isExpanded = false
+            subBtns.forEach {
+                it.animate().cancel()
+                it.visibility = View.GONE
+            }
+            mainBtn.animate().cancel()
+        }
+        
+        // Gỡ click listeners
+        mainBtn.setOnClickListener(null)
+        subBtns.forEach { it.setOnClickListener(null) }
+    }
+
 }

@@ -216,6 +216,7 @@ class MainActivity : ComponentActivity() {
     private var currentUrl = ""
     private var mobileUa = ""
     private var solidTop: Int? = null
+    private var orbController: OrbMenuController? = null
     private var programmatic = false
     private var suggestToken = 0
     private var suggestRunnable: Runnable? = null
@@ -299,19 +300,6 @@ class MainActivity : ComponentActivity() {
         val tv = TypedValue()
         theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
         return tv.resourceId
-    }
-
-    private fun glassBg(radiusDp: Int): GradientDrawable {
-        val g = GradientDrawable()
-        g.cornerRadius = radiusDp * d
-        // Nen trong mo kieu kinh
-        g.setColor(if (isNight) Color.argb(180, 30, 30, 35) else Color.argb(180, 255, 255, 255))
-        // Vien sang mong tao cam giac "canh kinh"
-        g.setStroke(
-            (1 * d).toInt().coerceAtLeast(1),
-            if (isNight) Color.argb(90, 255, 255, 255) else Color.argb(70, 255, 255, 255)
-        )
-        return g
     }
 
     private fun onOff(b: Boolean): String = if (b) "Bật" else "Tắt"
@@ -471,7 +459,7 @@ class MainActivity : ComponentActivity() {
         urlPill = LinearLayout(this)
         urlPill.orientation = LinearLayout.HORIZONTAL
         urlPill.gravity = Gravity.CENTER_VERTICAL
-        urlPill.background = glassBg(28)
+        urlPill.background = GlassDrawables.create(28, d, isNight)
         urlPill.setPadding(dp(8), 0, dp(8), 0)
         urlPill.overlay.add(pillProgress)
         urlPill.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
@@ -498,7 +486,7 @@ class MainActivity : ComponentActivity() {
         // --- Danh sách gợi ý tìm kiếm (hiện phía trên thanh địa chỉ) ---
         suggestBox = LinearLayout(this)
         suggestBox.orientation = LinearLayout.VERTICAL
-        suggestBox.background = glassBg(22)
+        suggestBox.background = GlassDrawables.create(22, d, isNight)
         suggestBox.setPadding(0, dp(6), 0, dp(6))
         suggestBox.visibility = View.GONE
 
@@ -561,7 +549,7 @@ class MainActivity : ComponentActivity() {
         findBar = LinearLayout(this)
         findBar.orientation = LinearLayout.HORIZONTAL
         findBar.gravity = Gravity.CENTER_VERTICAL
-        findBar.background = glassBg(28)
+        findBar.background = GlassDrawables.create(28, d, isNight)
         findBar.setPadding(dp(18), 0, dp(10), 0)
         findBar.visibility = View.GONE
         findBar.addView(findInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
@@ -951,7 +939,7 @@ class MainActivity : ComponentActivity() {
         layer.setOnClickListener { closeMenu() }
 
         val card = FrameLayout(this)
-        card.background = glassBg(26)
+        card.background = GlassDrawables.create(26, d, isNight)
         card.clipToOutline = true
         card.isClickable = true
 
@@ -1435,7 +1423,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun setupOrbMenu() {
-        val orbController = OrbMenuController(
+        orbController = OrbMenuController(
             rootLayout = root,
             dp = { dp(it) },
             d = d,
@@ -1450,4 +1438,43 @@ class MainActivity : ComponentActivity() {
         backBtn.visibility = View.INVISIBLE
         backBtn.setOnClickListener(null)
     }
+
+    override fun onDestroy() {
+        // === CLEANUP DE TRANH MEMORY LEAK ===
+        // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)
+        web.removeJavascriptInterface("EdgeBridge")
+        
+        // 2. Gỡ listeners khỏi WebView
+        web.webViewClient = WebViewClient()
+        web.webChromeClient = WebChromeClient()
+        web.setDownloadListener(null)
+        web.setFindListener(null)
+        web.setOnScrollChangeListener(null as View.OnScrollChangeListener?)
+        
+        // 3. Hủy tất cả Runnable đang chờ trong Handler
+        handler.removeCallbacksAndMessages(null)
+        suggestRunnable?.let { handler.removeCallbacks(it) }
+        suggestRunnable = null
+        
+        // 4. Hủy callbacks
+        pendingFileCallback?.onReceiveValue(null)
+        pendingFileCallback = null
+        
+        // 5. Cleanup Orb Menu Controller (gỡ PreDrawListener)
+        orbController?.destroy()
+        orbController = null
+        
+        // 6. Destroy WebView (phải làm CUỐI CÙNG)
+        web.stopLoading()
+        web.clearHistory()
+        web.clearCache(true)
+        web.loadUrl("about:blank")
+        web.onPause()
+        web.removeAllViews()
+        web.destroyDrawingCache()
+        web.destroy()
+        
+        super.onDestroy()
+    }
+
 }
