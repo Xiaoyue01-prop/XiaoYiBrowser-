@@ -1,5 +1,10 @@
 package com.example.webedge
 
+import android.graphics.Canvas
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.drawable.Drawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewTreeObserver
@@ -7,18 +12,53 @@ import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 
+/**
+ * Icon hình vòng nhẫn (ring) - đặc trưng HarmonyOS
+ * Vẽ trực tiếp bằng Canvas để đảm bảo hình tròn hoàn hảo ở mọi DPI
+ */
+class RingIcon(color: Int) : Drawable() {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    override fun draw(canvas: Canvas) {
+        val b = bounds
+        if (b.width() <= 0 || b.height() <= 0) return
+        
+        // Viền mỏng ~1.5dp (tính theo pixel dựa trên kích thước thực tế)
+        val strokeWidth = b.width() / 18f
+        paint.strokeWidth = strokeWidth
+        
+        // Bán kính = (kích thước - strokeWidth) / 2 để viền không bị cắt
+        val cx = b.exactCenterX()
+        val cy = b.exactCenterY()
+        val radius = (minOf(b.width(), b.height()) / 2f) - strokeWidth
+        
+        canvas.drawCircle(cx, cy, radius, paint)
+    }
+
+    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
 class OrbMenuController(
     private val rootLayout: FrameLayout,
     private val dp: (Int) -> Int,
     private val d: Float,
     private val isNight: Boolean,
     private val fg: Int,
+    private val barH: Int,   // Chiều cao thanh Pill (= kích thước nút 3 chấm)
     private val onBack: () -> Unit,
     private val onForward: () -> Unit,
     private val onHome: () -> Unit
 ) {
+    // Nút chính: Icon vòng nhẫn HarmonyOS, kích thước = barH (ngang bằng nút 3 chấm)
     private val mainBtn: ImageView = ImageView(rootLayout.context).apply {
-        setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
+        setImageDrawable(RingIcon(fg))
         setPadding(dp(8), dp(8), dp(8), dp(8))
         background = GlassDrawables.create(20, d, isNight)
         elevation = 12f
@@ -30,7 +70,8 @@ class OrbMenuController(
     private var preDrawListener: ViewTreeObserver.OnPreDrawListener? = null
 
     init {
-        val mainParams = FrameLayout.LayoutParams(dp(36), dp(36)).apply {
+        // Nút chính: kích thước = barH (đồng bộ với nút 3 chấm)
+        val mainParams = FrameLayout.LayoutParams(dp(barH), dp(barH)).apply {
             gravity = Gravity.BOTTOM or Gravity.START
             bottomMargin = dp(16)
             leftMargin = dp(16)
@@ -38,13 +79,15 @@ class OrbMenuController(
         rootLayout.addView(mainBtn, mainParams)
         mainBtn.setOnClickListener { toggle() }
 
+        // 3 nút con: ARROW_BACK, ARROW_FORWARD, HOME
+        // Tăng từ 28dp lên 32dp để cân đối với nút chính to hơn
         val icons = listOf(Icons.ARROW_BACK, Icons.ARROW_FORWARD, Icons.HOME)
         val actions = listOf(onBack, onForward, onHome)
         
         for (i in 0 until 3) {
             val btn = ImageView(rootLayout.context).apply {
                 setImageDrawable(PathIcon(icons[i], fg))
-                setPadding(dp(6), dp(6), dp(6), dp(6))
+                setPadding(dp(7), dp(7), dp(7), dp(7))
                 background = GlassDrawables.create(16, d, isNight)
                 setOnClickListener {
                     actions[i]()
@@ -56,7 +99,7 @@ class OrbMenuController(
                 alpha = 0f
                 elevation = 12f
             }
-            val params = FrameLayout.LayoutParams(dp(28), dp(28)).apply {
+            val params = FrameLayout.LayoutParams(dp(32), dp(32)).apply {
                 gravity = Gravity.BOTTOM or Gravity.START
                 bottomMargin = dp(16 + 4)
                 leftMargin = dp(16 + 4)
@@ -70,10 +113,8 @@ class OrbMenuController(
         anchorView = backBtn
         updatePosition()
         
-        // Xóa listener cũ (nếu có) để tránh leak
         preDrawListener?.let { backBtn.viewTreeObserver.removeOnPreDrawListener(it) }
         
-        // Gắn listener mới: Mỗi frame vẽ lại, kiểm tra vị trí backBtn
         preDrawListener = ViewTreeObserver.OnPreDrawListener {
             updatePosition()
             true
@@ -94,24 +135,18 @@ class OrbMenuController(
         val y = loc[1] - rootLoc[1]
         val anchorAlpha = anchor.alpha
         
-        // Đồng bộ alpha với thanh Pill (khi fade in/out)
         mainBtn.alpha = anchorAlpha
         if (isExpanded) {
             subBtns.forEach { it.alpha = anchorAlpha }
         }
         
-        // === UX FIX: Disable click khi Pill ẩn đi ===
-        // Chỉ cho phép chạm vào Orb khi thanh Pill hiện rõ (alpha > 0.3)
+        // Disable click khi Pill ẩn (UX fix)
         val threshold = 0.3f
         val isInteractable = anchorAlpha > threshold
         mainBtn.isClickable = isInteractable
         mainBtn.isEnabled = isInteractable
-        if (!isInteractable && isExpanded) {
-            // Pill đang ẩn mà menu vẫn mở -> tự động thu gọn
-            collapse()
-        }
+        if (!isInteractable && isExpanded) collapse()
         
-        // Cập nhật vị trí mainBtn (chỉ khi thực sự thay đổi để tiết kiệm CPU)
         val mParams = mainBtn.layoutParams as FrameLayout.LayoutParams
         if (mParams.leftMargin != x || mParams.topMargin != y) {
             mParams.leftMargin = x
@@ -134,7 +169,6 @@ class OrbMenuController(
     }
 
     fun toggle() {
-        // Chặn mở menu nếu thanh Pill đang ẩn (tránh UX lạ)
         val anchorAlpha = anchorView?.alpha ?: 1f
         if (!isExpanded && anchorAlpha < 0.3f) return
         if (isExpanded) collapse() else expand()

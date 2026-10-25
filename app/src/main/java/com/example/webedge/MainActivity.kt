@@ -1441,6 +1441,7 @@ class MainActivity : ComponentActivity() {
             d = d,
             isNight = isNight,
             fg = fg,
+            barH = barH,
             onBack = { if (web.canGoBack()) web.goBack() },
             onForward = { if (web.canGoForward()) web.goForward() },
             onHome = { load(store.homeUrl) }
