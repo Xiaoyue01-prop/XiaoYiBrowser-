@@ -1,6 +1,6 @@
 package com.example.webedge
 
-import com.example.webedge.GlassDrawables
+import com.example.webedge.GlassSystem
 import com.example.webedge.Theme
 
 import android.annotation.SuppressLint
@@ -58,6 +58,8 @@ import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import eightbitlab.com.blurview.BlurTarget
+import eightbitlab.com.blurview.BlurView
 import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URL
@@ -181,6 +183,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var store: Store
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
+    private lateinit var blurTarget: BlurTarget
+    private lateinit var urlPillFrame: FrameLayout
+    private lateinit var urlPillBlur: BlurView
     private lateinit var urlBar: EditText
     private lateinit var bar: LinearLayout
     private lateinit var backBtn: ImageView
@@ -343,7 +348,7 @@ class MainActivity : ComponentActivity() {
         t.text = msg
         t.textSize = 14f
         t.setTextColor(fg)
-        t.background = GlassDrawables.create(22, d, isNight)
+        t.background = GlassSystem.create(GlassSystem.Preset.TOAST, d, isNight)
         t.setPadding(dp(18), dp(10), dp(18), dp(10))
         val lp = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -401,7 +406,7 @@ class MainActivity : ComponentActivity() {
         backBtn = ImageView(this)
         backBtn.setImageDrawable(PathIcon(Icons.ARROW_BACK, fg))
         backBtn.setPadding(dp(11), dp(11), dp(11), dp(11))
-        backBtn.background = GlassDrawables.create(20, d, isNight)
+        backBtn.background = GlassSystem.create(GlassSystem.Preset.TOOLBAR_BUTTON, d, isNight)
         backBtn.alpha = 0.3f
         backBtn.setOnClickListener { if (web.canGoBack()) web.goBack() }
         press(backBtn, 0.85f)
@@ -409,7 +414,7 @@ class MainActivity : ComponentActivity() {
         menuBtn = ImageView(this)
         menuBtn.setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
         menuBtn.setPadding(dp(10), dp(10), dp(10), dp(10))
-        menuBtn.background = GlassDrawables.create(20, d, isNight)
+        menuBtn.background = GlassSystem.create(GlassSystem.Preset.TOOLBAR_BUTTON, d, isNight)
         menuBtn.setOnClickListener { openMenu() }
         press(menuBtn, 0.85f)
 
@@ -469,10 +474,14 @@ class MainActivity : ComponentActivity() {
             }
         })
 
+        // The content stays in a LinearLayout; a BlurView sits behind it in a wrapper.
+        // This is the first migrated surface. Other glass surfaces remain on the old
+        // drawable helper until they can be converted and visually checked one by one.
+        urlPillFrame = FrameLayout(this)
         urlPill = LinearLayout(this)
         urlPill.orientation = LinearLayout.HORIZONTAL
         urlPill.gravity = Gravity.CENTER_VERTICAL
-        urlPill.background = GlassDrawables.create(28, d, isNight)
+        urlPill.background = ColorDrawable(Color.TRANSPARENT)
         urlPill.setPadding(dp(8), 0, dp(8), 0)
         urlPill.overlay.add(pillProgress)
         urlPill.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
@@ -493,13 +502,14 @@ class MainActivity : ComponentActivity() {
         bar.addView(backBtn, LinearLayout.LayoutParams(dp(BOTTOM_BAR_HEIGHT_DP), dp(BOTTOM_BAR_HEIGHT_DP)))
         val pillLp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
         pillLp.setMargins(dp(8), 0, dp(8), 0)
-        bar.addView(urlPill, pillLp)
+        urlPillFrame.addView(urlPill, FrameLayout.LayoutParams(-1, -1))
+        bar.addView(urlPillFrame, pillLp)
         bar.addView(menuBtn, LinearLayout.LayoutParams(dp(BOTTOM_BAR_HEIGHT_DP), dp(BOTTOM_BAR_HEIGHT_DP)))
 
         // --- Danh sách gợi ý tìm kiếm (hiện phía trên thanh địa chỉ) ---
         suggestBox = LinearLayout(this)
         suggestBox.orientation = LinearLayout.VERTICAL
-        suggestBox.background = GlassDrawables.create(22, d, isNight)
+        suggestBox.background = GlassSystem.create(GlassSystem.Preset.SUGGESTIONS, d, isNight)
         suggestBox.setPadding(0, dp(6), 0, dp(6))
         suggestBox.visibility = View.GONE
 
@@ -562,7 +572,7 @@ class MainActivity : ComponentActivity() {
         findBar = LinearLayout(this)
         findBar.orientation = LinearLayout.HORIZONTAL
         findBar.gravity = Gravity.CENTER_VERTICAL
-        findBar.background = GlassDrawables.create(28, d, isNight)
+        findBar.background = GlassSystem.create(GlassSystem.Preset.FIND_BAR, d, isNight)
         findBar.setPadding(dp(18), 0, dp(10), 0)
         findBar.visibility = View.GONE
         findBar.addView(findInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
@@ -616,7 +626,16 @@ class MainActivity : ComponentActivity() {
         root.setBackgroundColor(pageColor)
         root.isFocusable = true
         root.isFocusableInTouchMode = true
-        root.addView(web, FrameLayout.LayoutParams(-1, -1))
+
+        // BlurTarget wraps the web content; glass surfaces are siblings above it.
+        blurTarget = BlurTarget(this)
+        blurTarget.addView(web, FrameLayout.LayoutParams(-1, -1))
+        root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
+
+        urlPillBlur = GlassSystem.createBlurView(
+            this, blurTarget, GlassSystem.Preset.ADDRESS_BAR, d, isNight
+        )
+        urlPillFrame.addView(urlPillBlur, 0, FrameLayout.LayoutParams(-1, -1))
         root.addView(topFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
         root.addView(bottomFade, FrameLayout.LayoutParams(-1, 0, Gravity.BOTTOM))
         root.addView(suggestBox, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
@@ -740,7 +759,7 @@ class MainActivity : ComponentActivity() {
         if (hide == barHidden) return
         barHidden = hide
         val ip = DecelerateInterpolator()
-        urlPill.animate()
+        urlPillFrame.animate()
             .scaleX(if (hide) 0.58f else 1f)
             .scaleY(if (hide) 0.62f else 1f)
             .setDuration(240).setInterpolator(ip).start()
@@ -952,7 +971,7 @@ class MainActivity : ComponentActivity() {
         layer.setOnClickListener { closeMenu() }
 
         val card = FrameLayout(this)
-        card.background = GlassDrawables.create(26, d, isNight)
+        card.background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight)
         card.clipToOutline = true
         card.isClickable = true
 
@@ -1388,10 +1407,7 @@ class MainActivity : ComponentActivity() {
         input.setTextColor(fg)
         input.textSize = 15f
         input.setPadding(dp(14), 0, dp(14), 0)
-        val box = GradientDrawable()
-        box.cornerRadius = 12 * d
-        box.setColor(if (isNight) Color.argb(40, 255, 255, 255) else Color.argb(18, 0, 0, 0))
-        input.background = box
+        input.background = GlassSystem.createInputField(12, d, isNight)
         val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46))
         lp.setMargins(dp(22), dp(4), dp(22), dp(8))
         p.body.addView(input, lp)
@@ -1551,7 +1567,7 @@ class MainActivity : ComponentActivity() {
 
         val card = LinearLayout(this)
         card.orientation = LinearLayout.VERTICAL
-        card.background = GlassDrawables.create(24, d, isNight)
+        card.background = GlassSystem.create(GlassSystem.Preset.TABS_CARD, d, isNight)
         card.isClickable = true
 
         val header = TextView(this)

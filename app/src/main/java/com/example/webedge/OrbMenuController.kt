@@ -60,7 +60,7 @@ class OrbMenuController(
     private val mainBtn: ImageView = ImageView(rootLayout.context).apply {
         setImageDrawable(RingIcon(fg))
         setPadding(dp(8), dp(8), dp(8), dp(8))
-        background = GlassDrawables.create(20, d, isNight)
+        background = GlassSystem.create(GlassSystem.Preset.ORB_BUTTON, d, isNight)
         elevation = 12f
     }
 
@@ -88,7 +88,7 @@ class OrbMenuController(
             val btn = ImageView(rootLayout.context).apply {
                 setImageDrawable(PathIcon(icons[i], fg))
                 setPadding(dp(7), dp(7), dp(7), dp(7))
-                background = GlassDrawables.create(16, d, isNight)
+                background = GlassSystem.create(GlassSystem.Preset.ORB_SUB_BUTTON, d, isNight)
                 setOnClickListener {
                     actions[i]()
                     collapse()
