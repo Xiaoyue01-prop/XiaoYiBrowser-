@@ -68,10 +68,40 @@ import java.net.URLEncoder
 private const val DESKTOP_UA =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
-// Script an toàn trích xuất màu tiêu đề / theme-color để tô dải thanh trạng thái liền mạch
-private const val EXTRACT_COLOR_JS = """
+// Script chạy trong trang: đẩy thanh menu cố định (fixed/sticky) ở đầu trang xuống dưới thanh trạng thái,
+// và báo màu của thanh đó về app để tô dải thanh trạng thái liền mạch.
+private const val EDGE_JS = """
 (function(){
-  try {
+  window.__edgeInset = %INSET%;
+  if (window.__edgeStarted) { if (window.__edgeRun) window.__edgeRun(); return; }
+  window.__edgeStarted = true;
+  var last = '';
+  function opaqueBg(el){
+    var c = getComputedStyle(el).backgroundColor;
+    var m = c && c.match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    var p = m[1].split(',').map(function(x){ return parseFloat(x); });
+    var a = p.length > 3 ? p[3] : 1;
+    if (a < 0.85) return null;
+    return p;
+  }
+  function pinned(el){
+    while (el && el !== document.documentElement && el !== document.body) {
+      var s = getComputedStyle(el).position;
+      if (s === 'fixed' || s === 'sticky') return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+  function report(v){
+    if (v === last) return;
+    last = v;
+    try {
+      if (v === 'none') { EdgeBridge.clearTopColor(); }
+      else { var p = v.split(','); EdgeBridge.setTopColor(Math.round(+p[0]), Math.round(+p[1]), Math.round(+p[2])); }
+    } catch (e) {}
+  }
+  function run(){
     var tc = document.querySelector('meta[name="theme-color"]');
     if (tc && tc.content) {
       var d = document.createElement('div');
@@ -81,21 +111,47 @@ private const val EXTRACT_COLOR_JS = """
       document.body.removeChild(d);
       var m = cs && cs.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
       if (m) {
-        EdgeBridge.setTopColor(parseInt(m[1]), parseInt(m[2]), parseInt(m[3]));
+        report(m[1] + ',' + m[2] + ',' + m[3]);
         return;
       }
     }
-    var h = document.querySelector('header') || document.querySelector('nav');
-    if (h) {
-      var bg = window.getComputedStyle(h).backgroundColor;
-      var m2 = bg && bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-      if (m2 && !(m2[1] === '0' && m2[2] === '0' && m2[3] === '0' && bg.indexOf('0)') !== -1)) {
-        EdgeBridge.setTopColor(parseInt(m2[1]), parseInt(m2[2]), parseInt(m2[3]));
-        return;
+    var I = window.__edgeInset || 0;
+    if (!I || !document.elementsFromPoint) return;
+    var y = I + 2, w = window.innerWidth, hit = null, color = null;
+    var xs = [0.5, 0.15, 0.85];
+    for (var i = 0; i < xs.length && !hit; i++) {
+      var stack = document.elementsFromPoint(w * xs[i], y);
+      for (var j = 0; j < stack.length && !hit; j++) {
+        var f = pinned(stack[j]);
+        if (!f) continue;
+        var r = f.getBoundingClientRect();
+        if (r.top <= y && r.height < window.innerHeight * 0.45 && r.width > w * 0.6) {
+          hit = f;
+          for (var e = stack[j]; e; e = e.parentElement) {
+            var c = opaqueBg(e);
+            if (c) { color = c; break; }
+          }
+        }
       }
     }
-    EdgeBridge.clearTopColor();
+    if (!hit) { report('none'); return; }
+    var top = parseFloat(getComputedStyle(hit).top);
+    if (!isNaN(top) && top < I - 0.5) { hit.style.setProperty('top', I + 'px', 'important'); }
+    if (color) { report(color[0] + ',' + color[1] + ',' + color[2]); } else { report('none'); }
+  }
+  var t = null;
+  function sched(){ if (t) return; t = setTimeout(function(){ t = null; run(); }, 180); }
+  window.__edgeRun = run;
+  window.addEventListener('scroll', sched, {passive: true});
+  window.addEventListener('resize', sched);
+  try {
+    new MutationObserver(sched).observe(document.documentElement,
+      {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style']});
   } catch (e) {}
+  setTimeout(run, 100);
+  setTimeout(run, 800);
+  setTimeout(run, 2000);
+  run();
 })();
 """
 
@@ -112,14 +168,15 @@ class MainActivity : ComponentActivity() {
     private lateinit var store: Store
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
-    private lateinit var topBarBg: View
+    private lateinit var topFade: View
+    private lateinit var bottomFade: View
+    private lateinit var fadeDrawable: GradientDrawable
     private lateinit var urlBar: EditText
     private lateinit var bar: LinearLayout
     private lateinit var backBtn: ImageView
     private lateinit var menuBtn: ImageView
     private lateinit var reloadBtn: ImageView
     private lateinit var clearBtn: ImageView
-    private lateinit var urlPill: LinearLayout
     private lateinit var loadingBar: ProgressBar
     private lateinit var suggestBox: LinearLayout
     private lateinit var suggestScroll: ScrollView
@@ -132,7 +189,7 @@ class MainActivity : ComponentActivity() {
     private var fg = Color.BLACK
     private var sub = Color.GRAY
     private val accent = Color.rgb(10, 132, 255)
-    private val barH = 40
+    private val barH = 44
 
     private var insetTop = 0
     private var insetBottom = 0
@@ -191,12 +248,10 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageCommitVisible(view: WebView, url: String) {
             injectInsets()
-            extractTopColor()
         }
 
         override fun onPageFinished(view: WebView, url: String) {
             injectInsets()
-            extractTopColor()
             store.addHistory(view.title ?: "", url)
         }
     }
@@ -316,27 +371,34 @@ class MainActivity : ComponentActivity() {
             Configuration.UI_MODE_NIGHT_YES
         fg = if (isNight) Color.WHITE else Color.BLACK
         sub = if (isNight) Color.argb(150, 255, 255, 255) else Color.argb(140, 0, 0, 0)
-        // Dải nền thanh trạng thái độc lập để trang web không bao giờ bị chui lẹm vào status bar
-        topBarBg = View(this)
-        topBarBg.setBackgroundColor(if (isNight) Color.rgb(28, 28, 30) else Color.WHITE)
+        // Dải gradient trên: mờ dần dưới thanh trạng thái hoặc đổi màu theo header trang web
+        val fadeStart = if (isNight) Color.argb(200, 0, 0, 0) else Color.argb(200, 255, 255, 255)
+        val fadeEnd = if (isNight) Color.argb(0, 0, 0, 0) else Color.argb(0, 255, 255, 255)
+        fadeDrawable = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(fadeStart, fadeEnd))
+        topFade = View(this)
+        topFade.background = fadeDrawable
+
+        // Dải gradient dưới: mờ dần ở đáy màn hình giúp thanh viên thuốc nổi bật, nội dung web cuộn vào êm ái
+        val botStart = if (isNight) Color.argb(230, 20, 20, 22) else Color.argb(230, 255, 255, 255)
+        val botEnd = if (isNight) Color.argb(0, 20, 20, 22) else Color.argb(0, 255, 255, 255)
+        bottomFade = View(this)
+        bottomFade.background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(botStart, botEnd))
 
         loadingBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
         loadingBar.max = 100
         loadingBar.visibility = View.GONE
 
-        // --- Thanh địa chỉ gọn: [‹]  tên miền  [⋯] ---
+        // --- Thanh địa chỉ dạng viên thuốc liền mạch: [‹]  tên miền  [x] [↺]  [⋯] ---
         backBtn = ImageView(this)
         backBtn.setImageDrawable(PathIcon(Icons.ARROW_BACK, fg))
-        backBtn.setPadding(dp(11), dp(11), dp(11), dp(11))
-        backBtn.background = panelBg(20)
+        backBtn.setPadding(dp(9), dp(9), dp(9), dp(9))
         backBtn.alpha = 0.3f
         backBtn.setOnClickListener { if (web.canGoBack()) web.goBack() }
         press(backBtn, 0.85f)
 
         menuBtn = ImageView(this)
         menuBtn.setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
-        menuBtn.setPadding(dp(10), dp(10), dp(10), dp(10))
-        menuBtn.background = panelBg(20)
+        menuBtn.setPadding(dp(9), dp(9), dp(9), dp(9))
         menuBtn.setOnClickListener { openMenu() }
         press(menuBtn, 0.85f)
 
@@ -366,7 +428,7 @@ class MainActivity : ComponentActivity() {
         urlBar.gravity = Gravity.CENTER
         urlBar.minHeight = 0
         urlBar.minimumHeight = 0
-        urlBar.setPadding(0, 0, 0, 0)
+        urlBar.setPadding(dp(4), 0, dp(4), 0)
         urlBar.inputType = InputType.TYPE_TEXT_VARIATION_URI
         urlBar.imeOptions = EditorInfo.IME_ACTION_GO
         urlBar.setBackgroundColor(Color.TRANSPARENT)
@@ -400,30 +462,17 @@ class MainActivity : ComponentActivity() {
             }
         })
 
-        urlPill = LinearLayout(this)
-        urlPill.orientation = LinearLayout.HORIZONTAL
-        urlPill.gravity = Gravity.CENTER_VERTICAL
-        urlPill.background = panelBg(28)
-        urlPill.setPadding(dp(8), 0, dp(8), 0)
-        urlPill.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
-            v.pivotX = (r - l) / 2f
-            v.pivotY = (b - t).toFloat()
-        }
-        urlPill.setOnClickListener { setBarHidden(false) }
-        urlPill.addView(View(this), LinearLayout.LayoutParams(dp(26), 1))
-        urlPill.addView(urlBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        urlPill.addView(clearBtn, LinearLayout.LayoutParams(dp(26), dp(26)))
-        urlPill.addView(reloadBtn, LinearLayout.LayoutParams(dp(26), dp(26)))
-
-        // Thanh dưới gồm 3 phần rời nhau: nút quay lại tròn, ô địa chỉ, nút ba chấm tròn
+        // Thanh viên thuốc liền mạch hoàn chỉnh, bo tròn hoàn hảo không bị lẹm
         bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
-        bar.addView(backBtn, LinearLayout.LayoutParams(dp(barH), dp(barH)))
-        val pillLp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-        pillLp.setMargins(dp(8), 0, dp(8), 0)
-        bar.addView(urlPill, pillLp)
-        bar.addView(menuBtn, LinearLayout.LayoutParams(dp(barH), dp(barH)))
+        bar.background = panelBg(28)
+        bar.setPadding(dp(6), 0, dp(6), 0)
+        bar.addView(backBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
+        bar.addView(urlBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        bar.addView(clearBtn, LinearLayout.LayoutParams(dp(28), dp(28)))
+        bar.addView(reloadBtn, LinearLayout.LayoutParams(dp(28), dp(28)))
+        bar.addView(menuBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
 
         // --- Danh sách gợi ý tìm kiếm bọc trong ScrollView ---
         suggestBox = LinearLayout(this)
@@ -573,7 +622,8 @@ class MainActivity : ComponentActivity() {
         root.isFocusable = true
         root.isFocusableInTouchMode = true
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
-        root.addView(topBarBg, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
+        root.addView(topFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
+        root.addView(bottomFade, FrameLayout.LayoutParams(-1, 0, Gravity.BOTTOM))
         root.addView(loadingBar, FrameLayout.LayoutParams(-1, dp(2), Gravity.TOP))
         root.addView(suggestScroll, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         root.addView(bar, FrameLayout.LayoutParams(-1, dp(barH), Gravity.BOTTOM))
@@ -608,27 +658,20 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) web.loadUrl(store.homeUrl) else web.restoreState(savedInstanceState)
     }
 
-    // ---------------- Insets / thanh trạng thái ----------------
+    // ---------------- Insets / thanh trạng thái / gradient tràn viền ----------------
 
     private fun applyInsets() {
-        val bottom = maxOf(insetBottom, imeBottom) + dp(10)
+        val bottom = maxOf(insetBottom, imeBottom) + dp(16)
 
-        // WebView bắt đầu bên dưới thanh trạng thái để trang web (Google, VnExpress...) không bao giờ chui lẹm vào status bar
+        // Web phủ trọn vẹn toàn màn hình EdgeToEdge
         val webLp = web.layoutParams as FrameLayout.LayoutParams
-        webLp.topMargin = insetTop
+        webLp.topMargin = 0
         web.layoutParams = webLp
 
-        val topLp = topBarBg.layoutParams as FrameLayout.LayoutParams
-        topLp.height = insetTop
-        topBarBg.layoutParams = topLp
-
-        val loadLp = loadingBar.layoutParams as FrameLayout.LayoutParams
-        loadLp.topMargin = insetTop
-        loadingBar.layoutParams = loadLp
-
+        // Thanh viên thuốc nổi cân đối, khoảng cách an toàn rộng rãi phía trên vạch điều hướng
         val barLp = bar.layoutParams as FrameLayout.LayoutParams
-        barLp.leftMargin = insetLeft + dp(14)
-        barLp.rightMargin = insetRight + dp(14)
+        barLp.leftMargin = insetLeft + dp(30)
+        barLp.rightMargin = insetRight + dp(30)
         barLp.bottomMargin = bottom
 
         val findLp = findBar.layoutParams as FrameLayout.LayoutParams
@@ -641,70 +684,69 @@ class MainActivity : ComponentActivity() {
         sugLp.rightMargin = insetRight + dp(16)
         sugLp.bottomMargin = bottom + dp(barH) + dp(8)
 
+        // Dải gradient dưới che phủ êm ái mép đáy màn hình
+        (bottomFade.layoutParams as FrameLayout.LayoutParams).height =
+            maxOf(insetBottom, imeBottom) + dp(92)
+        (loadingBar.layoutParams as FrameLayout.LayoutParams).topMargin = insetTop
+
+        updateTopFade()
         layoutMenu()
         root.requestLayout()
         injectInsets()
+    }
+
+    private fun updateTopFade() {
+        val c = solidTop
+        val lp = topFade.layoutParams as FrameLayout.LayoutParams
+        if (c != null) {
+            topFade.setBackgroundColor(c)
+            lp.height = insetTop
+        } else {
+            topFade.background = fadeDrawable
+            lp.height = insetTop + dp(16)
+        }
+        topFade.requestLayout()
     }
 
     // Tô dải thanh trạng thái theo màu trang web hoặc màu mặc định
     private fun applyTopColor(c: Int?) {
         if (c == solidTop) return
         solidTop = c
+        updateTopFade()
         val ctrl = WindowCompat.getInsetsController(window, root)
-        if (c != null) {
-            topBarBg.setBackgroundColor(c)
-            ctrl.isAppearanceLightStatusBars = ColorUtils.calculateLuminance(c) > 0.5
-        } else {
-            val defaultColor = if (isNight) Color.rgb(28, 28, 30) else Color.WHITE
-            topBarBg.setBackgroundColor(defaultColor)
-            ctrl.isAppearanceLightStatusBars = !isNight
-        }
+        ctrl.isAppearanceLightStatusBars = if (c != null) ColorUtils.calculateLuminance(c) > 0.5 else !isNight
     }
 
-    private fun extractTopColor() {
-        web.evaluateJavascript(EXTRACT_COLOR_JS, null)
-    }
-
-    // Đệm thêm đáy trang để nội dung không bị thanh công cụ đáy che khuất khi cuộn hết trang
+    // Đệm thêm đầu và đáy trang để nội dung không bị che khuất và đồng bộ màu header
     private fun injectInsets() {
-        val bottomCss = (maxOf(insetBottom, imeBottom) / d).toInt() + barH + 42
-        val js = """
-        (function(){
-            try {
-                var s = document.getElementById('__edge_insets');
-                if (!s) {
-                    s = document.createElement('style');
-                    s.id = '__edge_insets';
-                    (document.head || document.documentElement).appendChild(s);
-                }
-                s.textContent = 'html, body, #wrapper, .body_mobile, main, [role="main"], article, footer { padding-bottom: ${bottomCss}px !important; margin-bottom: 0px !important; }';
-            } catch (e) {}
-        })();
-        """.trimIndent()
+        val topCss = (insetTop / d).toInt()
+        val bottomCss = (insetBottom / d).toInt() + barH + 36
+        val js = "(function(){var s=document.getElementById('__edge');" +
+            "if(!s){s=document.createElement('style');s.id='__edge';" +
+            "(document.head||document.documentElement).appendChild(s);}" +
+            "s.textContent='html, body, #wrapper, .body_mobile, main, [role=\"main\"], article, footer { padding-top:${topCss}px!important;" +
+            "padding-bottom:${bottomCss}px!important;box-sizing:border-box!important}';})();"
         web.evaluateJavascript(js, null)
+        web.evaluateJavascript(EDGE_JS.replace("%INSET%", topCss.toString()), null)
     }
 
-    // "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi; chạm hoặc vuốt lên để mở lại
+    // Vuốt xuống thì ẩn thanh viên thuốc hoàn toàn, vuốt lên thì trượt lại vào vị trí
     private fun setBarHidden(hide: Boolean) {
         if (hide && !store.autoHideBar) return
         if (hide == barHidden) return
         barHidden = hide
-        val ip = DecelerateInterpolator()
-        urlPill.animate()
-            .scaleX(if (hide) 0.8f else 1f)
-            .scaleY(if (hide) 0.85f else 1f)
-            .translationY(if (hide) dp(6).toFloat() else 0f)
-            .setDuration(240).setInterpolator(ip).start()
-        backBtn.isClickable = !hide
-        menuBtn.isClickable = !hide
-        reloadBtn.isClickable = !hide
-        clearBtn.isClickable = !hide
-        backBtn.animate().alpha(if (hide) 0f else backAlpha())
-            .scaleX(if (hide) 0.5f else 1f).scaleY(if (hide) 0.5f else 1f).setDuration(200).start()
-        menuBtn.animate().alpha(if (hide) 0f else 1f)
-            .scaleX(if (hide) 0.5f else 1f).scaleY(if (hide) 0.5f else 1f).setDuration(200).start()
-        reloadBtn.animate().alpha(if (hide) 0f else 1f).setDuration(200).start()
-        clearBtn.animate().alpha(if (hide) 0f else 1f).setDuration(200).start()
+        val lp = bar.layoutParams as FrameLayout.LayoutParams
+        val dist = bar.height + lp.bottomMargin + 40 * d
+        bar.animate()
+            .translationY(if (hide) dist else 0f)
+            .alpha(if (hide) 0f else 1f)
+            .setDuration(220)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+        bottomFade.animate()
+            .alpha(if (hide) 0f else 1f)
+            .setDuration(220)
+            .start()
     }
 
     private fun updatePillButtons() {
