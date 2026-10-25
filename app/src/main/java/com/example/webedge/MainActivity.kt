@@ -414,8 +414,8 @@ class MainActivity : ComponentActivity() {
         press(menuBtn, 0.85f)
 
         reloadBtn = ImageView(this)
-        reloadBtn.setImageDrawable(PathIcon(Icons.REFRESH, sub))
-        reloadBtn.setPadding(dp(5), dp(5), dp(5), dp(5))
+        reloadBtn.setImageDrawable(PathIcon(Icons.REFRESH, fg))
+        reloadBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
         reloadBtn.setOnClickListener { web.reload() }
         press(reloadBtn, 0.8f)
         // === Nút Multi-tab (đối xứng với reloadBtn) ===
