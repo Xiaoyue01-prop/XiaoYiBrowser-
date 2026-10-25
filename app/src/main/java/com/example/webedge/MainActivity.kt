@@ -1288,7 +1288,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showSettings() {
-        val p = makePanel("Cài đặt", null, 320) { showMainPage() }
+        // Tinh width dong: 80% chieu rong man hinh, toi da 400dp
+        val screenWidth = resources.displayMetrics.widthPixels
+        val maxWidth = dp(400)
+        val dynamicWidth = minOf((screenWidth * 0.8f).toInt(), maxWidth)
+        val p = makePanel("Cài đặt", null, dynamicWidth / d.toInt()) { showMainPage() }
         val rp = ripple()
         val engines = arrayOf("Google", "Bing", "DuckDuckGo")
 
