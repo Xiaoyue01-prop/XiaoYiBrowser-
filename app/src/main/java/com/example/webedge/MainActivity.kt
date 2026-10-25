@@ -507,7 +507,7 @@ class MainActivity : ComponentActivity() {
         // --- Danh sách gợi ý tìm kiếm (hiện phía trên thanh địa chỉ) ---
         suggestBox = LinearLayout(this)
         suggestBox.orientation = LinearLayout.VERTICAL
-        suggestBox.background = panelBg(22)
+        suggestBox.background = glassBg(22)
         suggestBox.setPadding(0, dp(6), 0, dp(6))
         suggestBox.visibility = View.GONE
 
@@ -959,7 +959,7 @@ class MainActivity : ComponentActivity() {
         layer.setOnClickListener { closeMenu() }
 
         val card = FrameLayout(this)
-        card.background = panelBg(26)
+        card.background = glassBg(26)
         card.clipToOutline = true
         card.isClickable = true
 
