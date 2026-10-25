@@ -1551,7 +1551,7 @@ class MainActivity : ComponentActivity() {
 
         val card = LinearLayout(this)
         card.orientation = LinearLayout.VERTICAL
-        card.background = glassBg(24)
+        card.background = GlassDrawables.create(24, d, isNight)
         card.isClickable = true
 
         val header = TextView(this)
