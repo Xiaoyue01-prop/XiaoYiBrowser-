@@ -1307,6 +1307,7 @@ class MainActivity : ComponentActivity() {
             v.text = value
             v.textSize = 14f
             v.setTextColor(sub)
+        v.gravity = Gravity.END
             v.setSingleLine()
             v.ellipsize = TextUtils.TruncateAt.END
             v.maxWidth = dp(120)
