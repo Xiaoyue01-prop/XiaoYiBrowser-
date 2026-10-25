@@ -622,6 +622,7 @@ class MainActivity : ComponentActivity() {
         root.addView(bar, FrameLayout.LayoutParams(-1, dp(barH), Gravity.BOTTOM))
         root.addView(findBar, FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM))
         setContentView(root)
+        setupOrbMenu()
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(
@@ -1431,5 +1432,21 @@ class MainActivity : ComponentActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         web.saveState(outState)
+    }
+
+    private fun setupOrbMenu() {
+        val orbController = OrbMenuController(
+            rootLayout = root,
+            dp = { dp(it) },
+            d = d,
+            isNight = isNight,
+            fg = fg,
+            onBack = { if (web.canGoBack()) web.goBack() },
+            onForward = { if (web.canGoForward()) web.goForward() },
+            onHome = { load(store.homeUrl) }
+        )
+        orbController.alignWith(backBtn)
+        backBtn.visibility = View.INVISIBLE
+        backBtn.setOnClickListener(null)
     }
 }
