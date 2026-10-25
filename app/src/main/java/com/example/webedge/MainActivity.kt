@@ -1453,6 +1453,7 @@ class MainActivity : ComponentActivity() {
 
     private fun setupOrbMenu() {
         orbController = OrbMenuController(
+            blurTarget = blurTarget,
             rootLayout = root,
             dp = { dp(it) },
             d = d,
