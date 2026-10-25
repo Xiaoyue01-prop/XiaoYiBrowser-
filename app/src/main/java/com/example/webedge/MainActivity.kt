@@ -548,7 +548,6 @@ class MainActivity : ComponentActivity() {
             ws.forceDark = WebSettings.FORCE_DARK_OFF
         }
         if (android.os.Build.VERSION.SDK_INT >= 33) {
-            ws.algorithmicDarkeningAllowed = false
         }
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
