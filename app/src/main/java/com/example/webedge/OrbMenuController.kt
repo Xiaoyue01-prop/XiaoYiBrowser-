@@ -2,6 +2,7 @@ package com.example.webedge
 
 import android.view.Gravity
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -16,7 +17,6 @@ class OrbMenuController(
     private val onForward: () -> Unit,
     private val onHome: () -> Unit
 ) {
-    // Nút chính: Dùng MORE_HORIZ (3 chấm ngang) - biểu tượng điều khiển trung tâm
     private val mainBtn: ImageView = ImageView(rootLayout.context).apply {
         setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
         setPadding(dp(8), dp(8), dp(8), dp(8))
@@ -26,9 +26,10 @@ class OrbMenuController(
 
     private val subBtns = mutableListOf<ImageView>()
     private var isExpanded = false
+    private var anchorView: View? = null
+    private var preDrawListener: ViewTreeObserver.OnPreDrawListener? = null
 
     init {
-        // Nút chính: 36dp (nhỏ gọn, khớp thanh Pill)
         val mainParams = FrameLayout.LayoutParams(dp(36), dp(36)).apply {
             gravity = Gravity.BOTTOM or Gravity.START
             bottomMargin = dp(16)
@@ -37,7 +38,6 @@ class OrbMenuController(
         rootLayout.addView(mainBtn, mainParams)
         mainBtn.setOnClickListener { toggle() }
 
-        // 3 nút con: ARROW_BACK, ARROW_FORWARD, HOME
         val icons = listOf(Icons.ARROW_BACK, Icons.ARROW_FORWARD, Icons.HOME)
         val actions = listOf(onBack, onForward, onHome)
         
@@ -56,7 +56,6 @@ class OrbMenuController(
                 alpha = 0f
                 elevation = 12f
             }
-            // Nút con: 28dp (nhỏ hơn nút chính)
             val params = FrameLayout.LayoutParams(dp(28), dp(28)).apply {
                 gravity = Gravity.BOTTOM or Gravity.START
                 bottomMargin = dp(16 + 4)
@@ -68,25 +67,55 @@ class OrbMenuController(
     }
 
     fun alignWith(backBtn: View) {
-        backBtn.post {
-            val loc = IntArray(2)
-            backBtn.getLocationInWindow(loc)
-            val rootLoc = IntArray(2)
-            rootLayout.getLocationInWindow(rootLoc)
-            
-            val x = loc[0] - rootLoc[0]
-            val y = loc[1] - rootLoc[1]
-            
-            val mParams = mainBtn.layoutParams as FrameLayout.LayoutParams
+        anchorView = backBtn
+        updatePosition()
+        
+        // Xóa listener cũ (nếu có) để tránh leak
+        preDrawListener?.let { backBtn.viewTreeObserver.removeOnPreDrawListener(it) }
+        
+        // Gắn listener mới: Mỗi frame vẽ lại, kiểm tra vị trí backBtn
+        preDrawListener = ViewTreeObserver.OnPreDrawListener {
+            updatePosition()
+            true
+        }
+        backBtn.viewTreeObserver.addOnPreDrawListener(preDrawListener)
+    }
+    
+    private fun updatePosition() {
+        val anchor = anchorView ?: return
+        if (anchor.width == 0) return
+        
+        val loc = IntArray(2)
+        val rootLoc = IntArray(2)
+        anchor.getLocationInWindow(loc)
+        rootLayout.getLocationInWindow(rootLoc)
+        
+        val x = loc[0] - rootLoc[0]
+        val y = loc[1] - rootLoc[1]
+        val anchorAlpha = anchor.alpha
+        
+        // Đồng bộ alpha với thanh Pill (khi fade in/out)
+        mainBtn.alpha = anchorAlpha
+        if (isExpanded) {
+            subBtns.forEach { it.alpha = anchorAlpha }
+        }
+        
+        // Cập nhật vị trí mainBtn (chỉ khi thực sự thay đổi để tiết kiệm CPU)
+        val mParams = mainBtn.layoutParams as FrameLayout.LayoutParams
+        if (mParams.leftMargin != x || mParams.topMargin != y) {
             mParams.leftMargin = x
             mParams.topMargin = y
             mParams.gravity = Gravity.TOP or Gravity.START
             mainBtn.layoutParams = mParams
-            
-            for (btn in subBtns) {
-                val sParams = btn.layoutParams as FrameLayout.LayoutParams
-                sParams.leftMargin = x + dp(4)
-                sParams.topMargin = y + dp(4)
+        }
+        
+        for (btn in subBtns) {
+            val sParams = btn.layoutParams as FrameLayout.LayoutParams
+            val newX = x + dp(4)
+            val newY = y + dp(4)
+            if (sParams.leftMargin != newX || sParams.topMargin != newY) {
+                sParams.leftMargin = newX
+                sParams.topMargin = newY
                 sParams.gravity = Gravity.TOP or Gravity.START
                 btn.layoutParams = sParams
             }
@@ -101,8 +130,9 @@ class OrbMenuController(
         isExpanded = true
         mainBtn.animate().rotation(45f).setDuration(200).start()
         
-        val radius = dp(60).toFloat() // Giảm bán kính cho gọn
+        val radius = dp(60).toFloat()
         val angles = listOf(-90.0, -45.0, 0.0)
+        val targetAlpha = anchorView?.alpha ?: 1f
         
         for (i in subBtns.indices) {
             val angle = Math.toRadians(angles[i])
@@ -114,7 +144,7 @@ class OrbMenuController(
                 .translationX(dx)
                 .translationY(dy)
                 .scaleX(1f).scaleY(1f)
-                .alpha(1f)
+                .alpha(targetAlpha)
                 .setDuration(300 + i * 50L)
                 .setInterpolator(OvershootInterpolator(2.5f))
                 .start()
@@ -132,21 +162,6 @@ class OrbMenuController(
                 .alpha(0f)
                 .setDuration(200)
                 .withEndAction { btn.visibility = View.GONE }
-                .start()
-        }
-    }
-
-    /**
-     * Ẩn/hiện toàn bộ Orb Menu (để đồng bộ với nút 3 chấm)
-     */
-    fun setMenuVisible(visible: Boolean) {
-        if (visible) {
-            mainBtn.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(200).start()
-        } else {
-            // Tự động thu gọn nếu đang mở
-            if (isExpanded) collapse()
-            mainBtn.animate().alpha(0f).scaleX(0.8f).scaleY(0.8f).setDuration(200)
-                .withEndAction { /* Vẫn giữ clickable dù ẩn thị giác */ }
                 .start()
         }
     }
