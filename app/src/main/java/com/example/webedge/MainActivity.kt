@@ -293,6 +293,24 @@ class MainActivity : ComponentActivity() {
 
     // ---------------- Tiện ích giao diện ----------------
 
+        // === ORB MENU HARMONYOS ===
+        val orbController = OrbMenuController(
+            rootLayout = root,
+            dp = { dp(it) },
+            d = d,
+            isNight = isNight,
+            fg = fg,
+            onBack = { if (web.canGoBack()) web.goBack() },
+            onForward = { if (web.canGoForward()) web.goForward() },
+            onHome = { load(store.homeUrl) }
+        )
+        orbController.alignWith(backBtn)
+        
+        // Làm tàng hình nút back cũ để Orb Menu hiện lên trên (không phá vỡ layout)
+        backBtn.visibility = View.INVISIBLE
+        backBtn.setOnClickListener(null)
+        // ==========================
+
     private fun dp(v: Int): Int = (v * d).toInt()
 
     private fun ripple(): Int {
