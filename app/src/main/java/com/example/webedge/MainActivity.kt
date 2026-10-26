@@ -1,5 +1,6 @@
 package com.example.webedge
 
+
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.app.DownloadManager
@@ -16,11 +17,12 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.os.Message
 import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
 import android.text.TextWatcher
+import android.transition.AutoTransition
+import android.transition.TransitionManager
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -32,14 +34,10 @@ import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
-import android.webkit.GeolocationPermissions
 import android.webkit.JavascriptInterface
-import android.webkit.PermissionRequest
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -64,12 +62,12 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-// Chrome 131 Desktop User Agent chuẩn Windows x64 (tránh các lỗi tương thích của Linux X11)
 private const val DESKTOP_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-// Script an toàn (Non-destructive): Chỉ đọc màu mép trên để đồng bộ màu dải trạng thái,
-// KHÔNG cưỡng ép thay đổi style.top hay chèn !important làm vỡ layout của trang web.
+// Script chạy trong trang. Chế độ tràn viền: đẩy thanh menu cố định ở đầu trang xuống dưới thanh trạng thái
+// (hoặc chừa chỗ cho lớp phủ toàn màn hình) và báo màu thanh đó về app để tô dải thanh trạng thái.
+// Chế độ thường: chỉ đọc màu mép trên của trang.
 private const val EDGE_JS = """
 (function(){
   window.__edgeInset = %INSET%;
@@ -120,14 +118,51 @@ private const val EDGE_JS = """
     if (!color) { color = climb(document.body) || climb(document.documentElement); }
     report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
   }
-  function run(){ runTop(); }
+  function runEdge(){
+    var I = window.__edgeInset || 0;
+    if (!I || !document.elementsFromPoint) return;
+    var y = I + 2, w = window.innerWidth, hit = null, big = false, color = null;
+    var xs = [0.5, 0.15, 0.85];
+    for (var i = 0; i < xs.length && !hit; i++) {
+      var stack = document.elementsFromPoint(w * xs[i], y);
+      for (var j = 0; j < stack.length && !hit; j++) {
+        var f = pinned(stack[j]);
+        if (!f) continue;
+        var r = f.getBoundingClientRect();
+        if (r.top <= y && r.width > w * 0.6) {
+          hit = f;
+          big = r.height >= window.innerHeight * 0.45;
+          color = climb(stack[j]);
+        }
+      }
+    }
+    if (!hit) { report('none'); return; }
+    if (big) {
+      if (!hit.getAttribute('data-edge-pad')) {
+        hit.setAttribute('data-edge-pad', '1');
+        var cs = getComputedStyle(hit);
+        hit.style.setProperty('box-sizing', 'border-box', 'important');
+        hit.style.setProperty('padding-top', ((parseFloat(cs.paddingTop) || 0) + I) + 'px', 'important');
+      }
+    } else {
+      var top = parseFloat(getComputedStyle(hit).top);
+      if (!isNaN(top) && top < I - 0.5) { hit.style.setProperty('top', I + 'px', 'important'); }
+    }
+    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
+  }
+  function run(){ if (window.__edgeMode) { runEdge(); } else { runTop(); } }
   var t = null;
-  function sched(){ if (t) return; t = setTimeout(function(){ t = null; run(); }, 250); }
+  function sched(){ if (t) return; t = setTimeout(function(){ t = null; run(); }, 180); }
   window.__edgeRun = run;
   window.addEventListener('scroll', sched, {passive: true});
   window.addEventListener('resize', sched);
-  setTimeout(run, 150);
-  setTimeout(run, 1000);
+  try {
+    new MutationObserver(sched).observe(document.documentElement,
+      {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style']});
+  } catch (e) {}
+  setTimeout(run, 100);
+  setTimeout(run, 800);
+  setTimeout(run, 2000);
   run();
 })();
 """
@@ -143,6 +178,9 @@ class MainActivity : ComponentActivity() {
     )
 
     private lateinit var store: Store
+    private lateinit var fullscreenContainer: FrameLayout
+    private var customVideoView: View? = null
+    private var customVideoCallback: WebChromeClient.CustomViewCallback? = null
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
     private lateinit var blurTarget: BlurTarget
@@ -166,11 +204,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var findBarContainer: FrameLayout
     private lateinit var findInput: EditText
     private lateinit var findCount: TextView
-
-    // Fullscreen Video Container (YouTube, HTML5 Video)
-    private lateinit var fullscreenContainer: FrameLayout
-    private var customVideoView: View? = null
-    private var customVideoCallback: WebChromeClient.CustomViewCallback? = null
 
     private var d = 1f
     private var isNight = false
@@ -221,44 +254,40 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // WebViewClient chuẩn Chrome với xử lý Intent, Custom Schemes (Shopee, Momo, Zalo)
+    private fun handleSpecialUrl(url: String): Boolean {
+        if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("about:") || url.startsWith("javascript:")) {
+            return false
+        }
+        return try {
+            val intent = if (url.startsWith("intent://")) {
+                Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+            } else {
+                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            }
+            if (intent.resolveActivity(packageManager) != null) {
+                startActivity(intent)
+                true
+            } else {
+                val fallback = intent.getStringExtra("browser_fallback_url")
+                if (!fallback.isNullOrBlank()) {
+                    web.loadUrl(fallback)
+                    true
+                } else false
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     private val client = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            val uri = request.url
-            val scheme = uri.scheme?.lowercase() ?: return false
+            val url = request.url.toString()
+            return handleSpecialUrl(url)
+        }
 
-            // HTTP và HTTPS: WebView tự xử lý
-            if (scheme == "http" || scheme == "https") {
-                return false
-            }
-
-            // Xử lý deep-link ngoại bộ: intent://, tel:, mailto:, sms:, momo:, vnpay:, zalo:
-            return try {
-                val intent = if (scheme == "intent") {
-                    Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME)
-                } else {
-                    Intent(Intent.ACTION_VIEW, uri)
-                }
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                val pm = packageManager
-                if (intent.resolveActivity(pm) != null) {
-                    startActivity(intent)
-                    true
-                } else {
-                    // Nếu máy chưa cài App: đọc fallback url nếu có
-                    val fallback = intent.getStringExtra("browser_fallback_url")
-                    if (!fallback.isNullOrBlank()) {
-                        view.loadUrl(fallback)
-                        true
-                    } else {
-                        toast("Chưa cài ứng dụng hỗ trợ liên kết này")
-                        true
-                    }
-                }
-            } catch (e: Exception) {
-                toast("Không thể mở liên kết")
-                true
-            }
+        @Deprecated("Deprecated in Java")
+        override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
+            return handleSpecialUrl(url)
         }
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
@@ -289,29 +318,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // WebChromeClient chuẩn Chrome: Hỗ trợ Toàn màn hình Video, Popup OAuth, Geolocation, WebRTC
     private val chromeClient = object : WebChromeClient() {
-        override fun onProgressChanged(view: WebView, newProgress: Int) {
-            pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
-        }
-
-        override fun onShowFileChooser(
-            webView: WebView,
-            callback: ValueCallback<Array<Uri>>,
-            params: FileChooserParams
-        ): Boolean {
-            pendingFileCallback?.onReceiveValue(null)
-            pendingFileCallback = callback
-            return try {
-                fileLauncher.launch(params.createIntent())
-                true
-            } catch (e: Exception) {
-                pendingFileCallback = null
-                false
-            }
-        }
-
-        // 1. Phóng to Video toàn màn hình (YouTube, HTML5 Video)
         override fun onShowCustomView(view: View, callback: CustomViewCallback) {
             if (customVideoView != null) {
                 callback.onCustomViewHidden()
@@ -334,46 +341,61 @@ class MainActivity : ComponentActivity() {
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
 
-        // 2. Cửa sổ con cho OAuth / Popup đăng nhập (Google, Facebook, VNPAY OTP)
-        override fun onCreateWindow(
-            view: WebView,
-            isDialog: Boolean,
-            isUserGesture: Boolean,
-            resultMsg: Message?
-        ): Boolean {
+        override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
             val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
-            val popupWeb = WebView(this@MainActivity).apply {
+            val tempWeb = WebView(this@MainActivity).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
-                settings.userAgentString = mobileUa
-            }
-            val dialog = Dialog(this@MainActivity, android.R.style.Theme_DeviceDefault_Light_NoActionBar_Fullscreen)
-            dialog.setContentView(popupWeb)
-            popupWeb.webChromeClient = object : WebChromeClient() {
-                override fun onCloseWindow(window: WebView?) {
-                    dialog.dismiss()
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
+                        val u = req.url.toString()
+                        if (handleSpecialUrl(u)) return true
+                        web.loadUrl(u)
+                        return true
+                    }
+                    @Deprecated("Deprecated in Java")
+                    override fun shouldOverrideUrlLoading(v: WebView, u: String): Boolean {
+                        if (handleSpecialUrl(u)) return true
+                        web.loadUrl(u)
+                        return true
+                    }
                 }
             }
-            popupWeb.webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
-                    return false
-                }
-            }
-            dialog.show()
-            transport.webView = popupWeb
+            transport.webView = tempWeb
             resultMsg.sendToTarget()
             return true
-        }
-
-        // 3. Quyền định vị (Google Maps, Grab) & WebRTC
-        override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
-            callback.invoke(origin, true, false)
         }
 
         override fun onPermissionRequest(request: PermissionRequest) {
             request.grant(request.resources)
         }
+
+        override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
+            callback.invoke(origin, true, false)
+        }
+
+        override fun onProgressChanged(view: WebView, newProgress: Int) {
+            pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
+        }
+
+        override fun onShowFileChooser(
+            webView: WebView,
+            callback: ValueCallback<Array<Uri>>,
+            params: FileChooserParams
+        ): Boolean {
+            pendingFileCallback?.onReceiveValue(null)
+            pendingFileCallback = callback
+            return try {
+                fileLauncher.launch(params.createIntent())
+                true
+            } catch (e: Exception) {
+                pendingFileCallback = null
+                false
+            }
+        }
     }
+
+    // ---------------- Tiện ích giao diện ----------------
 
     private fun dp(v: Int): Int = (v * d).toInt()
 
@@ -385,6 +407,9 @@ class MainActivity : ComponentActivity() {
 
     private fun onOff(b: Boolean): String = if (b) "Bật" else "Tắt"
 
+    // ---------------- Hiệu ứng ----------------
+
+    // Nhấn co lại + rung nhẹ khi nhả tay trong vùng nút
     @SuppressLint("ClickableViewAccessibility")
     private fun press(v: View, scale: Float) {
         v.setOnTouchListener { view, ev ->
@@ -409,6 +434,7 @@ class MainActivity : ComponentActivity() {
 
     private var toastView: TextView? = null
 
+    // Thông báo nhỏ dạng viên thuốc: trượt lên, tự rút lại
     private fun toast(msg: String) {
         toastView?.let { root.removeView(it) }
         val t = TextView(this)
@@ -437,6 +463,8 @@ class MainActivity : ComponentActivity() {
         }, 1800L)
     }
 
+    // ---------------- onCreate ----------------
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -453,6 +481,7 @@ class MainActivity : ComponentActivity() {
         val pageColor = Theme.pageColor(isNight)
         pageBg = Color.WHITE
 
+        // Lớp mờ dần dưới thanh trạng thái (khi trang không có thanh menu cố định)
         val fadeStart = Theme.fadeStart(isNight)
         val fadeEnd = Theme.fadeEnd(isNight)
         fadeDrawable = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(fadeStart, fadeEnd))
@@ -466,6 +495,7 @@ class MainActivity : ComponentActivity() {
 
         pillProgress = PillProgress(accent, 2.5f * d)
 
+        // --- Thanh địa chỉ gọn: [‹]  tên miền  [⋯] ---
         backBtn = ImageView(this)
         backBtn.setImageDrawable(PathIcon(Icons.ARROW_BACK, fg))
         backBtn.setPadding(dp(11), dp(11), dp(11), dp(11))
@@ -474,6 +504,8 @@ class MainActivity : ComponentActivity() {
         backBtn.setOnClickListener { if (web.canGoBack()) web.goBack() }
         press(backBtn, 0.85f)
 
+        // Nút ba chấm dùng cùng bộ render kính blur thật với OrbMenu.
+        // BlurView được gắn sau khi blurTarget được khởi tạo bên dưới.
         menuBtn = FrameLayout(this).apply {
             isClickable = true
             isFocusable = true
@@ -503,7 +535,7 @@ class MainActivity : ComponentActivity() {
         reloadBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
         reloadBtn.setOnClickListener { web.reload() }
         press(reloadBtn, 0.8f)
-
+        // === Nút Multi-tab (đối xứng với reloadBtn) ===
         tabBtn = ImageView(this)
         tabBtn.setImageDrawable(PathIcon(Icons.TABS, fg))
         tabBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
@@ -554,6 +586,9 @@ class MainActivity : ComponentActivity() {
             }
         })
 
+        // The content stays in a LinearLayout; a BlurView sits behind it in a wrapper.
+        // This is the first migrated surface. Other glass surfaces remain on the old
+        // drawable helper until they can be converted and visually checked one by one.
         urlPillFrame = FrameLayout(this)
         urlPill = LinearLayout(this)
         urlPill.orientation = LinearLayout.HORIZONTAL
@@ -571,6 +606,7 @@ class MainActivity : ComponentActivity() {
         urlPill.addView(urlBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         urlPill.addView(reloadBtn, LinearLayout.LayoutParams(dp(32), dp(32)))
 
+        // Thanh dưới gồm 3 phần rời nhau: nút quay lại tròn, ô địa chỉ, nút ba chấm tròn
         bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
@@ -582,12 +618,16 @@ class MainActivity : ComponentActivity() {
         bar.addView(urlPillFrame, pillLp)
         bar.addView(menuBtn, LinearLayout.LayoutParams(dp(BOTTOM_BAR_HEIGHT_DP), dp(BOTTOM_BAR_HEIGHT_DP)))
 
+        // --- Danh sách gợi ý tìm kiếm (hiện phía trên thanh địa chỉ) ---
         suggestBox = LinearLayout(this)
         suggestBox.orientation = LinearLayout.VERTICAL
+        // Real Liquid Glass is rendered by a BlurView behind the suggestion rows.
+        // Keep the content container transparent so it does not cover the blur.
         suggestBox.background = ColorDrawable(Color.TRANSPARENT)
         suggestBox.setPadding(0, dp(6), 0, dp(6))
         suggestBox.visibility = View.GONE
 
+        // --- Thanh tìm trong trang (thay thế thanh địa chỉ khi đang tìm) ---
         findInput = EditText(this)
         findInput.setSingleLine()
         findInput.hint = "Tìm trong trang"
@@ -627,7 +667,6 @@ class MainActivity : ComponentActivity() {
         upBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
         upBtn.setOnClickListener { web.findNext(false) }
         press(upBtn, 0.8f)
-
         val downBtn = ImageView(this)
         downBtn.setImageDrawable(PathIcon(Icons.ARROW_DOWN, fg))
         downBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
@@ -647,7 +686,7 @@ class MainActivity : ComponentActivity() {
         findBar = LinearLayout(this)
         findBar.orientation = LinearLayout.HORIZONTAL
         findBar.gravity = Gravity.CENTER_VERTICAL
-        findBar.background = ColorDrawable(Color.TRANSPARENT)
+        findBar.background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
         findBar.setPadding(dp(18), 0, dp(10), 0)
         findBar.addView(findInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         findBar.addView(findCount, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -655,40 +694,27 @@ class MainActivity : ComponentActivity() {
         findBar.addView(downBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
         findBar.addView(doneBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        // --- CẤU HÌNH WEBVIEW CHUẨN CHROME ---
+        // --- WebView ---
         web = WebView(this)
         web.setBackgroundColor(Color.WHITE)
-
         val ws = web.settings
-        ws.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            databaseEnabled = true // IndexedDB & WebSQL
-            setSupportMultipleWindows(true) // Cho phép popup OAuth Google / Facebook
-            javaScriptCanOpenWindowsAutomatically = true
-            mediaPlaybackRequiresUserGesture = false // Video autoplay
-            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-            allowFileAccess = false
-            allowContentAccess = true
-            setSupportZoom(true)
-            builtInZoomControls = true
-            displayZoomControls = false
-            useWideViewPort = true
-            loadWithOverviewMode = true
-        }
-
-        // Sanitizing User-Agent: Loại bỏ cả '; wv' VÀ 'Version/4.0'
+        ws.javaScriptEnabled = true
+        ws.domStorageEnabled = true
+        ws.databaseEnabled = true
+        ws.setSupportMultipleWindows(true)
+        ws.javaScriptCanOpenWindowsAutomatically = true
+        ws.mediaPlaybackRequiresUserGesture = false
+        ws.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         mobileUa = ws.userAgentString
-            .replace(Regex(";\\s*wv", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\s*Version/4\\.0", RegexOption.IGNORE_CASE), "")
+            .replace(Regex(";\s*wv", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\s*Version/4\.0", RegexOption.IGNORE_CASE), "")
+        ws.userAgentString = mobileUa
         applyDesktopMode()
 
-        // Bật Third-Party Cookies (bắt buộc cho widget Spotify, nhúng Youtube, SSO auth)
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
             setAcceptThirdPartyCookies(web, true)
         }
-
         web.webViewClient = client
         web.webChromeClient = chromeClient
         web.addJavascriptInterface(Bridge(), "EdgeBridge")
@@ -696,30 +722,25 @@ class MainActivity : ComponentActivity() {
             findCount.text = if (total == 0) "0" else "" + (active + 1) + "/" + total
         }
 
-        // Tải xuống file (Hỗ trợ cả blob: và link trực tiếp)
         web.setDownloadListener { dlUrl, userAgent, contentDisposition, mimetype, _ ->
             try {
-                if (dlUrl.startsWith("blob:") || dlUrl.startsWith("data:")) {
-                    // Blob download: thông báo người dùng và lưu file an toàn
-                    toast("Đang tải dữ liệu tệp...")
-                } else {
-                    val req = DownloadManager.Request(Uri.parse(dlUrl))
-                    req.setMimeType(mimetype)
-                    CookieManager.getInstance().getCookie(dlUrl)?.let { req.addRequestHeader("cookie", it) }
-                    req.addRequestHeader("User-Agent", userAgent)
-                    req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    req.setDestinationInExternalPublicDir(
-                        Environment.DIRECTORY_DOWNLOADS,
-                        URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
-                    )
-                    (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
-                    toast("Đang tải xuống...")
-                }
+                val req = DownloadManager.Request(Uri.parse(dlUrl))
+                req.setMimeType(mimetype)
+                CookieManager.getInstance().getCookie(dlUrl)?.let { req.addRequestHeader("cookie", it) }
+                req.addRequestHeader("User-Agent", userAgent)
+                req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                req.setDestinationInExternalPublicDir(
+                    Environment.DIRECTORY_DOWNLOADS,
+                    URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
+                )
+                (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+                toast("Đang tải xuống...")
             } catch (e: Exception) {
                 toast("Không tải được file này")
             }
         }
 
+        // Vuốt xuống thì ẩn thanh, vuốt lên thì hiện lại
         web.setOnScrollChangeListener { _, _, y, _, oldY ->
             val dy = y - oldY
             if (urlBar.hasFocus()) return@setOnScrollChangeListener
@@ -732,17 +753,12 @@ class MainActivity : ComponentActivity() {
         root.isFocusable = true
         root.isFocusableInTouchMode = true
 
+        // BlurTarget wraps the web content; glass surfaces are siblings above it.
         blurTarget = BlurTarget(this)
         blurTarget.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
 
-        // Fullscreen container cho YouTube / HTML5 video
-        fullscreenContainer = FrameLayout(this).apply {
-            visibility = View.GONE
-            setBackgroundColor(Color.BLACK)
-        }
-        root.addView(fullscreenContainer, FrameLayout.LayoutParams(-1, -1))
-
+        // Nền kính của nút ba chấm phải lấy blur từ cùng BlurTarget như thanh địa chỉ/Orb.
         menuBtn.addView(
             GlassSystem.createBlurView(
                 this,
@@ -774,6 +790,7 @@ class MainActivity : ComponentActivity() {
         root.addView(suggestBlurView, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         root.addView(suggestBox, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         suggestBox.elevation = dp(1).toFloat()
+        // The BlurView has no intrinsic content height, so mirror the measured list height.
         suggestBox.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, _ ->
             val height = bottom - suggestBox.top
             val lp = suggestBlurView.layoutParams as FrameLayout.LayoutParams
@@ -815,9 +832,7 @@ class MainActivity : ComponentActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (customVideoView != null) {
-                    chromeClient.onHideCustomView()
-                } else if (menuLayer != null) {
+                if (menuLayer != null) {
                     val b = menuBackAction
                     if (b != null) b() else closeMenu()
                 } else if (findBarContainer.visibility == View.VISIBLE) closeFind()
@@ -829,6 +844,8 @@ class MainActivity : ComponentActivity() {
 
         if (savedInstanceState == null) web.loadUrl(store.homeUrl) else web.restoreState(savedInstanceState)
     }
+
+    // ---------------- Insets / thanh trạng thái ----------------
 
     private fun applyInsets() {
         val bottom = maxOf(insetBottom, imeBottom) + dp(10)
@@ -868,6 +885,8 @@ class MainActivity : ComponentActivity() {
         injectInsets()
     }
 
+    // Dải thanh trạng thái: tràn viền thì dùng lớp mờ (hoặc màu thanh menu của trang nếu có),
+    // không tràn viền thì luôn là màu đặc theo mép trên của trang
     private fun updateTopFade() {
         val lp = topFade.layoutParams as FrameLayout.LayoutParams
         val c = solidTop
@@ -886,36 +905,33 @@ class MainActivity : ComponentActivity() {
         WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = lightBar
     }
 
+    // Tô dải thanh trạng thái theo màu thanh menu của trang; null = dùng lớp mờ mặc định
     private fun applyTopColor(c: Int?) {
         if (c == solidTop) return
         solidTop = c
         updateTopFade()
     }
 
-    // Tiêm biến CSS an toàn không phá vỡ bố cục DOM của trang web
+    // Chừa chỗ đầu/cuối trang cho các thanh và chạy script xử lý thanh menu cố định
     private fun injectInsets() {
-        val topCss = (insetTop / d).toInt()
+        val edge = store.edgeMode
+        val topCss = if (edge) (insetTop / d).toInt() else 0
         val bottomCss = (insetBottom / d).toInt() + 64
-        val safeCss = ":root { --safe-area-inset-top: ${topCss}px; --safe-area-inset-bottom: ${bottomCss}px; }"
-        val js = """
-            (function(){
-              var s = document.getElementById('__summit_vars');
-              if(!s){
-                s = document.createElement('style');
-                s.id = '__summit_vars';
-                (document.head||document.documentElement).appendChild(s);
-              }
-              s.textContent = '$safeCss';
-            })();
-        """.trimIndent()
+        val rule = (if (edge) "padding-top:" + topCss + "px!important;" else "") +
+            "padding-bottom:" + bottomCss + "px!important;box-sizing:border-box!important"
+        val js = "(function(){var s=document.getElementById('__edge');" +
+            "if(!s){s=document.createElement('style');s.id='__edge';" +
+            "(document.head||document.documentElement).appendChild(s);}" +
+            "s.textContent='html{" + rule + "}';})();"
         web.evaluateJavascript(js, null)
         web.evaluateJavascript(
             EDGE_JS.replace("%INSET%", (insetTop / d).toInt().toString())
-                .replace("%MODE%", if (store.edgeMode) "1" else "0"),
+                .replace("%MODE%", if (edge) "1" else "0"),
             null
         )
     }
 
+    // "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi; chạm hoặc vuốt lên để mở lại
     private fun setBarHidden(hide: Boolean) {
         if (hide && !store.autoHideBar) return
         if (hide == barHidden) return
@@ -941,6 +957,8 @@ class MainActivity : ComponentActivity() {
         syncOrbMenuVisibility()
     }
 
+    // OrbMenu có trạng thái riêng, không suy diễn từ alpha của nút quay lại:
+    // nút quay lại có thể mờ vì không còn lịch sử nhưng OrbMenu vẫn cần dùng được.
     private fun syncOrbMenuVisibility() {
         if (!::findBarContainer.isInitialized || !::bar.isInitialized || !::urlBar.isInitialized) return
         val findOn = findBarContainer.visibility == View.VISIBLE
@@ -950,6 +968,7 @@ class MainActivity : ComponentActivity() {
         orbController?.setTemporarilyHidden(findOn || pageTyping)
     }
 
+    // Ẩn thanh địa chỉ khi đang gõ trong ô nhập của trang (tránh che nội dung), hoặc khi đang tìm trong trang.
     private fun updateBarVisibility() {
         val findOn = findBarContainer.visibility == View.VISIBLE
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
@@ -963,6 +982,8 @@ class MainActivity : ComponentActivity() {
     private fun updateNav() {
         backBtn.alpha = if (barHidden) 0f else backAlpha()
     }
+
+    // ---------------- Thanh địa chỉ ----------------
 
     private fun setUrlText(text: String) {
         programmatic = true
@@ -983,6 +1004,8 @@ class MainActivity : ComponentActivity() {
         root.requestFocus()
         WindowCompat.getInsetsController(window, urlBar).hide(WindowInsetsCompat.Type.ime())
     }
+
+    // ---------------- Gợi ý tìm kiếm ----------------
 
     private fun scheduleSuggest(q: String) {
         suggestRunnable?.let { handler.removeCallbacks(it) }
@@ -1078,6 +1101,29 @@ class MainActivity : ComponentActivity() {
         suggestBox.removeAllViews()
     }
 
+    // ---------------- Tìm trong trang ----------------
+
+    private fun openFind() {
+        // Hide OrbMenu before requesting the keyboard so neither its ring nor its sub-buttons
+        // can remain visible/touchable over FindBar during the IME animation.
+        findBarContainer.visibility = View.VISIBLE
+        orbController?.setTemporarilyHidden(true)
+        updateBarVisibility()
+        findInput.requestFocus()
+        WindowCompat.getInsetsController(window, findInput).show(WindowInsetsCompat.Type.ime())
+    }
+
+    private fun closeFind() {
+        web.clearMatches()
+        findInput.setText("")
+        findBarContainer.visibility = View.GONE
+        updateBarVisibility()
+        root.requestFocus()
+        WindowCompat.getInsetsController(window, findInput).hide(WindowInsetsCompat.Type.ime())
+    }
+
+    // ---------------- Tải trang ----------------
+
     private fun searchBase(): String = when (store.searchEngine) {
         1 -> "https://www.bing.com/search?q="
         2 -> "https://duckduckgo.com/?q="
@@ -1106,30 +1152,563 @@ class MainActivity : ComponentActivity() {
             s.loadWithOverviewMode = true
         } else {
             s.userAgentString = mobileUa
-            s.useWideViewPort = true
-            s.loadWithOverviewMode = true
+            s.useWideViewPort = false
+            s.loadWithOverviewMode = false
         }
     }
 
-    private fun closeFind() {
-        web.clearMatches()
-        findInput.setText("")
-        findBarContainer.visibility = View.GONE
-        updateBarVisibility()
-        root.requestFocus()
-        WindowCompat.getInsetsController(window, findInput).hide(WindowInsetsCompat.Type.ime())
-    }
-
-    private fun layoutMenu() {
-        // Tối ưu layout cho menu nổi
-    }
+    // ---------------- Menu ba chấm: mở tại chỗ, đổi trang ngay trong khung ----------------
 
     private fun openMenu() {
-        // Mở menu ba chấm của Summit
+        if (menuLayer != null) {
+            closeMenu()
+            return
+        }
+        val layer = FrameLayout(this)
+        layer.setOnClickListener { closeMenu() }
+
+        val card = FrameLayout(this).apply {
+            // Nền kính dự phòng + outline bo góc để menu không thành trong suốt
+            // nếu BlurView chưa render kịp trong lần layout đầu tiên.
+            background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight)
+            clipToOutline = true
+            clipChildren = true
+            clipToPadding = true
+            isClickable = true
+        }
+
+        val glass = GlassSystem.createBlurView(
+            this,
+            blurTarget,
+            GlassSystem.Preset.MENU_CARD,
+            d,
+            isNight
+        )
+        glass.isClickable = false
+        glass.isFocusable = false
+        // Ban đầu để lớp kính 0×0 để nó không ép card WRAP_CONTENT thành full màn hình.
+        // setMenuPage sẽ căn lớp kính theo kích thước card sau khi nội dung được đo.
+        card.addView(glass, FrameLayout.LayoutParams(0, 0))
+
+        layer.addView(
+            card,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.END
+            )
+        )
+        root.addView(layer, FrameLayout.LayoutParams(-1, -1))
+        menuLayer = layer
+        menuCard = card
+        layoutMenu()
+        showMainPage(false)
+
+        card.alpha = 0f
+        card.scaleX = 0.8f
+        card.scaleY = 0.8f
+        card.post {
+            card.pivotX = card.width.toFloat()
+            card.pivotY = card.height.toFloat()
+            card.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(260)
+                .setInterpolator(OvershootInterpolator(1.1f)).start()
+        }
     }
 
     private fun closeMenu() {
-        // Đóng menu
+        val layer = menuLayer ?: return
+        val card = menuCard
+        menuLayer = null
+        menuCard = null
+        menuBackAction = null
+        if (card == null) {
+            root.removeView(layer)
+            return
+        }
+        card.animate().alpha(0f).scaleX(0.85f).scaleY(0.85f).setDuration(160)
+            .withEndAction { root.removeView(layer) }.start()
+    }
+
+    // Đặt vị trí khung menu ngay phía trên nút ba chấm
+    private fun layoutMenu() {
+        val layer = menuLayer ?: return
+        val card = menuCard ?: return
+        layer.setPadding(0, insetTop + dp(12), 0, 0)
+        val lp = card.layoutParams as FrameLayout.LayoutParams
+        lp.rightMargin = insetRight + dp(14)
+        lp.bottomMargin = maxOf(insetBottom, imeBottom) + dp(10) + dp(BOTTOM_BAR_HEIGHT_DP) + dp(8)
+        card.layoutParams = lp
+    }
+
+    // Thay nội dung khung menu bằng một trang khác, có hiệu ứng đổi kích thước
+    private fun setMenuPage(page: View, widthDp: Int, animate: Boolean) {
+        val layer = menuLayer ?: return
+        val card = menuCard ?: return
+        val w = minOf(dp(widthDp), resources.displayMetrics.widthPixels - dp(28) - insetLeft - insetRight)
+        if (animate) {
+            val tr = AutoTransition()
+            tr.duration = 260
+            tr.interpolator = DecelerateInterpolator()
+            TransitionManager.beginDelayedTransition(layer, tr)
+        }
+        // Giữ lớp kính ở child đầu tiên, chỉ thay nội dung trang menu.
+        // Reset kích thước kính để nội dung mới tự quyết định kích thước card.
+        if (card.childCount > 0) {
+            val glassParams = card.getChildAt(0).layoutParams as? FrameLayout.LayoutParams
+            if (glassParams != null && (glassParams.width != 0 || glassParams.height != 0)) {
+                glassParams.width = 0
+                glassParams.height = 0
+                card.getChildAt(0).layoutParams = glassParams
+            }
+        }
+        if (card.childCount > 1) {
+            card.removeViews(1, card.childCount - 1)
+        }
+        card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
+        syncMenuGlassBounds(card)
+        WindowCompat.getInsetsController(window, layer).hide(WindowInsetsCompat.Type.ime())
+    }
+
+    /** Size the BlurView after the wrap-content menu card has been measured. */
+    private fun syncMenuGlassBounds(card: FrameLayout) {
+        val observer = card.viewTreeObserver
+        observer.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                if (menuCard !== card || card.parent == null || card.childCount == 0) {
+                    if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
+                    return
+                }
+
+                val width = card.width
+                val height = card.height
+                if (width <= 0 || height <= 0) return
+
+                val glass = card.getChildAt(0)
+                val params = glass.layoutParams as? FrameLayout.LayoutParams ?: return
+                if (params.width == width && params.height == height) {
+                    if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
+                    return
+                }
+
+                params.width = width
+                params.height = height
+                glass.layoutParams = params
+                // Remove this listener after the first successful size sync.
+                // A new listener is registered whenever setMenuPage changes content.
+                if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
+            }
+        })
+    }
+
+    private fun showMainPage(animate: Boolean = true) {
+        val gapColor = Theme.gapColor(isNight)
+        val rp = ripple()
+
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(0, dp(8), 0, dp(8))
+
+        fun cell(row: LinearLayout, label: String, path: String, action: () -> Unit) {
+            val c = LinearLayout(this)
+            c.orientation = LinearLayout.VERTICAL
+            c.gravity = Gravity.CENTER
+            c.setBackgroundResource(rp)
+            val iv = ImageView(this)
+            iv.setImageDrawable(PathIcon(path, fg))
+            c.addView(iv, LinearLayout.LayoutParams(dp(20), dp(20)))
+            val t = TextView(this)
+            t.text = label
+            t.textSize = 11.5f
+            t.setTextColor(fg)
+            t.gravity = Gravity.CENTER
+            t.setPadding(0, dp(5), 0, 0)
+            c.addView(t, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            c.setOnClickListener {
+                closeMenu()
+                action()
+            }
+            press(c, 0.92f)
+            row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        }
+
+        // closes = true: đóng menu rồi thực hiện; false: mở trang mới ngay trong khung menu
+        fun item(label: String, path: String?, closes: Boolean, action: () -> Unit) {
+            val r = LinearLayout(this)
+            r.orientation = LinearLayout.HORIZONTAL
+            r.gravity = Gravity.CENTER_VERTICAL
+            r.setPadding(dp(22), 0, dp(22), 0)
+            r.setBackgroundResource(rp)
+            val t = TextView(this)
+            t.text = label
+            t.textSize = 15f
+            t.setTextColor(fg)
+            r.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (path != null) {
+                val iv = ImageView(this)
+                iv.setImageDrawable(PathIcon(path, fg))
+                r.addView(iv, LinearLayout.LayoutParams(dp(22), dp(22)))
+            }
+            r.setOnClickListener {
+                if (closes) closeMenu()
+                action()
+            }
+            press(r, 0.98f)
+            box.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)))
+        }
+
+        fun gap() {
+            val g = View(this)
+            g.setBackgroundColor(gapColor)
+            box.addView(g, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)))
+        }
+
+        val marked = store.isBookmarked(currentUrl)
+
+        val quick = LinearLayout(this)
+        quick.orientation = LinearLayout.HORIZONTAL
+        quick.setPadding(dp(8), 0, dp(8), 0)
+        cell(quick, "Chia sẻ", Icons.SHARE) { shareUrl() }
+        cell(
+            quick,
+            if (marked) "Bỏ lưu" else "Lưu trang",
+            if (marked) Icons.BOOKMARK else Icons.BOOKMARK_OUTLINE
+        ) { toggleBookmark() }
+        cell(quick, "Tải lại", Icons.REFRESH) { web.reload() }
+        box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)))
+
+        gap()
+        item("Dấu trang", Icons.BOOKMARK_OUTLINE, false) { showList("Dấu trang", "bookmarks") }
+        item("Lịch sử", Icons.HISTORY, false) { showList("Lịch sử", "history") }
+        item("Tải xuống", Icons.DOWNLOAD, true) { openDownloads() }
+
+        gap()
+        item("Tìm trong trang", Icons.SEARCH, true) { openFind() }
+        item("Trang web máy tính", if (store.desktopMode) Icons.CHECK else null, true) {
+            store.desktopMode = !store.desktopMode
+            applyDesktopMode()
+            web.reload()
+        }
+
+        gap()
+        item("Cài đặt", Icons.TUNE, false) { showSettings() }
+
+        menuBackAction = null
+        setMenuPage(box, 280, animate)
+    }
+
+    private fun toggleBookmark() {
+        if (currentUrl.isBlank()) return
+        val added = store.toggleBookmark(web.title ?: currentUrl, currentUrl)
+        toast(if (added) "Đã thêm dấu trang" else "Đã bỏ dấu trang")
+    }
+
+    private fun shareUrl() {
+        if (currentUrl.isBlank()) return
+        val i = Intent(Intent.ACTION_SEND)
+        i.type = "text/plain"
+        i.putExtra(Intent.EXTRA_TEXT, currentUrl)
+        startActivity(Intent.createChooser(i, "Chia sẻ"))
+    }
+
+    private fun openDownloads() {
+        try {
+            startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
+        } catch (e: Exception) {
+            toast("Không mở được danh sách tải xuống")
+        }
+    }
+
+    // ---------------- Các trang trong khung menu ----------------
+
+    private fun makePanel(title: String, hint: String?, widthDp: Int, onBack: (() -> Unit)?): Panel {
+        val page = LinearLayout(this)
+        page.orientation = LinearLayout.VERTICAL
+
+        val head = LinearLayout(this)
+        head.orientation = LinearLayout.HORIZONTAL
+        head.gravity = Gravity.CENTER_VERTICAL
+        head.setPadding(if (onBack != null) dp(6) else dp(22), dp(12), dp(22), dp(2))
+        if (onBack != null) {
+            val back = ImageView(this)
+            back.setImageDrawable(PathIcon(Icons.ARROW_BACK, fg))
+            back.setPadding(dp(9), dp(9), dp(9), dp(9))
+            back.setOnClickListener { onBack() }
+            press(back, 0.85f)
+            head.addView(back, LinearLayout.LayoutParams(dp(40), dp(40)))
+        }
+        val t = TextView(this)
+        t.text = title
+        t.textSize = 18f
+        t.setTextColor(fg)
+        t.setTypeface(null, Typeface.BOLD)
+        t.setPadding(if (onBack != null) dp(4) else 0, 0, 0, 0)
+        head.addView(t)
+        page.addView(head)
+
+        if (hint != null) {
+            val h = TextView(this)
+            h.text = hint
+            h.textSize = 12f
+            h.setTextColor(sub)
+            h.setPadding(dp(22), 0, dp(22), dp(6))
+            page.addView(h)
+        }
+
+        val body = LinearLayout(this)
+        body.orientation = LinearLayout.VERTICAL
+        val scroll = ScrollView(this)
+        scroll.addView(body)
+        page.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        val buttons = LinearLayout(this)
+        buttons.orientation = LinearLayout.HORIZONTAL
+        buttons.gravity = Gravity.CENTER_VERTICAL
+        buttons.setPadding(dp(22), dp(4), dp(22), dp(10))
+        page.addView(buttons)
+
+        return Panel(page, body, buttons, widthDp, onBack)
+    }
+
+    private fun showPanel(p: Panel) {
+        menuBackAction = p.onBack
+        setMenuPage(p.page, p.widthDp, true)
+    }
+
+    private fun panelButton(text: String, color: Int, onClick: () -> Unit): TextView {
+        val b = TextView(this)
+        b.text = text
+        b.textSize = 15f
+        b.setTypeface(null, Typeface.BOLD)
+        b.setTextColor(color)
+        b.setPadding(0, dp(6), 0, dp(6))
+        b.setOnClickListener { onClick() }
+        press(b, 0.9f)
+        return b
+    }
+
+    private fun addButtons(p: Panel, left: TextView?, right: TextView) {
+        if (left != null) p.buttons.addView(left)
+        p.buttons.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        p.buttons.addView(right)
+    }
+
+    // Rút gọn link: chỉ hiện tên miền + đường dẫn, bỏ phần tham số dài
+    private fun shortUrl(url: String): String {
+        return try {
+            val u = Uri.parse(url)
+            val host = u.host?.removePrefix("www.") ?: return url
+            val path = u.path ?: ""
+            if (path.length > 1) host + path else host
+        } catch (e: Exception) {
+            url
+        }
+    }
+
+    private fun showList(title: String, key: String) {
+        val p = makePanel(title, "Chạm để mở, giữ lâu để xóa", 340) { showMainPage() }
+        val rp = ripple()
+
+        fun fill() {
+            p.body.removeAllViews()
+            val current = store.list(key).take(100)
+            if (current.isEmpty()) {
+                val empty = TextView(this)
+                empty.text = "Chưa có gì"
+                empty.textSize = 15f
+                empty.setTextColor(sub)
+                empty.setPadding(dp(22), dp(16), dp(22), dp(16))
+                p.body.addView(empty)
+                return
+            }
+            for (entry in current) {
+                val row = LinearLayout(this)
+                row.orientation = LinearLayout.VERTICAL
+                row.setPadding(dp(22), dp(10), dp(22), dp(10))
+                row.setBackgroundResource(rp)
+
+                val t = TextView(this)
+                t.text = if (entry.title.isBlank() || entry.title == entry.url) shortUrl(entry.url) else entry.title
+                t.textSize = 15f
+                t.setTextColor(fg)
+                t.setSingleLine()
+                t.ellipsize = TextUtils.TruncateAt.END
+                row.addView(t)
+
+                val u = TextView(this)
+                u.text = shortUrl(entry.url)
+                u.textSize = 12f
+                u.setTextColor(sub)
+                u.setSingleLine()
+                u.ellipsize = TextUtils.TruncateAt.END
+                row.addView(u)
+
+                row.setOnClickListener {
+                    closeMenu()
+                    load(entry.url)
+                }
+                row.setOnLongClickListener {
+                    store.remove(key, entry.url)
+                    fill()
+                    true
+                }
+                press(row, 0.98f)
+                p.body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+        }
+        fill()
+
+        val left: TextView? = if (key == "history") {
+            panelButton("Xóa tất cả", accent) {
+                store.clearHistory()
+                fill()
+            }
+        } else null
+        addButtons(p, left, panelButton("Xong", accent) { closeMenu() })
+        showPanel(p)
+    }
+
+    private fun showSettings() {
+        // Tinh width dong: 80% chieu rong man hinh, toi da 400dp
+        val screenWidth = resources.displayMetrics.widthPixels
+        val maxWidth = dp(400)
+        val dynamicWidth = minOf((screenWidth * 0.8f).toInt(), maxWidth)
+        val p = makePanel("Cài đặt", null, (dynamicWidth / d).toInt().coerceAtLeast(240)) { showMainPage() }
+        val rp = ripple()
+        val engines = arrayOf("Google", "Bing", "DuckDuckGo")
+
+        fun addRow(label: String, value: String, labelColor: Int, onClick: () -> Unit) {
+            val r = LinearLayout(this)
+            r.orientation = LinearLayout.HORIZONTAL
+            r.gravity = Gravity.CENTER_VERTICAL
+            r.setPadding(dp(22), 0, dp(22), 0)
+            r.setBackgroundResource(rp)
+            val l = TextView(this)
+            l.text = label
+            l.textSize = 16f
+            l.setTextColor(labelColor)
+            r.addView(l, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val v = TextView(this)
+            v.text = value
+            v.textSize = 14f
+            v.setTextColor(sub)
+        v.gravity = Gravity.END
+            v.setSingleLine()
+            v.ellipsize = TextUtils.TruncateAt.END
+            v.maxWidth = dp(120)
+            r.addView(v)
+            r.setOnClickListener { onClick() }
+            press(r, 0.98f)
+            p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
+        }
+
+        addRow("Công cụ tìm kiếm", engines[store.searchEngine], fg) { chooseEngine() }
+        addRow("Trang chủ", shortUrl(store.homeUrl), fg) { editHome() }
+        addRow("Trang web máy tính", onOff(store.desktopMode), fg) {
+            store.desktopMode = !store.desktopMode
+            applyDesktopMode()
+            web.reload()
+            showSettings()
+        }
+        addRow("Tràn viền nội dung (thử nghiệm)", onOff(store.edgeMode), fg) {
+            store.edgeMode = !store.edgeMode
+            applyInsets()
+            web.reload()
+            showSettings()
+        }
+        addRow("Thu gọn thanh địa chỉ khi cuộn", onOff(store.autoHideBar), fg) {
+            store.autoHideBar = !store.autoHideBar
+            if (!store.autoHideBar) setBarHidden(false)
+            showSettings()
+        }
+        addRow("Xóa dữ liệu duyệt web", "", Theme.DANGER_RED) { confirmClear() }
+
+        addButtons(p, null, panelButton("Xong", accent) { closeMenu() })
+        showPanel(p)
+    }
+
+    private fun chooseEngine() {
+        val p = makePanel("Công cụ tìm kiếm", null, 320) { showSettings() }
+        val rp = ripple()
+        val names = arrayOf("Google", "Bing", "DuckDuckGo")
+        for (i in names.indices) {
+            val r = LinearLayout(this)
+            r.orientation = LinearLayout.HORIZONTAL
+            r.gravity = Gravity.CENTER_VERTICAL
+            r.setPadding(dp(22), 0, dp(22), 0)
+            r.setBackgroundResource(rp)
+            val l = TextView(this)
+            l.text = names[i]
+            l.textSize = 16f
+            l.setTextColor(fg)
+            r.addView(l, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (store.searchEngine == i) {
+                val ic = ImageView(this)
+                ic.setImageDrawable(PathIcon(Icons.CHECK, accent))
+                r.addView(ic, LinearLayout.LayoutParams(dp(22), dp(22)))
+            }
+            r.setOnClickListener {
+                store.searchEngine = i
+                showSettings()
+            }
+            press(r, 0.98f)
+            p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
+        }
+        addButtons(p, null, panelButton("Xong", accent) { closeMenu() })
+        showPanel(p)
+    }
+
+    private fun editHome() {
+        val p = makePanel("Trang chủ", null, 320) { showSettings() }
+        val input = EditText(this)
+        input.setSingleLine()
+        input.inputType = InputType.TYPE_TEXT_VARIATION_URI
+        input.setText(store.homeUrl)
+        input.setTextColor(fg)
+        input.textSize = 15f
+        input.setPadding(dp(14), 0, dp(14), 0)
+        input.background = GlassSystem.createInputField(12, d, isNight)
+        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46))
+        lp.setMargins(dp(22), dp(4), dp(22), dp(8))
+        p.body.addView(input, lp)
+        addButtons(
+            p,
+            panelButton("Hủy", accent) { showSettings() },
+            panelButton("Lưu", accent) {
+                val t = input.text.toString().trim()
+                if (t.isNotEmpty()) store.homeUrl = toUrl(t)
+                showSettings()
+            }
+        )
+        showPanel(p)
+    }
+
+    private fun confirmClear() {
+        val p = makePanel("Xóa dữ liệu duyệt web?", null, 320) { showSettings() }
+        val msg = TextView(this)
+        msg.text = "Xóa lịch sử, cookie, bộ nhớ đệm và dữ liệu trang web. Bạn sẽ bị đăng xuất khỏi các trang đang đăng nhập."
+        msg.textSize = 14f
+        msg.setTextColor(sub)
+        msg.setPadding(dp(22), dp(4), dp(22), dp(12))
+        p.body.addView(msg)
+        addButtons(
+            p,
+            panelButton("Hủy", accent) { showSettings() },
+            panelButton("Xóa", Theme.DANGER_RED) {
+                store.clearHistory()
+                web.clearHistory()
+                CookieManager.getInstance().removeAllCookies(null)
+                WebStorage.getInstance().deleteAllData()
+                web.clearCache(true)
+                closeMenu()
+                toast("Đã xóa dữ liệu")
+            }
+        )
+        showPanel(p)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        web.saveState(outState)
     }
 
     private fun setupOrbMenu() {
@@ -1153,33 +1732,319 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         isActivityDestroyed = true
         suggestToken++
+        // === CLEANUP DE TRANH MEMORY LEAK ===
+        // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)
         web.removeJavascriptInterface("EdgeBridge")
+
+        // 2. Gỡ listeners khỏi WebView
         web.webViewClient = WebViewClient()
         web.webChromeClient = WebChromeClient()
         web.setDownloadListener(null)
         web.setFindListener(null)
         web.setOnScrollChangeListener(null as View.OnScrollChangeListener?)
+
+        // 3. Hủy tất cả Runnable đang chờ trong Handler
         handler.removeCallbacksAndMessages(null)
         suggestRunnable?.let { handler.removeCallbacks(it) }
         suggestRunnable = null
+
+        // 4. Hủy callbacks
         pendingFileCallback?.onReceiveValue(null)
         pendingFileCallback = null
+
+        // 5. Cleanup Orb Menu Controller (gỡ PreDrawListener)
         orbController?.destroy()
         orbController = null
+
+        // 6. Destroy WebView (phải làm CUỐI CÙNG)
         web.stopLoading()
+        // Do not clear persistent WebView cache/history during ordinary Activity teardown.
+        // The explicit "Xóa dữ liệu duyệt web" action remains responsible for data clearing.
         web.loadUrl("about:blank")
         web.onPause()
         web.removeAllViews()
         web.destroyDrawingCache()
         web.destroy()
+
         super.onDestroy()
     }
 
+
+    // ==========================================
+    // MULTI-TAB: Badge + Tab Switcher
+    // ==========================================
+    private class BadgeDrawable(
+        private val count: Int,
+        private val bgColor: Int,
+        private val textColor: Int,
+        private val d: Float
+    ) : android.graphics.drawable.Drawable() {
+        private val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = bgColor }
+        private val textPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = textColor
+            textAlign = android.graphics.Paint.Align.CENTER
+            textSize = 10 * d
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        override fun draw(canvas: android.graphics.Canvas) {
+            val b = bounds
+            if (b.width() <= 0 || b.height() <= 0) return
+            val cx = b.exactCenterX()
+            val cy = b.exactCenterY()
+            val r = minOf(b.width(), b.height()) / 2f
+            canvas.drawCircle(cx, cy, r, bgPaint)
+            val text = if (count > 99) "99+" else count.toString()
+            val y = cy - (textPaint.descent() + textPaint.ascent()) / 2f
+            canvas.drawText(text, cx, y, textPaint)
+        }
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(cf: android.graphics.ColorFilter?) {}
+        @Suppress("OVERRIDE_DEPRECATION")
+        override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+    }
+
     private fun updateTabBadge() {
-        // Cập nhật số tab
+        val count = tabManager.count()
+        val base = PathIcon(Icons.TABS, fg)
+        if (count <= 1) {
+            tabBtn.setImageDrawable(base)
+            return
+        }
+        val badgeColor = if (isNight) Color.rgb(50, 140, 255) else Color.rgb(10, 132, 255)
+        val textColor = if (isNight) Color.BLACK else Color.WHITE
+        val layer = android.graphics.drawable.LayerDrawable(arrayOf(
+            base,
+            BadgeDrawable(count, badgeColor, textColor, d)
+        ))
+        layer.setLayerInset(1, dp(14), 0, 0, dp(14))
+        tabBtn.setImageDrawable(layer)
     }
 
     private fun openTabSwitcher() {
-        // Trình chuyển tab với khôi phục Bundle state
+        val popup = Dialog(this, android.R.style.Theme_Translucent_NoTitleBar)
+        popup.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val container = FrameLayout(this)
+        container.setBackgroundColor(Color.argb(210, 0, 0, 0))
+
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setPadding(dp(12), dp(24), dp(12), dp(12))
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            val topInset = insets.systemWindowInsetTop
+            view.setPadding(dp(12), topInset + dp(8), dp(12), dp(12))
+            insets
+        }
+        root.setBackgroundColor(if (isNight) Color.rgb(24, 24, 28) else Color.rgb(245, 245, 250))
+        root.isClickable = true
+
+        val header = LinearLayout(this)
+        header.orientation = LinearLayout.HORIZONTAL
+        header.gravity = Gravity.CENTER_VERTICAL
+        header.setPadding(dp(8), dp(8), dp(8), dp(16))
+
+        val heading = LinearLayout(this)
+        heading.orientation = LinearLayout.VERTICAL
+
+        val title = TextView(this)
+        title.text = "Tab đang mở"
+        title.textSize = 25f
+        title.setTypeface(null, Typeface.BOLD)
+        title.setTextColor(fg)
+        heading.addView(title)
+
+        val count = TextView(this)
+        count.text = "${tabManager.count()} tab"
+        count.textSize = 13f
+        count.setTextColor(sub)
+        heading.addView(count)
+
+        header.addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val done = TextView(this)
+        done.text = "Xong"
+        done.textSize = 16f
+        done.setTypeface(null, Typeface.BOLD)
+        done.setTextColor(accent)
+        done.gravity = Gravity.CENTER
+        done.setPadding(dp(12), dp(10), dp(8), dp(10))
+        done.setOnClickListener { popup.dismiss() }
+        header.addView(done)
+        root.addView(header)
+
+        val scroll = ScrollView(this)
+        scroll.isFillViewport = true
+        val grid = LinearLayout(this)
+        grid.orientation = LinearLayout.VERTICAL
+
+        val tabs = tabManager.getAll()
+        for (chunk in tabs.chunked(2)) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.TOP
+
+            for (tab in chunk) {
+                val card = LinearLayout(this)
+                card.orientation = LinearLayout.VERTICAL
+                card.setPadding(dp(7), dp(7), dp(7), dp(9))
+                card.background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                    cornerRadius = dp(18).toFloat()
+                    setColor(if (isNight) Color.rgb(42, 42, 48) else Color.WHITE)
+                    setStroke(
+                        dp(if (tab.isActive) 2 else 1),
+                        if (tab.isActive) accent else
+                            if (isNight) Color.rgb(75, 75, 82) else Color.rgb(225, 225, 232)
+                    )
+                }
+
+                val preview = FrameLayout(this)
+                preview.background = android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                    if (isNight)
+                        intArrayOf(Color.rgb(63, 67, 82), Color.rgb(35, 39, 52))
+                    else
+                        intArrayOf(Color.rgb(225, 232, 246), Color.rgb(190, 204, 231))
+                ).apply {
+                    cornerRadius = dp(13).toFloat()
+                }
+
+                val mark = TextView(this)
+                mark.text = "S"
+                mark.textSize = 46f
+                mark.setTypeface(null, Typeface.BOLD)
+                mark.setTextColor(if (isNight) Color.rgb(210, 218, 245) else Color.rgb(75, 91, 130))
+                mark.gravity = Gravity.CENTER
+                preview.addView(mark, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                ))
+
+                if (!tab.isActive) {
+                    val close = TextView(this)
+                    close.text = "×"
+                    close.textSize = 23f
+                    close.gravity = Gravity.CENTER
+                    close.setTextColor(Color.WHITE)
+                    close.background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(Color.argb(190, 35, 35, 40))
+                    }
+                    preview.addView(close, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.TOP or Gravity.END).apply {
+                        setMargins(0, dp(5), dp(5), 0)
+                    })
+                    close.setOnClickListener {
+                        tabManager.close(tab.id)
+                        popup.dismiss()
+                        val active = tabManager.getActive()
+                        if (active != null) load(active.url.ifBlank { store.homeUrl })
+                        openTabSwitcher()
+                    }
+                } else {
+                    val activeMark = TextView(this)
+                    activeMark.text = "✓"
+                    activeMark.textSize = 15f
+                    activeMark.gravity = Gravity.CENTER
+                    activeMark.setTextColor(Color.WHITE)
+                    activeMark.background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(accent)
+                    }
+                    preview.addView(activeMark, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.TOP or Gravity.END).apply {
+                        setMargins(0, dp(5), dp(5), 0)
+                    })
+                }
+
+                card.addView(preview, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(122)
+                ))
+
+                val tabTitle = TextView(this)
+                tabTitle.text = tab.title.ifBlank { tab.url.ifBlank { "Tab mới" } }
+                tabTitle.textSize = 14f
+                tabTitle.setTypeface(null, Typeface.BOLD)
+                tabTitle.setTextColor(fg)
+                tabTitle.maxLines = 1
+                tabTitle.setSingleLine(true)
+                tabTitle.ellipsize = android.text.TextUtils.TruncateAt.END
+                tabTitle.setPadding(dp(3), dp(9), dp(3), 0)
+                card.addView(tabTitle)
+
+                val url = TextView(this)
+                url.text = shortUrl(tab.url).ifBlank { store.homeUrl }
+                url.textSize = 11f
+                url.setTextColor(sub)
+                url.maxLines = 1
+                url.setSingleLine(true)
+                url.ellipsize = android.text.TextUtils.TruncateAt.END
+                url.setPadding(dp(3), dp(3), dp(3), 0)
+                card.addView(url)
+
+                card.setOnClickListener {
+                    if (!tab.isActive) {
+                        tabManager.switchTo(tab.id)
+                        load(tab.url.ifBlank { store.homeUrl })
+                    }
+                    popup.dismiss()
+                }
+
+                row.addView(card, LinearLayout.LayoutParams(
+                    0, dp(205), 1f
+                ).apply {
+                    setMargins(dp(5), dp(5), dp(5), dp(7))
+                })
+            }
+
+            if (chunk.size == 1) {
+                row.addView(View(this), LinearLayout.LayoutParams(0, dp(205), 1f).apply {
+                    setMargins(dp(5), dp(5), dp(5), dp(7))
+                })
+            }
+            grid.addView(row)
+        }
+
+        scroll.addView(grid)
+        root.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+
+        val add = TextView(this)
+        add.text = "+  Tab mới"
+        add.textSize = 16f
+        add.setTypeface(null, Typeface.BOLD)
+        add.setTextColor(accent)
+        add.gravity = Gravity.CENTER
+        add.setPadding(dp(12), dp(17), dp(12), dp(12))
+        add.setOnClickListener {
+            tabManager.addNew(url = store.homeUrl, title = "Tab mới")
+            load(store.homeUrl)
+            popup.dismiss()
+        }
+        root.addView(add)
+
+        root.setOnClickListener { }
+        container.addView(root, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        popup.setContentView(container)
+        popup.show()
+        popup.window?.let { window ->
+            window.setBackgroundDrawable(
+                android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+            )
+            window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+                val topInset = insets.systemWindowInsetTop
+                root.setPadding(dp(12), topInset + dp(8), dp(12), dp(12))
+                view.onApplyWindowInsets(insets)
+            }
+            window.decorView.requestApplyInsets()
+        }
+        popup.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
     }
+
+
 }
