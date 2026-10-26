@@ -16,6 +16,13 @@ import eightbitlab.com.blurview.BlurView
  * methods below, so their existing colors and opacity remain unchanged.
  */
 object GlassSystem {
+    // Centralized glass tuning. Lower alpha lets more of the page colors pass through.
+    // Keep blur radius unchanged so the result remains frosted rather than clear acrylic.
+    private const val BLURRED_OVERLAY_ALPHA_LIGHT = 38
+    private const val BLURRED_OVERLAY_ALPHA_DARK = 34
+    private const val FALLBACK_FILL_ALPHA_LIGHT = 152
+    private const val FALLBACK_FILL_ALPHA_DARK = 142
+
     enum class Preset(val radiusDp: Int, val blurRadiusDp: Float) {
         ADDRESS_BAR(28, 18f),
         TOOLBAR_BUTTON(20, 16f),
@@ -39,12 +46,12 @@ object GlassSystem {
         GradientDrawable().apply {
             cornerRadius = radiusDp.coerceAtLeast(0) * density
             setColor(
-                if (isNight) Color.argb(200, 28, 28, 32)
-                else Color.argb(200, 255, 255, 255)
+                if (isNight) Color.argb(FALLBACK_FILL_ALPHA_DARK, 28, 28, 32)
+                else Color.argb(FALLBACK_FILL_ALPHA_LIGHT, 255, 255, 255)
             )
             val strokeColor = if (isNight) Color.argb(60, 255, 255, 255)
                 else Color.argb(40, 255, 255, 255)
-            setStroke(density.toInt().coerceAtLeast(1), strokeColor)
+            setStroke((density + 0.5f).toInt().coerceAtLeast(1), strokeColor)
         }
 
     fun createInputField(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
@@ -72,13 +79,13 @@ object GlassSystem {
             } else {
                 Color.argb(46, 255, 255, 255)
             }
-            setStroke(density.toInt().coerceAtLeast(1), strokeColor)
+            setStroke((density + 0.5f).toInt().coerceAtLeast(1), strokeColor)
         }
 
         val overlayColor = if (isNight) {
-            Color.argb(85, 28, 28, 32)
+            Color.argb(BLURRED_OVERLAY_ALPHA_DARK, 28, 28, 32)
         } else {
-            Color.argb(90, 255, 255, 255)
+            Color.argb(BLURRED_OVERLAY_ALPHA_LIGHT, 255, 255, 255)
         }
 
         return BlurView(context).apply {
