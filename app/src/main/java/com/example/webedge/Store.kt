@@ -53,7 +53,7 @@ class Store(context: Context) {
     }
 
     fun addHistory(title: String, url: String) {
-        if (url.isBlank() || url.startsWith("about:")) return
+        if (url.isBlank() || url.startsWith("about:") || url.startsWith("data:")) return
         val l = list("history")
         val entry = Entry(title.ifBlank { url }, url, System.currentTimeMillis())
         if (l.isNotEmpty() && l[0].url == url) {
