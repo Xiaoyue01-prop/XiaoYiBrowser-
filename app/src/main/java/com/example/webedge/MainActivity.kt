@@ -971,9 +971,19 @@ class MainActivity : ComponentActivity() {
         layer.setOnClickListener { closeMenu() }
 
         val card = FrameLayout(this)
-        card.background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight)
         card.clipToOutline = true
         card.isClickable = true
+
+        val glass = GlassSystem.createBlurView(
+            this,
+            blurTarget,
+            GlassSystem.Preset.MENU_CARD,
+            d,
+            isNight
+        )
+        glass.isClickable = false
+        glass.isFocusable = false
+        card.addView(glass, FrameLayout.LayoutParams(-1, -1))
 
         layer.addView(
             card,
@@ -1036,7 +1046,10 @@ class MainActivity : ComponentActivity() {
             tr.interpolator = DecelerateInterpolator()
             TransitionManager.beginDelayedTransition(layer, tr)
         }
-        card.removeAllViews()
+        // Giữ lớp kính ở child đầu tiên, chỉ thay nội dung trang menu.
+        if (card.childCount > 1) {
+            card.removeViews(1, card.childCount - 1)
+        }
         card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
         WindowCompat.getInsetsController(window, layer).hide(WindowInsetsCompat.Type.ime())
     }
