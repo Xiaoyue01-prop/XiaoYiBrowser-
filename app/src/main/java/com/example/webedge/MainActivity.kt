@@ -1568,6 +1568,11 @@ class MainActivity : ComponentActivity() {
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.setPadding(dp(12), dp(24), dp(12), dp(12))
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            val topInset = insets.systemWindowInsetTop
+            view.setPadding(dp(12), topInset + dp(8), dp(12), dp(12))
+            insets
+        }
         root.setBackgroundColor(if (isNight) Color.rgb(24, 24, 28) else Color.rgb(245, 245, 250))
         root.isClickable = true
 
@@ -1762,9 +1767,17 @@ class MainActivity : ComponentActivity() {
         ))
         popup.setContentView(container)
         popup.show()
-        popup.window?.setBackgroundDrawable(
-            android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
-        )
+        popup.window?.let { window ->
+            window.setBackgroundDrawable(
+                android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+            )
+            window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+                val topInset = insets.systemWindowInsetTop
+                root.setPadding(dp(12), topInset + dp(8), dp(12), dp(12))
+                view.onApplyWindowInsets(insets)
+            }
+            window.decorView.requestApplyInsets()
+        }
         popup.window?.setLayout(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
