@@ -70,8 +70,7 @@ if 'setAcceptThirdPartyCookies' not in c:
     c = c.replace(a, a + '\n' + add, 1)
     report.append('[OK] Bat cookie ben thu ba (fix dang nhap OAuth)')
 
-c = c.replace('web.setBackgroundColor(Color.WHITE)',
-              'web.setBackgroundColor(if (isNight) Color.rgb(18, 18, 18) else Color.WHITE)')
+# GIU NGUYEN web.setBackgroundColor(Color.WHITE) theo yeu cau
 
 if 'lastFailedUrl' not in c:
     a = 'private var currentUrl = ""'
@@ -86,8 +85,8 @@ if marker not in c:
 
 c = c.replace('reloadBtn.setOnClickListener { web.reload() }',
               'reloadBtn.setOnClickListener { reloadOrRetry() }')
-c = c.replace('cell(quick, "Tai lai", Icons.REFRESH) { web.reload() }',
-              'cell(quick, "Tai lai", Icons.REFRESH) { reloadOrRetry() }')
+c = c.replace('cell(quick, "Tải lại", Icons.REFRESH) { web.reload() }',
+              'cell(quick, "Tải lại", Icons.REFRESH) { reloadOrRetry() }')
 
 helpers = '''
 private fun reloadOrRetry() {
@@ -117,10 +116,10 @@ private fun handleIntentUrl(url: String) {
             try {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + pkg)))
             } catch (e2: Exception) {
-                toast("Khong mo duoc lien ket nay")
+                toast("Không mở được liên kết này")
             }
         } else {
-            toast("Khong mo duoc lien ket nay")
+            toast("Không mở được liên kết này")
         }
     }
 }
@@ -143,9 +142,9 @@ private fun showErrorPage(view: WebView, msg: String) {
         </head>
         <body>
         <div class="box">
-        <h2>Khong the tai trang</h2>
+        <h2>Không thể tải trang</h2>
         <p>$msg</p>
-        <p>Kiem tra ket noi mang, sau do bam nut tai lai.</p>
+        <p>Kiểm tra kết nối mạng, sau đó bấm nút tải lại.</p>
         </div>
         </body>
         </html>
@@ -162,29 +161,44 @@ if 'private fun showErrorPage' not in c:
 
 overrides = '''
 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-    val url = request.url.toString()
-    return when {
-        url.startsWith("mailto:") -> {
-            openExternal(Intent(Intent.ACTION_SENDTO, Uri.parse(url)), "Khong mo duoc ung dung email")
+    val uri = request.url
+    val scheme = uri.scheme ?: return false
+    return when (scheme) {
+        "http", "https" -> false
+        "about", "data", "file", "javascript", "blob" -> false
+        "mailto" -> {
+            openExternal(Intent(Intent.ACTION_SENDTO, uri), "Không mở được ứng dụng email")
             true
         }
-        url.startsWith("tel:") -> {
-            openExternal(Intent(Intent.ACTION_DIAL, Uri.parse(url)), "Khong mo duoc trinh quay so")
+        "tel" -> {
+            openExternal(Intent(Intent.ACTION_DIAL, uri), "Không mở được trình quay số")
             true
         }
-        url.startsWith("sms:") -> {
-            openExternal(Intent(Intent.ACTION_SENDTO, Uri.parse(url)), "Khong mo duoc ung dung tin nhan")
+        "sms", "smsto" -> {
+            openExternal(Intent(Intent.ACTION_SENDTO, uri), "Không mở được ứng dụng tin nhắn")
             true
         }
-        url.startsWith("intent:") -> {
-            handleIntentUrl(url)
+        "intent" -> {
+            handleIntentUrl(uri.toString())
             true
         }
-        url.startsWith("market:") -> {
-            openExternal(Intent(Intent.ACTION_VIEW, Uri.parse(url)), "Khong mo duoc Play Store")
+        "market" -> {
+            openExternal(Intent(Intent.ACTION_VIEW, uri), "Không mở được Play Store")
             true
         }
-        else -> false
+        else -> {
+            // Scheme riêng của app (snssdk1180:// TikTok, zalo://, fb://, ...)
+            val opened = try {
+                startActivity(Intent(Intent.ACTION_VIEW, uri))
+                true
+            } catch (e: Exception) {
+                false
+            }
+            if (!opened && request.hasGesture()) {
+                toast("Máy chưa cài ứng dụng để mở liên kết này")
+            }
+            true
+        }
     }
 }
 
@@ -192,7 +206,7 @@ override fun onReceivedError(view: WebView, request: WebResourceRequest, error: 
     super.onReceivedError(view, request, error)
     if (request.isForMainFrame) {
         lastFailedUrl = request.url.toString()
-        showErrorPage(view, error.description?.toString() ?: "Khong the tai trang")
+        showErrorPage(view, error.description?.toString() ?: "Không thể tải trang")
     }
 }
 
@@ -200,7 +214,7 @@ override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, err
     super.onReceivedHttpError(view, request, errorResponse)
     if (request.isForMainFrame && errorResponse.statusCode >= 500) {
         lastFailedUrl = request.url.toString()
-        showErrorPage(view, "May chu gap su co (" + errorResponse.statusCode + ")")
+        showErrorPage(view, "Máy chủ gặp sự cố (" + errorResponse.statusCode + ")")
     }
 }
 '''
@@ -228,14 +242,13 @@ if 'override fun shouldOverrideUrlLoading' not in c:
 
 write(MAIN, c)
 
-print('\n' + '='*50)
-print('KET QUA CHANG 1')
+print('='*50)
+print('KET QUA')
 print('='*50)
 for r in report: print(r)
-print('\n--- VERIFY ---')
 final = read(MAIN)
-print('setAcceptThirdPartyCookies :', 'setAcceptThirdPartyCookies' in final)
-print('mixedContentMode           :', 'mixedContentMode' in final)
-print('onReceivedError            :', 'onReceivedError' in final)
-print('shouldOverrideUrlLoading   :', 'shouldOverrideUrlLoading' in final)
-print('showErrorPage              :', 'showErrorPage' in final)
+print('--- VERIFY ---')
+print('shouldOverrideUrlLoading :', 'shouldOverrideUrlLoading' in final)
+print('onReceivedError          :', 'onReceivedError' in final)
+print('cookies                  :', 'setAcceptThirdPartyCookies' in final)
+print('WebView van mau trang    :', 'web.setBackgroundColor(Color.WHITE)' in final)

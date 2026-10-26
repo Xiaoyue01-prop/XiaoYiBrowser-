@@ -1381,7 +1381,7 @@ class MainActivity : ComponentActivity() {
             if (marked) "Bỏ lưu" else "Lưu trang",
             if (marked) Icons.BOOKMARK else Icons.BOOKMARK_OUTLINE
         ) { toggleBookmark() }
-        cell(quick, "Tải lại", Icons.REFRESH) { web.reload() }
+        cell(quick, "Tải lại", Icons.REFRESH) { reloadOrRetry() }
         box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)))
 
         gap()
