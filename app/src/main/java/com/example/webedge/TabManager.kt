@@ -1,5 +1,7 @@
 package com.example.webedge
 
+import android.os.Bundle
+
 /**
  * Quản lý đa tab cho Summit Browser.
  * Dùng chung 1 WebView để nhẹ và tiết kiệm RAM.
@@ -9,7 +11,8 @@ class TabManager {
         val id: Long = System.nanoTime(),
         var url: String = "",
         var title: String = "",
-        var isActive: Boolean = false
+        var isActive: Boolean = false,
+        var stateBundle: Bundle? = null
     )
 
     private val tabs = mutableListOf<Tab>()
@@ -42,6 +45,7 @@ class TabManager {
         if (tabs.size <= 1) return
         val wasActive = tabs.find { it.id == id }?.isActive ?: false
         val idx = tabs.indexOfFirst { it.id == id }
+        if (idx < 0) return
         tabs.removeAt(idx)
         if (wasActive) {
             val newActive = if (idx < tabs.size) tabs[idx] else tabs.last()
