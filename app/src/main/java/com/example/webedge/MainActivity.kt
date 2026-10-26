@@ -1,7 +1,5 @@
 package com.example.webedge
 
-import com.example.webedge.GlassSystem
-import com.example.webedge.Theme
 
 import android.annotation.SuppressLint
 import android.app.Dialog
@@ -46,8 +44,6 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.PopupWindow
-import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
@@ -228,6 +224,7 @@ class MainActivity : ComponentActivity() {
     private var orbController: OrbMenuController? = null
     private var programmatic = false
     private var suggestToken = 0
+    private var isActivityDestroyed = false
     private var suggestRunnable: Runnable? = null
     private val handler = Handler(Looper.getMainLooper())
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
@@ -824,14 +821,27 @@ class MainActivity : ComponentActivity() {
             .scaleX(if (hide) 0.5f else 1f).scaleY(if (hide) 0.5f else 1f).setDuration(200).start()
         reloadBtn.animate().alpha(if (hide) 0f else 1f).setDuration(200).start()
         bottomFade.animate().alpha(if (hide) 0.35f else 1f).setDuration(240).start()
+        syncOrbMenuVisibility()
     }
 
-    // Ẩn thanh địa chỉ khi đang gõ trong ô nhập của trang (tránh che nội dung), hoặc khi đang tìm trong trang
+    // OrbMenu có trạng thái riêng, không suy diễn từ alpha của nút quay lại:
+    // nút quay lại có thể mờ vì không còn lịch sử nhưng OrbMenu vẫn cần dùng được.
+    private fun syncOrbMenuVisibility() {
+        if (!::findBarContainer.isInitialized || !::bar.isInitialized || !::urlBar.isInitialized) return
+        val findOn = findBarContainer.visibility == View.VISIBLE
+        val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
+        val toolbarAvailable = bar.visibility == View.VISIBLE && !barHidden
+        orbController?.setToolbarAvailable(toolbarAvailable)
+        orbController?.setTemporarilyHidden(findOn || pageTyping)
+    }
+
+    // Ẩn thanh địa chỉ khi đang gõ trong ô nhập của trang (tránh che nội dung), hoặc khi đang tìm trong trang.
     private fun updateBarVisibility() {
         val findOn = findBarContainer.visibility == View.VISIBLE
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
         bar.visibility = if (findOn || pageTyping) View.GONE else View.VISIBLE
         bottomFade.visibility = if (pageTyping) View.GONE else View.VISIBLE
+        syncOrbMenuVisibility()
     }
 
     private fun backAlpha(): Float = if (web.canGoBack()) 1f else 0.3f
@@ -887,7 +897,7 @@ class MainActivity : ComponentActivity() {
                 emptyList<String>()
             }
             runOnUiThread {
-                if (token == suggestToken && urlBar.hasFocus()) showSuggestions(result)
+                if (!isActivityDestroyed && token == suggestToken && urlBar.hasFocus()) showSuggestions(result)
             }
         }.start()
     }
@@ -958,7 +968,10 @@ class MainActivity : ComponentActivity() {
     // ---------------- Tìm trong trang ----------------
 
     private fun openFind() {
+        // Hide OrbMenu before requesting the keyboard so neither its ring nor its sub-buttons
+        // can remain visible/touchable over FindBar during the IME animation.
         findBarContainer.visibility = View.VISIBLE
+        orbController?.setTemporarilyHidden(true)
         updateBarVisibility()
         findInput.requestFocus()
         WindowCompat.getInsetsController(window, findInput).show(WindowInsetsCompat.Type.ime())
@@ -1423,7 +1436,7 @@ class MainActivity : ComponentActivity() {
         val screenWidth = resources.displayMetrics.widthPixels
         val maxWidth = dp(400)
         val dynamicWidth = minOf((screenWidth * 0.8f).toInt(), maxWidth)
-        val p = makePanel("Cài đặt", null, dynamicWidth / d.toInt()) { showMainPage() }
+        val p = makePanel("Cài đặt", null, (dynamicWidth / d).toInt().coerceAtLeast(240)) { showMainPage() }
         val rp = ripple()
         val engines = arrayOf("Google", "Bing", "DuckDuckGo")
 
@@ -1546,6 +1559,7 @@ class MainActivity : ComponentActivity() {
             panelButton("Hủy", accent) { showSettings() },
             panelButton("Xóa", Theme.DANGER_RED) {
                 store.clearHistory()
+                web.clearHistory()
                 CookieManager.getInstance().removeAllCookies(null)
                 WebStorage.getInstance().deleteAllData()
                 web.clearCache(true)
@@ -1568,7 +1582,6 @@ class MainActivity : ComponentActivity() {
             dp = { dp(it) },
             d = d,
             isNight = isNight,
-            fg = fg,
             BOTTOM_BAR_HEIGHT_DP = BOTTOM_BAR_HEIGHT_DP,
             onBack = { if (web.canGoBack()) web.goBack() },
             onForward = { if (web.canGoForward()) web.goForward() },
@@ -1577,9 +1590,12 @@ class MainActivity : ComponentActivity() {
         orbController?.alignWith(backBtn)
         backBtn.visibility = View.INVISIBLE
         backBtn.setOnClickListener(null)
+        syncOrbMenuVisibility()
     }
 
     override fun onDestroy() {
+        isActivityDestroyed = true
+        suggestToken++
         // === CLEANUP DE TRANH MEMORY LEAK ===
         // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)
         web.removeJavascriptInterface("EdgeBridge")
@@ -1606,8 +1622,8 @@ class MainActivity : ComponentActivity() {
         
         // 6. Destroy WebView (phải làm CUỐI CÙNG)
         web.stopLoading()
-        web.clearHistory()
-        web.clearCache(true)
+        // Do not clear persistent WebView cache/history during ordinary Activity teardown.
+        // The explicit "Xóa dữ liệu duyệt web" action remains responsible for data clearing.
         web.loadUrl("about:blank")
         web.onPause()
         web.removeAllViews()
