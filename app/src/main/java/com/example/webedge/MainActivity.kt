@@ -1056,10 +1056,10 @@ class MainActivity : ComponentActivity() {
             c.setBackgroundResource(rp)
             val iv = ImageView(this)
             iv.setImageDrawable(PathIcon(path, fg))
-            c.addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
+            c.addView(iv, LinearLayout.LayoutParams(dp(20), dp(20)))
             val t = TextView(this)
             t.text = label
-            t.textSize = 12f
+            t.textSize = 11.5f
             t.setTextColor(fg)
             t.gravity = Gravity.CENTER
             t.setPadding(0, dp(5), 0, 0)
@@ -1081,7 +1081,7 @@ class MainActivity : ComponentActivity() {
             r.setBackgroundResource(rp)
             val t = TextView(this)
             t.text = label
-            t.textSize = 16f
+            t.textSize = 15f
             t.setTextColor(fg)
             r.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             if (path != null) {
@@ -1094,7 +1094,7 @@ class MainActivity : ComponentActivity() {
                 action()
             }
             press(r, 0.98f)
-            box.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+            box.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)))
         }
 
         fun gap() {
@@ -1134,7 +1134,7 @@ class MainActivity : ComponentActivity() {
         item("Cài đặt", Icons.TUNE, false) { showSettings() }
 
         menuBackAction = null
-        setMenuPage(box, 260, animate)
+        setMenuPage(box, 280, animate)
     }
 
     private fun toggleBookmark() {
