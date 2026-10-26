@@ -1735,27 +1735,27 @@ class MainActivity : ComponentActivity() {
         // === CLEANUP DE TRANH MEMORY LEAK ===
         // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)
         web.removeJavascriptInterface("EdgeBridge")
-
+        
         // 2. Gỡ listeners khỏi WebView
         web.webViewClient = WebViewClient()
         web.webChromeClient = WebChromeClient()
         web.setDownloadListener(null)
         web.setFindListener(null)
         web.setOnScrollChangeListener(null as View.OnScrollChangeListener?)
-
+        
         // 3. Hủy tất cả Runnable đang chờ trong Handler
         handler.removeCallbacksAndMessages(null)
         suggestRunnable?.let { handler.removeCallbacks(it) }
         suggestRunnable = null
-
+        
         // 4. Hủy callbacks
         pendingFileCallback?.onReceiveValue(null)
         pendingFileCallback = null
-
+        
         // 5. Cleanup Orb Menu Controller (gỡ PreDrawListener)
         orbController?.destroy()
         orbController = null
-
+        
         // 6. Destroy WebView (phải làm CUỐI CÙNG)
         web.stopLoading()
         // Do not clear persistent WebView cache/history during ordinary Activity teardown.
@@ -1765,7 +1765,7 @@ class MainActivity : ComponentActivity() {
         web.removeAllViews()
         web.destroyDrawingCache()
         web.destroy()
-
+        
         super.onDestroy()
     }
 
