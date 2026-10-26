@@ -858,7 +858,7 @@ class MainActivity : ComponentActivity() {
         val ws = web.settings
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
-        ws.supportMultipleWindows = true
+        ws.setSupportMultipleWindows(true)
         ws.javaScriptCanOpenWindowsAutomatically = false
         mobileUa = ws.userAgentString.replace("; wv", "").replace(" Version/4.0", "")
         applyDesktopMode()
