@@ -200,6 +200,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var fadeDrawable: GradientDrawable
     private lateinit var suggestBox: LinearLayout
     private lateinit var findBar: LinearLayout
+    private lateinit var findBarContainer: FrameLayout
     private lateinit var findInput: EditText
     private lateinit var findCount: TextView
 
@@ -591,9 +592,8 @@ class MainActivity : ComponentActivity() {
         findBar = LinearLayout(this)
         findBar.orientation = LinearLayout.HORIZONTAL
         findBar.gravity = Gravity.CENTER_VERTICAL
-        findBar.background = GlassSystem.create(GlassSystem.Preset.FIND_BAR, d, isNight)
+        findBar.background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
         findBar.setPadding(dp(18), 0, dp(10), 0)
-        findBar.visibility = View.GONE
         findBar.addView(findInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         findBar.addView(findCount, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
         findBar.addView(upBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
@@ -675,7 +675,20 @@ class MainActivity : ComponentActivity() {
         root.addView(bottomFade, FrameLayout.LayoutParams(-1, 0, Gravity.BOTTOM))
         root.addView(suggestBox, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         root.addView(bar, FrameLayout.LayoutParams(-1, dp(BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM))
-        root.addView(findBar, FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM))
+        findBarContainer = FrameLayout(this)
+        findBarContainer.visibility = View.GONE
+        val findGlass = GlassSystem.createBlurView(
+            this, blurTarget, GlassSystem.Preset.FIND_BAR, d, isNight
+        ).apply {
+            isClickable = false
+            isFocusable = false
+        }
+        findBarContainer.addView(findGlass, FrameLayout.LayoutParams(-1, -1))
+        findBarContainer.addView(findBar, FrameLayout.LayoutParams(-1, -1))
+        root.addView(
+            findBarContainer,
+            FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
+        )
         setContentView(root)
         setupOrbMenu()
 
@@ -697,7 +710,7 @@ class MainActivity : ComponentActivity() {
                 if (menuLayer != null) {
                     val b = menuBackAction
                     if (b != null) b() else closeMenu()
-                } else if (findBar.visibility == View.VISIBLE) closeFind()
+                } else if (findBarContainer.visibility == View.VISIBLE) closeFind()
                 else if (urlBar.hasFocus()) leaveEdit()
                 else if (web.canGoBack()) web.goBack()
                 else finish()
@@ -717,7 +730,7 @@ class MainActivity : ComponentActivity() {
         barLp.rightMargin = insetRight + dp(14)
         barLp.bottomMargin = bottom
 
-        val findLp = findBar.layoutParams as FrameLayout.LayoutParams
+        val findLp = findBarContainer.layoutParams as FrameLayout.LayoutParams
         findLp.leftMargin = insetLeft + dp(16)
         findLp.rightMargin = insetRight + dp(16)
         findLp.bottomMargin = bottom
@@ -815,7 +828,7 @@ class MainActivity : ComponentActivity() {
 
     // Ẩn thanh địa chỉ khi đang gõ trong ô nhập của trang (tránh che nội dung), hoặc khi đang tìm trong trang
     private fun updateBarVisibility() {
-        val findOn = findBar.visibility == View.VISIBLE
+        val findOn = findBarContainer.visibility == View.VISIBLE
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
         bar.visibility = if (findOn || pageTyping) View.GONE else View.VISIBLE
         bottomFade.visibility = if (pageTyping) View.GONE else View.VISIBLE
@@ -945,7 +958,7 @@ class MainActivity : ComponentActivity() {
     // ---------------- Tìm trong trang ----------------
 
     private fun openFind() {
-        findBar.visibility = View.VISIBLE
+        findBarContainer.visibility = View.VISIBLE
         updateBarVisibility()
         findInput.requestFocus()
         WindowCompat.getInsetsController(window, findInput).show(WindowInsetsCompat.Type.ime())
@@ -954,7 +967,7 @@ class MainActivity : ComponentActivity() {
     private fun closeFind() {
         web.clearMatches()
         findInput.setText("")
-        findBar.visibility = View.GONE
+        findBarContainer.visibility = View.GONE
         updateBarVisibility()
         root.requestFocus()
         WindowCompat.getInsetsController(window, findInput).hide(WindowInsetsCompat.Type.ime())
