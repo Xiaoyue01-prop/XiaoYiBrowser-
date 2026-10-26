@@ -5,7 +5,6 @@ import android.annotation.SuppressLint
 import android.app.Dialog
 import android.app.DownloadManager
 import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -63,7 +62,7 @@ import java.net.URL
 import java.net.URLEncoder
 
 private const val DESKTOP_UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
 // Script chạy trong trang. Chế độ tràn viền: đẩy thanh menu cố định ở đầu trang xuống dưới thanh trạng thái
 // (hoặc chừa chỗ cho lớp phủ toàn màn hình) và báo màu thanh đó về app để tô dải thanh trạng thái.
@@ -178,9 +177,6 @@ class MainActivity : ComponentActivity() {
     )
 
     private lateinit var store: Store
-    private lateinit var fullscreenContainer: FrameLayout
-    private var customVideoView: View? = null
-    private var customVideoCallback: WebChromeClient.CustomViewCallback? = null
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
     private lateinit var blurTarget: BlurTarget
@@ -254,42 +250,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun handleSpecialUrl(url: String): Boolean {
-        if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("about:") || url.startsWith("javascript:")) {
-            return false
-        }
-        return try {
-            val intent = if (url.startsWith("intent://")) {
-                Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
-            } else {
-                Intent(Intent.ACTION_VIEW, Uri.parse(url))
-            }
-            if (intent.resolveActivity(packageManager) != null) {
-                startActivity(intent)
-                true
-            } else {
-                val fallback = intent.getStringExtra("browser_fallback_url")
-                if (!fallback.isNullOrBlank()) {
-                    web.loadUrl(fallback)
-                    true
-                } else false
-            }
-        } catch (e: Exception) {
-            false
-        }
-    }
-
     private val client = object : WebViewClient() {
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            val url = request.url.toString()
-            return handleSpecialUrl(url)
-        }
-
-        @Deprecated("Deprecated in Java")
-        override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
-            return handleSpecialUrl(url)
-        }
-
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             currentUrl = url
             web.alpha = 0.6f
@@ -319,61 +280,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private val chromeClient = object : WebChromeClient() {
-        override fun onShowCustomView(view: View, callback: CustomViewCallback) {
-            if (customVideoView != null) {
-                callback.onCustomViewHidden()
-                return
-            }
-            customVideoView = view
-            customVideoCallback = callback
-            fullscreenContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
-            fullscreenContainer.visibility = View.VISIBLE
-            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        }
-
-        override fun onHideCustomView() {
-            val v = customVideoView ?: return
-            fullscreenContainer.removeView(v)
-            fullscreenContainer.visibility = View.GONE
-            customVideoCallback?.onCustomViewHidden()
-            customVideoView = null
-            customVideoCallback = null
-            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
-
-        override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
-            val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
-            val tempWeb = WebView(this@MainActivity).apply {
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
-                        val u = req.url.toString()
-                        if (handleSpecialUrl(u)) return true
-                        web.loadUrl(u)
-                        return true
-                    }
-                    @Deprecated("Deprecated in Java")
-                    override fun shouldOverrideUrlLoading(v: WebView, u: String): Boolean {
-                        if (handleSpecialUrl(u)) return true
-                        web.loadUrl(u)
-                        return true
-                    }
-                }
-            }
-            transport.webView = tempWeb
-            resultMsg.sendToTarget()
-            return true
-        }
-
-        override fun onPermissionRequest(request: PermissionRequest) {
-            request.grant(request.resources)
-        }
-
-        override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
-            callback.invoke(origin, true, false)
-        }
-
         override fun onProgressChanged(view: WebView, newProgress: Int) {
             pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
         }
@@ -700,21 +606,8 @@ class MainActivity : ComponentActivity() {
         val ws = web.settings
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
-        ws.databaseEnabled = true
-        ws.setSupportMultipleWindows(true)
-        ws.javaScriptCanOpenWindowsAutomatically = true
-        ws.mediaPlaybackRequiresUserGesture = false
-        ws.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-        mobileUa = ws.userAgentString
-            .replace(Regex(";\s*wv", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\s*Version/4\.0", RegexOption.IGNORE_CASE), "")
-        ws.userAgentString = mobileUa
+        mobileUa = ws.userAgentString.replace("; wv", "")
         applyDesktopMode()
-
-        CookieManager.getInstance().apply {
-            setAcceptCookie(true)
-            setAcceptThirdPartyCookies(web, true)
-        }
         web.webViewClient = client
         web.webChromeClient = chromeClient
         web.addJavascriptInterface(Bridge(), "EdgeBridge")
