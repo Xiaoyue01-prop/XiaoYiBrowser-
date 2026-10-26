@@ -40,10 +40,6 @@ import android.webkit.WebChromeClient
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -199,7 +195,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var bottomFade: View
     private lateinit var fadeDrawable: GradientDrawable
     private lateinit var suggestBox: LinearLayout
-    private lateinit var suggestBlurView: BlurView
     private lateinit var findBar: LinearLayout
     private lateinit var findBarContainer: FrameLayout
     private lateinit var findInput: EditText
@@ -224,7 +219,6 @@ class MainActivity : ComponentActivity() {
     private var menuCard: FrameLayout? = null
     private var menuBackAction: (() -> Unit)? = null
     private var currentUrl = ""
-    private var lastFailedUrl: String? = null
     private var mobileUa = ""
     private var solidTop: Int? = null
     private var orbController: OrbMenuController? = null
@@ -255,74 +249,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-        private fun reloadOrRetry() {
-        val failed = lastFailedUrl
-        if (failed != null && (web.url ?: "").startsWith("data:")) {
-            lastFailedUrl = null
-            web.loadUrl(failed)
-        } else {
-            web.reload()
-        }
-    }
-
-    private fun openExternal(intent: Intent, errMsg: String) {
-        try {
-            startActivity(intent)
-        } catch (e: Exception) {
-            toast(errMsg)
-        }
-    }
-
-    private fun handleIntentUrl(url: String) {
-        try {
-            startActivity(Intent.parseUri(url, Intent.URI_INTENT_SCHEME))
-        } catch (e: Exception) {
-            val pkg = url.substringAfter("package=").substringBefore("&").substringBefore(";").substringBefore("#")
-            if (pkg.isNotBlank() && pkg.contains(".")) {
-                try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + pkg)))
-                } catch (e2: Exception) {
-                    toast("Khong mo duoc lien ket nay")
-                }
-            } else {
-                toast("Khong mo duoc lien ket nay")
-            }
-        }
-    }
-
-    private fun showErrorPage(view: WebView, msg: String) {
-        val bg = if (isNight) "#121212" else "#ffffff"
-        val tx = if (isNight) "#e8e8e8" else "#1a1a1a"
-        val html = """
-            <!DOCTYPE html>
-            <html>
-            <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-            body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:90vh;margin:0;background:$bg;color:$tx;text-align:center}
-            .box{padding:24px;max-width:320px}
-            h2{font-size:19px;margin:0 0 8px}
-            p{font-size:14px;opacity:.65;margin:0 0 6px;line-height:1.4}
-            </style>
-            </head>
-            <body>
-            <div class="box">
-            <h2>Khong the tai trang</h2>
-            <p>$msg</p>
-            <p>Kiem tra ket noi mang, sau do bam nut tai lai.</p>
-            </div>
-            </body>
-            </html>
-        """.trimIndent()
-        view.loadUrl("data:text/html;charset=utf-8," + URLEncoder.encode(html, "UTF-8"))
-    }
-
     private val client = object : WebViewClient() {
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             currentUrl = url
             web.alpha = 0.6f
-            if (!url.startsWith("data:")) lastFailedUrl = null
             if (!urlBar.hasFocus()) showDomain()
             setBarHidden(false)
             updateNav()
@@ -346,49 +276,6 @@ class MainActivity : ComponentActivity() {
             tabManager.updateActive(url, view.title ?: url)
             updateTabBadge()
         }
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            val url = request.url.toString()
-            return when {
-                url.startsWith("mailto:") -> {
-                    openExternal(Intent(Intent.ACTION_SENDTO, Uri.parse(url)), "Khong mo duoc ung dung email")
-                    true
-                }
-                url.startsWith("tel:") -> {
-                    openExternal(Intent(Intent.ACTION_DIAL, Uri.parse(url)), "Khong mo duoc trinh quay so")
-                    true
-                }
-                url.startsWith("sms:") -> {
-                    openExternal(Intent(Intent.ACTION_SENDTO, Uri.parse(url)), "Khong mo duoc ung dung tin nhan")
-                    true
-                }
-                url.startsWith("intent:") -> {
-                    handleIntentUrl(url)
-                    true
-                }
-                url.startsWith("market:") -> {
-                    openExternal(Intent(Intent.ACTION_VIEW, Uri.parse(url)), "Khong mo duoc Play Store")
-                    true
-                }
-                else -> false
-            }
-        }
-
-        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            super.onReceivedError(view, request, error)
-            if (request.isForMainFrame) {
-                lastFailedUrl = request.url.toString()
-                showErrorPage(view, error.description?.toString() ?: "Khong the tai trang")
-            }
-        }
-
-        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
-            super.onReceivedHttpError(view, request, errorResponse)
-            if (request.isForMainFrame && errorResponse.statusCode >= 500) {
-                lastFailedUrl = request.url.toString()
-                showErrorPage(view, "May chu gap su co (" + errorResponse.statusCode + ")")
-            }
-        }
-
     }
 
     private val chromeClient = object : WebChromeClient() {
@@ -551,7 +438,7 @@ class MainActivity : ComponentActivity() {
         reloadBtn = ImageView(this)
         reloadBtn.setImageDrawable(PathIcon(Icons.REFRESH, fg))
         reloadBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
-        reloadBtn.setOnClickListener { reloadOrRetry() }
+        reloadBtn.setOnClickListener { web.reload() }
         press(reloadBtn, 0.8f)
         // === Nút Multi-tab (đối xứng với reloadBtn) ===
         tabBtn = ImageView(this)
@@ -639,9 +526,7 @@ class MainActivity : ComponentActivity() {
         // --- Danh sách gợi ý tìm kiếm (hiện phía trên thanh địa chỉ) ---
         suggestBox = LinearLayout(this)
         suggestBox.orientation = LinearLayout.VERTICAL
-        // Real Liquid Glass is rendered by a BlurView behind the suggestion rows.
-        // Keep the content container transparent so it does not cover the blur.
-        suggestBox.background = ColorDrawable(Color.TRANSPARENT)
+        suggestBox.background = GlassSystem.create(GlassSystem.Preset.SUGGESTIONS, d, isNight)
         suggestBox.setPadding(0, dp(6), 0, dp(6))
         suggestBox.visibility = View.GONE
 
@@ -714,17 +599,14 @@ class MainActivity : ComponentActivity() {
 
         // --- WebView ---
         web = WebView(this)
-        web.setBackgroundColor(if (isNight) Color.rgb(18, 18, 18) else Color.WHITE)
+        web.setBackgroundColor(Color.WHITE)
         val ws = web.settings
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
-        ws.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         mobileUa = ws.userAgentString.replace("; wv", "")
         applyDesktopMode()
         web.webViewClient = client
         web.webChromeClient = chromeClient
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
         web.addJavascriptInterface(Bridge(), "EdgeBridge")
         web.setFindListener { active, total, _ ->
             findCount.text = if (total == 0) "0" else "" + (active + 1) + "/" + total
@@ -788,25 +670,7 @@ class MainActivity : ComponentActivity() {
         urlPillFrame.addView(urlPillBlur, 0, FrameLayout.LayoutParams(-1, -1))
         root.addView(topFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
         root.addView(bottomFade, FrameLayout.LayoutParams(-1, 0, Gravity.BOTTOM))
-        suggestBlurView = GlassSystem.createBlurView(
-            this, blurTarget, GlassSystem.Preset.SUGGESTIONS, d, isNight
-        ).apply {
-            isClickable = false
-            isFocusable = false
-            visibility = View.GONE
-        }
-        root.addView(suggestBlurView, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         root.addView(suggestBox, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-        suggestBox.elevation = dp(1).toFloat()
-        // The BlurView has no intrinsic content height, so mirror the measured list height.
-        suggestBox.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, _ ->
-            val height = bottom - suggestBox.top
-            val lp = suggestBlurView.layoutParams as FrameLayout.LayoutParams
-            if (lp.height != height) {
-                lp.height = height
-                suggestBlurView.layoutParams = lp
-            }
-        }
         root.addView(bar, FrameLayout.LayoutParams(-1, dp(BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM))
         findBarContainer = FrameLayout(this)
         findBarContainer.visibility = View.GONE
@@ -872,11 +736,6 @@ class MainActivity : ComponentActivity() {
         sugLp.leftMargin = insetLeft + dp(16)
         sugLp.rightMargin = insetRight + dp(16)
         sugLp.bottomMargin = bottom + dp(BOTTOM_BAR_HEIGHT_DP) + dp(8)
-        val sugBlurLp = suggestBlurView.layoutParams as FrameLayout.LayoutParams
-        sugBlurLp.leftMargin = sugLp.leftMargin
-        sugBlurLp.rightMargin = sugLp.rightMargin
-        sugBlurLp.bottomMargin = sugLp.bottomMargin
-        suggestBlurView.layoutParams = sugBlurLp
 
         (bottomFade.layoutParams as FrameLayout.LayoutParams).height =
             maxOf(insetBottom, imeBottom) + dp(80)
@@ -1069,7 +928,6 @@ class MainActivity : ComponentActivity() {
         suggestBox.removeAllViews()
         if (items.isEmpty()) {
             suggestBox.visibility = View.GONE
-            suggestBlurView.visibility = View.GONE
             return
         }
         val rp = ripple()
@@ -1097,7 +955,6 @@ class MainActivity : ComponentActivity() {
             press(row, 0.98f)
             suggestBox.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         }
-        suggestBlurView.visibility = View.VISIBLE
         suggestBox.visibility = View.VISIBLE
     }
 
@@ -1105,7 +962,6 @@ class MainActivity : ComponentActivity() {
         suggestToken++
         suggestRunnable?.let { handler.removeCallbacks(it) }
         suggestBox.visibility = View.GONE
-        suggestBlurView.visibility = View.GONE
         suggestBox.removeAllViews()
     }
 
@@ -1381,7 +1237,7 @@ class MainActivity : ComponentActivity() {
             if (marked) "Bỏ lưu" else "Lưu trang",
             if (marked) Icons.BOOKMARK else Icons.BOOKMARK_OUTLINE
         ) { toggleBookmark() }
-        cell(quick, "Tải lại", Icons.REFRESH) { reloadOrRetry() }
+        cell(quick, "Tải lại", Icons.REFRESH) { web.reload() }
         box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)))
 
         gap()
