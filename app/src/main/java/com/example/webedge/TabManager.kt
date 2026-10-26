@@ -1,15 +1,19 @@
 package com.example.webedge
 
+import android.os.Bundle
+
 /**
- * Quản lý đa tab cho Summit Browser.
- * Dùng chung 1 WebView để nhẹ và tiết kiệm RAM.
+ * Quản lý đa tab cho Summit Browser v1.2.
+ * Giữ nguyên trạng thái DOM, vị trí cuộn và form input qua Bundle saveState/restoreState
+ * mà không cần tốn nhiều RAM tạo hàng chục WebView nền.
  */
 class TabManager {
     data class Tab(
         val id: Long = System.nanoTime(),
         var url: String = "",
         var title: String = "",
-        var isActive: Boolean = false
+        var isActive: Boolean = false,
+        var stateBundle: Bundle? = null
     )
 
     private val tabs = mutableListOf<Tab>()
