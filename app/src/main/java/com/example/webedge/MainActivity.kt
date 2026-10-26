@@ -195,6 +195,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var bottomFade: View
     private lateinit var fadeDrawable: GradientDrawable
     private lateinit var suggestBox: LinearLayout
+    private lateinit var suggestBlurView: BlurView
     private lateinit var findBar: LinearLayout
     private lateinit var findBarContainer: FrameLayout
     private lateinit var findInput: EditText
@@ -526,7 +527,9 @@ class MainActivity : ComponentActivity() {
         // --- Danh sách gợi ý tìm kiếm (hiện phía trên thanh địa chỉ) ---
         suggestBox = LinearLayout(this)
         suggestBox.orientation = LinearLayout.VERTICAL
-        suggestBox.background = GlassSystem.create(GlassSystem.Preset.SUGGESTIONS, d, isNight)
+        // Real Liquid Glass is rendered by a BlurView behind the suggestion rows.
+        // Keep the content container transparent so it does not cover the blur.
+        suggestBox.background = ColorDrawable(Color.TRANSPARENT)
         suggestBox.setPadding(0, dp(6), 0, dp(6))
         suggestBox.visibility = View.GONE
 
@@ -670,7 +673,25 @@ class MainActivity : ComponentActivity() {
         urlPillFrame.addView(urlPillBlur, 0, FrameLayout.LayoutParams(-1, -1))
         root.addView(topFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
         root.addView(bottomFade, FrameLayout.LayoutParams(-1, 0, Gravity.BOTTOM))
+        suggestBlurView = GlassSystem.createBlurView(
+            this, blurTarget, GlassSystem.Preset.SUGGESTIONS, d, isNight
+        ).apply {
+            isClickable = false
+            isFocusable = false
+            visibility = View.GONE
+        }
+        root.addView(suggestBlurView, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         root.addView(suggestBox, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        suggestBox.elevation = dp(1).toFloat()
+        // The BlurView has no intrinsic content height, so mirror the measured list height.
+        suggestBox.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, _ ->
+            val height = bottom - suggestBox.top
+            val lp = suggestBlurView.layoutParams as FrameLayout.LayoutParams
+            if (lp.height != height) {
+                lp.height = height
+                suggestBlurView.layoutParams = lp
+            }
+        }
         root.addView(bar, FrameLayout.LayoutParams(-1, dp(BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM))
         findBarContainer = FrameLayout(this)
         findBarContainer.visibility = View.GONE
@@ -736,6 +757,11 @@ class MainActivity : ComponentActivity() {
         sugLp.leftMargin = insetLeft + dp(16)
         sugLp.rightMargin = insetRight + dp(16)
         sugLp.bottomMargin = bottom + dp(BOTTOM_BAR_HEIGHT_DP) + dp(8)
+        val sugBlurLp = suggestBlurView.layoutParams as FrameLayout.LayoutParams
+        sugBlurLp.leftMargin = sugLp.leftMargin
+        sugBlurLp.rightMargin = sugLp.rightMargin
+        sugBlurLp.bottomMargin = sugLp.bottomMargin
+        suggestBlurView.layoutParams = sugBlurLp
 
         (bottomFade.layoutParams as FrameLayout.LayoutParams).height =
             maxOf(insetBottom, imeBottom) + dp(80)
@@ -928,6 +954,7 @@ class MainActivity : ComponentActivity() {
         suggestBox.removeAllViews()
         if (items.isEmpty()) {
             suggestBox.visibility = View.GONE
+            suggestBlurView.visibility = View.GONE
             return
         }
         val rp = ripple()
@@ -955,6 +982,7 @@ class MainActivity : ComponentActivity() {
             press(row, 0.98f)
             suggestBox.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         }
+        suggestBlurView.visibility = View.VISIBLE
         suggestBox.visibility = View.VISIBLE
     }
 
@@ -962,6 +990,7 @@ class MainActivity : ComponentActivity() {
         suggestToken++
         suggestRunnable?.let { handler.removeCallbacks(it) }
         suggestBox.visibility = View.GONE
+        suggestBlurView.visibility = View.GONE
         suggestBox.removeAllViews()
     }
 
