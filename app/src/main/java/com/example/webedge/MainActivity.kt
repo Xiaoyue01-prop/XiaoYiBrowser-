@@ -189,7 +189,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var urlBar: EditText
     private lateinit var bar: LinearLayout
     private lateinit var backBtn: ImageView
-    private lateinit var menuBtn: ImageView
+    private lateinit var menuBtn: FrameLayout
     private lateinit var reloadBtn: ImageView
     private lateinit var tabBtn: ImageView
     private lateinit var tabManager: TabManager
@@ -411,10 +411,29 @@ class MainActivity : ComponentActivity() {
         backBtn.setOnClickListener { if (web.canGoBack()) web.goBack() }
         press(backBtn, 0.85f)
 
-        menuBtn = ImageView(this)
-        menuBtn.setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
-        menuBtn.setPadding(dp(10), dp(10), dp(10), dp(10))
-        menuBtn.background = GlassSystem.create(GlassSystem.Preset.TOOLBAR_BUTTON, d, isNight)
+        // Nút ba chấm dùng cùng bộ render kính blur thật với OrbMenu.
+        // BlurView được gắn sau khi blurTarget được khởi tạo bên dưới.
+        menuBtn = FrameLayout(this).apply {
+            isClickable = true
+            isFocusable = true
+            clipChildren = true
+            clipToPadding = true
+            background = GradientDrawable().apply {
+                cornerRadius = GlassSystem.Preset.ORB_BUTTON.radiusDp * d
+                setColor(Color.TRANSPARENT)
+            }
+            clipToOutline = true
+            contentDescription = "Mở menu"
+        }
+        menuBtn.addView(
+            ImageView(this).apply {
+                setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            FrameLayout.LayoutParams(-1, -1)
+        )
         menuBtn.setOnClickListener { openMenu() }
         press(menuBtn, 0.85f)
 
@@ -631,6 +650,22 @@ class MainActivity : ComponentActivity() {
         blurTarget = BlurTarget(this)
         blurTarget.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
+
+        // Nền kính của nút ba chấm phải lấy blur từ cùng BlurTarget như thanh địa chỉ/Orb.
+        menuBtn.addView(
+            GlassSystem.createBlurView(
+                this,
+                blurTarget,
+                GlassSystem.Preset.ORB_BUTTON,
+                d,
+                isNight
+            ).apply {
+                isClickable = false
+                isFocusable = false
+            },
+            0,
+            FrameLayout.LayoutParams(-1, -1)
+        )
 
         urlPillBlur = GlassSystem.createBlurView(
             this, blurTarget, GlassSystem.Preset.ADDRESS_BAR, d, isNight
@@ -970,9 +1005,18 @@ class MainActivity : ComponentActivity() {
         val layer = FrameLayout(this)
         layer.setOnClickListener { closeMenu() }
 
-        val card = FrameLayout(this)
-        card.clipToOutline = true
-        card.isClickable = true
+        val card = FrameLayout(this).apply {
+            // Cần background có outline bo góc: clipToOutline không tạo bo góc khi
+            // view không có outline/background hợp lệ.
+            background = GradientDrawable().apply {
+                cornerRadius = GlassSystem.Preset.MENU_CARD.radiusDp * d
+                setColor(Color.TRANSPARENT)
+            }
+            clipToOutline = true
+            clipChildren = true
+            clipToPadding = true
+            isClickable = true
+        }
 
         val glass = GlassSystem.createBlurView(
             this,
