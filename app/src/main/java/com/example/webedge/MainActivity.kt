@@ -1006,12 +1006,9 @@ class MainActivity : ComponentActivity() {
         layer.setOnClickListener { closeMenu() }
 
         val card = FrameLayout(this).apply {
-            // Cần background có outline bo góc: clipToOutline không tạo bo góc khi
-            // view không có outline/background hợp lệ.
-            background = GradientDrawable().apply {
-                cornerRadius = GlassSystem.Preset.MENU_CARD.radiusDp * d
-                setColor(Color.TRANSPARENT)
-            }
+            // Nền kính dự phòng + outline bo góc để menu không thành trong suốt
+            // nếu BlurView chưa render kịp trong lần layout đầu tiên.
+            background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight)
             clipToOutline = true
             clipChildren = true
             clipToPadding = true
@@ -1027,7 +1024,9 @@ class MainActivity : ComponentActivity() {
         )
         glass.isClickable = false
         glass.isFocusable = false
-        card.addView(glass, FrameLayout.LayoutParams(-1, -1))
+        // Ban đầu để lớp kính 0×0 để nó không ép card WRAP_CONTENT thành full màn hình.
+        // setMenuPage sẽ căn lớp kính theo kích thước card sau khi nội dung được đo.
+        card.addView(glass, FrameLayout.LayoutParams(0, 0))
 
         layer.addView(
             card,
@@ -1091,11 +1090,52 @@ class MainActivity : ComponentActivity() {
             TransitionManager.beginDelayedTransition(layer, tr)
         }
         // Giữ lớp kính ở child đầu tiên, chỉ thay nội dung trang menu.
+        // Reset kích thước kính để nội dung mới tự quyết định kích thước card.
+        if (card.childCount > 0) {
+            val glassParams = card.getChildAt(0).layoutParams as? FrameLayout.LayoutParams
+            if (glassParams != null && (glassParams.width != 0 || glassParams.height != 0)) {
+                glassParams.width = 0
+                glassParams.height = 0
+                card.getChildAt(0).layoutParams = glassParams
+            }
+        }
         if (card.childCount > 1) {
             card.removeViews(1, card.childCount - 1)
         }
         card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
+        syncMenuGlassBounds(card)
         WindowCompat.getInsetsController(window, layer).hide(WindowInsetsCompat.Type.ime())
+    }
+
+    /** Size the BlurView after the wrap-content menu card has been measured. */
+    private fun syncMenuGlassBounds(card: FrameLayout) {
+        val observer = card.viewTreeObserver
+        observer.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                if (menuCard !== card || card.parent == null || card.childCount == 0) {
+                    if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
+                    return
+                }
+
+                val width = card.width
+                val height = card.height
+                if (width <= 0 || height <= 0) return
+
+                val glass = card.getChildAt(0)
+                val params = glass.layoutParams as? FrameLayout.LayoutParams ?: return
+                if (params.width == width && params.height == height) {
+                    if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
+                    return
+                }
+
+                params.width = width
+                params.height = height
+                glass.layoutParams = params
+                // Remove this listener after the first successful size sync.
+                // A new listener is registered whenever setMenuPage changes content.
+                if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
+            }
+        })
     }
 
     private fun showMainPage(animate: Boolean = true) {
