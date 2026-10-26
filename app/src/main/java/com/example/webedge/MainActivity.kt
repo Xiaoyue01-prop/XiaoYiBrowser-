@@ -131,9 +131,35 @@ private const val EDGE_JS = """
     if (!color) { color = climb(document.body) || climb(document.documentElement); }
     report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
   }
+  function removeSpacer(id){
+    var el = document.getElementById(id);
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+  function ensureSpacer(id, height, prepend){
+    if (!document.body) return;
+    var el = document.getElementById(id);
+    if (!height || height <= 0) { removeSpacer(id); return; }
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      el.setAttribute('aria-hidden', 'true');
+      el.setAttribute('data-summit-internal', '1');
+      el.style.cssText = 'display:block!important;box-sizing:border-box!important;width:100%!important;min-height:0!important;height:' +
+        height + 'px!important;max-height:none!important;flex:none!important;grid-column:1/-1!important;pointer-events:none!important;visibility:hidden!important;contain:strict!important;';
+      if (prepend) document.body.insertBefore(el, document.body.firstChild);
+      else document.body.appendChild(el);
+    } else {
+      el.style.setProperty('height', height + 'px', 'important');
+    }
+  }
   function runEdge(){
     var I = window.__edgeInset || 0;
     if (!I || !document.elementsFromPoint) return;
+    // Keep the last content scrollable above Summit's floating toolbar.
+    // This spacer changes scroll extent, not the site's global padding/layout.
+    var bottomInset = parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue('--summit-safe-area-bottom')) || 0;
+    ensureSpacer('__summit_edge_bottom_spacer', bottomInset + 54, false);
     var y = I + 2, w = window.innerWidth, hit = null, big = false, color = null;
     var xs = [0.5, 0.15, 0.85];
     for (var i = 0; i < xs.length && !hit; i++) {
@@ -149,7 +175,15 @@ private const val EDGE_JS = """
         }
       }
     }
-    if (!hit) { report('none'); return; }
+    if (!hit) {
+      // Some pages (including search portals) use normal-flow headers rather
+      // than fixed/sticky bars. In edge mode, reserve the top inset only for
+      // this fallback case so status icons do not cover the first row.
+      ensureSpacer('__summit_edge_top_spacer', I, true);
+      report('none');
+      return;
+    }
+    removeSpacer('__summit_edge_top_spacer');
     if (big) {
       if (!hit.getAttribute('data-edge-pad')) {
         hit.setAttribute('data-edge-pad', '1');
@@ -163,7 +197,15 @@ private const val EDGE_JS = """
     }
     report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
   }
-  function run(){ if (window.__edgeMode) { runEdge(); } else { runTop(); } }
+  function run(){
+    if (window.__edgeMode) {
+      runEdge();
+    } else {
+      removeSpacer('__summit_edge_top_spacer');
+      removeSpacer('__summit_edge_bottom_spacer');
+      runTop();
+    }
+  }
   var t = null;
   function sched(){ if (t) return; t = setTimeout(function(){ t = null; run(); }, 180); }
   window.__edgeRun = run;
