@@ -40,6 +40,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -54,6 +55,7 @@ import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 import org.json.JSONArray
@@ -230,6 +232,14 @@ class MainActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
 
+    // SUMMIT_BROWSER_COMPAT_V1: WebView custom-view/full-screen video state.
+    private var fullscreenCustomView: View? = null
+    private var fullscreenCustomViewCallback: WebChromeClient.CustomViewCallback? = null
+    private var fullscreenChildStates: List<Pair<View, Int>> = emptyList()
+    private var fullscreenPreviousOrientation: Int? = null
+    private var fullscreenOrientationChanged = false
+    private val popupWebViews = mutableSetOf<WebView>()
+
     private val fileLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { res ->
@@ -251,6 +261,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private val client = object : WebViewClient() {
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+            return routeExternalNavigation(view, request.url.toString(), request.hasGesture())
+        }
+
+        @Suppress("DEPRECATION")
+        override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
+            // Fallback for WebView versions that dispatch the legacy callback.
+            return routeExternalNavigation(view, url, true)
+        }
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             currentUrl = url
             web.alpha = 0.6f
@@ -280,6 +299,75 @@ class MainActivity : ComponentActivity() {
     }
 
     private val chromeClient = object : WebChromeClient() {
+        override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+            showVideoFullscreen(view, callback)
+        }
+
+        override fun onShowCustomView(view: View, requestedOrientation: Int, callback: CustomViewCallback) {
+            showVideoFullscreen(view, callback, requestedOrientation)
+        }
+
+        override fun onHideCustomView() {
+            hideVideoFullscreen()
+        }
+
+        override fun onCreateWindow(
+            view: WebView,
+            isDialog: Boolean,
+            isUserGesture: Boolean,
+            resultMsg: android.os.Message
+        ): Boolean {
+            // Handle target="_blank" by navigating the current browser tab instead of dropping it.
+            if (!isUserGesture) return false
+            val popup = WebView(this@MainActivity)
+            popup.settings.javaScriptEnabled = web.settings.javaScriptEnabled
+            popup.settings.domStorageEnabled = web.settings.domStorageEnabled
+            popup.settings.userAgentString = web.settings.userAgentString
+            popup.settings.useWideViewPort = web.settings.useWideViewPort
+            popup.settings.loadWithOverviewMode = web.settings.loadWithOverviewMode
+            popup.alpha = 0f
+            popup.isClickable = false
+            popup.isFocusable = false
+            popup.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            root.addView(popup, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
+            popupWebViews.add(popup)
+            var forwarded = false
+
+            fun forwardToCurrentTab(url: String) {
+                val scheme = runCatching { Uri.parse(url).scheme?.lowercase() }.getOrNull()
+                if (!forwarded && (scheme == "http" || scheme == "https")) {
+                    forwarded = true
+                    web.loadUrl(url)
+                    schedulePopupWebViewDestroy(popup)
+                }
+            }
+
+            popup.webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(popupView: WebView, request: WebResourceRequest): Boolean {
+                    val scheme = request.url.scheme?.lowercase().orEmpty()
+                    if (scheme == "about" || scheme == "javascript" || scheme == "data" || scheme == "blob") {
+                        return false
+                    }
+                    if (scheme == "http" || scheme == "https") {
+                        forwardToCurrentTab(request.url.toString())
+                        return true
+                    }
+                    return routeExternalNavigation(popupView, request.url.toString(), request.hasGesture())
+                }
+
+                override fun onPageStarted(popupView: WebView, url: String, favicon: Bitmap?) {
+                    forwardToCurrentTab(url)
+                }
+            }
+            popup.webChromeClient = WebChromeClient()
+            val transport = resultMsg.obj as? WebView.WebViewTransport ?: run {
+                destroyPopupWebViewNow(popup)
+                return false
+            }
+            transport.webView = popup
+            resultMsg.sendToTarget()
+            return true
+        }
         override fun onProgressChanged(view: WebView, newProgress: Int) {
             pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
         }
@@ -299,6 +387,170 @@ class MainActivity : ComponentActivity() {
                 false
             }
         }
+    }
+
+    private fun schedulePopupWebViewDestroy(popup: WebView) {
+        handler.post { destroyPopupWebViewNow(popup) }
+    }
+
+    private fun destroyPopupWebViewNow(popup: WebView) {
+        if (!popupWebViews.remove(popup)) return
+        (popup.parent as? ViewGroup)?.removeView(popup)
+        runCatching {
+            popup.stopLoading()
+            popup.webViewClient = WebViewClient()
+            popup.webChromeClient = WebChromeClient()
+            popup.removeAllViews()
+            popup.destroy()
+        }
+    }
+
+    // SUMMIT_BROWSER_COMPAT_V1: route app deep links safely and use web fallbacks.
+    private fun isBrowserHandledScheme(scheme: String): Boolean = scheme in setOf(
+        "http", "https", "about", "blob", "data", "javascript", "file", "content"
+    )
+
+    private fun validWebFallback(raw: String?): String? {
+        val candidate = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val uri = runCatching { Uri.parse(candidate) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase() ?: return null
+        return candidate.takeIf {
+            (scheme == "http" || scheme == "https") && !uri.host.isNullOrBlank() &&
+                !candidate.any { ch -> ch.isWhitespace() }
+        }
+    }
+
+    private fun findExternalWebFallback(uri: Uri): String? {
+        val keys = listOf(
+            "browser_fallback_url", "fallback_url", "params_url", "href",
+            "url", "link", "redirect_url", "redirect"
+        )
+        for (key in keys) {
+            val value = runCatching { uri.getQueryParameter(key) }.getOrNull() ?: continue
+            validWebFallback(value)?.let { return it }
+            // Some wrappers double-encode their fallback URL.
+            validWebFallback(runCatching { Uri.decode(value) }.getOrNull())?.let { return it }
+        }
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        return when {
+            scheme.startsWith("snssdk") -> "https://www.tiktok.com/"
+            scheme == "fb" || scheme.startsWith("fb-") -> "https://www.facebook.com/"
+            scheme == "instagram" -> "https://www.instagram.com/"
+            else -> null
+        }
+    }
+
+    private fun routeExternalNavigation(view: WebView, rawUrl: String, hasGesture: Boolean): Boolean {
+        val uri = runCatching { Uri.parse(rawUrl) }.getOrNull() ?: return true
+        val scheme = uri.scheme?.lowercase() ?: return false
+        if (isBrowserHandledScheme(scheme)) return false
+
+        if (scheme == "intent") {
+            val parsed = runCatching { Intent.parseUri(rawUrl, Intent.URI_INTENT_SCHEME) }.getOrNull()
+            val fallback = validWebFallback(parsed?.getStringExtra("browser_fallback_url"))
+                ?: findExternalWebFallback(uri)
+            if (parsed != null && hasGesture) {
+                try {
+                    // Do not honor explicit components from an untrusted web link.
+                    parsed.component = null
+                    parsed.selector = null
+                    parsed.addCategory(Intent.CATEGORY_BROWSABLE)
+                    startActivity(parsed)
+                    return true
+                } catch (_: Exception) {
+                    // Continue to browser_fallback_url below.
+                }
+            }
+            if (fallback != null) {
+                view.loadUrl(fallback)
+                return true
+            }
+            toast("Không tìm thấy ứng dụng để mở liên kết này")
+            return true
+        }
+
+        val fallback = findExternalWebFallback(uri)
+        if (hasGesture) {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
+                return true
+            } catch (_: Exception) {
+                // App not installed or no activity can handle the scheme.
+            }
+        }
+        if (fallback != null) {
+            view.loadUrl(fallback)
+            return true
+        }
+        toast("Không thể mở liên kết ngoài này")
+        // Consume unsupported schemes instead of letting WebView show ERR_UNKNOWN_URL_SCHEME.
+        return true
+    }
+
+    // SUMMIT_BROWSER_COMPAT_V1: support HTML5 video players that request a custom full-screen view.
+    private fun showVideoFullscreen(
+        view: View,
+        callback: WebChromeClient.CustomViewCallback,
+        requestedOrientation: Int? = null
+    ) {
+        if (fullscreenCustomView != null) {
+            callback.onCustomViewHidden()
+            return
+        }
+
+        fullscreenChildStates = (0 until root.childCount).map { index ->
+            val child = root.getChildAt(index)
+            child to child.visibility
+        }
+        fullscreenChildStates.forEach { (child, _) -> child.visibility = View.GONE }
+
+        (view.parent as? ViewGroup)?.removeView(view)
+        fullscreenCustomView = view
+        fullscreenCustomViewCallback = callback
+        root.addView(
+            view,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER
+            )
+        )
+
+        if (requestedOrientation != null && requestedOrientation != -1) {
+            fullscreenPreviousOrientation = this.requestedOrientation
+            fullscreenOrientationChanged = true
+            this.requestedOrientation = requestedOrientation
+        }
+
+        val controller = WindowCompat.getInsetsController(window, root)
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        root.requestLayout()
+    }
+
+    private fun hideVideoFullscreen() {
+        val view = fullscreenCustomView ?: return
+        (view.parent as? ViewGroup)?.removeView(view)
+        fullscreenCustomView = null
+
+        fullscreenChildStates.forEach { (child, visibility) ->
+            if (child.parent === root) child.visibility = visibility
+        }
+        fullscreenChildStates = emptyList()
+
+        if (fullscreenOrientationChanged) {
+            fullscreenPreviousOrientation?.let { requestedOrientation = it }
+            fullscreenPreviousOrientation = null
+            fullscreenOrientationChanged = false
+        }
+
+        WindowCompat.getInsetsController(window, root).show(WindowInsetsCompat.Type.systemBars())
+        ViewCompat.requestApplyInsets(root)
+        root.requestLayout()
+
+        val callback = fullscreenCustomViewCallback
+        fullscreenCustomViewCallback = null
+        callback?.onCustomViewHidden()
     }
 
     // ---------------- Tiện ích giao diện ----------------
@@ -606,7 +858,9 @@ class MainActivity : ComponentActivity() {
         val ws = web.settings
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
-        mobileUa = ws.userAgentString.replace("; wv", "")
+        ws.supportMultipleWindows = true
+        ws.javaScriptCanOpenWindowsAutomatically = false
+        mobileUa = ws.userAgentString.replace("; wv", "").replace(" Version/4.0", "")
         applyDesktopMode()
         web.webViewClient = client
         web.webChromeClient = chromeClient
@@ -725,7 +979,8 @@ class MainActivity : ComponentActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (menuLayer != null) {
+                if (fullscreenCustomView != null) hideVideoFullscreen()
+                else if (menuLayer != null) {
                     val b = menuBackAction
                     if (b != null) b() else closeMenu()
                 } else if (findBarContainer.visibility == View.VISIBLE) closeFind()
@@ -1045,7 +1300,8 @@ class MainActivity : ComponentActivity() {
             s.loadWithOverviewMode = true
         } else {
             s.userAgentString = mobileUa
-            s.useWideViewPort = false
+            // Honor <meta name="viewport"> so responsive sites render their mobile layout.
+            s.useWideViewPort = true
             s.loadWithOverviewMode = false
         }
     }
@@ -1623,6 +1879,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        hideVideoFullscreen()
+        popupWebViews.toList().forEach { destroyPopupWebViewNow(it) }
         isActivityDestroyed = true
         suggestToken++
         // === CLEANUP DE TRANH MEMORY LEAK ===
