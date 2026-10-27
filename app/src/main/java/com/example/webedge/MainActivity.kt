@@ -128,15 +128,17 @@ private const val HEADER_SCROLL_THROUGH_JS = """
   if (!style) {
     style = document.createElement('style');
     style.id = styleId;
-    style.textContent = '[' + attr + '="1"]{transform:translateY(var(--summit-header-scroll-offset,0px)) var(--summit-header-scroll-original-transform,none)!important;}';
+    style.textContent = '[' + attr + '="1"]{transform:translate3d(0,var(--summit-header-scroll-offset,0px),0) var(--summit-header-scroll-original-transform,matrix(1,0,0,1,0,0))!important;}';
     (document.head || document.documentElement).appendChild(style);
   }
   var tracked = new Set();
   var ticking = false;
   function findHeaders(){
-    var w = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
-    var h = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
-    var safeTop = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--summit-safe-area-top')) || 0;
+    var root = document.documentElement;
+    if (!root) return;
+    var w = Math.max(root.clientWidth || 0, window.innerWidth || 0);
+    var h = Math.max(root.clientHeight || 0, window.innerHeight || 0);
+    var safeTop = parseFloat(getComputedStyle(root).getPropertyValue('--summit-safe-area-top')) || 0;
     var nodes = document.querySelectorAll('header,nav,[role="banner"],[role="navigation"],body *');
     for (var i=0; i<nodes.length; i++) {
       var el = nodes[i];
@@ -145,19 +147,23 @@ private const val HEADER_SCROLL_THROUGH_JS = """
       var cs = getComputedStyle(el);
       if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
       var r = el.getBoundingClientRect();
-      if (r.width < w * 0.58 || r.height < 26 || r.height > h * 0.38) continue;
-      if (r.top > safeTop + 100 || r.bottom < 0) continue;
-      // Avoid double-translating nested fixed/sticky containers.
+      // Allow taller stacked headers (for example, news sites with several ad bars).
+      if (r.width < w * 0.52 || r.height < 26 || r.height > h * 0.62) continue;
+      if (r.top > safeTop + 120 || r.bottom < 0) continue;
+      // Mark only the outermost qualifying header to avoid applying the offset twice.
       var ancestor = el.parentElement, nested = false;
-      while (ancestor && ancestor !== document.body && ancestor !== document.documentElement) {
+      while (ancestor && ancestor !== document.body && ancestor !== root) {
         if (ancestor.hasAttribute(attr)) { nested = true; break; }
         var aps = getComputedStyle(ancestor).position;
-        var ar = ancestor.getBoundingClientRect();
-        if ((aps === 'fixed' || aps === 'sticky') && ar.width >= w * 0.58 && ar.height >= 26 && ar.height <= h * 0.38 && ar.top <= safeTop + 100) { nested = true; break; }
+        if (aps === 'fixed' || aps === 'sticky') {
+          var ar = ancestor.getBoundingClientRect();
+          if (ar.width >= w * 0.52 && ar.height >= 26 && ar.height <= h * 0.62 && ar.top <= safeTop + 120) { nested = true; break; }
+        }
         ancestor = ancestor.parentElement;
       }
       if (nested) continue;
       el.setAttribute(attr, '1');
+      // Preserve the site's existing transform; the scroll offset is composed in front of it.
       el.style.setProperty('--summit-header-scroll-original-transform', cs.transform === 'none' ? 'matrix(1,0,0,1,0,0)' : cs.transform);
       tracked.add(el);
     }
@@ -165,21 +171,33 @@ private const val HEADER_SCROLL_THROUGH_JS = """
   function update(){
     ticking = false;
     findHeaders();
-    var y = Math.max(0, window.scrollY || document.documentElement.scrollTop || 0);
+    var scrolling = document.scrollingElement || document.documentElement;
+    var y = Math.max(0, window.scrollY || (scrolling && scrolling.scrollTop) || document.documentElement.scrollTop || 0);
     tracked.forEach(function(el){
       if (!el || !el.isConnected) { tracked.delete(el); return; }
-      var h = el.getBoundingClientRect().height || el.offsetHeight || 0;
-      // Move only as far as needed to fully clear the header from the viewport.
-      var offset = -Math.min(y, h + 8);
+      var rect = el.getBoundingClientRect();
+      var height = rect.height || el.offsetHeight || 0;
+      // Move the top bar out of view as the document scrolls, including tall stacked bars.
+      var offset = -Math.min(y, height + 8);
       el.style.setProperty('--summit-header-scroll-offset', offset + 'px');
     });
   }
   function schedule(){ if (!ticking) { ticking = true; requestAnimationFrame(update); } }
   window.addEventListener('scroll', schedule, {passive:true});
   window.addEventListener('resize', schedule, {passive:true});
+  window.addEventListener('load', schedule, {once:true});
+  window.addEventListener('pageshow', schedule, {passive:true});
   if (window.MutationObserver && document.documentElement) {
-    var observer = new MutationObserver(function(){ schedule(); });
-    observer.observe(document.documentElement, {childList:true, subtree:true});
+    var observer = new MutationObserver(function(records){
+      // Ignore style writes made by this patch itself, but rescan when pages add
+      // banners or change class/position after asynchronous loading.
+      for (var i=0; i<records.length; i++) {
+        var m = records[i];
+        if (m.type === 'childList') { schedule(); return; }
+        if (m.type === 'attributes' && m.target && !m.target.hasAttribute(attr)) { schedule(); return; }
+      }
+    });
+    observer.observe(document.documentElement, {childList:true, subtree:true, attributes:true, attributeFilter:['class','style','role','aria-label']});
   }
   schedule();
 })();
