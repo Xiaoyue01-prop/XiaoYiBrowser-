@@ -63,6 +63,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
+import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -110,6 +111,54 @@ private const val BOTTOM_SPACER_JS = """
     window.__summitBottomSpacerObserver.observe(root, {childList:true, subtree:true});
   }
   window.addEventListener('resize', ensure, {passive:true});
+})();
+"""
+
+// Lấy màu nền ngay mép trên của trang (giống cách Chrome tô thanh trạng thái).
+// Thứ tự: meta theme-color -> phần tử đang nằm sát mép trên viewport -> body/html.
+// Trả về chuỗi "rgb(...)" hoặc "" nếu không xác định được.
+private const val TOP_COLOR_JS = """
+(function(){
+  function opaque(c){
+    if (!c) return null;
+    var m = c.match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    var p = m[1].split(/[ ,\/]+/).filter(Boolean);
+    var a = p.length > 3 ? parseFloat(p[3]) : 1;
+    if (isNaN(a) || a < 0.95) return null;
+    return 'rgb(' + parseInt(p[0]) + ',' + parseInt(p[1]) + ',' + parseInt(p[2]) + ')';
+  }
+  try {
+    var metas = document.querySelectorAll('meta[name="theme-color"]');
+    var dark = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches;
+    var pick = null;
+    for (var i = 0; i < metas.length; i++) {
+      var media = metas[i].getAttribute('media') || '';
+      if (!media) { if (!pick) pick = metas[i]; continue; }
+      if (media.indexOf('dark') >= 0 && dark) { pick = metas[i]; break; }
+      if (media.indexOf('light') >= 0 && !dark) { pick = metas[i]; break; }
+    }
+    if (pick) {
+      var d = document.createElement('div');
+      d.style.color = pick.getAttribute('content') || '';
+      document.documentElement.appendChild(d);
+      var tc = opaque(getComputedStyle(d).color);
+      d.remove();
+      if (tc) return tc;
+    }
+    var xs = [window.innerWidth / 2, 4, window.innerWidth - 4];
+    for (var k = 0; k < xs.length; k++) {
+      var el = document.elementFromPoint(xs[k], 2);
+      while (el) {
+        var c = opaque(getComputedStyle(el).backgroundColor);
+        if (c) return c;
+        el = el.parentElement;
+      }
+    }
+    var b = document.body ? opaque(getComputedStyle(document.body).backgroundColor) : null;
+    if (b) return b;
+    return opaque(getComputedStyle(document.documentElement).backgroundColor) || '';
+  } catch (e) { return ''; }
 })();
 """
 
@@ -508,7 +557,6 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             currentUrl = url
-            applyTopColor(null)
             web.alpha = 0.6f
             if (!urlBar.hasFocus()) showDomain()
             setBarHidden(false)
@@ -523,12 +571,14 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageCommitVisible(view: WebView, url: String) {
             injectInsets()
+            scheduleTopColorSample(100L)
             web.animate().alpha(1f).setDuration(220).start()
         }
 
         override fun onPageFinished(view: WebView, url: String) {
             injectInsets()
-            refreshTopColorFromPage(view)
+            scheduleTopColorSample(200L)
+            handler.postDelayed(topColorRunnable, 1200L) // trang dựng muộn (SPA, dark mode...)
             web.animate().alpha(1f).setDuration(120).start()
             store.addHistory(view.title ?: "", url)
             tabManager.updateActive(url, view.title ?: url)
@@ -671,7 +721,7 @@ class MainActivity : ComponentActivity() {
         fg = if (isNight) Color.WHITE else Color.BLACK
         sub = Theme.subColor(isNight)
         val pageColor = Theme.pageColor(isNight)
-        pageBg = pageColor
+        pageBg = Color.WHITE
 
         // Lớp mờ dần dưới thanh trạng thái (khi trang không có thanh menu cố định)
         val fadeStart = Theme.fadeStart(isNight)
@@ -888,7 +938,7 @@ class MainActivity : ComponentActivity() {
 
         // --- WebView ---
         web = WebView(this)
-        web.setBackgroundColor(pageBg)
+        web.setBackgroundColor(Color.WHITE)
         val ws = web.settings
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
@@ -933,6 +983,7 @@ class MainActivity : ComponentActivity() {
         // Vuốt xuống thì ẩn thanh, vuốt lên thì hiện lại
         web.setOnScrollChangeListener { _, _, y, _, oldY ->
             val dy = y - oldY
+            scheduleTopColorSample(180L)
             if (urlBar.hasFocus()) return@setOnScrollChangeListener
             if (dy > 12) setBarHidden(true)
             else if (dy < -12 || y < 10) setBarHidden(false)
@@ -947,6 +998,20 @@ class MainActivity : ComponentActivity() {
         blurTarget = BlurTarget(this)
         blurTarget.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
+
+        // WebView đã được đẩy xuống dưới thanh trạng thái bằng topMargin (applyInsets).
+        // Nếu vẫn để nó nhận inset phía trên, Chromium sẽ báo env(safe-area-inset-top) > 0
+        // và trang (vd. Google) cộng thêm lần nữa => header bị lệch, nút 3 gạch nằm tít trên.
+        // Nên ở đây bỏ phần inset trên + cutout, giữ nguyên trái/phải/dưới.
+        ViewCompat.setOnApplyWindowInsetsListener(blurTarget) { v, insets ->
+            val sb = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val trimmed = WindowInsetsCompat.Builder(insets)
+                .setInsets(WindowInsetsCompat.Type.systemBars(), Insets.of(sb.left, 0, sb.right, sb.bottom))
+                .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.NONE)
+                .setDisplayCutout(null)
+                .build()
+            ViewCompat.onApplyWindowInsets(v, trimmed)
+        }
 
         // Nền kính của nút ba chấm phải lấy blur từ cùng BlurTarget như thanh địa chỉ/Orb.
         menuBtn.addView(
@@ -1109,40 +1174,34 @@ class MainActivity : ComponentActivity() {
         WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = lightBar
     }
 
-    // Đọc màu chủ đạo do website công bố; nếu không có thì dò nền thực của html/body.
-    // Đây chỉ là đọc metadata/CSS, không dò header hay sửa DOM của trang.
-    private fun refreshTopColorFromPage(view: WebView) {
-        val script = "(function(){" +
-            "function opaque(c){if(!c||c==='transparent')return false;var m=c.match(/rgba?\(([^)]+)\)/i);" +
-            "if(m){var a=m[1].split(',');if(a.length>3&&parseFloat(a[3])===0)return false;}return true;}" +
-            "function hex(c){var m=c.match(/rgba?\(([^)]+)\)/i);if(!m)return '';var a=m[1].split(',');" +
-            "if(a.length>3&&parseFloat(a[3])===0)return '';return '#'+a.slice(0,3).map(function(v){" +
-            "var n=Math.max(0,Math.min(255,parseInt(v,10)||0));return n.toString(16).padStart(2,'0');}).join('');}" +
-            "var meta=document.querySelector('meta[name=\"theme-color\"]');" +
-            "if(meta&&/^#[0-9a-f]{3,8}$/i.test(meta.content.trim()))return meta.content.trim();" +
-            "var nodes=[document.body,document.documentElement];for(var i=0;i<nodes.length;i++){" +
-            "if(!nodes[i])continue;var c=getComputedStyle(nodes[i]).backgroundColor;if(opaque(c)){var h=hex(c);if(h)return h;}}" +
-            "return '';})()"
-        view.evaluateJavascript(script) { value ->
-            if (isActivityDestroyed || view !== web || value == null || value == "null") return@evaluateJavascript
-            val raw = value.trim().removeSurrounding("\"").replace("\\\"", "\"")
-            if (raw.isBlank()) {
-                applyTopColor(null)
-                return@evaluateJavascript
-            }
-            try {
-                applyTopColor(Color.parseColor(raw))
-            } catch (_: IllegalArgumentException) {
-                applyTopColor(null)
-            }
-        }
-    }
-
     // Tô dải thanh trạng thái theo màu thanh menu của trang; null = dùng lớp mờ mặc định
     private fun applyTopColor(c: Int?) {
         if (c == solidTop) return
         solidTop = c
         updateTopFade()
+    }
+
+    // Đọc màu nền mép trên của trang rồi tô dải thanh trạng thái (không cần JS bridge).
+    private fun sampleTopColor() {
+        if (isActivityDestroyed || !::web.isInitialized) return
+        web.evaluateJavascript(TOP_COLOR_JS) { raw ->
+            if (isActivityDestroyed) return@evaluateJavascript
+            val txt = raw?.trim('"') ?: ""
+            val m = Regex("""rgb\((\d+),(\d+),(\d+)\)""").find(txt)
+            if (m == null) {
+                applyTopColor(null)
+            } else {
+                val (r, g, b) = m.destructured
+                applyTopColor(Color.rgb(r.toInt(), g.toInt(), b.toInt()))
+            }
+        }
+    }
+
+    private val topColorRunnable = Runnable { sampleTopColor() }
+
+    private fun scheduleTopColorSample(delayMs: Long = 150L) {
+        handler.removeCallbacks(topColorRunnable)
+        handler.postDelayed(topColorRunnable, delayMs)
     }
 
     // Keep bottom scroll space isolated. The old EDGE_JS top-header heuristics are removed.
