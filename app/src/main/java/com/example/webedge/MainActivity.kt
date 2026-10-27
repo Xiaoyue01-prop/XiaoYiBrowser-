@@ -1137,10 +1137,8 @@ class MainActivity : ComponentActivity() {
             maxOf(insetBottom, imeBottom) + dp(80)
 
         val webLp = web.layoutParams as FrameLayout.LayoutParams
-        // In edge mode, let WebView occupy the full window. Modern Android WebView
-        // forwards overlapping system-bar/cutout insets to CSS safe-area-inset-*;
-        // adding insetTop to the native frame as well can create a second top offset.
-        val desiredWebTopMargin = if (store.edgeMode) 0 else insetTop
+        // WebView luôn nằm dưới thanh trạng thái; inset trên được chặn ở blurTarget.
+        val desiredWebTopMargin = insetTop
         val topMarginChanged = webLp.topMargin != desiredWebTopMargin
         webLp.topMargin = desiredWebTopMargin
         webLp.bottomMargin = imeBottom
@@ -1154,27 +1152,18 @@ class MainActivity : ComponentActivity() {
         injectInsets()
     }
 
-    // Dải thanh trạng thái: tràn viền thì dùng lớp mờ (hoặc màu thanh menu của trang nếu có),
-    // không tràn viền thì luôn là màu đặc theo mép trên của trang
+    // Dải thanh trạng thái luôn là màu đặc theo mép trên của trang (giống Chrome)
     private fun updateTopFade() {
         val lp = topFade.layoutParams as FrameLayout.LayoutParams
-        val c = solidTop
-        val lightBar: Boolean
-        if (store.edgeMode && c == null) {
-            topFade.background = fadeDrawable
-            lp.height = insetTop
-            lightBar = !isNight
-        } else {
-            val col = c ?: pageBg
-            topFade.setBackgroundColor(col)
-            lp.height = insetTop
-            lightBar = ColorUtils.calculateLuminance(col) > 0.5
-        }
+        val col = solidTop ?: pageBg
+        topFade.setBackgroundColor(col)
+        lp.height = insetTop
         topFade.requestLayout()
-        WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = lightBar
+        WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars =
+            ColorUtils.calculateLuminance(col) > 0.5
     }
 
-    // Tô dải thanh trạng thái theo màu thanh menu của trang; null = dùng lớp mờ mặc định
+    // Tô dải thanh trạng thái theo màu thanh menu của trang; null = dùng màu nền mặc định (trắng)
     private fun applyTopColor(c: Int?) {
         if (c == solidTop) return
         solidTop = c
