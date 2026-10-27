@@ -131,6 +131,7 @@ private const val TOP_COLOR_JS = """
   try {
     var metas = document.querySelectorAll('meta[name="theme-color"]');
     var dark = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches;
+    var themeC = null;
     var pick = null;
     for (var i = 0; i < metas.length; i++) {
       var media = metas[i].getAttribute('media') || '';
@@ -144,7 +145,7 @@ private const val TOP_COLOR_JS = """
       document.documentElement.appendChild(d);
       var tc = opaque(getComputedStyle(d).color);
       d.remove();
-      if (tc) return tc;
+      if (tc) themeC = tc;
     }
     var xs = [window.innerWidth / 2, 4, window.innerWidth - 4];
     for (var k = 0; k < xs.length; k++) {
@@ -155,6 +156,7 @@ private const val TOP_COLOR_JS = """
         el = el.parentElement;
       }
     }
+    if (themeC) return themeC;
     var b = document.body ? opaque(getComputedStyle(document.body).backgroundColor) : null;
     if (b) return b;
     return opaque(getComputedStyle(document.documentElement).backgroundColor) || '';
@@ -1041,13 +1043,10 @@ class MainActivity : ComponentActivity() {
         // và trang (vd. Google) cộng thêm lần nữa => header bị lệch, nút 3 gạch nằm tít trên.
         // Nên ở đây bỏ phần inset trên + cutout, giữ nguyên trái/phải/dưới.
         ViewCompat.setOnApplyWindowInsetsListener(blurTarget) { v, insets ->
-            val sb = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            val trimmed = WindowInsetsCompat.Builder(insets)
-                .setInsets(WindowInsetsCompat.Type.systemBars(), Insets.of(sb.left, 0, sb.right, sb.bottom))
-                .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.NONE)
-                .setDisplayCutout(null)
-                .build()
-            ViewCompat.onApplyWindowInsets(v, trimmed)
+            ViewCompat.onApplyWindowInsets(v, trimTopInsets(insets))
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(web) { v, insets ->
+            ViewCompat.onApplyWindowInsets(v, trimTopInsets(insets))
         }
 
         // Nền kính của nút ba chấm phải lấy blur từ cùng BlurTarget như thanh địa chỉ/Orb.
@@ -1146,6 +1145,29 @@ class MainActivity : ComponentActivity() {
     }
 
     // ---------------- Insets / thanh trạng thái ----------------
+
+    // Cat inset phia tren o MOI bien the (WebView co the doc ban "ignoring visibility"/"stable"
+    // thay vi ban systemBars), de env(safe-area-inset-top) trong trang = 0.
+    @Suppress("DEPRECATION")
+    private fun trimTopInsets(insets: WindowInsetsCompat): WindowInsetsCompat {
+        val sb = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+        val sbi = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.systemBars())
+        return WindowInsetsCompat.Builder(insets)
+            .setInsets(WindowInsetsCompat.Type.systemBars(), Insets.of(sb.left, 0, sb.right, sb.bottom))
+            .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.NONE)
+            .setInsetsIgnoringVisibility(
+                WindowInsetsCompat.Type.systemBars(), Insets.of(sbi.left, 0, sbi.right, sbi.bottom)
+            )
+            .setInsetsIgnoringVisibility(WindowInsetsCompat.Type.statusBars(), Insets.NONE)
+            .setSystemWindowInsets(
+                Insets.of(insets.systemWindowInsetLeft, 0, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            )
+            .setStableInsets(
+                Insets.of(insets.stableInsetLeft, 0, insets.stableInsetRight, insets.stableInsetBottom)
+            )
+            .setDisplayCutout(null)
+            .build()
+    }
 
     private fun applyInsets() {
         val bottom = maxOf(insetBottom, imeBottom) + dp(10)
