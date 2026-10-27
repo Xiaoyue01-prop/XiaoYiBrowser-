@@ -1801,12 +1801,6 @@ class MainActivity : ComponentActivity() {
             web.reload()
             showSettings()
         }
-        addRow("Tràn viền nội dung (thử nghiệm)", onOff(store.edgeMode), fg) {
-            store.edgeMode = !store.edgeMode
-            applyInsets()
-            web.reload()
-            showSettings()
-        }
         addRow("Thu gọn thanh địa chỉ khi cuộn", onOff(store.autoHideBar), fg) {
             store.autoHideBar = !store.autoHideBar
             if (!store.autoHideBar) setBarHidden(false)
