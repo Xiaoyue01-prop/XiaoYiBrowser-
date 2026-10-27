@@ -78,6 +78,45 @@ import java.util.Locale
 private const val DESKTOP_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
+// Scrollable top safe area. Unlike a native WebView top margin, this spacer
+// belongs to the document flow, so the website header and page can scroll behind
+// the status bar without changing the WebView viewport height.
+private const val TOP_SPACER_JS = """
+(function(){
+  var root = document.documentElement;
+  var body = document.body;
+  if (!root || !body) return;
+  var height = __TOP_HEIGHT__;
+  var id = '__summit_top_safe_spacer';
+  function ensure(){
+    if (!document.body) return;
+    var el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      el.setAttribute('aria-hidden', 'true');
+      el.setAttribute('data-summit-internal', '1');
+      el.style.cssText = 'display:block!important;box-sizing:border-box!important;width:100%!important;min-height:0!important;height:' +
+        height + 'px!important;max-height:none!important;flex:0 0 auto!important;grid-column:1/-1!important;pointer-events:none!important;visibility:hidden!important;contain:strict!important;';
+      body.insertBefore(el, body.firstChild);
+    } else if (Math.abs((parseFloat(el.style.height) || 0) - height) > 0.5) {
+      el.style.setProperty('height', height + 'px', 'important');
+    }
+  }
+  ensure();
+  if (!window.__summitTopSpacerObserver) {
+    window.__summitTopSpacerObserver = new MutationObserver(function(){
+      if (!document.getElementById(id) && document.body) {
+        body = document.body;
+        ensure();
+      }
+    });
+    window.__summitTopSpacerObserver.observe(root, {childList:true, subtree:true});
+  }
+  window.addEventListener('resize', ensure, {passive:true});
+})();
+"""
+
 // Bottom-only compatibility helper. The old EDGE_JS header/color heuristics are removed.
 // Keep the proven bottom scroll extent isolated so it can be rebuilt independently.
 private const val BOTTOM_SPACER_JS = """
@@ -150,7 +189,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var pillProgress: PillProgress
     private lateinit var topFade: View
     private lateinit var bottomFade: View
-    private lateinit var fadeDrawable: GradientDrawable
     private lateinit var suggestBox: LinearLayout
     private lateinit var suggestBlurView: BlurView
     private lateinit var findBar: LinearLayout
@@ -671,12 +709,9 @@ class MainActivity : ComponentActivity() {
         val pageColor = Theme.pageColor(isNight)
         pageBg = Color.WHITE
 
-        // Top safe-area surface: solid like Chrome at scrollY=0, real BlurView glass while scrolling.
-        val fadeStart = Theme.fadeStart(isNight)
-        val fadeEnd = Theme.fadeEnd(isNight)
-        fadeDrawable = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(fadeStart, fadeEnd))
-        topFade = BlurView(this)
-        topFade.background = android.graphics.drawable.ColorDrawable(pageBg)
+        // Native status-bar safe area: solid like Chrome at page top; dim overlay while scrolling.
+        topFade = View(this)
+        topFade.setBackgroundColor(pageBg)
 
         val botStart = Color.argb(if (isNight) 90 else 40, 0, 0, 0)
         val botEnd = Color.argb(0, 0, 0, 0)
@@ -928,9 +963,10 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Keep the top safe area Chrome-like at the page top; switch to real glass
-        // as soon as content scrolls underneath it. Do not resize/reposition WebView.
+        // Vuốt xuống thì ẩn thanh, vuốt lên thì hiện lại
         web.setOnScrollChangeListener { _, _, y, _, oldY ->
+            // Status bar dimming follows the real WebView scroll position.
+            // This is a dark overlay, not a blur/glass surface.
             updateTopFade()
             val dy = y - oldY
             if (urlBar.hasFocus()) return@setOnScrollChangeListener
@@ -947,12 +983,6 @@ class MainActivity : ComponentActivity() {
         blurTarget = BlurTarget(this)
         blurTarget.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
-
-        // The status-bar glass samples the actual WebView pixels; its overlay is subtle,
-        // with no rounded clipping so it fills the full status-bar safe area.
-        (topFade as BlurView).setupWith(blurTarget)
-            .setBlurRadius(16f * d)
-            .setOverlayColor(if (isNight) Color.argb(38, 22, 22, 26) else Color.argb(28, 255, 255, 255))
 
         // Nền kính của nút ba chấm phải lấy blur từ cùng BlurTarget như thanh địa chỉ/Orb.
         menuBtn.addView(
@@ -1078,15 +1108,12 @@ class MainActivity : ComponentActivity() {
             maxOf(insetBottom, imeBottom) + dp(80)
 
         val webLp = web.layoutParams as FrameLayout.LayoutParams
-        // In edge mode, let WebView occupy the full window. Modern Android WebView
-        // forwards overlapping system-bar/cutout insets to CSS safe-area-inset-*;
-        // adding insetTop to the native frame as well can create a second top offset.
-        val desiredWebTopMargin = if (store.edgeMode) 0 else insetTop
-        val topMarginChanged = webLp.topMargin != desiredWebTopMargin
-        webLp.topMargin = desiredWebTopMargin
+        // Keep the WebView full-height so the page can physically scroll behind
+        // the status bar. At scrollY=0, a scrollable DOM spacer (injected below)
+        // places the website header beneath the safe area without resizing the viewport.
+        webLp.topMargin = 0
         webLp.bottomMargin = imeBottom
         web.layoutParams = webLp
-        if (topMarginChanged) ViewCompat.requestApplyInsets(web)
 
         updateTopFade()
         updateBarVisibility()
@@ -1095,27 +1122,22 @@ class MainActivity : ComponentActivity() {
         injectInsets()
     }
 
-    // Top safe area: solid/Chrome-like at the top of a page, real blur glass once scrolled.
-    // The WebView frame is never resized here, avoiding viewport jumps and preserving bottom UI.
+    // The top safe area is solid like Chrome at scrollY=0. Once page content
+    // moves behind the status bar, a dark translucent overlay improves clock/icon
+    // contrast. This intentionally does NOT blur the content.
     private fun updateTopFade() {
         val lp = topFade.layoutParams as FrameLayout.LayoutParams
-        val pageTopColor = solidTop ?: pageBg
-        val scrolled = ::web.isInitialized && web.scrollY > 0
-        val useGlass = store.edgeMode && scrolled
-        val lightBar: Boolean
-
-        if (useGlass) {
-            topFade.background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
-            (topFade as? BlurView)?.setOverlayColor(
-                if (isNight) Color.argb(38, 22, 22, 26) else Color.argb(28, 255, 255, 255)
-            )
-            // Keep status glyph contrast consistent with the app's selected appearance.
-            lightBar = !isNight
-        } else {
-            topFade.background = android.graphics.drawable.ColorDrawable(pageTopColor)
-            lightBar = ColorUtils.calculateLuminance(pageTopColor) > 0.5
-        }
         lp.height = insetTop
+        val scrolled = ::web.isInitialized && web.scrollY > 0
+        val lightBar: Boolean
+        if (scrolled) {
+            topFade.setBackgroundColor(Color.argb(92, 0, 0, 0))
+            lightBar = false // white status icons over the dimmed content
+        } else {
+            val col = solidTop ?: pageBg
+            topFade.setBackgroundColor(col)
+            lightBar = ColorUtils.calculateLuminance(col) > 0.5
+        }
         topFade.layoutParams = lp
         topFade.requestLayout()
         WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = lightBar
@@ -1130,10 +1152,15 @@ class MainActivity : ComponentActivity() {
 
     // Keep bottom scroll space isolated. The old EDGE_JS top-header heuristics are removed.
     private fun injectInsets() {
+        val topCss = (insetTop / d).toInt().coerceAtLeast(0)
         val bottomCss = (insetBottom / d).toInt()
         val css = "(function(){var r=document.documentElement;if(!r)return;" +
+            "r.style.setProperty('--summit-safe-area-top','${topCss}px');" +
             "r.style.setProperty('--summit-safe-area-bottom','${bottomCss}px');})();"
         web.evaluateJavascript(css, null)
+        // This spacer is part of the document's scrollable content: at the top it
+        // reserves the safe area, and during scroll it moves away with the page.
+        web.evaluateJavascript(TOP_SPACER_JS.replace("__TOP_HEIGHT__", topCss.toString()), null)
         web.evaluateJavascript(BOTTOM_SPACER_JS, null)
     }
 
@@ -1812,12 +1839,6 @@ class MainActivity : ComponentActivity() {
         addRow("Trang web máy tính", onOff(store.desktopMode), fg) {
             store.desktopMode = !store.desktopMode
             applyDesktopMode()
-            web.reload()
-            showSettings()
-        }
-        addRow("Tràn viền nội dung (thử nghiệm)", onOff(store.edgeMode), fg) {
-            store.edgeMode = !store.edgeMode
-            applyInsets()
             web.reload()
             showSettings()
         }

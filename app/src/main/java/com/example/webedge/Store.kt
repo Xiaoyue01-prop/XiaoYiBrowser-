@@ -22,9 +22,11 @@ class Store(context: Context) {
         get() = sp.getBoolean("desktop", false)
         set(v) { sp.edit().putBoolean("desktop", v).apply() }
 
+    // Safe baseline: experimental content edge-to-edge is disabled.
+    // Keep the property temporarily so older call sites remain source-compatible.
     var edgeMode: Boolean
-        get() = sp.getBoolean("edge", true)
-        set(v) { sp.edit().putBoolean("edge", v).apply() }
+        get() = false
+        set(@Suppress("UNUSED_PARAMETER") v) { sp.edit().putBoolean("edge", false).apply() }
 
     var autoHideBar: Boolean
         get() = sp.getBoolean("autohide", true)
