@@ -522,6 +522,7 @@ fullscreenContainer.removeAllViews()
 fullscreenContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
 fullscreenContainer.visibility = View.VISIBLE
 fullscreenContainer.bringToFront()
+orbController?.setTemporarilyHidden(true)
 WindowInsetsControllerCompat(window, root).hide(WindowInsetsCompat.Type.systemBars())
 }
 
@@ -539,6 +540,7 @@ previousRequestedOrientation = null
 if (!isActivityDestroyed && !isFinishing && !isDestroyed && ::root.isInitialized) {
 WindowInsetsControllerCompat(window, root).show(WindowInsetsCompat.Type.systemBars())
 }
+syncOrbMenuVisibility()
 callback?.onCustomViewHidden()
 }
 

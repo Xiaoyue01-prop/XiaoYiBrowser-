@@ -1,10 +1,15 @@
 ======================================================================
 SUMMIT BROWSER - CODE DUMP
-Thoi gian: 2026-10-27 19:07:54
-3 commit gan nhat:
-b0597b1 Improve header scroll stability
-2f7e2c9 Fix fixed header scrolling through status bar
-08e3ea2 Fix top safe area scrolling
+Thoi gian: 2026-10-27 21:39:59
+Branch hien tai: summit-rebuild
+6 commit gan nhat:
+59ceaf9 C4: quyen camera/mic/GPS co hop thoai + popup window.open isolated
+a0bbd99 C3: fullscreen video + xoay ngang (YouTube, Netflix, etc)
+61f66ec C2: tuong thich WebView - scheme la, cookie, mixed content, error toast, UA
+4a92ea1 C1: Manifest - quyen camera/mic/GPS + cleartext + hardwareAccelerated
+b0934d7 Apply Liquid Glass to address suggestions
+dbe2843 Rollback to Summit v1.1 source
+Working tree: SACH (khong con thay doi cho commit)
 ======================================================================
 ======================================================================
 FILE: app/src/main/java/com/example/webedge/GlassDrawables.kt
@@ -240,13 +245,13 @@ import android.webkit.PermissionRequest
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebStorage
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
-import android.webkit.WebStorage
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -261,8 +266,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.WindowInsetsCompat
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 import org.json.JSONArray
@@ -274,163 +279,105 @@ import java.util.Locale
 private const val DESKTOP_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-// Scrollable top safe area. Unlike a native WebView top margin, this spacer
-// belongs to the document flow, so the website header and page can scroll behind
-// the status bar without changing the WebView viewport height.
-private const val TOP_SPACER_JS = """
+// Script chạy trong trang. Chế độ tràn viền: đẩy thanh menu cố định ở đầu trang xuống dưới thanh trạng thái
+// (hoặc chừa chỗ cho lớp phủ toàn màn hình) và báo màu thanh đó về app để tô dải thanh trạng thái.
+// Chế độ thường: chỉ đọc màu mép trên của trang.
+private const val EDGE_JS = """
 (function(){
-  var root = document.documentElement;
-  if (!root) return;
-  var height = __TOP_HEIGHT__;
-  var id = '__summit_top_safe_spacer';
-  function ensure(){
-    var body = document.body;
-    if (!body || !root) return;
-    var el = document.getElementById(id);
-    if (!el) {
-      el = document.createElement('div');
-      el.id = id;
-      el.setAttribute('aria-hidden', 'true');
-      el.setAttribute('data-summit-internal', '1');
+  window.__edgeInset = %INSET%;
+  window.__edgeMode = %MODE%;
+  if (window.__edgeStarted) { if (window.__edgeRun) window.__edgeRun(); return; }
+  window.__edgeStarted = true;
+  var last = '';
+  function rgbOf(c){
+    var m = c && c.match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    var p = m[1].split(',').map(function(x){ return parseFloat(x); });
+    var a = p.length > 3 ? p[3] : 1;
+    if (a < 0.85) return null;
+    return p;
+  }
+  function bgOf(el){ return rgbOf(getComputedStyle(el).backgroundColor); }
+  function pinned(el){
+    while (el && el !== document.documentElement && el !== document.body) {
+      var s = getComputedStyle(el).position;
+      if (s === 'fixed' || s === 'sticky') return el;
+      el = el.parentElement;
     }
-    // Keep the safe-area spacer OUTSIDE body so site-specific body flex/grid,
-    // transforms, and positioning cannot swallow it. It remains in document
-    // flow, so normal page scrolling carries it away with the page content.
-    el.style.cssText = 'display:block!important;position:relative!important;box-sizing:border-box!important;width:100%!important;margin:0!important;padding:0!important;border:0!important;min-height:0!important;height:' +
-      height + 'px!important;max-height:none!important;flex:none!important;grid-column:1/-1!important;align-self:stretch!important;pointer-events:none!important;visibility:hidden!important;';
-    if (el.parentNode !== root || el.nextElementSibling !== body) {
-      root.insertBefore(el, body);
+    return null;
+  }
+  function climb(el){
+    for (; el; el = el.parentElement) { var c = bgOf(el); if (c) return c; }
+    return null;
+  }
+  function report(v){
+    if (v === last) return;
+    last = v;
+    try {
+      if (v === 'none') { EdgeBridge.clearTopColor(); }
+      else { var p = v.split(','); EdgeBridge.setTopColor(Math.round(+p[0]), Math.round(+p[1]), Math.round(+p[2])); }
+    } catch (e) {}
+  }
+  function runTop(){
+    if (!document.elementsFromPoint) return;
+    var w = window.innerWidth, color = null;
+    var stack = document.elementsFromPoint(w * 0.5, 2);
+    for (var j = 0; j < stack.length && !color; j++) {
+      if (pinned(stack[j])) { color = climb(stack[j]); }
     }
+    if (!color) {
+      if ((window.scrollY || 0) > 2) { return; }
+      color = stack.length ? climb(stack[0]) : null;
+    }
+    if (!color) { color = climb(document.body) || climb(document.documentElement); }
+    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
   }
-  ensure();
-  if (!window.__summitTopSpacerObserver) {
-    window.__summitTopSpacerObserver = new MutationObserver(function(){ ensure(); });
-    window.__summitTopSpacerObserver.observe(root, {childList:true, subtree:true});
-  }
-  window.addEventListener('resize', ensure, {passive:true});
-})();
-"""
-
-// Narrow fix for site headers that are fixed/sticky at the top: let them scroll
-// upward and pass behind the status bar instead of remaining pinned forever.
-// This does not inspect or change page colors and does not restore the old EDGE_JS.
-private const val HEADER_SCROLL_THROUGH_JS = """
-(function(){
-  if (window.__summitHeaderScrollThrough) return;
-  window.__summitHeaderScrollThrough = true;
-  var attr = 'data-summit-header-scroll-through';
-  var styleId = '__summit_header_scroll_through_style';
-  var style = document.getElementById(styleId);
-  if (!style) {
-    style = document.createElement('style');
-    style.id = styleId;
-    style.textContent = '[' + attr + '="1"]{transform:translate3d(0,var(--summit-header-scroll-offset,0px),0) var(--summit-header-scroll-original-transform,matrix(1,0,0,1,0,0))!important;}';
-    (document.head || document.documentElement).appendChild(style);
-  }
-  var tracked = new Set();
-  var ticking = false;
-  function findHeaders(){
-    var root = document.documentElement;
-    if (!root) return;
-    var w = Math.max(root.clientWidth || 0, window.innerWidth || 0);
-    var h = Math.max(root.clientHeight || 0, window.innerHeight || 0);
-    var safeTop = parseFloat(getComputedStyle(root).getPropertyValue('--summit-safe-area-top')) || 0;
-    var nodes = document.querySelectorAll('header,nav,[role="banner"],[role="navigation"],body *');
-    for (var i=0; i<nodes.length; i++) {
-      var el = nodes[i];
-      if (!el || el.id === '__summit_top_safe_spacer' || el.id === '__summit_edge_bottom_spacer' || el.hasAttribute('data-summit-internal')) continue;
-      if (el.hasAttribute(attr)) { tracked.add(el); continue; }
-      var cs = getComputedStyle(el);
-      if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
-      var r = el.getBoundingClientRect();
-      // Allow taller stacked headers (for example, news sites with several ad bars).
-      if (r.width < w * 0.52 || r.height < 26 || r.height > h * 0.62) continue;
-      if (r.top > safeTop + 120 || r.bottom < 0) continue;
-      // Mark only the outermost qualifying header to avoid applying the offset twice.
-      var ancestor = el.parentElement, nested = false;
-      while (ancestor && ancestor !== document.body && ancestor !== root) {
-        if (ancestor.hasAttribute(attr)) { nested = true; break; }
-        var aps = getComputedStyle(ancestor).position;
-        if (aps === 'fixed' || aps === 'sticky') {
-          var ar = ancestor.getBoundingClientRect();
-          if (ar.width >= w * 0.52 && ar.height >= 26 && ar.height <= h * 0.62 && ar.top <= safeTop + 120) { nested = true; break; }
+  function runEdge(){
+    var I = window.__edgeInset || 0;
+    if (!I || !document.elementsFromPoint) return;
+    var y = I + 2, w = window.innerWidth, hit = null, big = false, color = null;
+    var xs = [0.5, 0.15, 0.85];
+    for (var i = 0; i < xs.length && !hit; i++) {
+      var stack = document.elementsFromPoint(w * xs[i], y);
+      for (var j = 0; j < stack.length && !hit; j++) {
+        var f = pinned(stack[j]);
+        if (!f) continue;
+        var r = f.getBoundingClientRect();
+        if (r.top <= y && r.width > w * 0.6) {
+          hit = f;
+          big = r.height >= window.innerHeight * 0.45;
+          color = climb(stack[j]);
         }
-        ancestor = ancestor.parentElement;
       }
-      if (nested) continue;
-      el.setAttribute(attr, '1');
-      // Preserve the site's existing transform; the scroll offset is composed in front of it.
-      el.style.setProperty('--summit-header-scroll-original-transform', cs.transform === 'none' ? 'matrix(1,0,0,1,0,0)' : cs.transform);
-      tracked.add(el);
     }
-  }
-  function update(){
-    ticking = false;
-    findHeaders();
-    var scrolling = document.scrollingElement || document.documentElement;
-    var y = Math.max(0, window.scrollY || (scrolling && scrolling.scrollTop) || document.documentElement.scrollTop || 0);
-    tracked.forEach(function(el){
-      if (!el || !el.isConnected) { tracked.delete(el); return; }
-      var rect = el.getBoundingClientRect();
-      var height = rect.height || el.offsetHeight || 0;
-      // Move the top bar out of view as the document scrolls, including tall stacked bars.
-      var offset = -Math.min(y, height + 8);
-      el.style.setProperty('--summit-header-scroll-offset', offset + 'px');
-    });
-  }
-  function schedule(){ if (!ticking) { ticking = true; requestAnimationFrame(update); } }
-  window.addEventListener('scroll', schedule, {passive:true});
-  window.addEventListener('resize', schedule, {passive:true});
-  window.addEventListener('load', schedule, {once:true});
-  window.addEventListener('pageshow', schedule, {passive:true});
-  if (window.MutationObserver && document.documentElement) {
-    var observer = new MutationObserver(function(records){
-      // Ignore style writes made by this patch itself, but rescan when pages add
-      // banners or change class/position after asynchronous loading.
-      for (var i=0; i<records.length; i++) {
-        var m = records[i];
-        if (m.type === 'childList') { schedule(); return; }
-        if (m.type === 'attributes' && m.target && !m.target.hasAttribute(attr)) { schedule(); return; }
+    if (!hit) { report('none'); return; }
+    if (big) {
+      if (!hit.getAttribute('data-edge-pad')) {
+        hit.setAttribute('data-edge-pad', '1');
+        var cs = getComputedStyle(hit);
+        hit.style.setProperty('box-sizing', 'border-box', 'important');
+        hit.style.setProperty('padding-top', ((parseFloat(cs.paddingTop) || 0) + I) + 'px', 'important');
       }
-    });
-    observer.observe(document.documentElement, {childList:true, subtree:true, attributes:true, attributeFilter:['class','style','role','aria-label']});
-  }
-  schedule();
-})();
-"""
-
-// Bottom-only compatibility helper. The old EDGE_JS header/color heuristics are removed.
-// Keep the proven bottom scroll extent isolated so it can be rebuilt independently.
-private const val BOTTOM_SPACER_JS = """
-(function(){
-  var root = document.documentElement;
-  if (!root) return;
-  var bottomInset = parseFloat(getComputedStyle(root).getPropertyValue('--summit-safe-area-bottom')) || 0;
-  var height = bottomInset + 54;
-  var id = '__summit_edge_bottom_spacer';
-  function ensure(){
-    if (!document.body) return;
-    var el = document.getElementById(id);
-    if (!el) {
-      el = document.createElement('div');
-      el.id = id;
-      el.setAttribute('aria-hidden', 'true');
-      el.setAttribute('data-summit-internal', '1');
-      el.style.cssText = 'display:block!important;box-sizing:border-box!important;width:100%!important;min-height:0!important;height:' +
-        height + 'px!important;max-height:none!important;flex:none!important;grid-column:1/-1!important;pointer-events:none!important;visibility:hidden!important;contain:strict!important;';
-      document.body.appendChild(el);
-    } else if (Math.abs((parseFloat(el.style.height) || 0) - height) > 0.5) {
-      el.style.setProperty('height', height + 'px', 'important');
+    } else {
+      var top = parseFloat(getComputedStyle(hit).top);
+      if (!isNaN(top) && top < I - 0.5) { hit.style.setProperty('top', I + 'px', 'important'); }
     }
+    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
   }
-  ensure();
-  if (!window.__summitBottomSpacerObserver) {
-    window.__summitBottomSpacerObserver = new MutationObserver(function(){
-      if (!document.getElementById(id)) ensure();
-    });
-    window.__summitBottomSpacerObserver.observe(root, {childList:true, subtree:true});
-  }
-  window.addEventListener('resize', ensure, {passive:true});
+  function run(){ if (window.__edgeMode) { runEdge(); } else { runTop(); } }
+  var t = null;
+  function sched(){ if (t) return; t = setTimeout(function(){ t = null; run(); }, 180); }
+  window.__edgeRun = run;
+  window.addEventListener('scroll', sched, {passive: true});
+  window.addEventListener('resize', sched);
+  try {
+    new MutationObserver(sched).observe(document.documentElement,
+      {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style']});
+  } catch (e) {}
+  setTimeout(run, 100);
+  setTimeout(run, 800);
+  setTimeout(run, 2000);
+  run();
 })();
 """
 
@@ -470,8 +417,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var urlPill: LinearLayout
     private lateinit var pillProgress: PillProgress
     private lateinit var topFade: View
-    private lateinit var fadeDrawable: GradientDrawable
     private lateinit var bottomFade: View
+    private lateinit var fadeDrawable: GradientDrawable
     private lateinit var suggestBox: LinearLayout
     private lateinit var suggestBlurView: BlurView
     private lateinit var findBar: LinearLayout
@@ -516,281 +463,194 @@ class MainActivity : ComponentActivity() {
         pendingFileCallback = null
     }
 
-    private val webPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ -> finishWebPermissionRequest() }
-
-    private val geoPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ -> finishGeoPermissionRequest() }
-
-
-    /**
-     * Handle only non-web schemes. Normal HTTP(S) navigation remains inside WebView.
-     * For intent:// links, only a safe HTTP(S) browser fallback is loaded when no app handles it.
-     */
-    private fun handleSpecialUrl(url: String, fallbackView: WebView = web): Boolean {
-        val uri = try { Uri.parse(url) } catch (_: Exception) { return false }
-        val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
-        if (scheme in setOf("http", "https", "about", "javascript", "data", "blob", "file")) {
-            return false
+    inner class Bridge {
+        @JavascriptInterface
+        fun setTopColor(r: Int, g: Int, b: Int) {
+            runOnUiThread { applyTopColor(Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))) }
         }
 
-        return try {
-            val intent = if (scheme == "intent") {
-                Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
-            } else {
-                Intent(Intent.ACTION_VIEW, uri)
-            }
-            // Do not let a page choose an explicit internal component.
-            intent.component = null
-            intent.addCategory(Intent.CATEGORY_BROWSABLE)
-
-            val fallback = intent.getStringExtra("browser_fallback_url")?.let {
-                val fallbackUri = runCatching { Uri.parse(it) }.getOrNull()
-                if (fallbackUri?.scheme.equals("https", ignoreCase = true) ||
-                    fallbackUri?.scheme.equals("http", ignoreCase = true)) it else null
-            }
-            when {
-                intent.resolveActivity(packageManager) != null -> {
-                    startActivity(intent)
-                    true
-                }
-                !fallback.isNullOrBlank() -> {
-                    fallbackView.loadUrl(fallback)
-                    true
-                }
-                else -> {
-                    toast("Không tìm thấy ứng dụng để mở liên kết này")
-                    true
-                }
-            }
-        } catch (_: Exception) {
-            toast("Không thể mở liên kết bên ngoài")
-            true
+        @JavascriptInterface
+        fun clearTopColor() {
+            runOnUiThread { applyTopColor(null) }
         }
     }
 
-    private fun hasRuntimePermission(permission: String): Boolean =
+                private val webPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+        ) { _ -> finishWebPermissionRequest() }
+        private val geoPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+        ) { _ -> finishGeoPermissionRequest() }
+        private fun hasRuntimePermission(permission: String): Boolean =
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
-
-    private fun requestWebPermissions(request: PermissionRequest) {
+        private fun requestWebPermissions(request: PermissionRequest) {
         if (isActivityDestroyed) {
-            request.deny()
-            return
+        request.deny()
+        return
         }
         val supported = request.resources.filter {
-            it == PermissionRequest.RESOURCE_VIDEO_CAPTURE ||
-                it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
+        it == PermissionRequest.RESOURCE_VIDEO_CAPTURE ||
+        it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
         }.toTypedArray()
         if (supported.isEmpty()) {
-            request.deny()
-            return
+        request.deny()
+        return
         }
         pendingWebPermissionRequest?.let { previous ->
-            if (previous !== request) previous.deny()
+        if (previous !== request) previous.deny()
         }
         pendingWebPermissionRequest = request
         pendingWebPermissionResources = supported
-
         val requestedLabels = buildList {
-            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in supported) add("camera")
-            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in supported) add("micro")
+        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in supported) add("camera")
+        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in supported) add("micro")
         }.joinToString(" và ")
         val origin = request.origin.host ?: request.origin.toString()
         AlertDialog.Builder(this)
-            .setTitle("Quyền trang web")
-            .setMessage("$origin muốn sử dụng $requestedLabels. Chỉ cho phép nếu bạn tin tưởng trang này.")
-            .setNegativeButton("Từ chối") { _, _ -> denyPendingWebPermission() }
-            .setPositiveButton("Cho phép") { _, _ ->
-                val missing = mutableListOf<String>()
-                if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in supported &&
-                    !hasRuntimePermission(Manifest.permission.CAMERA)) {
-                    missing.add(Manifest.permission.CAMERA)
-                }
-                if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in supported &&
-                    !hasRuntimePermission(Manifest.permission.RECORD_AUDIO)) {
-                    missing.add(Manifest.permission.RECORD_AUDIO)
-                }
-                if (missing.isEmpty()) finishWebPermissionRequest()
-                else webPermissionLauncher.launch(missing.toTypedArray())
-            }
-            .setOnCancelListener { denyPendingWebPermission() }
-            .show()
-    }
-
-    private fun finishWebPermissionRequest() {
+        .setTitle("Quyền trang web")
+        .setMessage("$origin muốn sử dụng $requestedLabels. Chỉ cho phép nếu bạn tin tưởng trang này.")
+        .setNegativeButton("Từ chối") { _, _ -> denyPendingWebPermission() }
+        .setPositiveButton("Cho phép") { _, _ ->
+        val missing = mutableListOf<String>()
+        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in supported &&
+        !hasRuntimePermission(Manifest.permission.CAMERA)) {
+        missing.add(Manifest.permission.CAMERA)
+        }
+        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in supported &&
+        !hasRuntimePermission(Manifest.permission.RECORD_AUDIO)) {
+        missing.add(Manifest.permission.RECORD_AUDIO)
+        }
+        if (missing.isEmpty()) finishWebPermissionRequest()
+        else webPermissionLauncher.launch(missing.toTypedArray())
+        }
+        .setOnCancelListener { denyPendingWebPermission() }
+        .show()
+        }
+        private fun finishWebPermissionRequest() {
         val request = pendingWebPermissionRequest ?: return
         val resources = pendingWebPermissionResources
         pendingWebPermissionRequest = null
         pendingWebPermissionResources = emptyArray()
         val allowed = resources.filter {
-            when (it) {
-                PermissionRequest.RESOURCE_VIDEO_CAPTURE -> hasRuntimePermission(Manifest.permission.CAMERA)
-                PermissionRequest.RESOURCE_AUDIO_CAPTURE -> hasRuntimePermission(Manifest.permission.RECORD_AUDIO)
-                else -> false
-            }
+        when (it) {
+        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> hasRuntimePermission(Manifest.permission.CAMERA)
+        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> hasRuntimePermission(Manifest.permission.RECORD_AUDIO)
+        else -> false
+        }
         }.toTypedArray()
         runCatching {
-            if (allowed.isEmpty()) request.deny() else request.grant(allowed)
+        if (allowed.isEmpty()) request.deny() else request.grant(allowed)
         }
-    }
-
-    private fun denyPendingWebPermission() {
+        }
+        private fun denyPendingWebPermission() {
         val request = pendingWebPermissionRequest ?: return
         pendingWebPermissionRequest = null
         pendingWebPermissionResources = emptyArray()
         runCatching { request.deny() }
-    }
-
-    private fun requestWebGeolocation(origin: String, callback: GeolocationPermissions.Callback) {
+        }
+        private fun requestWebGeolocation(origin: String, callback: GeolocationPermissions.Callback) {
         if (isActivityDestroyed) {
-            callback.invoke(origin, false, false)
-            return
+        callback.invoke(origin, false, false)
+        return
         }
         val host = runCatching { Uri.parse(origin).host }.getOrNull() ?: origin
         AlertDialog.Builder(this)
-            .setTitle("Vị trí của bạn")
-            .setMessage("$host muốn truy cập vị trí của bạn. Vị trí chỉ được cấp cho yêu cầu này.")
-            .setNegativeButton("Từ chối") { _, _ -> callback.invoke(origin, false, false) }
-            .setPositiveButton("Cho phép") { _, _ ->
-                pendingGeoOrigin = origin
-                pendingGeoCallback = callback
-                val missing = listOf(
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                ).filterNot(::hasRuntimePermission)
-                if (missing.isEmpty()) finishGeoPermissionRequest()
-                else geoPermissionLauncher.launch(missing.toTypedArray())
-            }
-            .setOnCancelListener { callback.invoke(origin, false, false) }
-            .show()
-    }
-
-    private fun finishGeoPermissionRequest() {
+        .setTitle("Vị trí của bạn")
+        .setMessage("$host muốn truy cập vị trí của bạn. Vị trí chỉ được cấp cho yêu cầu này.")
+        .setNegativeButton("Từ chối") { _, _ -> callback.invoke(origin, false, false) }
+        .setPositiveButton("Cho phép") { _, _ ->
+        pendingGeoOrigin = origin
+        pendingGeoCallback = callback
+        val missing = listOf(
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.ACCESS_FINE_LOCATION
+        ).filterNot(::hasRuntimePermission)
+        if (missing.isEmpty()) finishGeoPermissionRequest()
+        else geoPermissionLauncher.launch(missing.toTypedArray())
+        }
+        .setOnCancelListener { callback.invoke(origin, false, false) }
+        .show()
+        }
+        private fun finishGeoPermissionRequest() {
         val origin = pendingGeoOrigin ?: return
         val callback = pendingGeoCallback
         pendingGeoOrigin = null
         pendingGeoCallback = null
         val allowed = hasRuntimePermission(Manifest.permission.ACCESS_FINE_LOCATION) ||
-            hasRuntimePermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+        hasRuntimePermission(Manifest.permission.ACCESS_COARSE_LOCATION)
         callback?.invoke(origin, allowed, false)
-    }
-
-    private fun showFullscreenView(
-        view: View,
-        callback: WebChromeClient.CustomViewCallback,
-        requestedOrientationValue: Int? = null
-    ) {
-        if (!::fullscreenContainer.isInitialized || customVideoView != null) {
-            callback.onCustomViewHidden()
-            return
         }
-        customVideoView = view
-        customVideoCallback = callback
-        previousRequestedOrientation = requestedOrientation
-        requestedOrientationValue?.let {
-            if (it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) requestedOrientation = it
-        }
-        (view.parent as? ViewGroup)?.removeView(view)
-        fullscreenContainer.removeAllViews()
-        fullscreenContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
-        fullscreenContainer.visibility = View.VISIBLE
-        WindowInsetsControllerCompat(window, root).hide(WindowInsetsCompat.Type.systemBars())
-    }
-
-    private fun exitFullscreenView() {
-        val view = customVideoView ?: return
-        if (::fullscreenContainer.isInitialized) {
-            fullscreenContainer.removeView(view)
-            fullscreenContainer.visibility = View.GONE
-        }
-        customVideoView = null
-        val callback = customVideoCallback
-        customVideoCallback = null
-        previousRequestedOrientation?.let { requestedOrientation = it }
-        previousRequestedOrientation = null
-        if (!isActivityDestroyed && !isFinishing && !isDestroyed && ::root.isInitialized) {
-            WindowInsetsControllerCompat(window, root).show(WindowInsetsCompat.Type.systemBars())
-            applyInsets()
-        }
-        callback?.onCustomViewHidden()
-    }
-
-    private fun createPopupWindow(resultMsg: Message?): Boolean {
-        if (popupWebView != null) return false // One isolated popup at a time.
+        private fun createPopupWindow(resultMsg: Message?): Boolean {
+        if (popupWebView != null) return false
         val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
         val popup = WebView(this)
         popup.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            databaseEnabled = true
-            javaScriptCanOpenWindowsAutomatically = true
-            setSupportMultipleWindows(true)
-            mediaPlaybackRequiresUserGesture = false
-            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-            userAgentString = web.settings.userAgentString
-            useWideViewPort = web.settings.useWideViewPort
-            loadWithOverviewMode = web.settings.loadWithOverviewMode
+        javaScriptEnabled = true
+        domStorageEnabled = true
+        databaseEnabled = true
+        javaScriptCanOpenWindowsAutomatically = true
+        setSupportMultipleWindows(true)
+        mediaPlaybackRequiresUserGesture = false
+        mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        userAgentString = web.settings.userAgentString
+        useWideViewPort = web.settings.useWideViewPort
+        loadWithOverviewMode = web.settings.loadWithOverviewMode
         }
         CookieManager.getInstance().apply {
-            setAcceptCookie(true)
-            setAcceptThirdPartyCookies(popup, true)
+        setAcceptCookie(true)
+        setAcceptThirdPartyCookies(popup, true)
         }
         popup.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                if (!request.isForMainFrame) return false
-                return handleSpecialUrl(request.url.toString(), view)
-            }
-
-            @Deprecated("Deprecated in Java")
-            override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
-                handleSpecialUrl(url, view)
-
-            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame) toast("Không tải được cửa sổ đăng nhập (${error.errorCode})")
-            }
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+        if (!request.isForMainFrame) return false
+        return handleSpecialUrl(request.url.toString(), view)
+        }
+        @Deprecated("Deprecated in Java")
+        override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
+        handleSpecialUrl(url, view)
+        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+        if (request.isForMainFrame) toast("Không tải được cửa sổ đăng nhập (${error.errorCode})")
+        }
         }
         popup.webChromeClient = chromeClient
-
         val dialog = Dialog(this)
         val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(Color.WHITE)
         }
         val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.rgb(245, 245, 247))
-            setPadding(dp(16), 0, dp(12), 0)
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setBackgroundColor(Color.rgb(245, 245, 247))
+        setPadding(dp(16), 0, dp(12), 0)
         }
         val title = TextView(this).apply {
-            text = "Cửa sổ mới"
-            textSize = 14f
-            setTextColor(Color.BLACK)
+        text = "Cửa sổ mới"
+        textSize = 14f
+        setTextColor(Color.BLACK)
         }
         header.addView(title, LinearLayout.LayoutParams(0, dp(44), 1f))
         val close = TextView(this).apply {
-            text = "✕"
-            textSize = 18f
-            gravity = Gravity.CENTER
-            setTextColor(Color.BLACK)
-            setOnClickListener { dialog.dismiss() }
+        text = "✕"
+        textSize = 18f
+        gravity = Gravity.CENTER
+        setTextColor(Color.BLACK)
+        setOnClickListener { dialog.dismiss() }
         }
         header.addView(close, LinearLayout.LayoutParams(dp(44), dp(44)))
         content.addView(header, LinearLayout.LayoutParams(-1, dp(44)))
         content.addView(popup, LinearLayout.LayoutParams(-1, 0, 1f))
         dialog.setContentView(content)
         dialog.setOnDismissListener {
-            if (popupWebView === popup) {
-                popup.stopLoading()
-                (popup.parent as? ViewGroup)?.removeView(popup)
-                popup.webChromeClient = WebChromeClient()
-                popup.webViewClient = WebViewClient()
-                popup.destroy()
-                popupWebView = null
-                popupDialog = null
-            }
+        if (popupWebView === popup) {
+        popup.stopLoading()
+        (popup.parent as? ViewGroup)?.removeView(popup)
+        popup.webChromeClient = WebChromeClient()
+        popup.webViewClient = WebViewClient()
+        popup.destroy()
+        popupWebView = null
+        popupDialog = null
+        }
         }
         popupWebView = popup
         popupDialog = dialog
@@ -799,34 +659,109 @@ class MainActivity : ComponentActivity() {
         transport.webView = popup
         resultMsg?.sendToTarget()
         return true
-    }
-
-    private fun closePopupWindow() {
+        }
+        private fun closePopupWindow() {
         popupDialog?.dismiss()
+        }
+
+
+private fun handleSpecialUrl(url: String, fallbackView: WebView = web): Boolean {
+    val uri = try { Uri.parse(url) } catch (_: Exception) { return false }
+    val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
+    if (scheme in setOf("http", "https", "about", "javascript", "data", "blob", "file")) {
+    return false
     }
+    return try {
+    val intent = if (scheme == "intent") {
+    Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+    } else {
+    Intent(Intent.ACTION_VIEW, uri)
+    }
+    intent.component = null
+    intent.addCategory(Intent.CATEGORY_BROWSABLE)
+    val fallback = intent.getStringExtra("browser_fallback_url")?.let {
+    val fallbackUri = runCatching { Uri.parse(it) }.getOrNull()
+    if (fallbackUri?.scheme.equals("https", ignoreCase = true) ||
+    fallbackUri?.scheme.equals("http", ignoreCase = true)) it else null
+    }
+    when {
+    intent.resolveActivity(packageManager) != null -> {
+    startActivity(intent)
+    true
+    }
+    !fallback.isNullOrBlank() -> {
+    fallbackView.loadUrl(fallback)
+    true
+    }
+    else -> {
+    toast("Không tìm thấy ứng dụng để mở liên kết này")
+    true
+    }
+    }
+    } catch (_: Exception) {
+    toast("Không thể mở liên kết bên ngoài")
+    true
+    }
+    }
+private fun showFullscreenView(
+view: View,
+callback: WebChromeClient.CustomViewCallback,
+requestedOrientationValue: Int? = null
+) {
+if (!::fullscreenContainer.isInitialized || customVideoView != null) {
+callback.onCustomViewHidden()
+return
+}
+customVideoView = view
+customVideoCallback = callback
+previousRequestedOrientation = requestedOrientation
+requestedOrientationValue?.let {
+if (it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) requestedOrientation = it
+}
+(view.parent as? ViewGroup)?.removeView(view)
+fullscreenContainer.removeAllViews()
+fullscreenContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
+fullscreenContainer.visibility = View.VISIBLE
+fullscreenContainer.bringToFront()
+WindowInsetsControllerCompat(window, root).hide(WindowInsetsCompat.Type.systemBars())
+}
 
-    private val client = object : WebViewClient() {
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            if (!request.isForMainFrame) return false
-            return handleSpecialUrl(request.url.toString(), view)
-        }
+private fun exitFullscreenView() {
+val view = customVideoView ?: return
+if (::fullscreenContainer.isInitialized) {
+fullscreenContainer.removeView(view)
+fullscreenContainer.visibility = View.GONE
+}
+customVideoView = null
+val callback = customVideoCallback
+customVideoCallback = null
+previousRequestedOrientation?.let { requestedOrientation = it }
+previousRequestedOrientation = null
+if (!isActivityDestroyed && !isFinishing && !isDestroyed && ::root.isInitialized) {
+WindowInsetsControllerCompat(window, root).show(WindowInsetsCompat.Type.systemBars())
+}
+callback?.onCustomViewHidden()
+}
 
-        @Deprecated("Deprecated in Java")
-        override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
-            handleSpecialUrl(url, view)
 
-        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            if (request.isForMainFrame && !isActivityDestroyed) {
-                toast("Không tải được trang (${error.errorCode})")
-            }
-        }
-
-        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-            if (request.isForMainFrame && response.statusCode >= 400 && !isActivityDestroyed) {
-                toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
-            }
-        }
-
+private val client = object : WebViewClient() {
+override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+if (!request.isForMainFrame) return false
+return handleSpecialUrl(request.url.toString(), view)
+}
+@Deprecated("Deprecated in Java")
+override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
+handleSpecialUrl(url, view)
+override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+if (request.isForMainFrame && !isActivityDestroyed) {
+toast("Không tải được trang (${error.errorCode})")
+}
+}
+override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+if (request.isForMainFrame && response.statusCode >= 400 && !isActivityDestroyed) {
+toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
+}
+}
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             currentUrl = url
             web.alpha = 0.6f
@@ -856,36 +791,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private val chromeClient = object : WebChromeClient() {
-        override fun onShowCustomView(view: View, callback: CustomViewCallback) {
-            showFullscreenView(view, callback)
+    override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+    showFullscreenView(view, callback)
+    }
+    override fun onShowCustomView(view: View, requestedOrientation: Int, callback: CustomViewCallback) {
+    showFullscreenView(view, callback, requestedOrientation)
+    }
+    override fun onHideCustomView() {
+    exitFullscreenView()
+    }
+                override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
+        return createPopupWindow(resultMsg)
         }
-
-        override fun onShowCustomView(view: View, requestedOrientation: Int, callback: CustomViewCallback) {
-            showFullscreenView(view, callback, requestedOrientation)
-        }
-
-        override fun onHideCustomView() {
-            exitFullscreenView()
-        }
-
-        override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
-            return createPopupWindow(resultMsg)
-        }
-
         override fun onCloseWindow(window: WebView) {
-            if (window === popupWebView) closePopupWindow()
-            else super.onCloseWindow(window)
+        if (window === popupWebView) closePopupWindow()
+        else super.onCloseWindow(window)
         }
-
         override fun onPermissionRequest(request: PermissionRequest) {
-            runOnUiThread { requestWebPermissions(request) }
+        runOnUiThread { requestWebPermissions(request) }
         }
-
         override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
-            runOnUiThread { requestWebGeolocation(origin, callback) }
+        runOnUiThread { requestWebGeolocation(origin, callback) }
         }
 
-        override fun onProgressChanged(view: WebView, newProgress: Int) {
+override fun onProgressChanged(view: WebView, newProgress: Int) {
             pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
         }
 
@@ -992,14 +921,12 @@ class MainActivity : ComponentActivity() {
         val pageColor = Theme.pageColor(isNight)
         pageBg = Color.WHITE
 
-        // Reuse Summit v1.1's original status-bar fade (theme-aware, opaque-to-transparent).
-        // Keep it hidden as a solid Chrome-like safe area until the WebView scrolls.
-        fadeDrawable = GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(Theme.fadeStart(isNight), Theme.fadeEnd(isNight))
-        )
+        // Lớp mờ dần dưới thanh trạng thái (khi trang không có thanh menu cố định)
+        val fadeStart = Theme.fadeStart(isNight)
+        val fadeEnd = Theme.fadeEnd(isNight)
+        fadeDrawable = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(fadeStart, fadeEnd))
         topFade = View(this)
-        topFade.setBackgroundColor(pageBg)
+        topFade.background = fadeDrawable
 
         val botStart = Color.argb(if (isNight) 90 else 40, 0, 0, 0)
         val botEnd = Color.argb(0, 0, 0, 0)
@@ -1213,22 +1140,23 @@ class MainActivity : ComponentActivity() {
         val ws = web.settings
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
-        ws.databaseEnabled = true
+                ws.databaseEnabled = true
         ws.setSupportMultipleWindows(true)
         ws.javaScriptCanOpenWindowsAutomatically = true
         ws.mediaPlaybackRequiresUserGesture = false
         ws.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         mobileUa = ws.userAgentString
-            .replace(Regex(""";\s*wv""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""\s*Version/4\.0""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex(""";\s*wv""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\s*Version/4\.0""", RegexOption.IGNORE_CASE), "")
         ws.userAgentString = mobileUa
         applyDesktopMode()
-        CookieManager.getInstance().apply {
-            setAcceptCookie(true)
-            setAcceptThirdPartyCookies(web, true)
+                CookieManager.getInstance().apply {
+        setAcceptCookie(true)
+        setAcceptThirdPartyCookies(web, true)
         }
-        web.webViewClient = client
+web.webViewClient = client
         web.webChromeClient = chromeClient
+        web.addJavascriptInterface(Bridge(), "EdgeBridge")
         web.setFindListener { active, total, _ ->
             findCount.text = if (total == 0) "0" else "" + (active + 1) + "/" + total
         }
@@ -1253,9 +1181,6 @@ class MainActivity : ComponentActivity() {
 
         // Vuốt xuống thì ẩn thanh, vuốt lên thì hiện lại
         web.setOnScrollChangeListener { _, _, y, _, oldY ->
-            // Status bar dimming follows the real WebView scroll position.
-            // This is a dark overlay, not a blur/glass surface.
-            updateTopFade()
             val dy = y - oldY
             if (urlBar.hasFocus()) return@setOnScrollChangeListener
             if (dy > 12) setBarHidden(true)
@@ -1314,6 +1239,12 @@ class MainActivity : ComponentActivity() {
             }
         }
         root.addView(bar, FrameLayout.LayoutParams(-1, dp(BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM))
+        fullscreenContainer = FrameLayout(this).apply {
+        setBackgroundColor(Color.BLACK)
+        visibility = View.GONE
+        isClickable = true
+        }
+        root.addView(fullscreenContainer, FrameLayout.LayoutParams(-1, -1))
         findBarContainer = FrameLayout(this)
         findBarContainer.visibility = View.GONE
         val findGlass = GlassSystem.createBlurView(
@@ -1328,12 +1259,6 @@ class MainActivity : ComponentActivity() {
             findBarContainer,
             FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
         )
-        fullscreenContainer = FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK)
-            visibility = View.GONE
-            isClickable = true
-        }
-        root.addView(fullscreenContainer, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
         setupOrbMenu()
 
@@ -1352,9 +1277,7 @@ class MainActivity : ComponentActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (customVideoView != null) exitFullscreenView()
-                else if (popupDialog?.isShowing == true) closePopupWindow()
-                else if (menuLayer != null) {
+                if (menuLayer != null) {
                     val b = menuBackAction
                     if (b != null) b() else closeMenu()
                 } else if (findBarContainer.visibility == View.VISIBLE) closeFind()
@@ -1396,10 +1319,7 @@ class MainActivity : ComponentActivity() {
             maxOf(insetBottom, imeBottom) + dp(80)
 
         val webLp = web.layoutParams as FrameLayout.LayoutParams
-        // Keep the WebView full-height so the page can physically scroll behind
-        // the status bar. At scrollY=0, a scrollable DOM spacer (injected below)
-        // places the website header beneath the safe area without resizing the viewport.
-        webLp.topMargin = 0
+        webLp.topMargin = if (store.edgeMode) 0 else insetTop
         webLp.bottomMargin = imeBottom
         web.layoutParams = webLp
 
@@ -1410,24 +1330,22 @@ class MainActivity : ComponentActivity() {
         injectInsets()
     }
 
-    // Match Summit v1.1: theme-aware gradient fading from opaque to transparent.
-    // At scrollY=0 keep the Chrome-like solid safe area; while scrolling, extend
-    // the original fade slightly below the status bar over content passing behind it.
+    // Dải thanh trạng thái: tràn viền thì dùng lớp mờ (hoặc màu thanh menu của trang nếu có),
+    // không tràn viền thì luôn là màu đặc theo mép trên của trang
     private fun updateTopFade() {
         val lp = topFade.layoutParams as FrameLayout.LayoutParams
-        val scrolled = ::web.isInitialized && web.scrollY > 0
+        val c = solidTop
         val lightBar: Boolean
-        if (scrolled) {
+        if (store.edgeMode && c == null) {
             topFade.background = fadeDrawable
             lp.height = insetTop + dp(16)
             lightBar = !isNight
         } else {
-            val col = solidTop ?: pageBg
+            val col = c ?: pageBg
             topFade.setBackgroundColor(col)
             lp.height = insetTop
             lightBar = ColorUtils.calculateLuminance(col) > 0.5
         }
-        topFade.layoutParams = lp
         topFade.requestLayout()
         WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = lightBar
     }
@@ -1439,19 +1357,23 @@ class MainActivity : ComponentActivity() {
         updateTopFade()
     }
 
-    // Keep bottom scroll space isolated. The old EDGE_JS top-header heuristics are removed.
+    // Chừa chỗ đầu/cuối trang cho các thanh và chạy script xử lý thanh menu cố định
     private fun injectInsets() {
-        val topCss = (insetTop / d).toInt().coerceAtLeast(0)
-        val bottomCss = (insetBottom / d).toInt()
-        val css = "(function(){var r=document.documentElement;if(!r)return;" +
-            "r.style.setProperty('--summit-safe-area-top','${topCss}px');" +
-            "r.style.setProperty('--summit-safe-area-bottom','${bottomCss}px');})();"
-        web.evaluateJavascript(css, null)
-        // This spacer is part of the document's scrollable content: at the top it
-        // reserves the safe area, and during scroll it moves away with the page.
-        web.evaluateJavascript(TOP_SPACER_JS.replace("__TOP_HEIGHT__", topCss.toString()), null)
-        web.evaluateJavascript(BOTTOM_SPACER_JS, null)
-        web.evaluateJavascript(HEADER_SCROLL_THROUGH_JS, null)
+        val edge = store.edgeMode
+        val topCss = if (edge) (insetTop / d).toInt() else 0
+        val bottomCss = (insetBottom / d).toInt() + 64
+        val rule = (if (edge) "padding-top:" + topCss + "px!important;" else "") +
+            "padding-bottom:" + bottomCss + "px!important;box-sizing:border-box!important"
+        val js = "(function(){var s=document.getElementById('__edge');" +
+            "if(!s){s=document.createElement('style');s.id='__edge';" +
+            "(document.head||document.documentElement).appendChild(s);}" +
+            "s.textContent='html{" + rule + "}';})();"
+        web.evaluateJavascript(js, null)
+        web.evaluateJavascript(
+            EDGE_JS.replace("%INSET%", (insetTop / d).toInt().toString())
+                .replace("%MODE%", if (edge) "1" else "0"),
+            null
+        )
     }
 
     // "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi; chạm hoặc vuốt lên để mở lại
@@ -2132,6 +2054,12 @@ class MainActivity : ComponentActivity() {
             web.reload()
             showSettings()
         }
+        addRow("Tràn viền nội dung (thử nghiệm)", onOff(store.edgeMode), fg) {
+            store.edgeMode = !store.edgeMode
+            applyInsets()
+            web.reload()
+            showSettings()
+        }
         addRow("Thu gọn thanh địa chỉ khi cuộn", onOff(store.autoHideBar), fg) {
             store.autoHideBar = !store.autoHideBar
             if (!store.autoHideBar) setBarHidden(false)
@@ -2248,15 +2176,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         isActivityDestroyed = true
-        denyPendingWebPermission()
-        pendingGeoCallback?.invoke(pendingGeoOrigin.orEmpty(), false, false)
-        pendingGeoCallback = null
-        pendingGeoOrigin = null
         if (customVideoView != null) exitFullscreenView()
-        popupDialog?.dismiss()
         suggestToken++
         // === CLEANUP DE TRANH MEMORY LEAK ===
-        // Gỡ listeners khỏi WebView; no page JavaScript bridge is installed.
+        // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)
+        web.removeJavascriptInterface("EdgeBridge")
+        
+        // 2. Gỡ listeners khỏi WebView
         web.webViewClient = WebViewClient()
         web.webChromeClient = WebChromeClient()
         web.setDownloadListener(null)
@@ -2338,37 +2264,6 @@ class MainActivity : ComponentActivity() {
         ))
         layer.setLayerInset(1, dp(14), 0, 0, dp(14))
         tabBtn.setImageDrawable(layer)
-    }
-
-    /** Save the active WebView history/scroll/form state before switching tabs. */
-    private fun saveActiveTabState() {
-        if (!::web.isInitialized) return
-        val active = tabManager.getActive() ?: return
-        val state = Bundle()
-        val saved = runCatching { web.saveState(state) }.getOrNull()
-        active.stateBundle = if (saved != null) state else null
-        active.url = web.url ?: active.url
-        active.title = web.title ?: active.title
-    }
-
-    /** Restore a tab's WebView history when available, otherwise navigate to its last URL. */
-    private fun activateTab(tab: TabManager.Tab) {
-        val state = tab.stateBundle?.let { Bundle(it) }
-        val restored = if (state != null) runCatching { web.restoreState(state) }.getOrNull() else null
-        if (restored == null) {
-            load(tab.url.ifBlank { store.homeUrl })
-        } else {
-            currentUrl = web.url ?: tab.url
-            if (!urlBar.hasFocus()) showDomain()
-            updateNav()
-            injectInsets()
-        }
-    }
-
-    private fun switchToTab(id: Long) {
-        saveActiveTabState()
-        val target = tabManager.switchTo(id) ?: return
-        activateTab(target)
     }
 
     private fun openTabSwitcher() {
@@ -2487,6 +2382,8 @@ class MainActivity : ComponentActivity() {
                     close.setOnClickListener {
                         tabManager.close(tab.id)
                         popup.dismiss()
+                        val active = tabManager.getActive()
+                        if (active != null) load(active.url.ifBlank { store.homeUrl })
                         openTabSwitcher()
                     }
                 } else {
@@ -2531,7 +2428,8 @@ class MainActivity : ComponentActivity() {
 
                 card.setOnClickListener {
                     if (!tab.isActive) {
-                        switchToTab(tab.id)
+                        tabManager.switchTo(tab.id)
+                        load(tab.url.ifBlank { store.homeUrl })
                     }
                     popup.dismiss()
                 }
@@ -2564,9 +2462,8 @@ class MainActivity : ComponentActivity() {
         add.gravity = Gravity.CENTER
         add.setPadding(dp(12), dp(17), dp(12), dp(12))
         add.setOnClickListener {
-            saveActiveTabState()
-            val newTab = tabManager.addNew(url = store.homeUrl, title = "Tab mới")
-            activateTab(newTab)
+            tabManager.addNew(url = store.homeUrl, title = "Tab mới")
+            load(store.homeUrl)
             popup.dismiss()
         }
         root.addView(add)
@@ -3065,11 +2962,9 @@ class Store(context: Context) {
         get() = sp.getBoolean("desktop", false)
         set(v) { sp.edit().putBoolean("desktop", v).apply() }
 
-    // Safe baseline: experimental content edge-to-edge is disabled.
-    // Keep the property temporarily so older call sites remain source-compatible.
     var edgeMode: Boolean
-        get() = false
-        set(@Suppress("UNUSED_PARAMETER") v) { sp.edit().putBoolean("edge", false).apply() }
+        get() = sp.getBoolean("edge", true)
+        set(v) { sp.edit().putBoolean("edge", v).apply() }
 
     var autoHideBar: Boolean
         get() = sp.getBoolean("autohide", true)
@@ -3139,63 +3034,9 @@ class Store(context: Context) {
 }
 
 ======================================================================
-FILE: app/src/main/java/com/example/webedge/SummitWebView.kt
-======================================================================
-package com.example.webedge
-
-import android.content.Context
-import android.view.WindowInsets
-import android.webkit.WebView
-import androidx.core.graphics.Insets
-import androidx.core.view.WindowInsetsCompat
-
-@Suppress("DEPRECATION")
-fun trimTopInsetsCompat(insets: WindowInsetsCompat): WindowInsetsCompat {
-    val sb = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-    val sbi = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.systemBars())
-    return WindowInsetsCompat.Builder(insets)
-        .setInsets(WindowInsetsCompat.Type.systemBars(), Insets.of(sb.left, 0, sb.right, sb.bottom))
-        .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.NONE)
-        .setInsetsIgnoringVisibility(
-            WindowInsetsCompat.Type.systemBars(), Insets.of(sbi.left, 0, sbi.right, sbi.bottom)
-        )
-        .setInsetsIgnoringVisibility(WindowInsetsCompat.Type.statusBars(), Insets.NONE)
-        .setSystemWindowInsets(
-            Insets.of(insets.systemWindowInsetLeft, 0, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
-        )
-        .setStableInsets(
-            Insets.of(insets.stableInsetLeft, 0, insets.stableInsetRight, insets.stableInsetBottom)
-        )
-        .setDisplayCutout(null)
-        .build()
-}
-
-/** WebView luon nam duoi thanh trang thai, nen khong bao gio de no thay inset phia tren. */
-class SummitWebView(context: Context) : WebView(context) {
-
-    private fun trim(raw: WindowInsets): WindowInsets {
-        // Khong dung toWindowInsetsCompat(raw, view): no goi lai getRootWindowInsets -> de quy vo han
-        return trimTopInsetsCompat(WindowInsetsCompat.toWindowInsetsCompat(raw)).toWindowInsets() ?: raw
-    }
-
-    override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets =
-        super.onApplyWindowInsets(trim(insets))
-
-    override fun dispatchApplyWindowInsets(insets: WindowInsets): WindowInsets =
-        super.dispatchApplyWindowInsets(trim(insets))
-
-    override fun getRootWindowInsets(): WindowInsets? {
-        val raw = super.getRootWindowInsets() ?: return null
-        return trim(raw)
-    }
-}
-
-======================================================================
 FILE: app/src/main/java/com/example/webedge/TabManager.kt
 ======================================================================
 package com.example.webedge
-
-import android.os.Bundle
 
 /**
  * Quản lý đa tab cho Summit Browser.
@@ -3206,8 +3047,7 @@ class TabManager {
         val id: Long = System.nanoTime(),
         var url: String = "",
         var title: String = "",
-        var isActive: Boolean = false,
-        var stateBundle: Bundle? = null
+        var isActive: Boolean = false
     )
 
     private val tabs = mutableListOf<Tab>()
@@ -3240,7 +3080,6 @@ class TabManager {
         if (tabs.size <= 1) return
         val wasActive = tabs.find { it.id == id }?.isActive ?: false
         val idx = tabs.indexOfFirst { it.id == id }
-        if (idx < 0) return
         tabs.removeAt(idx)
         if (wasActive) {
             val newActive = if (idx < tabs.size) tabs[idx] else tabs.last()
@@ -3320,8 +3159,8 @@ FILE: app/src/main/AndroidManifest.xml
 
     <application
         android:label="Summit"
-        android:theme="@style/AppTheme"
         android:hardwareAccelerated="true"
+        android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
 
         <activity
