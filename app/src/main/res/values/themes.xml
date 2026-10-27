@@ -1,10 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
         <item name="android:windowBackground">@android:color/white</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
-        <!-- Ngăn chặn triệt để thuật toán Force Dark của hệ thống tự ý đảo màu loang đen nửa trang khi duyệt web/duyệt ghép -->
-        <item name="android:forceDarkAllowed">false</item>
     </style>
 </resources>
-
