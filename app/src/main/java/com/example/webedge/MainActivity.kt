@@ -82,8 +82,33 @@ private const val DESKTOP_UA =
 // Vùng an toàn phía trên do Android WindowInsets và khung WebView xử lý, không sửa CSS header của website.
 private const val EDGE_JS = """
 (function(){
-  if (window.__edgeStarted) { if (window.__edgeRun) window.__edgeRun(); return; }
+  var EDGE_VERSION = 'summit-native-safe-area-v2';
+  var RELOAD_KEY = '__summit_edge_safearea_reload_v2';
+
+  // WebView.restoreState() may resurrect a document with the previous EDGE_JS
+  // still attached. Reload that document once so legacy header-padding code and
+  // its event listeners cannot keep mutating the page after the native fix.
+  if (window.__edgeScriptVersion === EDGE_VERSION && window.__edgeRun) {
+    window.__edgeRun();
+    return;
+  }
+  if (window.__edgeStarted && window.__edgeScriptVersion !== EDGE_VERSION) {
+    if (window.__edgeReloadingForVersion) return;
+    try {
+      if (!window.sessionStorage.getItem(RELOAD_KEY)) {
+        window.sessionStorage.setItem(RELOAD_KEY, '1');
+        window.__edgeReloadingForVersion = true;
+        window.location.reload();
+        return;
+      }
+      window.sessionStorage.removeItem(RELOAD_KEY);
+    } catch (e) {}
+  } else {
+    try { window.sessionStorage.removeItem(RELOAD_KEY); } catch (e) {}
+  }
+
   window.__edgeStarted = true;
+  window.__edgeScriptVersion = EDGE_VERSION;
   var last = '';
   function rgbOf(c){
     var m = c && c.match(/rgba?\(([^)]+)\)/);
@@ -1140,9 +1165,15 @@ class MainActivity : ComponentActivity() {
             maxOf(insetBottom, imeBottom) + dp(80)
 
         val webLp = web.layoutParams as FrameLayout.LayoutParams
-        webLp.topMargin = insetTop
+        // In edge mode, let WebView occupy the full window. Modern Android WebView
+        // forwards overlapping system-bar/cutout insets to CSS safe-area-inset-*;
+        // adding insetTop to the native frame as well can create a second top offset.
+        val desiredWebTopMargin = if (store.edgeMode) 0 else insetTop
+        val topMarginChanged = webLp.topMargin != desiredWebTopMargin
+        webLp.topMargin = desiredWebTopMargin
         webLp.bottomMargin = imeBottom
         web.layoutParams = webLp
+        if (topMarginChanged) ViewCompat.requestApplyInsets(web)
 
         updateTopFade()
         updateBarVisibility()
