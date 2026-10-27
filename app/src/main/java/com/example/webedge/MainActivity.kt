@@ -181,22 +181,40 @@ private const val DEBUG_LAYOUT_JS = """
       out.push(e.tagName.toLowerCase()+' y'+Math.round(r.top)+' h'+Math.round(r.height)+' '+c.position+' pt'+c.paddingTop+' mt'+c.marginTop+' top'+c.top+' '+c.display);
       e=e.parentElement; i++;
     }
-    return out.join('\\n  ');
+    return out.join('\n  ');
   }
   var vp=document.querySelector('meta[name=viewport]');
   var sp=document.getElementById('__summit_edge_bottom_spacer');
   var b=document.body, bc=getComputedStyle(b);
-  var t='safeTop='+st+' safeBot='+sb+'\\niw='+innerWidth+' ih='+innerHeight+' dpr='+devicePixelRatio+
-   '\\nvvTop='+(window.visualViewport?visualViewport.offsetTop:'-')+' scrollY='+Math.round(scrollY)+
-   '\\nviewport='+(vp?vp.content:'none')+
-   '\\nbody '+bc.display+' h'+Math.round(b.getBoundingClientRect().height)+' pt'+bc.paddingTop+' mt'+bc.marginTop+
-   '\\nspacerTop='+(sp?Math.round(sp.getBoundingClientRect().top):'none')+
-   '\\nHAMB:\\n  '+chain(96*k,95*k)+'\\nLOGO:\\n  '+chain(585*k,340*k)+'\\nUA='+navigator.userAgent;
+  var t='safeTop='+st+' safeBot='+sb+'\niw='+innerWidth+' ih='+innerHeight+' dpr='+devicePixelRatio+
+   '\nvvTop='+(window.visualViewport?visualViewport.offsetTop:'-')+' scrollY='+Math.round(scrollY)+
+   '\nviewport='+(vp?vp.content:'none')+
+   '\nbody '+bc.display+' h'+Math.round(b.getBoundingClientRect().height)+' pt'+bc.paddingTop+' mt'+bc.marginTop+
+   '\nspacerTop='+(sp?Math.round(sp.getBoundingClientRect().top):'none')+
+   '\nHAMB:\n  '+chain(96*k,95*k)+'\nLOGO:\n  '+chain(585*k,340*k)+'\nUA='+navigator.userAgent+' TL='+(window.__sTl?window.__sTl.join(' '):'none');
   var D=document.createElement('pre'); D.id='__summit_dbg';
   D.style.cssText='position:fixed;left:0;right:0;top:0;margin:0;padding:6px;background:rgba(0,0,0,.88);color:#0f0;font:10px/1.25 monospace;z-index:2147483647;white-space:pre-wrap;pointer-events:none;word-break:break-all';
   D.textContent=t; document.documentElement.appendChild(D);
   setTimeout(function(){D.remove();},25000);
  }catch(e){}
+})();
+"""
+
+// TAM THOI: ghi lai gia tri env(safe-area-inset-top) theo thoi gian ke tu luc trang hien ra
+private const val TL_JS = """
+(function(){
+  if (window.__sTl) return;
+  var tl = window.__sTl = [];
+  var P = document.createElement('div');
+  P.style.cssText = 'position:absolute;visibility:hidden;padding-top:env(safe-area-inset-top)';
+  (document.documentElement || document).appendChild(P);
+  var last = null;
+  var t0 = performance.now();
+  var iv = setInterval(function(){
+    var v = getComputedStyle(P).paddingTop;
+    if (v !== last) { last = v; tl.push(Math.round(performance.now() - t0) + ':' + v); }
+    if (tl.length > 12 || performance.now() - t0 > 15000) clearInterval(iv);
+  }, 100);
 })();
 """
 
@@ -609,6 +627,7 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageCommitVisible(view: WebView, url: String) {
             injectInsets()
+            web.evaluateJavascript(TL_JS, null)
             scheduleTopColorSample(100L)
             web.animate().alpha(1f).setDuration(220).start()
         }
@@ -976,7 +995,7 @@ class MainActivity : ComponentActivity() {
         findBar.addView(doneBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         // --- WebView ---
-        web = WebView(this)
+        web = SummitWebView(this)
         web.setBackgroundColor(Color.WHITE)
         val ws = web.settings
         ws.javaScriptEnabled = true
