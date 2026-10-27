@@ -508,6 +508,7 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             currentUrl = url
+            applyTopColor(null)
             web.alpha = 0.6f
             if (!urlBar.hasFocus()) showDomain()
             setBarHidden(false)
@@ -527,6 +528,7 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageFinished(view: WebView, url: String) {
             injectInsets()
+            refreshTopColorFromPage(view)
             web.animate().alpha(1f).setDuration(120).start()
             store.addHistory(view.title ?: "", url)
             tabManager.updateActive(url, view.title ?: url)
@@ -669,7 +671,7 @@ class MainActivity : ComponentActivity() {
         fg = if (isNight) Color.WHITE else Color.BLACK
         sub = Theme.subColor(isNight)
         val pageColor = Theme.pageColor(isNight)
-        pageBg = Color.WHITE
+        pageBg = pageColor
 
         // Lớp mờ dần dưới thanh trạng thái (khi trang không có thanh menu cố định)
         val fadeStart = Theme.fadeStart(isNight)
@@ -886,7 +888,7 @@ class MainActivity : ComponentActivity() {
 
         // --- WebView ---
         web = WebView(this)
-        web.setBackgroundColor(Color.WHITE)
+        web.setBackgroundColor(pageBg)
         val ws = web.settings
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
@@ -1105,6 +1107,35 @@ class MainActivity : ComponentActivity() {
         }
         topFade.requestLayout()
         WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = lightBar
+    }
+
+    // Đọc màu chủ đạo do website công bố; nếu không có thì dò nền thực của html/body.
+    // Đây chỉ là đọc metadata/CSS, không dò header hay sửa DOM của trang.
+    private fun refreshTopColorFromPage(view: WebView) {
+        val script = "(function(){" +
+            "function opaque(c){if(!c||c==='transparent')return false;var m=c.match(/rgba?\(([^)]+)\)/i);" +
+            "if(m){var a=m[1].split(',');if(a.length>3&&parseFloat(a[3])===0)return false;}return true;}" +
+            "function hex(c){var m=c.match(/rgba?\(([^)]+)\)/i);if(!m)return '';var a=m[1].split(',');" +
+            "if(a.length>3&&parseFloat(a[3])===0)return '';return '#'+a.slice(0,3).map(function(v){" +
+            "var n=Math.max(0,Math.min(255,parseInt(v,10)||0));return n.toString(16).padStart(2,'0');}).join('');}" +
+            "var meta=document.querySelector('meta[name=\"theme-color\"]');" +
+            "if(meta&&/^#[0-9a-f]{3,8}$/i.test(meta.content.trim()))return meta.content.trim();" +
+            "var nodes=[document.body,document.documentElement];for(var i=0;i<nodes.length;i++){" +
+            "if(!nodes[i])continue;var c=getComputedStyle(nodes[i]).backgroundColor;if(opaque(c)){var h=hex(c);if(h)return h;}}" +
+            "return '';})()"
+        view.evaluateJavascript(script) { value ->
+            if (isActivityDestroyed || view !== web || value == null || value == "null") return@evaluateJavascript
+            val raw = value.trim().removeSurrounding("\"").replace("\\\"", "\"")
+            if (raw.isBlank()) {
+                applyTopColor(null)
+                return@evaluateJavascript
+            }
+            try {
+                applyTopColor(Color.parseColor(raw))
+            } catch (_: IllegalArgumentException) {
+                applyTopColor(null)
+            }
+        }
     }
 
     // Tô dải thanh trạng thái theo màu thanh menu của trang; null = dùng lớp mờ mặc định
