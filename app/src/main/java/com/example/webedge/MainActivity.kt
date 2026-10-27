@@ -84,33 +84,31 @@ private const val DESKTOP_UA =
 private const val TOP_SPACER_JS = """
 (function(){
   var root = document.documentElement;
-  var body = document.body;
-  if (!root || !body) return;
+  if (!root) return;
   var height = __TOP_HEIGHT__;
   var id = '__summit_top_safe_spacer';
   function ensure(){
-    if (!document.body) return;
+    var body = document.body;
+    if (!body || !root) return;
     var el = document.getElementById(id);
     if (!el) {
       el = document.createElement('div');
       el.id = id;
       el.setAttribute('aria-hidden', 'true');
       el.setAttribute('data-summit-internal', '1');
-      el.style.cssText = 'display:block!important;box-sizing:border-box!important;width:100%!important;min-height:0!important;height:' +
-        height + 'px!important;max-height:none!important;flex:0 0 auto!important;grid-column:1/-1!important;pointer-events:none!important;visibility:hidden!important;contain:strict!important;';
-      body.insertBefore(el, body.firstChild);
-    } else if (Math.abs((parseFloat(el.style.height) || 0) - height) > 0.5) {
-      el.style.setProperty('height', height + 'px', 'important');
+    }
+    // Keep the safe-area spacer OUTSIDE body so site-specific body flex/grid,
+    // transforms, and positioning cannot swallow it. It remains in document
+    // flow, so normal page scrolling carries it away with the page content.
+    el.style.cssText = 'display:block!important;position:relative!important;box-sizing:border-box!important;width:100%!important;margin:0!important;padding:0!important;border:0!important;min-height:0!important;height:' +
+      height + 'px!important;max-height:none!important;flex:none!important;grid-column:1/-1!important;align-self:stretch!important;pointer-events:none!important;visibility:hidden!important;';
+    if (el.parentNode !== root || el.nextElementSibling !== body) {
+      root.insertBefore(el, body);
     }
   }
   ensure();
   if (!window.__summitTopSpacerObserver) {
-    window.__summitTopSpacerObserver = new MutationObserver(function(){
-      if (!document.getElementById(id) && document.body) {
-        body = document.body;
-        ensure();
-      }
-    });
+    window.__summitTopSpacerObserver = new MutationObserver(function(){ ensure(); });
     window.__summitTopSpacerObserver.observe(root, {childList:true, subtree:true});
   }
   window.addEventListener('resize', ensure, {passive:true});
