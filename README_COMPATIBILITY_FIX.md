@@ -12,7 +12,7 @@ This source archive starts from the user's Summit v1.1 backup and applies a focu
 7. **Diagnostics:** main-frame network and HTTP errors show a small user-facing error message, without changing the page into a homemade error document.
 8. **Web compatibility:** enables storage, multiple-window handling, autoplay, compatibility-mode mixed content and third-party cookies. These may improve legacy login/embed sites, but autoplay and third-party cookies have privacy/usability trade-offs.
 9. **HTTP sites:** enables cleartext HTTP because Summit is a general-purpose browser. HTTP is not encrypted; users should use HTTPS for logins and sensitive information.
-10. **Page layout:** removes the unconditional `html` padding rule with `!important`, which was being injected even when edge mode was off. Summit exposes opt-in `--summit-safe-area-top` and `--summit-safe-area-bottom` CSS variables instead. Edge-mode's existing header adjustment remains experimental.
+10. **Page layout:** removes global `html` padding and all JavaScript mutations of `position: fixed/sticky` headers. The native WebView is laid out below the Android status-bar inset; the native top fade/color layer remains over the status-bar area. `EDGE_JS` only samples the page-edge color and adds an idempotent bottom scroll spacer for the floating toolbar.
 11. **Tabs:** wires WebView `saveState/restoreState` snapshots into tab switching so a tab can preserve its navigation history where WebView supports it. This does **not** keep inactive pages' JavaScript running and is not equivalent to separate persistent WebViews.
 12. **Safety fix:** a tab close request with an unknown ID no longer risks removing an invalid list index.
 

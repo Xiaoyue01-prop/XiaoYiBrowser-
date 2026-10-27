@@ -78,13 +78,10 @@ import java.util.Locale
 private const val DESKTOP_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-// Script chạy trong trang. Chế độ tràn viền: đẩy thanh menu cố định ở đầu trang xuống dưới thanh trạng thái
-// (hoặc chừa chỗ cho lớp phủ toàn màn hình) và báo màu thanh đó về app để tô dải thanh trạng thái.
-// Chế độ thường: chỉ đọc màu mép trên của trang.
+// EDGE_JS chỉ lấy màu mép trên của trang và tạo vùng cuộn dưới thanh công cụ nổi.
+// Vùng an toàn phía trên do Android WindowInsets và khung WebView xử lý, không sửa CSS header của website.
 private const val EDGE_JS = """
 (function(){
-  window.__edgeInset = %INSET%;
-  window.__edgeMode = %MODE%;
   if (window.__edgeStarted) { if (window.__edgeRun) window.__edgeRun(); return; }
   window.__edgeStarted = true;
   var last = '';
@@ -99,8 +96,8 @@ private const val EDGE_JS = """
   function bgOf(el){ return rgbOf(getComputedStyle(el).backgroundColor); }
   function pinned(el){
     while (el && el !== document.documentElement && el !== document.body) {
-      var s = getComputedStyle(el).position;
-      if (s === 'fixed' || s === 'sticky') return el;
+      var p = getComputedStyle(el).position;
+      if (p === 'fixed' || p === 'sticky') return el;
       el = el.parentElement;
     }
     return null;
@@ -122,23 +119,24 @@ private const val EDGE_JS = """
     var w = window.innerWidth, color = null;
     var stack = document.elementsFromPoint(w * 0.5, 2);
     for (var j = 0; j < stack.length && !color; j++) {
-      if (pinned(stack[j])) { color = climb(stack[j]); }
+      if (pinned(stack[j])) color = climb(stack[j]);
     }
     if (!color) {
-      if ((window.scrollY || 0) > 2) { return; }
+      if ((window.scrollY || 0) > 2) return;
       color = stack.length ? climb(stack[0]) : null;
     }
-    if (!color) { color = climb(document.body) || climb(document.documentElement); }
+    if (!color) color = climb(document.body) || climb(document.documentElement);
     report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
   }
-  function removeSpacer(id){
-    var el = document.getElementById(id);
-    if (el && el.parentNode) el.parentNode.removeChild(el);
-  }
-  function ensureSpacer(id, height, prepend){
+  function ensureBottomSpacer(){
     if (!document.body) return;
+    var bottomInset = parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue('--summit-safe-area-bottom')) || 0;
+    // Summit's floating toolbar overlaps the bottom of the WebView.
+    // Add only scroll extent; do not change the site's padding or header layout.
+    var height = bottomInset + 54;
+    var id = '__summit_edge_bottom_spacer';
     var el = document.getElementById(id);
-    if (!height || height <= 0) { removeSpacer(id); return; }
     if (!el) {
       el = document.createElement('div');
       el.id = id;
@@ -146,67 +144,16 @@ private const val EDGE_JS = """
       el.setAttribute('data-summit-internal', '1');
       el.style.cssText = 'display:block!important;box-sizing:border-box!important;width:100%!important;min-height:0!important;height:' +
         height + 'px!important;max-height:none!important;flex:none!important;grid-column:1/-1!important;pointer-events:none!important;visibility:hidden!important;contain:strict!important;';
-      if (prepend) document.body.insertBefore(el, document.body.firstChild);
-      else document.body.appendChild(el);
-    } else {
+      document.body.appendChild(el);
+    } else if (Math.abs((parseFloat(el.style.height) || 0) - height) > 0.5) {
       el.style.setProperty('height', height + 'px', 'important');
     }
   }
-  function runEdge(){
-    var I = window.__edgeInset || 0;
-    if (!I || !document.elementsFromPoint) return;
-    // Keep the last content scrollable above Summit's floating toolbar.
-    // This spacer changes scroll extent, not the site's global padding/layout.
-    var bottomInset = parseFloat(getComputedStyle(document.documentElement)
-      .getPropertyValue('--summit-safe-area-bottom')) || 0;
-    ensureSpacer('__summit_edge_bottom_spacer', bottomInset + 54, false);
-    var y = I + 2, w = window.innerWidth, hit = null, big = false, color = null;
-    var xs = [0.5, 0.15, 0.85];
-    for (var i = 0; i < xs.length && !hit; i++) {
-      var stack = document.elementsFromPoint(w * xs[i], y);
-      for (var j = 0; j < stack.length && !hit; j++) {
-        var f = pinned(stack[j]);
-        if (!f) continue;
-        var r = f.getBoundingClientRect();
-        if (r.top <= y && r.width > w * 0.6) {
-          hit = f;
-          // Only treat near-fullscreen overlays as large containers; ordinary page headers
-          // should be moved below the status bar rather than padded internally.
-          big = r.height >= window.innerHeight * 0.85;
-          color = climb(stack[j]);
-        }
-      }
-    }
-    if (!hit) {
-      // Some pages (including search portals) use normal-flow headers rather
-      // than fixed/sticky bars. In edge mode, reserve the top inset only for
-      // this fallback case so status icons do not cover the first row.
-      ensureSpacer('__summit_edge_top_spacer', I, true);
-      report('none');
-      return;
-    }
-    removeSpacer('__summit_edge_top_spacer');
-    if (big) {
-      if (!hit.getAttribute('data-edge-pad')) {
-        hit.setAttribute('data-edge-pad', '1');
-        var cs = getComputedStyle(hit);
-        hit.style.setProperty('box-sizing', 'border-box', 'important');
-        hit.style.setProperty('padding-top', ((parseFloat(cs.paddingTop) || 0) + I) + 'px', 'important');
-      }
-    } else {
-      var top = parseFloat(getComputedStyle(hit).top);
-      if (!isNaN(top) && top < I - 0.5) { hit.style.setProperty('top', I + 'px', 'important'); }
-    }
-    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
-  }
   function run(){
-    if (window.__edgeMode) {
-      runEdge();
-    } else {
-      removeSpacer('__summit_edge_top_spacer');
-      removeSpacer('__summit_edge_bottom_spacer');
-      runTop();
-    }
+    // Native WindowInsets keeps the WebView's layout viewport below the status bar.
+    // Do not guess page headers, prepend top spacers, or inject padding into site elements.
+    ensureBottomSpacer();
+    runTop();
   }
   var t = null;
   function sched(){ if (t) return; t = setTimeout(function(){ t = null; run(); }, 180); }
@@ -1193,7 +1140,7 @@ class MainActivity : ComponentActivity() {
             maxOf(insetBottom, imeBottom) + dp(80)
 
         val webLp = web.layoutParams as FrameLayout.LayoutParams
-        webLp.topMargin = if (store.edgeMode) 0 else insetTop
+        webLp.topMargin = insetTop
         webLp.bottomMargin = imeBottom
         web.layoutParams = webLp
 
@@ -1212,7 +1159,7 @@ class MainActivity : ComponentActivity() {
         val lightBar: Boolean
         if (store.edgeMode && c == null) {
             topFade.background = fadeDrawable
-            lp.height = insetTop + dp(16)
+            lp.height = insetTop
             lightBar = !isNight
         } else {
             val col = c ?: pageBg
@@ -1233,21 +1180,14 @@ class MainActivity : ComponentActivity() {
 
     // Chừa chỗ đầu/cuối trang cho các thanh và chạy script xử lý thanh menu cố định
     private fun injectInsets() {
-        val edge = store.edgeMode
-        val topCss = if (edge) (insetTop / d).toInt() else 0
         val bottomCss = (insetBottom / d).toInt()
-        // Expose insets as opt-in CSS variables. Do not force padding on <html>:
-        // a global !important rule changes layouts and can break fixed/sticky site headers.
+        // Native WindowInsets owns the top safe area. Keep only the bottom inset
+        // as a private value for the floating-toolbar scroll spacer.
         val css = "(function(){var r=document.documentElement;if(!r)return;" +
-            "r.style.setProperty('--summit-safe-area-top','${topCss}px');" +
             "r.style.setProperty('--summit-safe-area-bottom','${bottomCss}px');" +
             "var s=document.getElementById('__edge');if(s)s.remove();})();"
         web.evaluateJavascript(css, null)
-        web.evaluateJavascript(
-            EDGE_JS.replace("%INSET%", topCss.toString())
-                .replace("%MODE%", if (edge) "1" else "0"),
-            null
-        )
+        web.evaluateJavascript(EDGE_JS, null)
     }
 
     // "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi; chạm hoặc vuốt lên để mở lại
