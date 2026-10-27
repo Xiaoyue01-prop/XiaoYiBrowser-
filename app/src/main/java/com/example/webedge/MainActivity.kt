@@ -1,11 +1,14 @@
 package com.example.webedge
 
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.app.Dialog
 import android.app.DownloadManager
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -17,6 +20,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.Message
 import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
@@ -34,7 +38,9 @@ import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -55,6 +61,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -190,6 +197,12 @@ class MainActivity : ComponentActivity() {
     private var customVideoView: View? = null
     private var customVideoCallback: WebChromeClient.CustomViewCallback? = null
     private var previousRequestedOrientation: Int? = null
+    private var popupDialog: Dialog? = null
+    private var popupWebView: WebView? = null
+    private var pendingWebPermissionRequest: PermissionRequest? = null
+    private var pendingWebPermissionResources: Array<String> = emptyArray()
+    private var pendingGeoOrigin: String? = null
+    private var pendingGeoCallback: GeolocationPermissions.Callback? = null
     private lateinit var blurTarget: BlurTarget
     private lateinit var urlPillFrame: FrameLayout
     private lateinit var urlPillBlur: BlurView
@@ -261,7 +274,197 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-        private fun handleSpecialUrl(url: String, fallbackView: WebView = web): Boolean {
+                private val webPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+        ) { _ -> finishWebPermissionRequest() }
+        private val geoPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+        ) { _ -> finishGeoPermissionRequest() }
+        private fun hasRuntimePermission(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        private fun requestWebPermissions(request: PermissionRequest) {
+        if (isActivityDestroyed) {
+        request.deny()
+        return
+        }
+        val supported = request.resources.filter {
+        it == PermissionRequest.RESOURCE_VIDEO_CAPTURE ||
+        it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
+        }.toTypedArray()
+        if (supported.isEmpty()) {
+        request.deny()
+        return
+        }
+        pendingWebPermissionRequest?.let { previous ->
+        if (previous !== request) previous.deny()
+        }
+        pendingWebPermissionRequest = request
+        pendingWebPermissionResources = supported
+        val requestedLabels = buildList {
+        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in supported) add("camera")
+        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in supported) add("micro")
+        }.joinToString(" và ")
+        val origin = request.origin.host ?: request.origin.toString()
+        AlertDialog.Builder(this)
+        .setTitle("Quyền trang web")
+        .setMessage("$origin muốn sử dụng $requestedLabels. Chỉ cho phép nếu bạn tin tưởng trang này.")
+        .setNegativeButton("Từ chối") { _, _ -> denyPendingWebPermission() }
+        .setPositiveButton("Cho phép") { _, _ ->
+        val missing = mutableListOf<String>()
+        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in supported &&
+        !hasRuntimePermission(Manifest.permission.CAMERA)) {
+        missing.add(Manifest.permission.CAMERA)
+        }
+        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in supported &&
+        !hasRuntimePermission(Manifest.permission.RECORD_AUDIO)) {
+        missing.add(Manifest.permission.RECORD_AUDIO)
+        }
+        if (missing.isEmpty()) finishWebPermissionRequest()
+        else webPermissionLauncher.launch(missing.toTypedArray())
+        }
+        .setOnCancelListener { denyPendingWebPermission() }
+        .show()
+        }
+        private fun finishWebPermissionRequest() {
+        val request = pendingWebPermissionRequest ?: return
+        val resources = pendingWebPermissionResources
+        pendingWebPermissionRequest = null
+        pendingWebPermissionResources = emptyArray()
+        val allowed = resources.filter {
+        when (it) {
+        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> hasRuntimePermission(Manifest.permission.CAMERA)
+        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> hasRuntimePermission(Manifest.permission.RECORD_AUDIO)
+        else -> false
+        }
+        }.toTypedArray()
+        runCatching {
+        if (allowed.isEmpty()) request.deny() else request.grant(allowed)
+        }
+        }
+        private fun denyPendingWebPermission() {
+        val request = pendingWebPermissionRequest ?: return
+        pendingWebPermissionRequest = null
+        pendingWebPermissionResources = emptyArray()
+        runCatching { request.deny() }
+        }
+        private fun requestWebGeolocation(origin: String, callback: GeolocationPermissions.Callback) {
+        if (isActivityDestroyed) {
+        callback.invoke(origin, false, false)
+        return
+        }
+        val host = runCatching { Uri.parse(origin).host }.getOrNull() ?: origin
+        AlertDialog.Builder(this)
+        .setTitle("Vị trí của bạn")
+        .setMessage("$host muốn truy cập vị trí của bạn. Vị trí chỉ được cấp cho yêu cầu này.")
+        .setNegativeButton("Từ chối") { _, _ -> callback.invoke(origin, false, false) }
+        .setPositiveButton("Cho phép") { _, _ ->
+        pendingGeoOrigin = origin
+        pendingGeoCallback = callback
+        val missing = listOf(
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.ACCESS_FINE_LOCATION
+        ).filterNot(::hasRuntimePermission)
+        if (missing.isEmpty()) finishGeoPermissionRequest()
+        else geoPermissionLauncher.launch(missing.toTypedArray())
+        }
+        .setOnCancelListener { callback.invoke(origin, false, false) }
+        .show()
+        }
+        private fun finishGeoPermissionRequest() {
+        val origin = pendingGeoOrigin ?: return
+        val callback = pendingGeoCallback
+        pendingGeoOrigin = null
+        pendingGeoCallback = null
+        val allowed = hasRuntimePermission(Manifest.permission.ACCESS_FINE_LOCATION) ||
+        hasRuntimePermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+        callback?.invoke(origin, allowed, false)
+        }
+        private fun createPopupWindow(resultMsg: Message?): Boolean {
+        if (popupWebView != null) return false
+        val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+        val popup = WebView(this)
+        popup.settings.apply {
+        javaScriptEnabled = true
+        domStorageEnabled = true
+        databaseEnabled = true
+        javaScriptCanOpenWindowsAutomatically = true
+        setSupportMultipleWindows(true)
+        mediaPlaybackRequiresUserGesture = false
+        mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        userAgentString = web.settings.userAgentString
+        useWideViewPort = web.settings.useWideViewPort
+        loadWithOverviewMode = web.settings.loadWithOverviewMode
+        }
+        CookieManager.getInstance().apply {
+        setAcceptCookie(true)
+        setAcceptThirdPartyCookies(popup, true)
+        }
+        popup.webViewClient = object : WebViewClient() {
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+        if (!request.isForMainFrame) return false
+        return handleSpecialUrl(request.url.toString(), view)
+        }
+        @Deprecated("Deprecated in Java")
+        override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
+        handleSpecialUrl(url, view)
+        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+        if (request.isForMainFrame) toast("Không tải được cửa sổ đăng nhập (${error.errorCode})")
+        }
+        }
+        popup.webChromeClient = chromeClient
+        val dialog = Dialog(this)
+        val content = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(Color.WHITE)
+        }
+        val header = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setBackgroundColor(Color.rgb(245, 245, 247))
+        setPadding(dp(16), 0, dp(12), 0)
+        }
+        val title = TextView(this).apply {
+        text = "Cửa sổ mới"
+        textSize = 14f
+        setTextColor(Color.BLACK)
+        }
+        header.addView(title, LinearLayout.LayoutParams(0, dp(44), 1f))
+        val close = TextView(this).apply {
+        text = "✕"
+        textSize = 18f
+        gravity = Gravity.CENTER
+        setTextColor(Color.BLACK)
+        setOnClickListener { dialog.dismiss() }
+        }
+        header.addView(close, LinearLayout.LayoutParams(dp(44), dp(44)))
+        content.addView(header, LinearLayout.LayoutParams(-1, dp(44)))
+        content.addView(popup, LinearLayout.LayoutParams(-1, 0, 1f))
+        dialog.setContentView(content)
+        dialog.setOnDismissListener {
+        if (popupWebView === popup) {
+        popup.stopLoading()
+        (popup.parent as? ViewGroup)?.removeView(popup)
+        popup.webChromeClient = WebChromeClient()
+        popup.webViewClient = WebViewClient()
+        popup.destroy()
+        popupWebView = null
+        popupDialog = null
+        }
+        }
+        popupWebView = popup
+        popupDialog = dialog
+        dialog.show()
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        transport.webView = popup
+        resultMsg?.sendToTarget()
+        return true
+        }
+        private fun closePopupWindow() {
+        popupDialog?.dismiss()
+        }
+
+
+private fun handleSpecialUrl(url: String, fallbackView: WebView = web): Boolean {
     val uri = try { Uri.parse(url) } catch (_: Exception) { return false }
     val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
     if (scheme in setOf("http", "https", "about", "javascript", "data", "blob", "file")) {
@@ -396,7 +599,21 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
     override fun onHideCustomView() {
     exitFullscreenView()
     }
-        override fun onProgressChanged(view: WebView, newProgress: Int) {
+                override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
+        return createPopupWindow(resultMsg)
+        }
+        override fun onCloseWindow(window: WebView) {
+        if (window === popupWebView) closePopupWindow()
+        else super.onCloseWindow(window)
+        }
+        override fun onPermissionRequest(request: PermissionRequest) {
+        runOnUiThread { requestWebPermissions(request) }
+        }
+        override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
+        runOnUiThread { requestWebGeolocation(origin, callback) }
+        }
+
+override fun onProgressChanged(view: WebView, newProgress: Int) {
             pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
         }
 
