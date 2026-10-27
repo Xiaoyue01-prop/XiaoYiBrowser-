@@ -115,6 +115,76 @@ private const val TOP_SPACER_JS = """
 })();
 """
 
+// Narrow fix for site headers that are fixed/sticky at the top: let them scroll
+// upward and pass behind the status bar instead of remaining pinned forever.
+// This does not inspect or change page colors and does not restore the old EDGE_JS.
+private const val HEADER_SCROLL_THROUGH_JS = """
+(function(){
+  if (window.__summitHeaderScrollThrough) return;
+  window.__summitHeaderScrollThrough = true;
+  var attr = 'data-summit-header-scroll-through';
+  var styleId = '__summit_header_scroll_through_style';
+  var style = document.getElementById(styleId);
+  if (!style) {
+    style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = '[' + attr + '="1"]{transform:translateY(var(--summit-header-scroll-offset,0px)) var(--summit-header-scroll-original-transform,none)!important;}';
+    (document.head || document.documentElement).appendChild(style);
+  }
+  var tracked = new Set();
+  var ticking = false;
+  function findHeaders(){
+    var w = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+    var h = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+    var safeTop = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--summit-safe-area-top')) || 0;
+    var nodes = document.querySelectorAll('header,nav,[role="banner"],[role="navigation"],body *');
+    for (var i=0; i<nodes.length; i++) {
+      var el = nodes[i];
+      if (!el || el.id === '__summit_top_safe_spacer' || el.id === '__summit_edge_bottom_spacer' || el.hasAttribute('data-summit-internal')) continue;
+      if (el.hasAttribute(attr)) { tracked.add(el); continue; }
+      var cs = getComputedStyle(el);
+      if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+      var r = el.getBoundingClientRect();
+      if (r.width < w * 0.58 || r.height < 26 || r.height > h * 0.38) continue;
+      if (r.top > safeTop + 100 || r.bottom < 0) continue;
+      // Avoid double-translating nested fixed/sticky containers.
+      var ancestor = el.parentElement, nested = false;
+      while (ancestor && ancestor !== document.body && ancestor !== document.documentElement) {
+        if (ancestor.hasAttribute(attr)) { nested = true; break; }
+        var aps = getComputedStyle(ancestor).position;
+        var ar = ancestor.getBoundingClientRect();
+        if ((aps === 'fixed' || aps === 'sticky') && ar.width >= w * 0.58 && ar.height >= 26 && ar.height <= h * 0.38 && ar.top <= safeTop + 100) { nested = true; break; }
+        ancestor = ancestor.parentElement;
+      }
+      if (nested) continue;
+      el.setAttribute(attr, '1');
+      el.style.setProperty('--summit-header-scroll-original-transform', cs.transform === 'none' ? 'matrix(1,0,0,1,0,0)' : cs.transform);
+      tracked.add(el);
+    }
+  }
+  function update(){
+    ticking = false;
+    findHeaders();
+    var y = Math.max(0, window.scrollY || document.documentElement.scrollTop || 0);
+    tracked.forEach(function(el){
+      if (!el || !el.isConnected) { tracked.delete(el); return; }
+      var h = el.getBoundingClientRect().height || el.offsetHeight || 0;
+      // Move only as far as needed to fully clear the header from the viewport.
+      var offset = -Math.min(y, h + 8);
+      el.style.setProperty('--summit-header-scroll-offset', offset + 'px');
+    });
+  }
+  function schedule(){ if (!ticking) { ticking = true; requestAnimationFrame(update); } }
+  window.addEventListener('scroll', schedule, {passive:true});
+  window.addEventListener('resize', schedule, {passive:true});
+  if (window.MutationObserver && document.documentElement) {
+    var observer = new MutationObserver(function(){ schedule(); });
+    observer.observe(document.documentElement, {childList:true, subtree:true});
+  }
+  schedule();
+})();
+"""
+
 // Bottom-only compatibility helper. The old EDGE_JS header/color heuristics are removed.
 // Keep the proven bottom scroll extent isolated so it can be rebuilt independently.
 private const val BOTTOM_SPACER_JS = """
@@ -1167,6 +1237,7 @@ class MainActivity : ComponentActivity() {
         // reserves the safe area, and during scroll it moves away with the page.
         web.evaluateJavascript(TOP_SPACER_JS.replace("__TOP_HEIGHT__", topCss.toString()), null)
         web.evaluateJavascript(BOTTOM_SPACER_JS, null)
+        web.evaluateJavascript(HEADER_SCROLL_THROUGH_JS, null)
     }
 
     // "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi; chạm hoặc vuốt lên để mở lại
