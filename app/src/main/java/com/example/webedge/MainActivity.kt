@@ -162,6 +162,42 @@ private const val TOP_COLOR_JS = """
 })();
 """
 
+// TAM THOI: in so lieu layout len man hinh de tim nguyen nhan header Google bi lech
+private const val DEBUG_LAYOUT_JS = """
+(function(){
+ try{
+  var old=document.getElementById('__summit_dbg'); if(old) old.remove();
+  var P=document.createElement('div');
+  P.style.cssText='position:absolute;visibility:hidden;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)';
+  document.documentElement.appendChild(P);
+  var pc=getComputedStyle(P); var st=pc.paddingTop, sb=pc.paddingBottom; P.remove();
+  var k=innerWidth/1178;
+  function chain(x,y){
+    var e=document.elementFromPoint(x,y), out=[], i=0;
+    while(e && i<7){
+      var c=getComputedStyle(e), r=e.getBoundingClientRect();
+      out.push(e.tagName.toLowerCase()+' y'+Math.round(r.top)+' h'+Math.round(r.height)+' '+c.position+' pt'+c.paddingTop+' mt'+c.marginTop+' top'+c.top+' '+c.display);
+      e=e.parentElement; i++;
+    }
+    return out.join('\\n  ');
+  }
+  var vp=document.querySelector('meta[name=viewport]');
+  var sp=document.getElementById('__summit_edge_bottom_spacer');
+  var b=document.body, bc=getComputedStyle(b);
+  var t='safeTop='+st+' safeBot='+sb+'\\niw='+innerWidth+' ih='+innerHeight+' dpr='+devicePixelRatio+
+   '\\nvvTop='+(window.visualViewport?visualViewport.offsetTop:'-')+' scrollY='+Math.round(scrollY)+
+   '\\nviewport='+(vp?vp.content:'none')+
+   '\\nbody '+bc.display+' h'+Math.round(b.getBoundingClientRect().height)+' pt'+bc.paddingTop+' mt'+bc.marginTop+
+   '\\nspacerTop='+(sp?Math.round(sp.getBoundingClientRect().top):'none')+
+   '\\nHAMB:\\n  '+chain(96*k,95*k)+'\\nLOGO:\\n  '+chain(585*k,340*k)+'\\nUA='+navigator.userAgent;
+  var D=document.createElement('pre'); D.id='__summit_dbg';
+  D.style.cssText='position:fixed;left:0;right:0;top:0;margin:0;padding:6px;background:rgba(0,0,0,.88);color:#0f0;font:10px/1.25 monospace;z-index:2147483647;white-space:pre-wrap;pointer-events:none;word-break:break-all';
+  D.textContent=t; document.documentElement.appendChild(D);
+  setTimeout(function(){D.remove();},25000);
+ }catch(e){}
+})();
+"""
+
 class MainActivity : ComponentActivity() {
 
     private class Panel(
@@ -576,6 +612,7 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun onPageFinished(view: WebView, url: String) {
+            handler.postDelayed({ if (!isActivityDestroyed) web.evaluateJavascript(DEBUG_LAYOUT_JS, null) }, 2500L)
             injectInsets()
             scheduleTopColorSample(200L)
             handler.postDelayed(topColorRunnable, 1200L) // trang dựng muộn (SPA, dark mode...)
