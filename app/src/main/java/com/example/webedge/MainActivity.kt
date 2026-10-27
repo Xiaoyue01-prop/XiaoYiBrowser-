@@ -936,7 +936,7 @@ class MainActivity : ComponentActivity() {
         }
 
         root = FrameLayout(this)
-        root.setBackgroundColor(pageColor)
+        root.setBackgroundColor(pageBg)
         root.isFocusable = true
         root.isFocusableInTouchMode = true
 
@@ -1112,14 +1112,14 @@ class MainActivity : ComponentActivity() {
             "if(!el.style.color)return '';var x=document.createElement('canvas').getContext('2d');if(!x)return '';" +
             "x.fillStyle='#000000';x.fillStyle=el.style.color;var v=x.fillStyle;" +
             "if(/^#[0-9a-f]{6}$/i.test(v))return v;" +
-            "var m=v.match(/rgba?\(([^)]+)\)/i);if(!m)return '';" +
+            "var m=v.match(/rgba?\\(([^)]+)\\)/i);if(!m)return '';" +
             "var a=m[1].match(/[0-9.]+/g);if(!a||a.length<3||(a.length>3&&Number(a[3])<1))return '';" +
             "return '#'+a.slice(0,3).map(function(n){return Math.max(0,Math.min(255,Math.round(Number(n)||0))).toString(16).padStart(2,'0');}).join('');}" +
             "var meta=document.querySelector('meta[name=\"theme-color\"]');" +
             "if(meta){var mc=hex(meta.content.trim());if(mc)return mc;}" +
             "var nodes=[document.body,document.documentElement];for(var i=0;i<nodes.length;i++){" +
             "if(!nodes[i])continue;var c=getComputedStyle(nodes[i]).backgroundColor;" +
-            "var m=c.match(/rgba?\(([^)]+)\)/i);if(m){var a=m[1].match(/[0-9.]+/g);" +
+            "var m=c.match(/rgba?\\(([^)]+)\\)/i);if(m){var a=m[1].match(/[0-9.]+/g);" +
             "if(a&&a.length>3&&Number(a[3])<1)continue;}var h=hex(c);if(h)return h;}return '';})()"
         view.evaluateJavascript(script) { value ->
             if (isActivityDestroyed || view !== web || view.url != expectedUrl || value == null || value == "null") return@evaluateJavascript
