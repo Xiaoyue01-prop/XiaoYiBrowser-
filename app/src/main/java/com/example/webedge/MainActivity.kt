@@ -40,6 +40,10 @@ import android.webkit.WebChromeClient
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -60,9 +64,10 @@ import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.Locale
 
 private const val DESKTOP_UA =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 // Script chạy trong trang. Chế độ tràn viền: đẩy thanh menu cố định ở đầu trang xuống dưới thanh trạng thái
 // (hoặc chừa chỗ cho lớp phủ toàn màn hình) và báo màu thanh đó về app để tô dải thanh trạng thái.
@@ -250,7 +255,62 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private val client = object : WebViewClient() {
+        private fun handleSpecialUrl(url: String, fallbackView: WebView = web): Boolean {
+    val uri = try { Uri.parse(url) } catch (_: Exception) { return false }
+    val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
+    if (scheme in setOf("http", "https", "about", "javascript", "data", "blob", "file")) {
+    return false
+    }
+    return try {
+    val intent = if (scheme == "intent") {
+    Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+    } else {
+    Intent(Intent.ACTION_VIEW, uri)
+    }
+    intent.component = null
+    intent.addCategory(Intent.CATEGORY_BROWSABLE)
+    val fallback = intent.getStringExtra("browser_fallback_url")?.let {
+    val fallbackUri = runCatching { Uri.parse(it) }.getOrNull()
+    if (fallbackUri?.scheme.equals("https", ignoreCase = true) ||
+    fallbackUri?.scheme.equals("http", ignoreCase = true)) it else null
+    }
+    when {
+    intent.resolveActivity(packageManager) != null -> {
+    startActivity(intent)
+    true
+    }
+    !fallback.isNullOrBlank() -> {
+    fallbackView.loadUrl(fallback)
+    true
+    }
+    else -> {
+    toast("Không tìm thấy ứng dụng để mở liên kết này")
+    true
+    }
+    }
+    } catch (_: Exception) {
+    toast("Không thể mở liên kết bên ngoài")
+    true
+    }
+    }
+private val client = object : WebViewClient() {
+override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+if (!request.isForMainFrame) return false
+return handleSpecialUrl(request.url.toString(), view)
+}
+@Deprecated("Deprecated in Java")
+override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
+handleSpecialUrl(url, view)
+override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+if (request.isForMainFrame && !isActivityDestroyed) {
+toast("Không tải được trang (${error.errorCode})")
+}
+}
+override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+if (request.isForMainFrame && response.statusCode >= 400 && !isActivityDestroyed) {
+toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
+}
+}
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             currentUrl = url
             web.alpha = 0.6f
@@ -606,9 +666,21 @@ class MainActivity : ComponentActivity() {
         val ws = web.settings
         ws.javaScriptEnabled = true
         ws.domStorageEnabled = true
-        mobileUa = ws.userAgentString.replace("; wv", "")
+                ws.databaseEnabled = true
+        ws.setSupportMultipleWindows(true)
+        ws.javaScriptCanOpenWindowsAutomatically = true
+        ws.mediaPlaybackRequiresUserGesture = false
+        ws.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        mobileUa = ws.userAgentString
+        .replace(Regex(""";\s*wv""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\s*Version/4\.0""", RegexOption.IGNORE_CASE), "")
+        ws.userAgentString = mobileUa
         applyDesktopMode()
-        web.webViewClient = client
+                CookieManager.getInstance().apply {
+        setAcceptCookie(true)
+        setAcceptThirdPartyCookies(web, true)
+        }
+web.webViewClient = client
         web.webChromeClient = chromeClient
         web.addJavascriptInterface(Bridge(), "EdgeBridge")
         web.setFindListener { active, total, _ ->
