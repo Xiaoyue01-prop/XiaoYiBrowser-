@@ -188,6 +188,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var urlPill: LinearLayout
     private lateinit var pillProgress: PillProgress
     private lateinit var topFade: View
+    private lateinit var fadeDrawable: GradientDrawable
     private lateinit var bottomFade: View
     private lateinit var suggestBox: LinearLayout
     private lateinit var suggestBlurView: BlurView
@@ -709,7 +710,12 @@ class MainActivity : ComponentActivity() {
         val pageColor = Theme.pageColor(isNight)
         pageBg = Color.WHITE
 
-        // Native status-bar safe area: solid like Chrome at page top; dim overlay while scrolling.
+        // Reuse Summit v1.1's original status-bar fade (theme-aware, opaque-to-transparent).
+        // Keep it hidden as a solid Chrome-like safe area until the WebView scrolls.
+        fadeDrawable = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Theme.fadeStart(isNight), Theme.fadeEnd(isNight))
+        )
         topFade = View(this)
         topFade.setBackgroundColor(pageBg)
 
@@ -1122,20 +1128,21 @@ class MainActivity : ComponentActivity() {
         injectInsets()
     }
 
-    // The top safe area is solid like Chrome at scrollY=0. Once page content
-    // moves behind the status bar, a dark translucent overlay improves clock/icon
-    // contrast. This intentionally does NOT blur the content.
+    // Match Summit v1.1: theme-aware gradient fading from opaque to transparent.
+    // At scrollY=0 keep the Chrome-like solid safe area; while scrolling, extend
+    // the original fade slightly below the status bar over content passing behind it.
     private fun updateTopFade() {
         val lp = topFade.layoutParams as FrameLayout.LayoutParams
-        lp.height = insetTop
         val scrolled = ::web.isInitialized && web.scrollY > 0
         val lightBar: Boolean
         if (scrolled) {
-            topFade.setBackgroundColor(Color.argb(92, 0, 0, 0))
-            lightBar = false // white status icons over the dimmed content
+            topFade.background = fadeDrawable
+            lp.height = insetTop + dp(16)
+            lightBar = !isNight
         } else {
             val col = solidTop ?: pageBg
             topFade.setBackgroundColor(col)
+            lp.height = insetTop
             lightBar = ColorUtils.calculateLuminance(col) > 0.5
         }
         topFade.layoutParams = lp
