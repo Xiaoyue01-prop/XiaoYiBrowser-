@@ -170,7 +170,9 @@ private const val EDGE_JS = """
         var r = f.getBoundingClientRect();
         if (r.top <= y && r.width > w * 0.6) {
           hit = f;
-          big = r.height >= window.innerHeight * 0.45;
+          // Only treat near-fullscreen overlays as large containers; ordinary page headers
+          // should be moved below the status bar rather than padded internally.
+          big = r.height >= window.innerHeight * 0.85;
           color = climb(stack[j]);
         }
       }
