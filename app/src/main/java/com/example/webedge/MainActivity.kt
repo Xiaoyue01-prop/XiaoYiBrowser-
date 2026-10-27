@@ -78,89 +78,17 @@ import java.util.Locale
 private const val DESKTOP_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-// EDGE_JS chỉ lấy màu mép trên của trang và tạo vùng cuộn dưới thanh công cụ nổi.
-// Vùng an toàn phía trên do Android WindowInsets và khung WebView xử lý, không sửa CSS header của website.
-private const val EDGE_JS = """
+// Bottom-only compatibility helper. The old EDGE_JS header/color heuristics are removed.
+// Keep the proven bottom scroll extent isolated so it can be rebuilt independently.
+private const val BOTTOM_SPACER_JS = """
 (function(){
-  var EDGE_VERSION = 'summit-native-safe-area-v2';
-  var RELOAD_KEY = '__summit_edge_safearea_reload_v2';
-
-  // WebView.restoreState() may resurrect a document with the previous EDGE_JS
-  // still attached. Reload that document once so legacy header-padding code and
-  // its event listeners cannot keep mutating the page after the native fix.
-  if (window.__edgeScriptVersion === EDGE_VERSION && window.__edgeRun) {
-    window.__edgeRun();
-    return;
-  }
-  if (window.__edgeStarted && window.__edgeScriptVersion !== EDGE_VERSION) {
-    if (window.__edgeReloadingForVersion) return;
-    try {
-      if (!window.sessionStorage.getItem(RELOAD_KEY)) {
-        window.sessionStorage.setItem(RELOAD_KEY, '1');
-        window.__edgeReloadingForVersion = true;
-        window.location.reload();
-        return;
-      }
-      window.sessionStorage.removeItem(RELOAD_KEY);
-    } catch (e) {}
-  } else {
-    try { window.sessionStorage.removeItem(RELOAD_KEY); } catch (e) {}
-  }
-
-  window.__edgeStarted = true;
-  window.__edgeScriptVersion = EDGE_VERSION;
-  var last = '';
-  function rgbOf(c){
-    var m = c && c.match(/rgba?\(([^)]+)\)/);
-    if (!m) return null;
-    var p = m[1].split(',').map(function(x){ return parseFloat(x); });
-    var a = p.length > 3 ? p[3] : 1;
-    if (a < 0.85) return null;
-    return p;
-  }
-  function bgOf(el){ return rgbOf(getComputedStyle(el).backgroundColor); }
-  function pinned(el){
-    while (el && el !== document.documentElement && el !== document.body) {
-      var p = getComputedStyle(el).position;
-      if (p === 'fixed' || p === 'sticky') return el;
-      el = el.parentElement;
-    }
-    return null;
-  }
-  function climb(el){
-    for (; el; el = el.parentElement) { var c = bgOf(el); if (c) return c; }
-    return null;
-  }
-  function report(v){
-    if (v === last) return;
-    last = v;
-    try {
-      if (v === 'none') { EdgeBridge.clearTopColor(); }
-      else { var p = v.split(','); EdgeBridge.setTopColor(Math.round(+p[0]), Math.round(+p[1]), Math.round(+p[2])); }
-    } catch (e) {}
-  }
-  function runTop(){
-    if (!document.elementsFromPoint) return;
-    var w = window.innerWidth, color = null;
-    var stack = document.elementsFromPoint(w * 0.5, 2);
-    for (var j = 0; j < stack.length && !color; j++) {
-      if (pinned(stack[j])) color = climb(stack[j]);
-    }
-    if (!color) {
-      if ((window.scrollY || 0) > 2) return;
-      color = stack.length ? climb(stack[0]) : null;
-    }
-    if (!color) color = climb(document.body) || climb(document.documentElement);
-    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
-  }
-  function ensureBottomSpacer(){
+  var root = document.documentElement;
+  if (!root) return;
+  var bottomInset = parseFloat(getComputedStyle(root).getPropertyValue('--summit-safe-area-bottom')) || 0;
+  var height = bottomInset + 54;
+  var id = '__summit_edge_bottom_spacer';
+  function ensure(){
     if (!document.body) return;
-    var bottomInset = parseFloat(getComputedStyle(document.documentElement)
-      .getPropertyValue('--summit-safe-area-bottom')) || 0;
-    // Summit's floating toolbar overlaps the bottom of the WebView.
-    // Add only scroll extent; do not change the site's padding or header layout.
-    var height = bottomInset + 54;
-    var id = '__summit_edge_bottom_spacer';
     var el = document.getElementById(id);
     if (!el) {
       el = document.createElement('div');
@@ -174,25 +102,14 @@ private const val EDGE_JS = """
       el.style.setProperty('height', height + 'px', 'important');
     }
   }
-  function run(){
-    // Native WindowInsets keeps the WebView's layout viewport below the status bar.
-    // Do not guess page headers, prepend top spacers, or inject padding into site elements.
-    ensureBottomSpacer();
-    runTop();
+  ensure();
+  if (!window.__summitBottomSpacerObserver) {
+    window.__summitBottomSpacerObserver = new MutationObserver(function(){
+      if (!document.getElementById(id)) ensure();
+    });
+    window.__summitBottomSpacerObserver.observe(root, {childList:true, subtree:true});
   }
-  var t = null;
-  function sched(){ if (t) return; t = setTimeout(function(){ t = null; run(); }, 180); }
-  window.__edgeRun = run;
-  window.addEventListener('scroll', sched, {passive: true});
-  window.addEventListener('resize', sched);
-  try {
-    new MutationObserver(sched).observe(document.documentElement,
-      {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style']});
-  } catch (e) {}
-  setTimeout(run, 100);
-  setTimeout(run, 800);
-  setTimeout(run, 2000);
-  run();
+  window.addEventListener('resize', ensure, {passive:true});
 })();
 """
 
@@ -286,17 +203,6 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ -> finishGeoPermissionRequest() }
 
-    inner class Bridge {
-        @JavascriptInterface
-        fun setTopColor(r: Int, g: Int, b: Int) {
-            runOnUiThread { applyTopColor(Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))) }
-        }
-
-        @JavascriptInterface
-        fun clearTopColor() {
-            runOnUiThread { applyTopColor(null) }
-        }
-    }
 
     /**
      * Handle only non-web schemes. Normal HTTP(S) navigation remains inside WebView.
@@ -1000,7 +906,6 @@ class MainActivity : ComponentActivity() {
         }
         web.webViewClient = client
         web.webChromeClient = chromeClient
-        web.addJavascriptInterface(Bridge(), "EdgeBridge")
         web.setFindListener { active, total, _ ->
             findCount.text = if (total == 0) "0" else "" + (active + 1) + "/" + total
         }
@@ -1209,16 +1114,13 @@ class MainActivity : ComponentActivity() {
         updateTopFade()
     }
 
-    // Chừa chỗ đầu/cuối trang cho các thanh và chạy script xử lý thanh menu cố định
+    // Keep bottom scroll space isolated. The old EDGE_JS top-header heuristics are removed.
     private fun injectInsets() {
         val bottomCss = (insetBottom / d).toInt()
-        // Native WindowInsets owns the top safe area. Keep only the bottom inset
-        // as a private value for the floating-toolbar scroll spacer.
         val css = "(function(){var r=document.documentElement;if(!r)return;" +
-            "r.style.setProperty('--summit-safe-area-bottom','${bottomCss}px');" +
-            "var s=document.getElementById('__edge');if(s)s.remove();})();"
+            "r.style.setProperty('--summit-safe-area-bottom','${bottomCss}px');})();"
         web.evaluateJavascript(css, null)
-        web.evaluateJavascript(EDGE_JS, null)
+        web.evaluateJavascript(BOTTOM_SPACER_JS, null)
     }
 
     // "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi; chạm hoặc vuốt lên để mở lại
@@ -2029,10 +1931,7 @@ class MainActivity : ComponentActivity() {
         popupDialog?.dismiss()
         suggestToken++
         // === CLEANUP DE TRANH MEMORY LEAK ===
-        // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)
-        web.removeJavascriptInterface("EdgeBridge")
-        
-        // 2. Gỡ listeners khỏi WebView
+        // Gỡ listeners khỏi WebView; no page JavaScript bridge is installed.
         web.webViewClient = WebViewClient()
         web.webChromeClient = WebChromeClient()
         web.setDownloadListener(null)

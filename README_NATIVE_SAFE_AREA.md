@@ -1,11 +1,7 @@
-# Summit v1.2 Native Safe Area patch
+# Summit v1.2 — No EDGE_JS baseline
 
-This patch changes the top-edge handling strategy:
+This experimental baseline removes the former EDGE_JS page-header/color heuristic and its JavaScript bridge. The native WindowInsets path remains responsible for the top layout. A separate minimal bottom-only helper is retained to preserve the tested scroll space behind Summit's floating toolbar.
 
-- Android `WindowInsets` is the source of truth for the status-bar safe area.
-- The WebView starts below the status bar (`topMargin = insetTop`) so web content does not have to be guessed/repositioned by JavaScript.
-- The native top fade/color layer remains and is sized to the system status-bar area only.
-- `EDGE_JS` is preserved, but no longer inserts a top spacer or mutates `position: fixed/sticky` headers with `padding-top`/`top`. It continues sampling the page edge color and adds a bottom scroll spacer for the floating toolbar.
-- The bottom spacer is idempotent to avoid mutation-observer loops.
+The bottom helper does not inspect or reposition website headers and does not sample page-edge colors. This intentionally reduces behavior so compatibility can be rebuilt in small, testable steps.
 
-This prioritizes correct page layout and avoids Summit-induced gaps. It is a compatibility-oriented approximation rather than an exact reproduction of Safari's internal WebKit/Safari viewport implementation. Build and test on device before treating it as stable.
+Validation performed: ZIP integrity and source/reference inspection. Android `assembleDebug` and on-device testing have not been run in this environment.

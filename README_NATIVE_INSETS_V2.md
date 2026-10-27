@@ -1,7 +1,7 @@
-# Summit v1.2 Native Insets v2
+# Summit v1.2 — No EDGE_JS baseline
 
-Based on Summit-v1.2-NativeSafeArea. This revision changes the edge-to-edge top layout so that when edge mode is enabled, the WebView occupies the full window instead of adding the status-bar inset as an additional native top margin. In non-edge mode the WebView remains below the status bar. It also versions EDGE_JS and reloads a restored legacy document once, preventing an old injected script from continuing to mutate headers after an app update.
+This experimental baseline removes the former EDGE_JS page-header/color heuristic and its JavaScript bridge. The native WindowInsets path remains responsible for the top layout. A separate minimal bottom-only helper is retained to preserve the tested scroll space behind Summit's floating toolbar.
 
-EDGE_JS is retained: it still samples the top edge color and maintains the bottom scroll spacer, but does not inject top padding into website headers.
+The bottom helper does not inspect or reposition website headers and does not sample page-edge colors. This intentionally reduces behavior so compatibility can be rebuilt in small, testable steps.
 
-Validation performed: ZIP structure, Kotlin source text/diff review, and JavaScript syntax check for the EDGE_JS body. Android assembleDebug/device testing has not been run in this environment.
+Validation performed: ZIP integrity and source/reference inspection. Android `assembleDebug` and on-device testing have not been run in this environment.
