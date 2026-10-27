@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.Dialog
 import android.app.DownloadManager
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -57,6 +58,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.WindowInsetsCompat
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
@@ -184,6 +186,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var store: Store
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
+    private lateinit var fullscreenContainer: FrameLayout
+    private var customVideoView: View? = null
+    private var customVideoCallback: WebChromeClient.CustomViewCallback? = null
+    private var previousRequestedOrientation: Int? = null
     private lateinit var blurTarget: BlurTarget
     private lateinit var urlPillFrame: FrameLayout
     private lateinit var urlPillBlur: BlurView
@@ -293,6 +299,47 @@ class MainActivity : ComponentActivity() {
     true
     }
     }
+private fun showFullscreenView(
+view: View,
+callback: WebChromeClient.CustomViewCallback,
+requestedOrientationValue: Int? = null
+) {
+if (!::fullscreenContainer.isInitialized || customVideoView != null) {
+callback.onCustomViewHidden()
+return
+}
+customVideoView = view
+customVideoCallback = callback
+previousRequestedOrientation = requestedOrientation
+requestedOrientationValue?.let {
+if (it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) requestedOrientation = it
+}
+(view.parent as? ViewGroup)?.removeView(view)
+fullscreenContainer.removeAllViews()
+fullscreenContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
+fullscreenContainer.visibility = View.VISIBLE
+fullscreenContainer.bringToFront()
+WindowInsetsControllerCompat(window, root).hide(WindowInsetsCompat.Type.systemBars())
+}
+
+private fun exitFullscreenView() {
+val view = customVideoView ?: return
+if (::fullscreenContainer.isInitialized) {
+fullscreenContainer.removeView(view)
+fullscreenContainer.visibility = View.GONE
+}
+customVideoView = null
+val callback = customVideoCallback
+customVideoCallback = null
+previousRequestedOrientation?.let { requestedOrientation = it }
+previousRequestedOrientation = null
+if (!isActivityDestroyed && !isFinishing && !isDestroyed && ::root.isInitialized) {
+WindowInsetsControllerCompat(window, root).show(WindowInsetsCompat.Type.systemBars())
+}
+callback?.onCustomViewHidden()
+}
+
+
 private val client = object : WebViewClient() {
 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
 if (!request.isForMainFrame) return false
@@ -340,6 +387,15 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
     }
 
     private val chromeClient = object : WebChromeClient() {
+    override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+    showFullscreenView(view, callback)
+    }
+    override fun onShowCustomView(view: View, requestedOrientation: Int, callback: CustomViewCallback) {
+    showFullscreenView(view, callback, requestedOrientation)
+    }
+    override fun onHideCustomView() {
+    exitFullscreenView()
+    }
         override fun onProgressChanged(view: WebView, newProgress: Int) {
             pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
         }
@@ -765,6 +821,12 @@ web.webViewClient = client
             }
         }
         root.addView(bar, FrameLayout.LayoutParams(-1, dp(BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM))
+        fullscreenContainer = FrameLayout(this).apply {
+        setBackgroundColor(Color.BLACK)
+        visibility = View.GONE
+        isClickable = true
+        }
+        root.addView(fullscreenContainer, FrameLayout.LayoutParams(-1, -1))
         findBarContainer = FrameLayout(this)
         findBarContainer.visibility = View.GONE
         val findGlass = GlassSystem.createBlurView(
@@ -1696,6 +1758,7 @@ web.webViewClient = client
 
     override fun onDestroy() {
         isActivityDestroyed = true
+        if (customVideoView != null) exitFullscreenView()
         suggestToken++
         // === CLEANUP DE TRANH MEMORY LEAK ===
         // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)
