@@ -671,14 +671,12 @@ class MainActivity : ComponentActivity() {
         val pageColor = Theme.pageColor(isNight)
         pageBg = Color.WHITE
 
-        // Lớp mờ dần dưới thanh trạng thái (khi trang không có thanh menu cố định)
+        // Top safe-area surface: solid like Chrome at scrollY=0, real BlurView glass while scrolling.
         val fadeStart = Theme.fadeStart(isNight)
         val fadeEnd = Theme.fadeEnd(isNight)
         fadeDrawable = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(fadeStart, fadeEnd))
-        // Native status-bar glass layer. It is connected to BlurTarget after the
-        // WebView has been attached, so it samples the page without DOM heuristics.
         topFade = BlurView(this)
-        topFade.background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+        topFade.background = android.graphics.drawable.ColorDrawable(pageBg)
 
         val botStart = Color.argb(if (isNight) 90 else 40, 0, 0, 0)
         val botEnd = Color.argb(0, 0, 0, 0)
@@ -930,8 +928,10 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Vuốt xuống thì ẩn thanh, vuốt lên thì hiện lại
+        // Keep the top safe area Chrome-like at the page top; switch to real glass
+        // as soon as content scrolls underneath it. Do not resize/reposition WebView.
         web.setOnScrollChangeListener { _, _, y, _, oldY ->
+            updateTopFade()
             val dy = y - oldY
             if (urlBar.hasFocus()) return@setOnScrollChangeListener
             if (dy > 12) setBarHidden(true)
@@ -948,8 +948,8 @@ class MainActivity : ComponentActivity() {
         blurTarget.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
 
-        // A flat, full-width BlurView is intentional: no rounded clipping and no
-        // per-site header detection. Bottom glass surfaces and their layout remain untouched.
+        // The status-bar glass samples the actual WebView pixels; its overlay is subtle,
+        // with no rounded clipping so it fills the full status-bar safe area.
         (topFade as BlurView).setupWith(blurTarget)
             .setBlurRadius(16f * d)
             .setOverlayColor(if (isNight) Color.argb(38, 22, 22, 26) else Color.argb(28, 255, 255, 255))
@@ -1095,25 +1095,25 @@ class MainActivity : ComponentActivity() {
         injectInsets()
     }
 
-    // Dải thanh trạng thái: tràn viền thì dùng lớp mờ (hoặc màu thanh menu của trang nếu có),
-    // không tràn viền thì luôn là màu đặc theo mép trên của trang
+    // Top safe area: solid/Chrome-like at the top of a page, real blur glass once scrolled.
+    // The WebView frame is never resized here, avoiding viewport jumps and preserving bottom UI.
     private fun updateTopFade() {
         val lp = topFade.layoutParams as FrameLayout.LayoutParams
-        val c = solidTop
+        val pageTopColor = solidTop ?: pageBg
+        val scrolled = ::web.isInitialized && web.scrollY > 0
+        val useGlass = store.edgeMode && scrolled
         val lightBar: Boolean
-        if (store.edgeMode && c == null) {
-            // Blur the actual WebView pixels behind the status bar instead of
-            // painting a gradient that can look like a flat strip on bright pages.
+
+        if (useGlass) {
             topFade.background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
             (topFade as? BlurView)?.setOverlayColor(
                 if (isNight) Color.argb(38, 22, 22, 26) else Color.argb(28, 255, 255, 255)
             )
+            // Keep status glyph contrast consistent with the app's selected appearance.
             lightBar = !isNight
         } else {
-            val col = c ?: pageBg
-            // Respect an explicitly detected page top color, and keep non-edge mode solid.
-            topFade.background = android.graphics.drawable.ColorDrawable(col)
-            lightBar = ColorUtils.calculateLuminance(col) > 0.5
+            topFade.background = android.graphics.drawable.ColorDrawable(pageTopColor)
+            lightBar = ColorUtils.calculateLuminance(pageTopColor) > 0.5
         }
         lp.height = insetTop
         topFade.layoutParams = lp
