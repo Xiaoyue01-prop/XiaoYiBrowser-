@@ -150,7 +150,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var pillProgress: PillProgress
     private lateinit var topFade: View
     private lateinit var bottomFade: View
-    private lateinit var fadeDrawable: GradientDrawable
     private lateinit var suggestBox: LinearLayout
     private lateinit var suggestBlurView: BlurView
     private lateinit var findBar: LinearLayout
@@ -508,6 +507,7 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             currentUrl = url
+            applyTopColor(null)
             web.alpha = 0.6f
             if (!urlBar.hasFocus()) showDomain()
             setBarHidden(false)
@@ -522,11 +522,13 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageCommitVisible(view: WebView, url: String) {
             injectInsets()
+            refreshTopColorFromPage(view)
             web.animate().alpha(1f).setDuration(220).start()
         }
 
         override fun onPageFinished(view: WebView, url: String) {
             injectInsets()
+            refreshTopColorFromPage(view)
             web.animate().alpha(1f).setDuration(120).start()
             store.addHistory(view.title ?: "", url)
             tabManager.updateActive(url, view.title ?: url)
@@ -668,15 +670,12 @@ class MainActivity : ComponentActivity() {
             Configuration.UI_MODE_NIGHT_YES
         fg = if (isNight) Color.WHITE else Color.BLACK
         sub = Theme.subColor(isNight)
-        val pageColor = Theme.pageColor(isNight)
-        pageBg = Color.WHITE
+        pageBg = Theme.pageColor(isNight)
 
-        // Lớp mờ dần dưới thanh trạng thái (khi trang không có thanh menu cố định)
-        val fadeStart = Theme.fadeStart(isNight)
-        val fadeEnd = Theme.fadeEnd(isNight)
-        fadeDrawable = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(fadeStart, fadeEnd))
+        // Native backing for the status-bar safe area. Its color follows the page
+        // when the site exposes a theme-color or opaque html/body background.
         topFade = View(this)
-        topFade.background = fadeDrawable
+        topFade.setBackgroundColor(pageBg)
 
         val botStart = Color.argb(if (isNight) 90 else 40, 0, 0, 0)
         val botEnd = Color.argb(0, 0, 0, 0)
@@ -1070,12 +1069,10 @@ class MainActivity : ComponentActivity() {
             maxOf(insetBottom, imeBottom) + dp(80)
 
         val webLp = web.layoutParams as FrameLayout.LayoutParams
-        // In edge mode, let WebView occupy the full window. Modern Android WebView
-        // forwards overlapping system-bar/cutout insets to CSS safe-area-inset-*;
-        // adding insetTop to the native frame as well can create a second top offset.
-        val desiredWebTopMargin = if (store.edgeMode) 0 else insetTop
-        val topMarginChanged = webLp.topMargin != desiredWebTopMargin
-        webLp.topMargin = desiredWebTopMargin
+        // Chrome-like geometry: web content always starts below the status bar/cutout.
+        // The lower floating toolbar and bottom safe-area calculations stay independent.
+        val topMarginChanged = webLp.topMargin != insetTop
+        webLp.topMargin = insetTop
         webLp.bottomMargin = imeBottom
         web.layoutParams = webLp
         if (topMarginChanged) ViewCompat.requestApplyInsets(web)
@@ -1087,31 +1084,56 @@ class MainActivity : ComponentActivity() {
         injectInsets()
     }
 
-    // Dải thanh trạng thái: tràn viền thì dùng lớp mờ (hoặc màu thanh menu của trang nếu có),
-    // không tràn viền thì luôn là màu đặc theo mép trên của trang
+    // Chrome-like top safe area: keep the page below the status bar and paint
+    // the status-bar backing with the page's declared/background color when available.
     private fun updateTopFade() {
         val lp = topFade.layoutParams as FrameLayout.LayoutParams
-        val c = solidTop
-        val lightBar: Boolean
-        if (store.edgeMode && c == null) {
-            topFade.background = fadeDrawable
-            lp.height = insetTop
-            lightBar = !isNight
-        } else {
-            val col = c ?: pageBg
-            topFade.setBackgroundColor(col)
-            lp.height = insetTop
-            lightBar = ColorUtils.calculateLuminance(col) > 0.5
-        }
+        val col = solidTop ?: pageBg
+        topFade.setBackgroundColor(col)
+        lp.height = insetTop
+        topFade.layoutParams = lp
         topFade.requestLayout()
-        WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = lightBar
+        WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars =
+            ColorUtils.calculateLuminance(col) > 0.5
     }
 
-    // Tô dải thanh trạng thái theo màu thanh menu của trang; null = dùng lớp mờ mặc định
     private fun applyTopColor(c: Int?) {
         if (c == solidTop) return
         solidTop = c
         updateTopFade()
+    }
+
+    // Read only declared page theme/background colors; do not inspect or reposition
+    // site headers, and do not inject top padding into page DOM.
+    private fun refreshTopColorFromPage(view: WebView) {
+        val expectedUrl = view.url
+        val script = "(function(){" +
+            "function hex(c){if(!c)return '';var el=document.createElement('span');el.style.color='';el.style.color=c;" +
+            "if(!el.style.color)return '';var x=document.createElement('canvas').getContext('2d');if(!x)return '';" +
+            "x.fillStyle='#000000';x.fillStyle=el.style.color;var v=x.fillStyle;" +
+            "if(/^#[0-9a-f]{6}$/i.test(v))return v;" +
+            "var m=v.match(/rgba?\(([^)]+)\)/i);if(!m)return '';" +
+            "var a=m[1].match(/[0-9.]+/g);if(!a||a.length<3||(a.length>3&&Number(a[3])<1))return '';" +
+            "return '#'+a.slice(0,3).map(function(n){return Math.max(0,Math.min(255,Math.round(Number(n)||0))).toString(16).padStart(2,'0');}).join('');}" +
+            "var meta=document.querySelector('meta[name=\"theme-color\"]');" +
+            "if(meta){var mc=hex(meta.content.trim());if(mc)return mc;}" +
+            "var nodes=[document.body,document.documentElement];for(var i=0;i<nodes.length;i++){" +
+            "if(!nodes[i])continue;var c=getComputedStyle(nodes[i]).backgroundColor;" +
+            "var m=c.match(/rgba?\(([^)]+)\)/i);if(m){var a=m[1].match(/[0-9.]+/g);" +
+            "if(a&&a.length>3&&Number(a[3])<1)continue;}var h=hex(c);if(h)return h;}return '';})()"
+        view.evaluateJavascript(script) { value ->
+            if (isActivityDestroyed || view !== web || view.url != expectedUrl || value == null || value == "null") return@evaluateJavascript
+            val raw = value.trim().removeSurrounding("\"").replace("\\\"", "\"")
+            if (raw.isBlank()) {
+                applyTopColor(null)
+                return@evaluateJavascript
+            }
+            try {
+                applyTopColor(Color.parseColor(raw))
+            } catch (_: IllegalArgumentException) {
+                applyTopColor(null)
+            }
+        }
     }
 
     // Keep bottom scroll space isolated. The old EDGE_JS top-header heuristics are removed.
@@ -1798,12 +1820,6 @@ class MainActivity : ComponentActivity() {
         addRow("Trang web máy tính", onOff(store.desktopMode), fg) {
             store.desktopMode = !store.desktopMode
             applyDesktopMode()
-            web.reload()
-            showSettings()
-        }
-        addRow("Tràn viền nội dung (thử nghiệm)", onOff(store.edgeMode), fg) {
-            store.edgeMode = !store.edgeMode
-            applyInsets()
             web.reload()
             showSettings()
         }
