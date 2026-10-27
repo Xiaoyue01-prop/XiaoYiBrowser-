@@ -22,6 +22,10 @@ class Store(context: Context) {
         get() = sp.getBoolean("desktop", false)
         set(v) { sp.edit().putBoolean("desktop", v).apply() }
 
+    var edgeMode: Boolean
+        get() = sp.getBoolean("edge", true)
+        set(v) { sp.edit().putBoolean("edge", v).apply() }
+
     var autoHideBar: Boolean
         get() = sp.getBoolean("autohide", true)
         set(v) { sp.edit().putBoolean("autohide", v).apply() }
