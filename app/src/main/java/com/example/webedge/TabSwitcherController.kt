@@ -376,7 +376,7 @@ class TabSwitcherController(
             iconColor = Theme.safariButtonBlue(false),
             fillColor = Color.argb(105, 255, 255, 255),
             strokeColor = Color.argb(135, 125, 125, 136),
-            textSize = 27f
+            iconTextSize = 27f
         ) {
             onCreateTab()
             dismissAnimated()
@@ -395,7 +395,7 @@ class TabSwitcherController(
             iconColor = Color.WHITE,
             fillColor = accentColor,
             strokeColor = Color.TRANSPARENT,
-            textSize = 27f
+            iconTextSize = 27f
         ) { dismissAnimated() }
         bottomBar.addView(doneButton, LinearLayout.LayoutParams(dp(52), dp(52)).apply {
             setMargins(dp(8), 0, dp(4), 0)
