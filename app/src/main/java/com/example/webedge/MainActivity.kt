@@ -2202,15 +2202,21 @@ web.webViewClient = client
 
         header.addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
+        val doneFrame = FrameLayout(this)
+        doneFrame.addView(GlassSystem.createBlurView(
+            this, blurTarget, GlassSystem.Preset.TABS_BUTTON, d, isNight
+        ).apply { isClickable = false; isFocusable = false }, FrameLayout.LayoutParams(-1, -1))
         val done = TextView(this)
         done.text = "Xong"
         done.textSize = 17f
         done.setTypeface(null, Typeface.BOLD)
         done.setTextColor(if (isNight) Color.rgb(10, 132, 255) else Color.rgb(0, 122, 255))
         done.gravity = Gravity.CENTER
-        done.setPadding(dp(12), dp(10), dp(8), dp(10))
+        done.setPadding(dp(18), dp(6), dp(18), dp(6))
         done.setOnClickListener { popup.dismiss() }
-        header.addView(done)
+        doneFrame.addView(done, FrameLayout.LayoutParams(-1, -1))
+        press(doneFrame, 0.92f)
+        header.addView(doneFrame)
         root.addView(header)
 
         val scroll = ScrollView(this)
@@ -2453,20 +2459,28 @@ web.webViewClient = client
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
 
+        val addFrame = FrameLayout(this)
+        addFrame.addView(GlassSystem.createBlurView(
+            this, blurTarget, GlassSystem.Preset.TABS_BUTTON, d, isNight
+        ).apply { isClickable = false; isFocusable = false }, FrameLayout.LayoutParams(-1, -1))
         val add = TextView(this)
         add.text = "+  Tab mới"
         add.textSize = 17f
         add.setTypeface(null, Typeface.BOLD)
         add.setTextColor(if (isNight) Color.rgb(10, 132, 255) else Color.rgb(0, 122, 255))
         add.gravity = Gravity.CENTER
-        add.setPadding(dp(12), dp(17), dp(12), dp(12))
+        add.setPadding(dp(18), dp(8), dp(18), dp(8))
         add.setOnClickListener {
             tabManager.saveState(web)
             tabManager.addNew(url = store.homeUrl, title = "Tab mới")
             load(store.homeUrl)
             popup.dismiss()
         }
-        root.addView(add)
+        addFrame.addView(add, FrameLayout.LayoutParams(-1, -1))
+        press(addFrame, 0.95f)
+        val addLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        addLp.setMargins(dp(12), dp(8), dp(12), dp(4))
+        root.addView(addFrame, addLp)
 
         root.setOnClickListener { }
         container.addView(root, FrameLayout.LayoutParams(
