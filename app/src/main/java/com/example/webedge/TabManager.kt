@@ -62,16 +62,18 @@ class TabManager {
 
     fun saveState(web: WebView) {
         val active = getActive() ?: return
+        val oldUrl = active.url
         active.url = web.url ?: active.url
         active.title = web.title ?: active.title
+        val urlChanged = oldUrl != active.url
         // Luu Bundle de khoi phuc lich su + vi tri cuon
         try {
             val b = Bundle()
             web.saveState(b)
             active.bundle = b
         } catch (_: Exception) {}
-        // Chup thumbnail nho gon
-        try {
+        // Chup thumbnail nho gon (chi khi URL thay doi)
+        if (urlChanged) try {
             val w = web.width
             val h = web.height
             if (w > 0 && h > 0) {

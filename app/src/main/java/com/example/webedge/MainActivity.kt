@@ -2153,6 +2153,35 @@ web.webViewClient = client
         tabBtn.setImageDrawable(layer)
     }
 
+
+    private fun createBlurButton(
+        text: String,
+        textSize: Float = 17f,
+        paddingH: Int = 18,
+        paddingV: Int = 6,
+        pressScale: Float = 0.92f,
+        onClick: () -> Unit
+    ): FrameLayout {
+        val frame = FrameLayout(this)
+        frame.addView(GlassSystem.createBlurView(
+            this, blurTarget, GlassSystem.Preset.TABS_BUTTON, d, isNight
+        ).apply { isClickable = false; isFocusable = false },
+        FrameLayout.LayoutParams(-1, -1))
+        
+        val tv = TextView(this)
+        tv.text = text
+        tv.textSize = textSize
+        tv.setTypeface(null, Typeface.BOLD)
+        tv.setTextColor(if (isNight) Color.rgb(10, 132, 255) else Color.rgb(0, 122, 255))
+        tv.gravity = Gravity.CENTER
+        tv.setPadding(dp(paddingH), dp(paddingV), dp(paddingH), dp(paddingV))
+        tv.setOnClickListener { onClick() }
+        
+        frame.addView(tv, FrameLayout.LayoutParams(-1, -1))
+        press(frame, pressScale)
+        return frame
+    }
+
     private fun openTabSwitcher() {
         val popup = Dialog(this, android.R.style.Theme_Translucent_NoTitleBar)
         popup.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -2202,20 +2231,12 @@ web.webViewClient = client
 
         header.addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        val doneFrame = FrameLayout(this)
-        doneFrame.addView(GlassSystem.createBlurView(
-            this, blurTarget, GlassSystem.Preset.TABS_BUTTON, d, isNight
-        ).apply { isClickable = false; isFocusable = false }, FrameLayout.LayoutParams(-1, -1))
-        val done = TextView(this)
-        done.text = "Xong"
-        done.textSize = 17f
-        done.setTypeface(null, Typeface.BOLD)
-        done.setTextColor(if (isNight) Color.rgb(10, 132, 255) else Color.rgb(0, 122, 255))
-        done.gravity = Gravity.CENTER
-        done.setPadding(dp(18), dp(6), dp(18), dp(6))
-        done.setOnClickListener { popup.dismiss() }
-        doneFrame.addView(done, FrameLayout.LayoutParams(-1, -1))
-        press(doneFrame, 0.92f)
+        val doneFrame = createBlurButton(
+            text = "Xong",
+            paddingH = 18,
+            paddingV = 6,
+            pressScale = 0.92f
+        ) { popup.dismiss() }
         header.addView(doneFrame)
         root.addView(header)
 
@@ -2459,25 +2480,17 @@ web.webViewClient = client
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
 
-        val addFrame = FrameLayout(this)
-        addFrame.addView(GlassSystem.createBlurView(
-            this, blurTarget, GlassSystem.Preset.TABS_BUTTON, d, isNight
-        ).apply { isClickable = false; isFocusable = false }, FrameLayout.LayoutParams(-1, -1))
-        val add = TextView(this)
-        add.text = "+  Tab mới"
-        add.textSize = 17f
-        add.setTypeface(null, Typeface.BOLD)
-        add.setTextColor(if (isNight) Color.rgb(10, 132, 255) else Color.rgb(0, 122, 255))
-        add.gravity = Gravity.CENTER
-        add.setPadding(dp(18), dp(6), dp(18), dp(6))
-        add.setOnClickListener {
+        val addFrame = createBlurButton(
+            text = "+  Tab mới",
+            paddingH = 18,
+            paddingV = 6,
+            pressScale = 0.95f
+        ) {
             tabManager.saveState(web)
             tabManager.addNew(url = store.homeUrl, title = "Tab mới")
             load(store.homeUrl)
             popup.dismiss()
         }
-        addFrame.addView(add, FrameLayout.LayoutParams(-1, -1))
-        press(addFrame, 0.95f)
         val addLp = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
