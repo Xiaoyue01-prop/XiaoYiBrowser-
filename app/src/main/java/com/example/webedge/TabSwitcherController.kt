@@ -72,7 +72,7 @@ class TabSwitcherController(
         iconColor: Int,
         fillColor: Int,
         strokeColor: Int,
-        textSize: Float,
+        iconTextSize: Float,
         onClick: () -> Unit
     ): FrameLayout {
         val button = FrameLayout(activity).apply {
@@ -88,7 +88,7 @@ class TabSwitcherController(
         }
         button.addView(TextView(activity).apply {
             text = symbol
-            textSize = textSize
+            textSize = iconTextSize
             gravity = Gravity.CENTER
             includeFontPadding = false
             setTextColor(iconColor)
