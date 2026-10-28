@@ -1,7 +1,10 @@
 package com.example.webedge
 
+import android.annotation.SuppressLint
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
 import android.view.View
-import android.view.animation.PathInterpolator
+import android.view.animation.Interpolator
 import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
@@ -24,24 +27,42 @@ object AnimationSystem {
         }
     }
 
-    // === Preset spring ===
-    /** Mượt, không nảy: chuyển trạng thái, thu gọn thanh công cụ, fade. */
-    val SMOOTH = SpringSpec(0.45f, 1.0f)
-    /** Nhanh, nảy rất nhẹ: nhấn nút, mở menu/dialog. */
-    val SNAPPY = SpringSpec(0.32f, 0.88f)
-    /** Nảy rõ hơn: các nút con của orb. */
-    val BOUNCY = SpringSpec(0.45f, 0.72f)
-    /** Rất nhanh, không nảy: nhấn xuống, fade ngắn. */
-    val QUICK = SpringSpec(0.22f, 1.0f)
-    /** Đóng lại: nhanh, không nảy (tránh scale âm). */
-    val DISMISS = SpringSpec(0.18f, 1.0f)
+    // === Preset spring (dùng chung toàn app, dampingRatio càng thấp càng nảy) ===
+    /** Nhấn xuống: nhanh, không nảy. */
+    val QUICK = SpringSpec(0.20f, 1.0f)
+    /** Nhả tay sau khi nhấn: nảy rất mạnh. */
+    val PRESS_RELEASE = SpringSpec(0.40f, 0.30f)
+    /** Mở menu/dialog, nút xoay, chuyển trang menu: nảy mạnh. */
+    val SNAPPY = SpringSpec(0.45f, 0.42f)
+    /** Orb, thẻ tab xuất hiện: nảy mạnh nhất. */
+    val BOUNCY = SpringSpec(0.50f, 0.35f)
+    /** Thu gọn thanh công cụ, toast, đổi trạng thái: nảy vừa. */
+    val SMOOTH = SpringSpec(0.50f, 0.55f)
+    /** Đóng lại: vẫn nảy nhẹ (scale/alpha được chặn ở 0 nên không bị lật). */
+    val DISMISS = SpringSpec(0.30f, 0.60f)
 
     // === Hằng số ===
-    const val PRESS_SCALE_SMALL = 0.92f
+    /** Nút kính phồng lên khi nhấn (như Liquid Glass của iOS 26). */
+    const val GLASS_PRESS_SCALE = 1.12f
 
-    /** Đường cong iOS cho Transition của Android (đổi nội dung/kích thước card menu). */
-    val iosCurve = PathInterpolator(0.32f, 0.72f, 0f, 1f)
-    const val PAGE_DURATION = 350L
+    /** Interpolator mô phỏng spring thiếu giảm chấn, dùng cho Transition của Android. */
+    class SpringInterpolator(spec: SpringSpec, private val durationSec: Float) : Interpolator {
+        private val zeta = spec.dampingRatio.coerceAtMost(0.999f).toDouble()
+        private val w = 2.0 * Math.PI / spec.response
+        private val wd = w * Math.sqrt(1.0 - zeta * zeta)
+
+        override fun getInterpolation(input: Float): Float {
+            if (input >= 1f) return 1f
+            val t = input * durationSec
+            val decay = Math.exp(-zeta * w * t)
+            val v = 1.0 - decay * (Math.cos(wd * t) + (zeta * w / wd) * Math.sin(wd * t))
+            return v.toFloat()
+        }
+    }
+
+    /** Đổi nội dung/kích thước card menu: nảy theo spring. */
+    const val PAGE_DURATION = 600L
+    val pageInterpolator = SpringInterpolator(SNAPPY, PAGE_DURATION / 1000f)
 
     private val running =
         WeakHashMap<View, HashMap<DynamicAnimation.ViewProperty, SpringAnimation>>()
@@ -66,6 +87,8 @@ object AnimationSystem {
         if (prop === DynamicAnimation.ALPHA) {
             anim.setMinValue(0f)
             anim.setMaxValue(1f)
+        } else if (prop === DynamicAnimation.SCALE_X || prop === DynamicAnimation.SCALE_Y) {
+            anim.setMinValue(0f) // spring nảy qua 0 sẽ làm view bị lật ngược
         }
         anim.addEndListener { _, canceled, _, _ ->
             if (map[prop] === anim) map.remove(prop)
@@ -89,11 +112,37 @@ object AnimationSystem {
         spring(view, DynamicAnimation.SCALE_Y, sy, spec)
     }
 
-    /** Nhấn xuống: co lại nhanh. */
+    /** Nhấn xuống: đổi kích thước nhanh (scale < 1 là co lại, > 1 là phồng lên). */
     fun pressDown(view: View, scale: Float) = scaleTo(view, scale, scale, QUICK)
 
-    /** Nhả tay: bật về kích thước gốc theo spring. */
-    fun pressUp(view: View) = scaleTo(view, 1f, 1f, SNAPPY)
+    /** Nhả tay: bật về kích thước gốc, nảy mạnh. */
+    fun pressUp(view: View) = scaleTo(view, 1f, 1f, PRESS_RELEASE)
+
+    /**
+     * Gắn hiệu ứng nhấn cho [touch]; animation chạy trên [target] (mặc định chính nó).
+     * Truyền [target] khác khi view được chạm là con của khung cần nảy (vd. TextView trong nút kính).
+     * Trả false nên onClick vẫn hoạt động bình thường.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    fun attachPress(touch: View, target: View = touch, scale: Float) {
+        touch.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> pressDown(target, scale)
+                MotionEvent.ACTION_UP -> {
+                    pressUp(target)
+                    if (ev.x >= 0f && ev.x <= v.width && ev.y >= 0f && ev.y <= v.height) {
+                        v.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> pressUp(target)
+            }
+            false
+        }
+    }
+
+    /** Nút kính: phồng lên khi nhấn rồi nảy về. */
+    fun attachGlassPress(touch: View, target: View = touch) =
+        attachPress(touch, target, GLASS_PRESS_SCALE)
 
     /** Menu/dialog mở ra: scale + fade từ góc neo (đặt pivot trước khi gọi). */
     fun popIn(view: View, fromScale: Float = 0.8f) {

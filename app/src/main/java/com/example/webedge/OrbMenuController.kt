@@ -98,6 +98,7 @@ class OrbMenuController(
             }
         )
         mainBtn.setOnClickListener { toggle() }
+        AnimationSystem.attachGlassPress(mainBtn)
 
         val icons = listOf(Icons.ARROW_BACK, Icons.ARROW_FORWARD, Icons.HOME)
         val labels = listOf("Quay lại", "Tiến tới", "Trang chủ")
@@ -118,6 +119,7 @@ class OrbMenuController(
                         collapse()
                     }
                 }
+                AnimationSystem.attachGlassPress(this)
                 visibility = View.GONE
                 scaleX = 0f
                 scaleY = 0f

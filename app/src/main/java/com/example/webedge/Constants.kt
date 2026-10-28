@@ -10,13 +10,5 @@ object Constants {
     const val BUTTON_PADDING_V = 6
     
     // === Typography: font sizes (sp) ===
-    const val TEXT_SIZE_XS = 11.5f
-    const val TEXT_SIZE_SM = 12f
-    const val TEXT_SIZE_BASE = 13.5f
-    const val TEXT_SIZE_MD = 14f
-    const val TEXT_SIZE_LG = 15f
     const val TEXT_SIZE_XL = 17f
-    const val TEXT_SIZE_XXL = 28f
-    const val TEXT_SIZE_ICON_BADGE = 10f
-    const val TEXT_SIZE_TAB_PREVIEW = 46f
 }

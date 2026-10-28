@@ -724,26 +724,10 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
     // ---------------- Hiệu ứng ----------------
 
-    // Nhấn co lại + rung nhẹ khi nhả tay trong vùng nút
-    @SuppressLint("ClickableViewAccessibility")
+    // Nút kính (scale <= 0.9) phồng lên khi nhấn, hàng danh sách/thẻ co lại; cả hai nhả ra nảy.
     private fun press(v: View, scale: Float) {
-        v.setOnTouchListener { view, ev ->
-            when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    AnimationSystem.pressDown(view, scale)
-                }
-                MotionEvent.ACTION_UP -> {
-                    AnimationSystem.pressUp(view)
-                    if (ev.x >= 0f && ev.x <= view.width && ev.y >= 0f && ev.y <= view.height) {
-                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                    }
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    AnimationSystem.pressUp(view)
-                }
-            }
-            false
-        }
+        if (scale <= 0.9f) AnimationSystem.attachGlassPress(v)
+        else AnimationSystem.attachPress(v, v, scale)
     }
 
     private var toastView: TextView? = null
@@ -1526,7 +1510,7 @@ web.webViewClient = client
         card.post {
             card.pivotX = card.width.toFloat()
             card.pivotY = card.height.toFloat()
-            AnimationSystem.popIn(card)
+            AnimationSystem.popIn(card, 0.6f)
         }
     }
 
@@ -1562,7 +1546,7 @@ web.webViewClient = client
         if (animate) {
             val tr = AutoTransition()
             tr.duration = AnimationSystem.PAGE_DURATION
-            tr.interpolator = AnimationSystem.iosCurve
+            tr.interpolator = AnimationSystem.pageInterpolator
             TransitionManager.beginDelayedTransition(layer, tr)
         }
         // Giữ lớp kính ở child đầu tiên, chỉ thay nội dung trang menu.
@@ -2148,7 +2132,6 @@ web.webViewClient = client
         textSize: Float = Constants.TEXT_SIZE_XL,
         paddingH: Int = Constants.BUTTON_PADDING_H,
         paddingV: Int = Constants.BUTTON_PADDING_V,
-        pressScale: Float = AnimationSystem.PRESS_SCALE_SMALL,
         onClick: () -> Unit
     ): FrameLayout {
         val frame = FrameLayout(this)
@@ -2167,15 +2150,21 @@ web.webViewClient = client
         tv.setOnClickListener { onClick() }
         
         frame.addView(tv, FrameLayout.LayoutParams(-1, -1))
-        press(frame, pressScale)
+        AnimationSystem.attachGlassPress(tv, frame)
         return frame
     }
 
-    private fun openTabSwitcher() {
+    private fun openTabSwitcher(animate: Boolean = true) {
         val popup = Dialog(this, android.R.style.Theme_Translucent_NoTitleBar)
         popup.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         val container = FrameLayout(this)
+        var closing = false
+        fun dismissAnimated() {
+            if (closing) return
+            closing = true
+            AnimationSystem.popOut(container, 0.9f) { popup.dismiss() }
+        }
         // Nen kinh mo Liquid Glass (blur tu noi dung web phia sau)
         val dialogBlur = GlassSystem.createBlurView(
             this, blurTarget, GlassSystem.Preset.TABS_DIALOG, d, isNight
@@ -2223,9 +2212,8 @@ web.webViewClient = client
         val doneFrame = createBlurButton(
             text = "Xong",
             paddingH = 18,
-            paddingV = 6,
-            pressScale = 0.92f
-        ) { popup.dismiss() }
+            paddingV = 6
+        ) { dismissAnimated() }
         header.addView(doneFrame)
         root.addView(header)
 
@@ -2235,6 +2223,7 @@ web.webViewClient = client
         grid.orientation = LinearLayout.VERTICAL
 
         val tabs = tabManager.getAll()
+        var cardIndex = 0
         for (chunk in tabs.chunked(2)) {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
@@ -2365,6 +2354,7 @@ web.webViewClient = client
                     preview.addView(close, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.TOP or Gravity.END).apply {
                         setMargins(0, dp(5), dp(5), 0)
                     })
+                    AnimationSystem.attachGlassPress(close)
                     close.setOnClickListener {
                         val wasActive = tab.isActive
 
@@ -2386,7 +2376,7 @@ web.webViewClient = client
                             }
 
                         }
-                        openTabSwitcher()
+                        openTabSwitcher(false)
                     }
                 } else {
                     val activeMark = TextView(this)
@@ -2446,8 +2436,15 @@ web.webViewClient = client
 
                         }
                     }
-                    popup.dismiss()
+                    dismissAnimated()
                 }
+                AnimationSystem.attachPress(card, card, 0.96f)
+
+                card.alpha = 0f
+                card.scaleX = 0.7f
+                card.scaleY = 0.7f
+                val appearDelay = 60L + (cardIndex++ * 45L).coerceAtMost(270L)
+                card.postDelayed({ AnimationSystem.popIn(card, 0.7f) }, appearDelay)
 
                 row.addView(card, LinearLayout.LayoutParams(
                     0, dp(205), 1f
@@ -2472,13 +2469,12 @@ web.webViewClient = client
         val addFrame = createBlurButton(
             text = "+  Tab mới",
             paddingH = 18,
-            paddingV = 6,
-            pressScale = 0.95f
+            paddingV = 6
         ) {
             tabManager.saveState(web)
             tabManager.addNew(url = store.homeUrl, title = "Tab mới")
             load(store.homeUrl)
-            popup.dismiss()
+            dismissAnimated()
         }
         val addLp = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -2495,7 +2491,9 @@ web.webViewClient = client
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
         popup.setContentView(container)
+        if (animate) container.alpha = 0f
         popup.show()
+        if (animate) container.post { AnimationSystem.popIn(container, 0.88f) }
         popup.window?.let { window ->
             window.setBackgroundDrawable(
                 android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
