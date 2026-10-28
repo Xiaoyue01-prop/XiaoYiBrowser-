@@ -22,7 +22,6 @@ import eightbitlab.com.blurview.BlurTarget
 class TabSwitcherController(
     private val activity: ComponentActivity,
     private val tabManager: TabManager,
-    private val web: WebView,
     private val store: Store,
     private val blurTarget: BlurTarget,
     private val isNight: Boolean,
@@ -30,9 +29,10 @@ class TabSwitcherController(
     private val secondaryColor: Int,
     private val accentColor: Int,
     private val dp: (Int) -> Int,
-    private val load: (String) -> Unit,
-    private val setCurrentUrl: (String) -> Unit,
-    private val updateNav: () -> Unit,
+    private val captureActiveTab: () -> Unit,
+    private val onActivateTab: (TabManager.Tab) -> Unit,
+    private val onCloseTab: (TabManager.Tab) -> Unit,
+    private val onCreateTab: () -> Unit,
     private val shortUrl: (String) -> String
 ) {
     private fun createBlurButton(
@@ -68,6 +68,8 @@ class TabSwitcherController(
     }
 
     fun show(animate: Boolean = true) {
+        // Chụp lại tab hiện tại ngay lúc mở lưới, không để thumbnail của lần trước bị cũ.
+        captureActiveTab()
         val popup = Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar)
         popup.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
@@ -204,11 +206,11 @@ class TabSwitcherController(
                     })
                     AnimationSystem.attachGlassPress(close)
                     close.setOnClickListener {
-                        val wasActive = tab.isActive
-                        if (wasActive) tabManager.saveState(web)
-                        tabManager.close(tab.id)
+                        onCloseTab(tab)
                         popup.dismiss()
-                        if (wasActive) restoreActiveTab()
+                        tab.thumbnail?.recycle()
+                        tab.thumbnail = null
+                        tab.thumbnailUrl = null
                         show(false)
                     }
                 } else {
@@ -249,20 +251,7 @@ class TabSwitcherController(
                 })
 
                 card.setOnClickListener {
-                    if (!tab.isActive) {
-                        tabManager.saveState(web)
-                        tabManager.switchTo(tab.id)
-                        val target = tabManager.getActive()
-                        val restored = target?.bundle?.let { bundle ->
-                            runCatching { web.restoreState(bundle) }.getOrNull()
-                        }
-                        if (target != null && restored != null) {
-                            setCurrentUrl(web.url ?: target.url)
-                            updateNav()
-                        } else {
-                            load(target?.url?.ifBlank { store.homeUrl } ?: store.homeUrl)
-                        }
-                    }
+                    if (!tab.isActive) onActivateTab(tab)
                     dismissAnimated()
                 }
                 AnimationSystem.attachPress(card, card, 0.96f)
@@ -287,9 +276,7 @@ class TabSwitcherController(
         scroll.addView(grid)
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(createBlurButton("+  Tab mới", paddingH = 18, paddingV = 6) {
-            tabManager.saveState(web)
-            tabManager.addNew(url = store.homeUrl, title = "Tab mới")
-            load(store.homeUrl)
+            onCreateTab()
             dismissAnimated()
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -314,16 +301,4 @@ class TabSwitcherController(
         popup.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     }
 
-    private fun restoreActiveTab() {
-        val active = tabManager.getActive() ?: return
-        val restored = active.bundle?.let { bundle ->
-            runCatching { web.restoreState(bundle) }.getOrNull()
-        }
-        if (restored == null) {
-            load(active.url.ifBlank { store.homeUrl })
-        } else {
-            setCurrentUrl(web.url ?: active.url)
-            updateNav()
-        }
-    }
 }

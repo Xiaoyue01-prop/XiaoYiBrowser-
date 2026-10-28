@@ -49,6 +49,7 @@ import android.webkit.WebViewClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebSettings
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -156,15 +157,21 @@ class MainActivity : ComponentActivity() {
         pendingFileCallback = null
     }
 
-    inner class Bridge {
+    inner class Bridge(private val owner: WebView) {
         @JavascriptInterface
         fun setTopColor(r: Int, g: Int, b: Int) {
-            runOnUiThread { applyTopColor(Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))) }
+            runOnUiThread {
+                if (owner === web && !isActivityDestroyed) {
+                    applyTopColor(Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255)))
+                }
+            }
         }
 
         @JavascriptInterface
         fun clearTopColor() {
-            runOnUiThread { applyTopColor(null) }
+            runOnUiThread {
+                if (owner === web && !isActivityDestroyed) applyTopColor(null)
+            }
         }
     }
 
@@ -448,41 +455,62 @@ return handleSpecialUrl(request.url.toString(), view)
 override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
 handleSpecialUrl(url, view)
 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-if (request.isForMainFrame && !isActivityDestroyed) {
+if (request.isForMainFrame && !isActivityDestroyed && view === web) {
 toast("Không tải được trang (${error.errorCode})")
-AnimationSystem.fade(web, 1f)
+AnimationSystem.fade(view, 1f)
 }
 }
 override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-if (request.isForMainFrame && response.statusCode >= 400 && !isActivityDestroyed) {
+if (request.isForMainFrame && response.statusCode >= 400 && !isActivityDestroyed && view === web) {
 toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
 }
 }
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+            tabManager.updateForWebView(view, url, view.title ?: url)
+            if (view !== web) return
             currentUrl = url
-            web.alpha = 0.6f
+            view.alpha = 0.6f
             if (!urlBar.hasFocus()) showDomain()
             setBarHidden(false)
             updateNav()
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+            tabManager.updateForWebView(view, url, view.title ?: url)
+            if (view !== web) return
             currentUrl = url
             if (!urlBar.hasFocus()) showDomain()
             updateNav()
         }
 
         override fun onPageCommitVisible(view: WebView, url: String) {
+            if (view !== web) return
             injectInsets()
-            AnimationSystem.fade(web, 1f, AnimationSystem.SMOOTH)
+            AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
         }
 
         override fun onPageFinished(view: WebView, url: String) {
-            injectInsets()
-            AnimationSystem.fade(web, 1f)
+            tabManager.updateForWebView(view, url, view.title ?: url)
             store.addHistory(view.title ?: "", url)
-            tabManager.updateActive(url, view.title ?: url)
+            if (view !== web) return
+            injectInsets()
+            AnimationSystem.fade(view, 1f)
+            currentUrl = url
             updateTabBadge()
+        }
+
+        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            val tab = tabManager.getForWebView(view)
+            val lastUrl = view.url
+            if (tab != null) {
+                if (!lastUrl.isNullOrBlank()) tab.url = lastUrl
+                if (tab.webView === view) tab.webView = null
+            }
+            (view.parent as? ViewGroup)?.removeView(view)
+            runCatching { view.destroy() }
+            // Android có thể thu hồi renderer của tab nền; tạo lại tab đó khi người dùng quay về.
+            if (!isActivityDestroyed && tab?.isActive == true) activateTab(tab)
+            return true
         }
     }
 
@@ -511,7 +539,7 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
         }
 
 override fun onProgressChanged(view: WebView, newProgress: Int) {
-            pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
+            if (view === web) pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
         }
 
         override fun onShowFileChooser(
@@ -812,58 +840,10 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         findBar.addView(downBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
         findBar.addView(doneBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        // --- WebView ---
+        // --- WebView của tab đầu tiên; các tab mới có WebView riêng ---
         web = WebView(this)
-        web.setBackgroundColor(Color.WHITE)
-        val ws = web.settings
-        ws.javaScriptEnabled = true
-        ws.domStorageEnabled = true
-                ws.databaseEnabled = true
-        ws.setSupportMultipleWindows(true)
-        ws.javaScriptCanOpenWindowsAutomatically = true
-        ws.mediaPlaybackRequiresUserGesture = false
-        ws.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-        mobileUa = ws.userAgentString
-        .replace(Regex(""";\s*wv""", RegexOption.IGNORE_CASE), "")
-        .replace(Regex("""\s*Version/4\.0""", RegexOption.IGNORE_CASE), "")
-        ws.userAgentString = mobileUa
-        applyDesktopMode()
-                CookieManager.getInstance().apply {
-        setAcceptCookie(true)
-        setAcceptThirdPartyCookies(web, true)
-        }
-web.webViewClient = client
-        web.webChromeClient = chromeClient
-        web.addJavascriptInterface(Bridge(), "EdgeBridge")
-        web.setFindListener { active, total, _ ->
-            findCount.text = if (total == 0) "0" else "" + (active + 1) + "/" + total
-        }
-
-        web.setDownloadListener { dlUrl, userAgent, contentDisposition, mimetype, _ ->
-            try {
-                val req = DownloadManager.Request(Uri.parse(dlUrl))
-                req.setMimeType(mimetype)
-                CookieManager.getInstance().getCookie(dlUrl)?.let { req.addRequestHeader("cookie", it) }
-                req.addRequestHeader("User-Agent", userAgent)
-                req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                req.setDestinationInExternalPublicDir(
-                    Environment.DIRECTORY_DOWNLOADS,
-                    URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
-                )
-                (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
-                toast("Đang tải xuống...")
-            } catch (e: Exception) {
-                toast("Không tải được file này")
-            }
-        }
-
-        // Vuốt xuống thì ẩn thanh, vuốt lên thì hiện lại
-        web.setOnScrollChangeListener { _, _, y, _, oldY ->
-            val dy = y - oldY
-            if (urlBar.hasFocus()) return@setOnScrollChangeListener
-            if (dy > 12) setBarHidden(true)
-            else if (dy < -12 || y < 10) setBarHidden(false)
-        }
+        configureTabWebView(web)
+        tabManager.getActive()?.webView = web
 
         root = FrameLayout(this)
         root.setBackgroundColor(pageColor)
@@ -941,7 +921,6 @@ web.webViewClient = client
         tabSwitcherController = TabSwitcherController(
             activity = this,
             tabManager = tabManager,
-            web = web,
             store = store,
             blurTarget = blurTarget,
             isNight = isNight,
@@ -949,9 +928,10 @@ web.webViewClient = client
             secondaryColor = sub,
             accentColor = accent,
             dp = ::dp,
-            load = ::load,
-            setCurrentUrl = { currentUrl = it },
-            updateNav = ::updateNav,
+            captureActiveTab = ::captureActiveTab,
+            onActivateTab = ::activateTab,
+            onCloseTab = ::closeBrowserTab,
+            onCreateTab = ::createBrowserTab,
             shortUrl = ::shortUrl
         )
         setupOrbMenu()
@@ -1291,17 +1271,134 @@ web.webViewClient = client
         web.loadUrl(toUrl(input))
     }
 
-    private fun applyDesktopMode() {
-        val s = web.settings
+    private fun applyDesktopMode(target: WebView = web) {
+        val settings = target.settings
         if (store.desktopMode) {
-            s.userAgentString = DESKTOP_UA
-            s.useWideViewPort = true
-            s.loadWithOverviewMode = true
+            settings.userAgentString = DESKTOP_UA
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
         } else {
-            s.userAgentString = mobileUa
-            s.useWideViewPort = false
-            s.loadWithOverviewMode = false
+            settings.userAgentString = mobileUa
+            settings.useWideViewPort = false
+            settings.loadWithOverviewMode = false
         }
+    }
+
+    /** Mỗi tab có cấu hình/client riêng nhưng vẫn dùng chung cache và cookie Chromium. */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun configureTabWebView(view: WebView) {
+        view.setBackgroundColor(Color.WHITE)
+        val settings = view.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
+        settings.setSupportMultipleWindows(true)
+        settings.javaScriptCanOpenWindowsAutomatically = true
+        settings.mediaPlaybackRequiresUserGesture = false
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        if (mobileUa.isBlank()) {
+            mobileUa = settings.userAgentString
+                .replace(Regex(""";\s*wv""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""\s*Version/4\.0""", RegexOption.IGNORE_CASE), "")
+        }
+        applyDesktopMode(view)
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+            setAcceptThirdPartyCookies(view, true)
+        }
+        view.webViewClient = client
+        view.webChromeClient = chromeClient
+        view.addJavascriptInterface(Bridge(view), "EdgeBridge")
+        view.setFindListener { active, total, _ ->
+            if (view === web) findCount.text = if (total == 0) "0" else "${active + 1}/$total"
+        }
+        view.setDownloadListener { dlUrl, userAgent, contentDisposition, mimetype, _ ->
+            try {
+                val req = DownloadManager.Request(Uri.parse(dlUrl))
+                req.setMimeType(mimetype)
+                CookieManager.getInstance().getCookie(dlUrl)?.let { req.addRequestHeader("cookie", it) }
+                req.addRequestHeader("User-Agent", userAgent)
+                req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                req.setDestinationInExternalPublicDir(
+                    Environment.DIRECTORY_DOWNLOADS,
+                    URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
+                )
+                (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+                toast("Đang tải xuống...")
+            } catch (_: Exception) {
+                toast("Không tải được file này")
+            }
+        }
+        view.setOnScrollChangeListener { _, _, y, _, oldY ->
+            if (view !== web || urlBar.hasFocus()) return@setOnScrollChangeListener
+            val dy = y - oldY
+            if (dy > 12) setBarHidden(true)
+            else if (dy < -12 || y < 10) setBarHidden(false)
+        }
+    }
+
+    private fun captureActiveTab() {
+        if (::web.isInitialized) tabManager.saveState(web)
+    }
+
+    private fun activateTab(tab: TabManager.Tab) {
+        val target = tab.webView ?: WebView(this).also { created ->
+            configureTabWebView(created)
+            tab.webView = created
+        }
+        val previous = if (::web.isInitialized) web else null
+        if (previous !== target) {
+            previous?.let { old ->
+                runCatching { old.onPause() }
+                (old.parent as? ViewGroup)?.removeView(old)
+            }
+            (target.parent as? ViewGroup)?.removeView(target)
+            web = target
+            blurTarget.addView(target, FrameLayout.LayoutParams(-1, -1))
+            runCatching { target.onResume() }
+        }
+        tabManager.switchTo(tab.id)
+        currentUrl = target.url ?: tab.url
+        target.alpha = 1f
+        pillProgress.progress = 0f
+        applyInsets()
+        if (target.url.isNullOrBlank()) {
+            load(tab.url.ifBlank { store.homeUrl })
+        } else {
+            if (target.progress >= 100) target.post { if (web === target) injectInsets() }
+            if (!urlBar.hasFocus()) showDomain()
+            updateNav()
+        }
+        updateTabBadge()
+    }
+
+    private fun createBrowserTab() {
+        val tab = tabManager.addNew(title = "Tab mới")
+        activateTab(tab)
+    }
+
+    private fun closeBrowserTab(tab: TabManager.Tab) {
+        val wasActive = tab.isActive
+        if (wasActive) captureActiveTab()
+        val removed = tabManager.close(tab.id) ?: return
+        if (wasActive) tabManager.getActive()?.let(::activateTab)
+        removed.webView?.let { view -> if (view !== web) destroyTabWebView(view) }
+    }
+
+    private fun destroyTabWebView(view: WebView) {
+        runCatching { view.stopLoading() }
+        runCatching { view.removeJavascriptInterface("EdgeBridge") }
+        runCatching { view.webViewClient = WebViewClient() }
+        runCatching { view.webChromeClient = WebChromeClient() }
+        runCatching { view.setDownloadListener(null) }
+        runCatching { view.setFindListener(null) }
+        runCatching { view.setOnScrollChangeListener(null as View.OnScrollChangeListener?) }
+        runCatching { view.onPause() }
+        (view.parent as? ViewGroup)?.removeView(view)
+        runCatching { view.loadUrl("about:blank") }
+        runCatching { view.removeAllViews() }
+        runCatching { view.destroyDrawingCache() }
+        runCatching { view.destroy() }
     }
 
     // ---------------- Menu ba chấm: mở tại chỗ, đổi trang ngay trong khung ----------------
@@ -1829,10 +1926,12 @@ web.webViewClient = client
             panelButton("Hủy", accent) { showSettings() },
             panelButton("Xóa", Theme.DANGER_RED) {
                 store.clearHistory()
-                web.clearHistory()
+                tabManager.getAll().mapNotNull { it.webView }.distinct().forEach { tabWeb ->
+                    runCatching { tabWeb.clearHistory() }
+                    runCatching { tabWeb.clearCache(true) }
+                }
                 CookieManager.getInstance().removeAllCookies(null)
                 WebStorage.getInstance().deleteAllData()
-                web.clearCache(true)
                 closeMenu()
                 toast("Đã xóa dữ liệu")
             }
@@ -1899,21 +1998,16 @@ web.webViewClient = client
         orbController?.destroy()
         orbController = null
 
-        // 6. Destroy WebView (phải làm CUỐI CÙNG)
-        // Giai phong thumbnail cua cac tab
+        // 6. Destroy every tab WebView last, including views detached in the background.
+        val tabViews = tabManager.getAll().mapNotNull { it.webView }.distinct()
         tabManager.getAll().forEach {
             it.thumbnail?.recycle()
             it.thumbnail = null
             it.thumbnailUrl = null
+            it.webView = null
         }
-        web.stopLoading()
         // Do not clear persistent WebView cache/history during ordinary Activity teardown.
-        // The explicit "Xóa dữ liệu duyệt web" action remains responsible for data clearing.
-        web.loadUrl("about:blank")
-        web.onPause()
-        web.removeAllViews()
-        web.destroyDrawingCache()
-        web.destroy()
+        tabViews.forEach(::destroyTabWebView)
 
         super.onDestroy()
     }

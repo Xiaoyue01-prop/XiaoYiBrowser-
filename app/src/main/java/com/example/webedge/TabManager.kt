@@ -1,22 +1,17 @@
 package com.example.webedge
 
 import android.graphics.Bitmap
-import android.os.Bundle
+import android.graphics.Canvas
 import android.webkit.WebView
 
-/**
- * Quản lý đa tab cho Summit Browser.
- * Dùng chung 1 WebView để nhẹ và tiết kiệm RAM.
- */
+/** Quản lý tab; mỗi tab giữ WebView riêng để giữ nguyên phiên trang khi chuyển tab. */
 class TabManager {
     data class Tab(
         val id: Long = System.nanoTime(),
         var url: String = "",
         var title: String = "",
         var isActive: Boolean = false,
-
-        var bundle: Bundle? = null,
-
+        var webView: WebView? = null,
         var thumbnail: Bitmap? = null,
         var thumbnailUrl: String? = null
     )
@@ -24,82 +19,87 @@ class TabManager {
     private val tabs = mutableListOf<Tab>()
     private var listener: (() -> Unit)? = null
 
-    init {
-        tabs.add(Tab(isActive = true))
-    }
+    init { tabs.add(Tab(isActive = true)) }
 
     fun setOnChangeListener(l: () -> Unit) { listener = l }
     fun getAll(): List<Tab> = tabs.toList()
     fun getActive(): Tab? = tabs.find { it.isActive }
+    fun getById(id: Long): Tab? = tabs.find { it.id == id }
+    fun getForWebView(view: WebView): Tab? = tabs.find { it.webView === view }
     fun count(): Int = tabs.size
 
     fun addNew(url: String = "", title: String = "Tab mới"): Tab {
         tabs.forEach { it.isActive = false }
-        val newTab = Tab(url = url, title = title, isActive = true)
-        tabs.add(newTab)
+        val tab = Tab(url = url, title = title, isActive = true)
+        tabs.add(tab)
         listener?.invoke()
-        return newTab
+        return tab
     }
 
     fun switchTo(id: Long): Tab? {
+        val target = tabs.find { it.id == id } ?: return null
         tabs.forEach { it.isActive = (it.id == id) }
         listener?.invoke()
-        return tabs.find { it.id == id }
+        return target
     }
 
-    fun close(id: Long) {
-        if (tabs.size <= 1) return
-        val wasActive = tabs.find { it.id == id }?.isActive ?: false
+    /** Trả tab đã đóng để Activity có thể destroy WebView đúng vòng đời. */
+    fun close(id: Long): Tab? {
+        if (tabs.size <= 1) return null
         val idx = tabs.indexOfFirst { it.id == id }
-        if (idx < 0) return
+        if (idx < 0) return null
         val removed = tabs.removeAt(idx)
-        removed.thumbnail?.recycle()
-        removed.thumbnail = null
-        removed.thumbnailUrl = null
-        if (wasActive) {
-            val newActive = if (idx < tabs.size) tabs[idx] else tabs.last()
-            newActive.isActive = true
+        if (removed.isActive) {
+            val next = if (idx < tabs.size) tabs[idx] else tabs.last()
+            tabs.forEach { it.isActive = (it === next) }
         }
+        listener?.invoke()
+        return removed
+    }
+
+    /** Lưu metadata và thumbnail của WebView hiện tại trước khi rời tab. */
+    fun saveState(web: WebView) {
+        val tab = getForWebView(web) ?: getActive() ?: return
+        tab.url = web.url ?: tab.url
+        tab.title = web.title ?: tab.title
+        captureThumbnail(tab, web)
         listener?.invoke()
     }
 
-
-    fun saveState(web: WebView) {
-        val active = getActive() ?: return
-        active.url = web.url ?: active.url
-        active.title = web.title ?: active.title
-        // Luu Bundle de khoi phuc lich su + vi tri cuon
+    private fun captureThumbnail(tab: Tab, web: WebView) {
         try {
-            val b = Bundle()
-            web.saveState(b)
-            active.bundle = b
-        } catch (_: Exception) {}
-        // Chụp thumbnail nếu chưa có hoặc thumbnail không còn khớp URL hiện tại.
-        // updateActive() có thể cập nhật URL trước khi saveState() được gọi.
-        if (active.thumbnail == null || active.thumbnailUrl != active.url) try {
             val w = web.width
             val h = web.height
-            if (w > 0 && h > 0) {
-                val scale = (180f * web.resources.displayMetrics.density) / w.toFloat()
-                val tw = (w * scale).toInt().coerceAtLeast(1)
-                val th = (h * scale).toInt().coerceAtLeast(1)
-                val full = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                val canvas = android.graphics.Canvas(full)
-                web.draw(canvas)
-                val scaled = Bitmap.createScaledBitmap(full, tw, th, true)
-                if (scaled !== full) full.recycle()
-                active.thumbnail?.recycle()
-                active.thumbnail = scaled
-                active.thumbnailUrl = active.url
-            }
-        } catch (_: Exception) {}
+            if (w <= 0 || h <= 0) return
+            // Vẽ trực tiếp vào bitmap nhỏ, tránh tạo bitmap toàn màn hình rồi scale (tốn RAM).
+            val targetWidth = (180f * web.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+            val targetHeight = (targetWidth.toFloat() * h / w).toInt().coerceAtLeast(1)
+            val scaled = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(scaled)
+            canvas.drawColor(android.graphics.Color.WHITE)
+            canvas.scale(targetWidth.toFloat() / w, targetHeight.toFloat() / h)
+            web.draw(canvas)
+            tab.thumbnail?.takeIf { it !== scaled }?.recycle()
+            tab.thumbnail = scaled
+            tab.thumbnailUrl = tab.url
+        } catch (_: Exception) {
+            // Giữ thumbnail gần nhất nếu frame hiện tại chưa thể chụp.
+        }
+    }
+
+    fun updateForWebView(web: WebView, url: String, title: String) {
+        val tab = getForWebView(web) ?: return
+        if (url.isNotBlank()) tab.url = url
+        if (title.isNotBlank()) tab.title = title
+        listener?.invoke()
     }
 
     fun updateActive(url: String, title: String) {
         getActive()?.let {
-            it.url = url
-            it.title = title
+            if (url.isNotBlank()) it.url = url
+            if (title.isNotBlank()) it.title = title
         }
         listener?.invoke()
     }
 }
+
