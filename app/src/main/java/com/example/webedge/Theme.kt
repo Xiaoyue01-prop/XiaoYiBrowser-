@@ -37,4 +37,15 @@ object Theme {
     fun pageColor(isNight: Boolean): Int =
         if (isNight) Color.rgb(18, 18, 18)
         else Color.WHITE
+
+    // === Safari Typography Colors ===
+    // Màu xanh Safari cho các nút hành động
+    fun safariButtonBlue(isNight: Boolean): Int =
+        if (isNight) android.graphics.Color.rgb(10, 132, 255)
+        else android.graphics.Color.rgb(0, 122, 255)
+    
+    // Màu xám Safari cho URL/count text
+    fun safariGray(isNight: Boolean): Int =
+        if (isNight) android.graphics.Color.rgb(152, 152, 157)
+        else android.graphics.Color.rgb(142, 142, 147)
 }

@@ -2156,10 +2156,10 @@ web.webViewClient = client
 
     private fun createBlurButton(
         text: String,
-        textSize: Float = 17f,
-        paddingH: Int = 18,
-        paddingV: Int = 6,
-        pressScale: Float = 0.92f,
+        textSize: Float = Constants.TEXT_SIZE_XL,
+        paddingH: Int = Constants.BUTTON_PADDING_H,
+        paddingV: Int = Constants.BUTTON_PADDING_V,
+        pressScale: Float = Constants.PRESS_SCALE_SMALL,
         onClick: () -> Unit
     ): FrameLayout {
         val frame = FrameLayout(this)
@@ -2172,7 +2172,7 @@ web.webViewClient = client
         tv.text = text
         tv.textSize = textSize
         tv.setTypeface(null, Typeface.BOLD)
-        tv.setTextColor(if (isNight) Color.rgb(10, 132, 255) else Color.rgb(0, 122, 255))
+        tv.setTextColor(Theme.safariButtonBlue(isNight))
         tv.gravity = Gravity.CENTER
         tv.setPadding(dp(paddingH), dp(paddingV), dp(paddingH), dp(paddingV))
         tv.setOnClickListener { onClick() }
@@ -2432,7 +2432,7 @@ web.webViewClient = client
                 val url = TextView(this)
                 url.text = shortUrl(tab.url).ifBlank { store.homeUrl }
                 url.textSize = 12f
-                url.setTextColor(if (isNight) Color.rgb(152, 152, 157) else Color.rgb(142, 142, 147))
+                url.setTextColor(Theme.safariGray(isNight))
                 url.maxLines = 1
                 url.setSingleLine(true)
                 url.ellipsize = android.text.TextUtils.TruncateAt.END
