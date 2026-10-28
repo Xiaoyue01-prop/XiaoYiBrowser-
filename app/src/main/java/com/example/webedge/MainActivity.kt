@@ -1148,7 +1148,17 @@ web.webViewClient = client
             }
         })
 
-        if (savedInstanceState == null) web.loadUrl(store.homeUrl) else web.restoreState(savedInstanceState)
+        if (savedInstanceState == null) {
+            web.loadUrl(store.homeUrl)
+        } else {
+            val restored = runCatching { web.restoreState(savedInstanceState) }.getOrNull()
+            if (restored == null) {
+                web.loadUrl(store.homeUrl)
+            } else {
+                currentUrl = web.url ?: store.homeUrl
+                tabManager.updateActive(currentUrl, web.title ?: currentUrl)
+            }
+        }
     }
 
     // ---------------- Insets / thanh trạng thái ----------------
@@ -1997,7 +2007,10 @@ web.webViewClient = client
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        web.saveState(outState)
+        if (::web.isInitialized) {
+            tabManager.saveState(web)
+            web.saveState(outState)
+        }
     }
 
     private fun setupOrbMenu() {
@@ -2053,7 +2066,11 @@ web.webViewClient = client
         
         // 6. Destroy WebView (phải làm CUỐI CÙNG)
         // Giai phong thumbnail cua cac tab
-        tabManager.getAll().forEach { it.thumbnail?.recycle(); it.thumbnail = null }
+        tabManager.getAll().forEach {
+            it.thumbnail?.recycle()
+            it.thumbnail = null
+            it.thumbnailUrl = null
+        }
         web.stopLoading()
         // Do not clear persistent WebView cache/history during ordinary Activity teardown.
         // The explicit "Xóa dữ liệu duyệt web" action remains responsible for data clearing.
@@ -2353,19 +2370,21 @@ web.webViewClient = client
 
                         tabManager.close(tab.id)
                         popup.dismiss()
-                        val active = tabManager.getActive()
-                        if (active != null) {
 
-                            if (wasActive && active.bundle != null) {
-
-                                web.restoreState(active.bundle!!)
-
-                            } else {
-
-                                load(active.url.ifBlank { store.homeUrl })
-
+                        // Đóng tab nền không được làm tải lại tab đang xem.
+                        if (wasActive) {
+                            val active = tabManager.getActive()
+                            if (active != null) {
+                                val restored = active.bundle?.let { bundle ->
+                                    runCatching { web.restoreState(bundle) }.getOrNull()
+                                }
+                                if (restored == null) {
+                                    load(active.url.ifBlank { store.homeUrl })
+                                } else {
+                                    currentUrl = web.url ?: active.url
+                                    updateNav()
+                                }
                             }
-
                         }
                         openTabSwitcher(false)
                     }
@@ -2417,14 +2436,14 @@ web.webViewClient = client
 
                         val target = tabManager.getActive()
 
-                        if (target != null && target.bundle != null) {
-
-                            web.restoreState(target.bundle!!)
-
+                        val restored = target?.bundle?.let { bundle ->
+                            runCatching { web.restoreState(bundle) }.getOrNull()
+                        }
+                        if (target != null && restored != null) {
+                            currentUrl = web.url ?: target.url
+                            updateNav()
                         } else {
-
                             load(target?.url?.ifBlank { store.homeUrl } ?: store.homeUrl)
-
                         }
                     }
                     dismissAnimated()

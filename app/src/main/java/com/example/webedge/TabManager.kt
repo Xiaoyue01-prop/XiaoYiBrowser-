@@ -17,7 +17,8 @@ class TabManager {
 
         var bundle: Bundle? = null,
 
-        var thumbnail: Bitmap? = null
+        var thumbnail: Bitmap? = null,
+        var thumbnailUrl: String? = null
     )
 
     private val tabs = mutableListOf<Tab>()
@@ -51,7 +52,10 @@ class TabManager {
         val wasActive = tabs.find { it.id == id }?.isActive ?: false
         val idx = tabs.indexOfFirst { it.id == id }
         if (idx < 0) return
-        tabs.removeAt(idx)
+        val removed = tabs.removeAt(idx)
+        removed.thumbnail?.recycle()
+        removed.thumbnail = null
+        removed.thumbnailUrl = null
         if (wasActive) {
             val newActive = if (idx < tabs.size) tabs[idx] else tabs.last()
             newActive.isActive = true
@@ -62,18 +66,17 @@ class TabManager {
 
     fun saveState(web: WebView) {
         val active = getActive() ?: return
-        val oldUrl = active.url
         active.url = web.url ?: active.url
         active.title = web.title ?: active.title
-        val urlChanged = oldUrl != active.url
         // Luu Bundle de khoi phuc lich su + vi tri cuon
         try {
             val b = Bundle()
             web.saveState(b)
             active.bundle = b
         } catch (_: Exception) {}
-        // Chup thumbnail nho gon (chi khi URL thay doi)
-        if (urlChanged) try {
+        // Chụp thumbnail nếu chưa có hoặc thumbnail không còn khớp URL hiện tại.
+        // updateActive() có thể cập nhật URL trước khi saveState() được gọi.
+        if (active.thumbnail == null || active.thumbnailUrl != active.url) try {
             val w = web.width
             val h = web.height
             if (w > 0 && h > 0) {
@@ -87,6 +90,7 @@ class TabManager {
                 if (scaled !== full) full.recycle()
                 active.thumbnail?.recycle()
                 active.thumbnail = scaled
+                active.thumbnailUrl = active.url
             }
         } catch (_: Exception) {}
     }
