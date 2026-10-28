@@ -1210,8 +1210,9 @@ web.webViewClient = client
         val findOn = findBarContainer.visibility == View.VISIBLE
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
         val toolbarAvailable = bar.visibility == View.VISIBLE && !barHidden
-        orbController?.setToolbarAvailable(toolbarAvailable)
-        orbController?.setTemporarilyHidden(findOn || pageTyping)
+        val inFullscreen = customVideoView != null
+        orbController?.setToolbarAvailable(toolbarAvailable && !inFullscreen)
+        orbController?.setTemporarilyHidden(findOn || pageTyping || inFullscreen)
     }
 
     // Ẩn thanh địa chỉ khi đang gõ trong ô nhập của trang (tránh che nội dung), hoặc khi đang tìm trong trang.
