@@ -35,7 +35,6 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.Window
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
@@ -74,186 +73,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
-
-private const val DESKTOP_UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-
-// Script chạy trong trang. Chế độ tràn viền: đẩy thanh menu cố định ở đầu trang xuống dưới thanh trạng thái
-// (hoặc chừa chỗ cho lớp phủ toàn màn hình) và báo màu thanh đó về app để tô dải thanh trạng thái.
-// Chế độ thường: chỉ đọc màu mép trên của trang.
-private const val EDGE_JS = """
-(function(){
-window.__edgeInset = %INSET%;
-window.__edgeMode = %MODE%;
-if (window.__edgeStarted) { if (window.__edgeRun) window.__edgeRun(); return; }
-window.__edgeStarted = true;
-
-var last = '';
-var styleCache = new WeakMap();
-var rafId = null;
-
-function rgbOf(c){
-  try {
-    var m = c && c.match(/rgba?\(([^)]+)\)/);
-    if (!m) return null;
-    var p = m[1].split(',').map(function(x){ return parseFloat(x); });
-    var a = p.length > 3 ? p[3] : 1;
-    if (a < 0.85) return null;
-    return p;
-  } catch (e) { return null; }
-}
-
-function bgOf(el){
-  if (!el) return null;
-  if (styleCache.has(el)) {
-    var cached = styleCache.get(el);
-    return rgbOf(cached.backgroundColor);
-  }
-  try {
-    var style = getComputedStyle(el);
-    styleCache.set(el, style);
-    return rgbOf(style.backgroundColor);
-  } catch (e) { return null; }
-}
-
-function isVisible(el){
-  try {
-    var style = styleCache.get(el) || getComputedStyle(el);
-    if (!styleCache.has(el)) styleCache.set(el, style);
-    var opacity = parseFloat(style.opacity);
-    var zIndex = style.zIndex;
-    var display = style.display;
-    if (opacity < 0.1) return false;
-    if (display === 'none') return false;
-    if (zIndex !== 'auto' && parseInt(zIndex) < 0) return false;
-    return true;
-  } catch (e) { return true; }
-}
-
-function pinned(el){
-  while (el && el !== document.documentElement && el !== document.body) {
-    try {
-      var s = styleCache.get(el) || getComputedStyle(el);
-      if (!styleCache.has(el)) styleCache.set(el, s);
-      if (s.position === 'fixed' || s.position === 'sticky') {
-        if (isVisible(el)) return el;
-      }
-      el = el.parentElement;
-    } catch (e) { return null; }
-  }
-  return null;
-}
-
-function climb(el){
-  for (; el; el = el.parentElement) { 
-    var c = bgOf(el); 
-    if (c) return c; 
-  }
-  return null;
-}
-
-function report(v){
-  if (v === last) return;
-  last = v;
-  try {
-    if (v === 'none') { EdgeBridge.clearTopColor(); }
-    else { 
-      var p = v.split(','); 
-      EdgeBridge.setTopColor(Math.round(+p[0]), Math.round(+p[1]), Math.round(+p[2])); 
-    }
-  } catch (e) {}
-}
-
-function runTop(){
-  if (!document.elementsFromPoint) return;
-  var w = window.innerWidth, color = null;
-  try {
-    var stack = document.elementsFromPoint(w * 0.5, 2);
-    for (var j = 0; j < stack.length && !color; j++) {
-      if (pinned(stack[j])) { color = climb(stack[j]); }
-    }
-    if (!color) {
-      if ((window.scrollY || 0) > 2) { return; }
-      color = stack.length ? climb(stack[0]) : null;
-    }
-    if (!color) { color = climb(document.body) || climb(document.documentElement); }
-    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
-  } catch (e) {}
-}
-
-function runEdge(){
-  var I = window.__edgeInset || 0;
-  if (!I || !document.elementsFromPoint) return;
-  try {
-    var y = I + 2, w = window.innerWidth, hit = null, big = false, color = null;
-    var xs = [0.5, 0.15, 0.85];
-    for (var i = 0; i < xs.length && !hit; i++) {
-      var stack = document.elementsFromPoint(w * xs[i], y);
-      for (var j = 0; j < stack.length && !hit; j++) {
-        var f = pinned(stack[j]);
-        if (!f) continue;
-        var r = f.getBoundingClientRect();
-        if (r.top <= y && r.width > w * 0.6) {
-          hit = f;
-          big = r.height >= window.innerHeight * 0.45;
-          color = climb(stack[j]);
-        }
-      }
-    }
-    if (!hit) { report('none'); return; }
-    if (big) {
-      if (!hit.getAttribute('data-edge-pad')) {
-        hit.setAttribute('data-edge-pad', '1');
-        var cs = styleCache.get(hit) || getComputedStyle(hit);
-        if (!styleCache.has(hit)) styleCache.set(hit, cs);
-        hit.style.setProperty('box-sizing', 'border-box', 'important');
-        hit.style.setProperty('padding-top', ((parseFloat(cs.paddingTop) || 0) + I) + 'px', 'important');
-      }
-    } else {
-      var cs2 = styleCache.get(hit) || getComputedStyle(hit);
-      if (!styleCache.has(hit)) styleCache.set(hit, cs2);
-      var top = parseFloat(cs2.top);
-      if (!isNaN(top) && top < I - 0.5) { 
-        hit.style.setProperty('top', I + 'px', 'important'); 
-      }
-    }
-    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
-  } catch (e) { report('none'); }
-}
-
-function run(){ 
-  if (window.__edgeMode) { runEdge(); } 
-  else { runTop(); } 
-}
-
-function sched(){ 
-  if (rafId) return; 
-  rafId = requestAnimationFrame(function(){ 
-    rafId = null; 
-    run(); 
-  }); 
-}
-
-window.__edgeRun = run;
-window.addEventListener('scroll', sched, {passive: true});
-window.addEventListener('resize', sched);
-
-try {
-  var observer = new MutationObserver(sched);
-  observer.observe(document.documentElement,
-    {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style']});
-  window.addEventListener('beforeunload', function(){
-    observer.disconnect();
-    styleCache = null;
-  });
-} catch (e) {}
-
-setTimeout(run, 100);
-setTimeout(run, 800);
-setTimeout(run, 2000);
-run();
-})();
-"""
 
 class MainActivity : ComponentActivity() {
 
@@ -1119,6 +938,22 @@ web.webViewClient = client
             FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
         )
         setContentView(root)
+        tabSwitcherController = TabSwitcherController(
+            activity = this,
+            tabManager = tabManager,
+            web = web,
+            store = store,
+            blurTarget = blurTarget,
+            isNight = isNight,
+            foregroundColor = fg,
+            secondaryColor = sub,
+            accentColor = accent,
+            dp = ::dp,
+            load = ::load,
+            setCurrentUrl = { currentUrl = it },
+            updateNav = ::updateNav,
+            shortUrl = ::shortUrl
+        )
         setupOrbMenu()
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
@@ -2043,27 +1878,27 @@ web.webViewClient = client
         // === CLEANUP DE TRANH MEMORY LEAK ===
         // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)
         web.removeJavascriptInterface("EdgeBridge")
-        
+
         // 2. Gỡ listeners khỏi WebView
         web.webViewClient = WebViewClient()
         web.webChromeClient = WebChromeClient()
         web.setDownloadListener(null)
         web.setFindListener(null)
         web.setOnScrollChangeListener(null as View.OnScrollChangeListener?)
-        
+
         // 3. Hủy tất cả Runnable đang chờ trong Handler
         handler.removeCallbacksAndMessages(null)
         suggestRunnable?.let { handler.removeCallbacks(it) }
         suggestRunnable = null
-        
+
         // 4. Hủy callbacks
         pendingFileCallback?.onReceiveValue(null)
         pendingFileCallback = null
-        
+
         // 5. Cleanup Orb Menu Controller (gỡ PreDrawListener)
         orbController?.destroy()
         orbController = null
-        
+
         // 6. Destroy WebView (phải làm CUỐI CÙNG)
         // Giai phong thumbnail cua cac tab
         tabManager.getAll().forEach {
@@ -2079,7 +1914,7 @@ web.webViewClient = client
         web.removeAllViews()
         web.destroyDrawingCache()
         web.destroy()
-        
+
         super.onDestroy()
     }
 
@@ -2135,391 +1970,9 @@ web.webViewClient = client
     }
 
 
-    private fun createBlurButton(
-        text: String,
-        textSize: Float = Constants.TEXT_SIZE_XL,
-        paddingH: Int = Constants.BUTTON_PADDING_H,
-        paddingV: Int = Constants.BUTTON_PADDING_V,
-        onClick: () -> Unit
-    ): FrameLayout {
-        val frame = FrameLayout(this)
-        frame.addView(GlassSystem.createBlurView(
-            this, blurTarget, GlassSystem.Preset.TABS_BUTTON, d, isNight
-        ).apply { isClickable = false; isFocusable = false },
-        FrameLayout.LayoutParams(-1, -1))
-        
-        val tv = TextView(this)
-        tv.text = text
-        tv.textSize = textSize
-        tv.setTypeface(null, Typeface.BOLD)
-        tv.setTextColor(Theme.safariButtonBlue(isNight))
-        tv.gravity = Gravity.CENTER
-        tv.setPadding(dp(paddingH), dp(paddingV), dp(paddingH), dp(paddingV))
-        tv.setOnClickListener { onClick() }
-        
-        frame.addView(tv, FrameLayout.LayoutParams(-1, -1))
-        AnimationSystem.attachGlassPress(tv, frame)
-        return frame
-    }
+    private lateinit var tabSwitcherController: TabSwitcherController
 
     private fun openTabSwitcher(animate: Boolean = true) {
-        val popup = Dialog(this, android.R.style.Theme_Translucent_NoTitleBar)
-        popup.requestWindowFeature(Window.FEATURE_NO_TITLE)
-
-        val container = FrameLayout(this)
-        var closing = false
-        fun dismissAnimated() {
-            if (closing) return
-            closing = true
-            AnimationSystem.popOut(container, 0.9f) { popup.dismiss() }
-        }
-        // Nen kinh mo Liquid Glass (blur tu noi dung web phia sau)
-        val dialogBlur = GlassSystem.createBlurView(
-            this, blurTarget, GlassSystem.Preset.TABS_DIALOG, d, isNight
-        ).apply {
-            isClickable = false
-            isFocusable = false
-        }
-        container.addView(dialogBlur, FrameLayout.LayoutParams(-1, -1))
-
-        val root = LinearLayout(this)
-        root.orientation = LinearLayout.VERTICAL
-        root.setPadding(dp(12), dp(24), dp(12), dp(12))
-        root.setOnApplyWindowInsetsListener { view, insets ->
-            val topInset = insets.systemWindowInsetTop
-            view.setPadding(dp(12), topInset + dp(8), dp(12), dp(12))
-            insets
-        }
-        // Root trong suot de BlurView phia sau hien thi (chi tint nhe de doc chu de)
-        root.setBackgroundColor(if (isNight) Color.argb(100, 24, 24, 28) else Color.argb(90, 245, 245, 250))
-        root.isClickable = true
-
-        val header = LinearLayout(this)
-        header.orientation = LinearLayout.HORIZONTAL
-        header.gravity = Gravity.CENTER_VERTICAL
-        header.setPadding(dp(8), dp(8), dp(8), dp(16))
-
-        val heading = LinearLayout(this)
-        heading.orientation = LinearLayout.VERTICAL
-
-        val title = TextView(this)
-        title.text = "Tab đang mở"
-        title.textSize = 28f
-        title.setTypeface(null, Typeface.BOLD)
-        title.setTextColor(fg)
-        heading.addView(title)
-
-        val count = TextView(this)
-        count.text = "${tabManager.count()} tab"
-        count.textSize = 13f
-        count.setTextColor(sub)
-        heading.addView(count)
-
-        header.addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-        val doneFrame = createBlurButton(
-            text = "Xong",
-            paddingH = 18,
-            paddingV = 6
-        ) { dismissAnimated() }
-        header.addView(doneFrame)
-        root.addView(header)
-
-        val scroll = ScrollView(this)
-        scroll.isFillViewport = true
-        val grid = LinearLayout(this)
-        grid.orientation = LinearLayout.VERTICAL
-
-        val tabs = tabManager.getAll()
-        var cardIndex = 0
-        for (chunk in tabs.chunked(2)) {
-            val row = LinearLayout(this)
-            row.orientation = LinearLayout.HORIZONTAL
-            row.gravity = Gravity.TOP
-
-            for (tab in chunk) {
-                val card = LinearLayout(this)
-                card.orientation = LinearLayout.VERTICAL
-                card.setPadding(dp(7), dp(7), dp(7), dp(9))
-                card.background = android.graphics.drawable.GradientDrawable().apply {
-                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                    cornerRadius = dp(18).toFloat()
-                    setColor(if (isNight) Color.argb(180, 42, 42, 48) else Color.argb(200, 255, 255, 255))
-                    setStroke(
-                        dp(if (tab.isActive) 2 else 1),
-                        if (tab.isActive) accent else
-                            if (isNight) Color.argb(120, 120, 120, 130) else Color.argb(120, 225, 225, 232)
-                    )
-                }
-
-                val preview = FrameLayout(this)
-                preview.background = android.graphics.drawable.GradientDrawable(
-                    android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
-                    if (isNight)
-                        intArrayOf(Color.argb(180, 63, 67, 82), Color.argb(180, 35, 39, 52))
-                    else
-                        intArrayOf(Color.argb(200, 225, 232, 246), Color.argb(200, 190, 204, 231))
-                ).apply {
-                    cornerRadius = dp(13).toFloat()
-                }
-
-                // Hien thumbnail neu co, nguoc lai hien chu cai dau voi mau sac rieng
-
-
-                if (tab.thumbnail != null) {
-
-
-                    val iv = ImageView(this)
-
-
-                    iv.setImageBitmap(tab.thumbnail)
-
-
-                    iv.scaleType = ImageView.ScaleType.CENTER_CROP
-
-
-                    iv.setBackgroundColor(Color.WHITE)
-
-
-                    preview.addView(iv, FrameLayout.LayoutParams(
-
-
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-
-
-                        ViewGroup.LayoutParams.MATCH_PARENT
-
-
-                    ))
-
-
-                } else {
-
-
-                    val domain = try { Uri.parse(tab.url).host?.removePrefix("www.") ?: "S" } catch (_: Exception) { "S" }
-
-
-                    val firstChar = domain.take(1).uppercase()
-
-
-                    val hash = tab.url.hashCode()
-
-
-                    val hue = (hash and 0xFF) % 360
-
-
-                    val sat = if (isNight) 0.5f else 0.6f
-
-
-                    val lum = if (isNight) 0.6f else 0.45f
-
-
-                    val color = android.graphics.Color.HSVToColor(floatArrayOf(hue.toFloat(), sat, lum))
-
-
-                    val mark = TextView(this)
-
-
-                    mark.text = firstChar
-
-
-                    mark.textSize = 46f
-
-
-                    mark.setTypeface(null, Typeface.BOLD)
-
-
-                    mark.setTextColor(color)
-
-
-                    mark.gravity = Gravity.CENTER
-
-
-                    preview.addView(mark, FrameLayout.LayoutParams(
-
-
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-
-
-                        ViewGroup.LayoutParams.MATCH_PARENT
-
-
-                    ))
-
-
-                }
-
-                if (!tab.isActive) {
-                    val close = TextView(this)
-                    close.text = "×"
-                    close.textSize = 23f
-                    close.gravity = Gravity.CENTER
-                    close.setTextColor(Color.WHITE)
-                    close.background = android.graphics.drawable.GradientDrawable().apply {
-                        shape = android.graphics.drawable.GradientDrawable.OVAL
-                        setColor(Color.argb(190, 35, 35, 40))
-                    }
-                    preview.addView(close, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.TOP or Gravity.END).apply {
-                        setMargins(0, dp(5), dp(5), 0)
-                    })
-                    AnimationSystem.attachGlassPress(close)
-                    close.setOnClickListener {
-                        val wasActive = tab.isActive
-
-                        if (wasActive) tabManager.saveState(web)
-
-                        tabManager.close(tab.id)
-                        popup.dismiss()
-
-                        // Đóng tab nền không được làm tải lại tab đang xem.
-                        if (wasActive) {
-                            val active = tabManager.getActive()
-                            if (active != null) {
-                                val restored = active.bundle?.let { bundle ->
-                                    runCatching { web.restoreState(bundle) }.getOrNull()
-                                }
-                                if (restored == null) {
-                                    load(active.url.ifBlank { store.homeUrl })
-                                } else {
-                                    currentUrl = web.url ?: active.url
-                                    updateNav()
-                                }
-                            }
-                        }
-                        openTabSwitcher(false)
-                    }
-                } else {
-                    val activeMark = TextView(this)
-                    activeMark.text = "✓"
-                    activeMark.textSize = 15f
-                    activeMark.gravity = Gravity.CENTER
-                    activeMark.setTextColor(Color.WHITE)
-                    activeMark.background = android.graphics.drawable.GradientDrawable().apply {
-                        shape = android.graphics.drawable.GradientDrawable.OVAL
-                        setColor(accent)
-                    }
-                    preview.addView(activeMark, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.TOP or Gravity.END).apply {
-                        setMargins(0, dp(5), dp(5), 0)
-                    })
-                }
-
-                card.addView(preview, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(122)
-                ))
-
-                val tabTitle = TextView(this)
-                tabTitle.text = tab.title.ifBlank { tab.url.ifBlank { "Tab mới" } }
-                tabTitle.textSize = 15f
-                tabTitle.setTypeface(null, Typeface.BOLD)
-                tabTitle.setTextColor(fg)
-                tabTitle.maxLines = 1
-                tabTitle.setSingleLine(true)
-                tabTitle.ellipsize = android.text.TextUtils.TruncateAt.END
-                tabTitle.setPadding(dp(3), dp(9), dp(3), 0)
-                card.addView(tabTitle)
-
-                val url = TextView(this)
-                url.text = shortUrl(tab.url).ifBlank { store.homeUrl }
-                url.textSize = 12f
-                url.setTextColor(Theme.safariGray(isNight))
-                url.maxLines = 1
-                url.setSingleLine(true)
-                url.ellipsize = android.text.TextUtils.TruncateAt.END
-                url.setPadding(dp(3), dp(3), dp(3), 0)
-                card.addView(url)
-
-                card.setOnClickListener {
-                    if (!tab.isActive) {
-                        tabManager.saveState(web)
-
-                        tabManager.switchTo(tab.id)
-
-                        val target = tabManager.getActive()
-
-                        val restored = target?.bundle?.let { bundle ->
-                            runCatching { web.restoreState(bundle) }.getOrNull()
-                        }
-                        if (target != null && restored != null) {
-                            currentUrl = web.url ?: target.url
-                            updateNav()
-                        } else {
-                            load(target?.url?.ifBlank { store.homeUrl } ?: store.homeUrl)
-                        }
-                    }
-                    dismissAnimated()
-                }
-                AnimationSystem.attachPress(card, card, 0.96f)
-
-                card.alpha = 0f
-                card.scaleX = 0.7f
-                card.scaleY = 0.7f
-                val appearDelay = 60L + (cardIndex++ * 45L).coerceAtMost(270L)
-                card.postDelayed({ AnimationSystem.popIn(card, 0.7f) }, appearDelay)
-
-                row.addView(card, LinearLayout.LayoutParams(
-                    0, dp(205), 1f
-                ).apply {
-                    setMargins(dp(5), dp(5), dp(5), dp(7))
-                })
-            }
-
-            if (chunk.size == 1) {
-                row.addView(View(this), LinearLayout.LayoutParams(0, dp(205), 1f).apply {
-                    setMargins(dp(5), dp(5), dp(5), dp(7))
-                })
-            }
-            grid.addView(row)
-        }
-
-        scroll.addView(grid)
-        root.addView(scroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
-
-        val addFrame = createBlurButton(
-            text = "+  Tab mới",
-            paddingH = 18,
-            paddingV = 6
-        ) {
-            tabManager.saveState(web)
-            tabManager.addNew(url = store.homeUrl, title = "Tab mới")
-            load(store.homeUrl)
-            dismissAnimated()
-        }
-        val addLp = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            gravity = Gravity.CENTER_HORIZONTAL
-            setMargins(dp(12), dp(8), dp(12), dp(12))
-        }
-        root.addView(addFrame, addLp)
-
-        root.setOnClickListener { }
-        container.addView(root, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-        popup.setContentView(container)
-        if (animate) container.alpha = 0f
-        popup.show()
-        if (animate) container.post { AnimationSystem.popIn(container, 0.88f) }
-        popup.window?.let { window ->
-            window.setBackgroundDrawable(
-                android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
-            )
-            window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-                val topInset = insets.systemWindowInsetTop
-                root.setPadding(dp(12), topInset + dp(8), dp(12), dp(12))
-                view.onApplyWindowInsets(insets)
-            }
-            window.decorView.requestApplyInsets()
-        }
-        popup.window?.setLayout(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        )
+        tabSwitcherController.show(animate)
     }
-
-
 }

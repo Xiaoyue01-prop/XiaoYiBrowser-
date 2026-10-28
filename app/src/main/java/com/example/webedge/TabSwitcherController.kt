@@ -1,0 +1,329 @@
+package com.example.webedge
+
+import android.app.Dialog
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.Window
+import android.webkit.WebView
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import androidx.activity.ComponentActivity
+import eightbitlab.com.blurview.BlurTarget
+
+/** UI đa tab tách riêng khỏi Activity để MainActivity tập trung điều phối trình duyệt. */
+class TabSwitcherController(
+    private val activity: ComponentActivity,
+    private val tabManager: TabManager,
+    private val web: WebView,
+    private val store: Store,
+    private val blurTarget: BlurTarget,
+    private val isNight: Boolean,
+    private val foregroundColor: Int,
+    private val secondaryColor: Int,
+    private val accentColor: Int,
+    private val dp: (Int) -> Int,
+    private val load: (String) -> Unit,
+    private val setCurrentUrl: (String) -> Unit,
+    private val updateNav: () -> Unit,
+    private val shortUrl: (String) -> String
+) {
+    private fun createBlurButton(
+        text: String,
+        paddingH: Int = Constants.BUTTON_PADDING_H,
+        paddingV: Int = Constants.BUTTON_PADDING_V,
+        onClick: () -> Unit
+    ): FrameLayout {
+        val frame = FrameLayout(activity)
+        frame.addView(
+            GlassSystem.createBlurView(
+                activity, blurTarget, GlassSystem.Preset.TABS_BUTTON,
+                activity.resources.displayMetrics.density, isNight
+            ).apply {
+                isClickable = false
+                isFocusable = false
+            },
+            FrameLayout.LayoutParams(-1, -1)
+        )
+
+        val label = TextView(activity).apply {
+            this.text = text
+            textSize = Constants.TEXT_SIZE_XL
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(Theme.safariButtonBlue(isNight))
+            gravity = Gravity.CENTER
+            setPadding(dp(paddingH), dp(paddingV), dp(paddingH), dp(paddingV))
+            setOnClickListener { onClick() }
+        }
+        frame.addView(label, FrameLayout.LayoutParams(-1, -1))
+        AnimationSystem.attachGlassPress(label, frame)
+        return frame
+    }
+
+    fun show(animate: Boolean = true) {
+        val popup = Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar)
+        popup.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val container = FrameLayout(activity)
+        var closing = false
+        fun dismissAnimated() {
+            if (closing) return
+            closing = true
+            AnimationSystem.popOut(container, 0.9f) { popup.dismiss() }
+        }
+
+        val dialogBlur = GlassSystem.createBlurView(
+            activity, blurTarget, GlassSystem.Preset.TABS_DIALOG,
+            activity.resources.displayMetrics.density, isNight
+        ).apply {
+            isClickable = false
+            isFocusable = false
+        }
+        container.addView(dialogBlur, FrameLayout.LayoutParams(-1, -1))
+
+        val root = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(24), dp(12), dp(12))
+            setBackgroundColor(
+                if (isNight) Color.argb(100, 24, 24, 28)
+                else Color.argb(90, 245, 245, 250)
+            )
+            isClickable = true
+            setOnApplyWindowInsetsListener { view, insets ->
+                view.setPadding(dp(12), insets.systemWindowInsetTop + dp(8), dp(12), dp(12))
+                insets
+            }
+        }
+
+        val header = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(16))
+        }
+        val heading = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        heading.addView(TextView(activity).apply {
+            text = "Tab đang mở"
+            textSize = 28f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(foregroundColor)
+        })
+        heading.addView(TextView(activity).apply {
+            text = "${tabManager.count()} tab"
+            textSize = 13f
+            setTextColor(secondaryColor)
+        })
+        header.addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(createBlurButton("Xong", paddingH = 18, paddingV = 6) { dismissAnimated() })
+        root.addView(header)
+
+        val scroll = ScrollView(activity).apply { isFillViewport = true }
+        val grid = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        var cardIndex = 0
+
+        for (chunk in tabManager.getAll().chunked(2)) {
+            val row = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.TOP
+            }
+
+            for (tab in chunk) {
+                val card = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(7), dp(7), dp(7), dp(9))
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(18).toFloat()
+                        setColor(
+                            if (isNight) Color.argb(180, 42, 42, 48)
+                            else Color.argb(200, 255, 255, 255)
+                        )
+                        setStroke(
+                            dp(if (tab.isActive) 2 else 1),
+                            if (tab.isActive) accentColor else if (isNight)
+                                Color.argb(120, 120, 120, 130)
+                            else Color.argb(120, 225, 225, 232)
+                        )
+                    }
+                }
+
+                val preview = FrameLayout(activity).apply {
+                    background = GradientDrawable(
+                        GradientDrawable.Orientation.TL_BR,
+                        if (isNight) intArrayOf(
+                            Color.argb(180, 63, 67, 82), Color.argb(180, 35, 39, 52)
+                        ) else intArrayOf(
+                            Color.argb(200, 225, 232, 246), Color.argb(200, 190, 204, 231)
+                        )
+                    ).apply { cornerRadius = dp(13).toFloat() }
+                }
+
+                val thumbnail = tab.thumbnail
+                if (thumbnail != null) {
+                    preview.addView(ImageView(activity).apply {
+                        setImageBitmap(thumbnail)
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        setBackgroundColor(Color.WHITE)
+                    }, FrameLayout.LayoutParams(-1, -1))
+                } else {
+                    val domain = runCatching {
+                        Uri.parse(tab.url).host?.removePrefix("www.") ?: "S"
+                    }.getOrDefault("S")
+                    val hue = (tab.url.hashCode() and 0xFF) % 360
+                    val saturation = if (isNight) 0.5f else 0.6f
+                    val luminance = if (isNight) 0.6f else 0.45f
+                    val markColor = Color.HSVToColor(floatArrayOf(hue.toFloat(), saturation, luminance))
+                    preview.addView(TextView(activity).apply {
+                        text = domain.take(1).uppercase()
+                        textSize = 46f
+                        setTypeface(null, android.graphics.Typeface.BOLD)
+                        setTextColor(markColor)
+                        gravity = Gravity.CENTER
+                    }, FrameLayout.LayoutParams(-1, -1))
+                }
+
+                if (!tab.isActive) {
+                    val close = TextView(activity).apply {
+                        text = "×"
+                        textSize = 23f
+                        gravity = Gravity.CENTER
+                        setTextColor(Color.WHITE)
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(Color.argb(190, 35, 35, 40))
+                        }
+                    }
+                    preview.addView(close, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.TOP or Gravity.END).apply {
+                        setMargins(0, dp(5), dp(5), 0)
+                    })
+                    AnimationSystem.attachGlassPress(close)
+                    close.setOnClickListener {
+                        val wasActive = tab.isActive
+                        if (wasActive) tabManager.saveState(web)
+                        tabManager.close(tab.id)
+                        popup.dismiss()
+                        if (wasActive) restoreActiveTab()
+                        show(false)
+                    }
+                } else {
+                    val activeMark = TextView(activity).apply {
+                        text = "✓"
+                        textSize = 15f
+                        gravity = Gravity.CENTER
+                        setTextColor(Color.WHITE)
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(accentColor)
+                        }
+                    }
+                    preview.addView(activeMark, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.TOP or Gravity.END).apply {
+                        setMargins(0, dp(5), dp(5), 0)
+                    })
+                }
+
+                card.addView(preview, LinearLayout.LayoutParams(-1, dp(122)))
+                card.addView(TextView(activity).apply {
+                    text = tab.title.ifBlank { tab.url.ifBlank { "Tab mới" } }
+                    textSize = 15f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    setTextColor(foregroundColor)
+                    maxLines = 1
+                    setSingleLine(true)
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(dp(3), dp(9), dp(3), 0)
+                })
+                card.addView(TextView(activity).apply {
+                    text = shortUrl(tab.url).ifBlank { store.homeUrl }
+                    textSize = 12f
+                    setTextColor(Theme.safariGray(isNight))
+                    maxLines = 1
+                    setSingleLine(true)
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(dp(3), dp(3), dp(3), 0)
+                })
+
+                card.setOnClickListener {
+                    if (!tab.isActive) {
+                        tabManager.saveState(web)
+                        tabManager.switchTo(tab.id)
+                        val target = tabManager.getActive()
+                        val restored = target?.bundle?.let { bundle ->
+                            runCatching { web.restoreState(bundle) }.getOrNull()
+                        }
+                        if (target != null && restored != null) {
+                            setCurrentUrl(web.url ?: target.url)
+                            updateNav()
+                        } else {
+                            load(target?.url?.ifBlank { store.homeUrl } ?: store.homeUrl)
+                        }
+                    }
+                    dismissAnimated()
+                }
+                AnimationSystem.attachPress(card, card, 0.96f)
+                card.alpha = 0f
+                card.scaleX = 0.7f
+                card.scaleY = 0.7f
+                val delay = 60L + (cardIndex++ * 45L).coerceAtMost(270L)
+                card.postDelayed({ AnimationSystem.popIn(card, 0.7f) }, delay)
+                row.addView(card, LinearLayout.LayoutParams(0, dp(205), 1f).apply {
+                    setMargins(dp(5), dp(5), dp(5), dp(7))
+                })
+            }
+
+            if (chunk.size == 1) {
+                row.addView(View(activity), LinearLayout.LayoutParams(0, dp(205), 1f).apply {
+                    setMargins(dp(5), dp(5), dp(5), dp(7))
+                })
+            }
+            grid.addView(row)
+        }
+
+        scroll.addView(grid)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(createBlurButton("+  Tab mới", paddingH = 18, paddingV = 6) {
+            tabManager.saveState(web)
+            tabManager.addNew(url = store.homeUrl, title = "Tab mới")
+            load(store.homeUrl)
+            dismissAnimated()
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setMargins(dp(12), dp(8), dp(12), dp(12))
+        })
+
+        container.addView(root, FrameLayout.LayoutParams(-1, -1))
+        popup.setContentView(container)
+        if (animate) container.alpha = 0f
+        popup.show()
+        if (animate) container.post { AnimationSystem.popIn(container, 0.88f) }
+        popup.window?.let { window ->
+            window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+                root.setPadding(dp(12), insets.systemWindowInsetTop + dp(8), dp(12), dp(12))
+                view.onApplyWindowInsets(insets)
+            }
+            window.decorView.requestApplyInsets()
+        }
+        popup.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    }
+
+    private fun restoreActiveTab() {
+        val active = tabManager.getActive() ?: return
+        val restored = active.bundle?.let { bundle ->
+            runCatching { web.restoreState(bundle) }.getOrNull()
+        }
+        if (restored == null) {
+            load(active.url.ifBlank { store.homeUrl })
+        } else {
+            setCurrentUrl(web.url ?: active.url)
+            updateNav()
+        }
+    }
+}
