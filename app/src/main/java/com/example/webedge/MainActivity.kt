@@ -2469,7 +2469,7 @@ web.webViewClient = client
         add.setTypeface(null, Typeface.BOLD)
         add.setTextColor(if (isNight) Color.rgb(10, 132, 255) else Color.rgb(0, 122, 255))
         add.gravity = Gravity.CENTER
-        add.setPadding(dp(18), dp(8), dp(18), dp(8))
+        add.setPadding(dp(18), dp(6), dp(18), dp(6))
         add.setOnClickListener {
             tabManager.saveState(web)
             tabManager.addNew(url = store.homeUrl, title = "Tab mới")
@@ -2478,8 +2478,13 @@ web.webViewClient = client
         }
         addFrame.addView(add, FrameLayout.LayoutParams(-1, -1))
         press(addFrame, 0.95f)
-        val addLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        addLp.setMargins(dp(12), dp(8), dp(12), dp(4))
+        val addLp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setMargins(dp(12), dp(8), dp(12), dp(12))
+        }
         root.addView(addFrame, addLp)
 
         root.setOnClickListener { }

@@ -34,6 +34,7 @@ object GlassSystem {
         ORB_SUB_BUTTON(16, 14f),
         TABS_DIALOG(0, 24f),
         TABS_BUTTON(18, 14f)
+        TABS_BUTTON(18, 14f)
     }
 
     /**
