@@ -62,7 +62,7 @@ class TabSwitcherController(
         }
         button.addView(ImageView(activity).apply {
             setImageDrawable(StrokeGlyph(StrokeGlyph.Kind.CHECK, Color.WHITE, dp(3).toFloat()))
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+            setPadding(dp(14), dp(14), dp(14), dp(14))
         }, FrameLayout.LayoutParams(-1, -1))
         button.setOnClickListener { onClick() }
         AnimationSystem.attachGlassPress(button)
@@ -136,13 +136,10 @@ class TabSwitcherController(
         }, FrameLayout.LayoutParams(-1, -1).apply {
             setMargins(dp(1), dp(1), dp(1), dp(1))
         })
-        button.addView(TextView(activity).apply {
-            text = symbol
-            textSize = if (symbol == "✓") 24f else iconTextSize
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(iconColor)
-            setTypeface(null, if (symbol == "✓") android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+        // Dấu + vẽ nét đậm cùng độ dày và cỡ với dấu ✓ của nút Xong.
+        button.addView(ImageView(activity).apply {
+            setImageDrawable(StrokeGlyph(StrokeGlyph.Kind.PLUS, iconColor, dp(3).toFloat()))
+            setPadding(dp(14), dp(14), dp(14), dp(14))
         }, FrameLayout.LayoutParams(-1, -1))
         button.setOnClickListener { onClick() }
         AnimationSystem.attachGlassPress(button)
@@ -282,13 +279,11 @@ class TabSwitcherController(
 
         // Cập nhật viền tab đang chọn, nút × và số tab sau khi đóng một tab.
         fun refreshCards() {
-            val canClose = tabManager.count() > 1
             for (t in tabManager.getAll()) {
                 (cardViews[t.id]?.background as? GradientDrawable)?.setStroke(
                     dp(if (t.isActive) 2 else 1),
                     if (t.isActive) accentColor else Color.argb(145, 195, 195, 205)
                 )
-                closeViews[t.id]?.visibility = if (canClose) View.VISIBLE else View.GONE
             }
             countLabel?.text = "${tabManager.count()} tab"
         }
@@ -296,7 +291,14 @@ class TabSwitcherController(
         // Thẻ co lại + mờ dần, rồi các thẻ còn lại trượt lấp chỗ trống (không dựng lại cả bảng).
         fun closeTabAnimated(tab: TabManager.Tab) {
             val card = cardViews[tab.id] ?: return
-            if (tabManager.count() <= 1 || !closingIds.add(tab.id)) return
+            if (!closingIds.add(tab.id)) return
+            if (tabManager.count() <= 1) {
+                // Giống Safari: đóng tab cuối cùng thì mở một tab mới rồi thoát bảng tab.
+                onCreateTab()
+                onCloseTab(tab)
+                dismissAnimated()
+                return
+            }
             onCloseTab(tab)
             refreshCards()
             card.isClickable = false
@@ -390,7 +392,6 @@ class TabSwitcherController(
                 )
                 setPadding(dp(10), dp(10), dp(10), dp(10))
                 contentDescription = "Đóng tab"
-                visibility = if (tabManager.count() > 1) View.VISIBLE else View.GONE
             }
             preview.addView(close, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.TOP or Gravity.END).apply {
                 setMargins(0, dp(2), dp(2), 0)
@@ -476,7 +477,7 @@ class TabSwitcherController(
         })
 
         val doneButton = createDoneButton { dismissAnimated() }
-        bottomBar.addView(doneButton, LinearLayout.LayoutParams(dp(60), dp(60)).apply {
+        bottomBar.addView(doneButton, LinearLayout.LayoutParams(dp(52), dp(52)).apply {
             setMargins(dp(8), 0, dp(4), 0)
         })
         root.addView(bottomBar)
@@ -504,17 +505,17 @@ class TabSwitcherController(
 /** Dấu ✓ / × vẽ bằng nét tròn đầu, đậm đều như SF Symbols; halo tuỳ chọn để nổi trên nền ảnh. */
 private class StrokeGlyph(
     private val kind: Kind,
-    color: Int,
+    glyphColor: Int,
     strokePx: Float,
     haloColor: Int = Color.TRANSPARENT
 ) : Drawable() {
-    enum class Kind { CHECK, CROSS }
+    enum class Kind { CHECK, CROSS, PLUS }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
-        this.color = color
+        color = glyphColor
         strokeWidth = strokePx
     }
     private val halo = Paint(paint).apply {
@@ -535,6 +536,12 @@ private class StrokeGlyph(
                 path.moveTo(b.left + w * 0.16f, b.top + h * 0.54f)
                 path.lineTo(b.left + w * 0.40f, b.top + h * 0.76f)
                 path.lineTo(b.left + w * 0.84f, b.top + h * 0.26f)
+            }
+            Kind.PLUS -> {
+                path.moveTo(b.left + w * 0.10f, b.top + h * 0.50f)
+                path.lineTo(b.left + w * 0.90f, b.top + h * 0.50f)
+                path.moveTo(b.left + w * 0.50f, b.top + h * 0.10f)
+                path.lineTo(b.left + w * 0.50f, b.top + h * 0.90f)
             }
             Kind.CROSS -> {
                 path.moveTo(b.left + w * 0.14f, b.top + h * 0.14f)
