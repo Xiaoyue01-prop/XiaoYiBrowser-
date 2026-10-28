@@ -86,13 +86,29 @@ class TabSwitcherController(
             isClickable = true
             isFocusable = true
         }
+        // Frosted-glass inset layer: keep the outer oval border visible and let the
+        // parent remain unclipped so the press animation can expand smoothly.
+        button.addView(GlassSystem.createBlurView(
+            activity, blurTarget, GlassSystem.Preset.TABS_BUTTON,
+            activity.resources.displayMetrics.density, false
+        ).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(fillColor)
+            }
+            clipToOutline = true
+            isClickable = false
+            isFocusable = false
+        }, FrameLayout.LayoutParams(-1, -1).apply {
+            setMargins(dp(1), dp(1), dp(1), dp(1))
+        })
         button.addView(TextView(activity).apply {
             text = symbol
-            textSize = iconTextSize
+            textSize = if (symbol == "✓") 24f else iconTextSize
             gravity = Gravity.CENTER
             includeFontPadding = false
             setTextColor(iconColor)
-            setTypeface(null, android.graphics.Typeface.NORMAL)
+            setTypeface(null, if (symbol == "✓") android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
         }, FrameLayout.LayoutParams(-1, -1))
         button.setOnClickListener { onClick() }
         AnimationSystem.attachGlassPress(button)
@@ -115,7 +131,10 @@ class TabSwitcherController(
         ).apply {
             isClickable = false
             isFocusable = false
-        }, FrameLayout.LayoutParams(-1, -1))
+            // Leave a one-dp inset so the pill's glass outline is not covered.
+        }, FrameLayout.LayoutParams(-1, -1).apply {
+            setMargins(dp(1), dp(1), dp(1), dp(1))
+        })
         frame.addView(TextView(activity).apply {
             this.text = text
             textSize = 16f
@@ -394,8 +413,8 @@ class TabSwitcherController(
             symbol = "✓",
             iconColor = Color.WHITE,
             fillColor = accentColor,
-            strokeColor = Color.TRANSPARENT,
-            iconTextSize = 27f
+            strokeColor = Color.argb(180, 255, 255, 255),
+            iconTextSize = 25f
         ) { dismissAnimated() }
         bottomBar.addView(doneButton, LinearLayout.LayoutParams(dp(52), dp(52)).apply {
             setMargins(dp(8), 0, dp(4), 0)
