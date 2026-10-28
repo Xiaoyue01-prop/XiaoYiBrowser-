@@ -67,13 +67,76 @@ class TabSwitcherController(
         return frame
     }
 
+    private fun createCircleIconButton(
+        symbol: String,
+        iconColor: Int,
+        fillColor: Int,
+        strokeColor: Int,
+        textSize: Float,
+        onClick: () -> Unit
+    ): FrameLayout {
+        val button = FrameLayout(activity).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(fillColor)
+                if (strokeColor != Color.TRANSPARENT) setStroke(dp(1), strokeColor)
+            }
+            clipChildren = false
+            clipToPadding = false
+            isClickable = true
+            isFocusable = true
+        }
+        button.addView(TextView(activity).apply {
+            text = symbol
+            textSize = textSize
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(iconColor)
+            setTypeface(null, android.graphics.Typeface.NORMAL)
+        }, FrameLayout.LayoutParams(-1, -1))
+        button.setOnClickListener { onClick() }
+        AnimationSystem.attachGlassPress(button)
+        return button
+    }
+
+    private fun createGlassPill(text: String): FrameLayout {
+        val frame = FrameLayout(activity).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(24).toFloat()
+                setColor(Color.argb(118, 255, 255, 255))
+                setStroke(dp(1), Color.argb(100, 130, 130, 140))
+            }
+            clipChildren = false
+            clipToPadding = false
+        }
+        frame.addView(GlassSystem.createBlurView(
+            activity, blurTarget, GlassSystem.Preset.TABS_BUTTON,
+            activity.resources.displayMetrics.density, false
+        ).apply {
+            isClickable = false
+            isFocusable = false
+        }, FrameLayout.LayoutParams(-1, -1))
+        frame.addView(TextView(activity).apply {
+            this.text = text
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(Color.BLACK)
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(7), dp(14), dp(7))
+        }, FrameLayout.LayoutParams(-1, -1))
+        return frame
+    }
+
     fun show(animate: Boolean = true) {
         // Chụp lại tab hiện tại ngay lúc mở lưới, không để thumbnail của lần trước bị cũ.
         captureActiveTab()
         val popup = Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar)
         popup.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
-        val container = FrameLayout(activity)
+        val container = FrameLayout(activity).apply {
+            clipChildren = false
+            clipToPadding = false
+        }
         var closing = false
         fun dismissAnimated() {
             if (closing) return
@@ -83,7 +146,7 @@ class TabSwitcherController(
 
         val dialogBlur = GlassSystem.createBlurView(
             activity, blurTarget, GlassSystem.Preset.TABS_DIALOG,
-            activity.resources.displayMetrics.density, isNight
+            activity.resources.displayMetrics.density, false
         ).apply {
             isClickable = false
             isFocusable = false
@@ -93,10 +156,10 @@ class TabSwitcherController(
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(24), dp(12), dp(12))
-            setBackgroundColor(
-                if (isNight) Color.argb(100, 24, 24, 28)
-                else Color.argb(90, 245, 245, 250)
-            )
+            // Light, slightly rosy glass like Safari's tab overview; the browser itself keeps its theme.
+            setBackgroundColor(Color.argb(178, 249, 243, 248))
+            clipChildren = false
+            clipToPadding = false
             isClickable = true
             setOnApplyWindowInsetsListener { view, insets ->
                 view.setPadding(dp(12), insets.systemWindowInsetTop + dp(8), dp(12), dp(12))
@@ -108,22 +171,16 @@ class TabSwitcherController(
         val header = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(6), dp(4), dp(6), dp(10))
+            setPadding(dp(6), dp(4), dp(6), dp(6))
         }
         val heading = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         heading.addView(TextView(activity).apply {
             text = "Tab đang mở"
-            textSize = 23f
+            textSize = 19f
             setTypeface(null, android.graphics.Typeface.BOLD)
-            setTextColor(foregroundColor)
-        })
-        heading.addView(TextView(activity).apply {
-            text = "${tabManager.count()} tab"
-            textSize = 12f
-            setTextColor(secondaryColor)
+            setTextColor(Color.BLACK)
         })
         header.addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(createBlurButton("Xong", paddingH = 16, paddingV = 6) { dismissAnimated() })
         root.addView(header)
 
         // Hai cột độc lập trong cùng vùng cuộn: thẻ có thể cao thấp khác nhau như Safari.
@@ -131,14 +188,26 @@ class TabSwitcherController(
             isFillViewport = false
             clipToPadding = false
             setPadding(0, dp(2), 0, dp(4))
+            clipChildren = false
+            clipToPadding = false
             overScrollMode = View.OVER_SCROLL_NEVER
         }
         val columns = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.TOP
+            clipChildren = false
+            clipToPadding = false
         }
-        val leftColumn = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        val rightColumn = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val leftColumn = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+        }
+        val rightColumn = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+        }
         columns.addView(leftColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         columns.addView(rightColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         var leftHeight = 0
@@ -152,30 +221,42 @@ class TabSwitcherController(
             val card = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(6), dp(6), dp(6), dp(9))
+                clipChildren = false
+                clipToPadding = false
+                elevation = dp(2).toFloat()
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
-                    cornerRadius = dp(19).toFloat()
-                    setColor(if (isNight) Color.argb(180, 42, 42, 48) else Color.argb(205, 255, 255, 255))
+                    cornerRadius = dp(22).toFloat()
+                    setColor(Color.argb(218, 255, 255, 255))
                     setStroke(
                         dp(if (tab.isActive) 2 else 1),
-                        if (tab.isActive) accentColor else if (isNight)
-                            Color.argb(120, 120, 120, 130) else Color.argb(120, 225, 225, 232)
+                        if (tab.isActive) accentColor else Color.argb(145, 195, 195, 205)
                     )
                 }
             }
 
+            // The rounded thumbnail viewport clips only webpage pixels; Safari-style controls
+            // are siblings above it, so their press animation can expand without being cut off.
             val preview = FrameLayout(activity).apply {
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(14).toFloat()
+                    setColor(Color.argb(28, 120, 120, 132))
+                }
+                clipChildren = false
+                clipToPadding = false
+            }
+            val previewContent = FrameLayout(activity).apply {
                 background = GradientDrawable(
                     GradientDrawable.Orientation.TL_BR,
-                    if (isNight) intArrayOf(Color.argb(180, 63, 67, 82), Color.argb(180, 35, 39, 52))
-                    else intArrayOf(Color.argb(200, 225, 232, 246), Color.argb(200, 190, 204, 231))
-                ).apply { cornerRadius = dp(13).toFloat() }
+                    intArrayOf(Color.rgb(250, 247, 250), Color.rgb(231, 227, 235))
+                ).apply { cornerRadius = dp(14).toFloat() }
                 clipToOutline = true
             }
+            preview.addView(previewContent, FrameLayout.LayoutParams(-1, -1))
 
             val thumbnail = tab.thumbnail
             if (thumbnail != null && !thumbnail.isRecycled) {
-                preview.addView(ImageView(activity).apply {
+                previewContent.addView(ImageView(activity).apply {
                     setImageBitmap(thumbnail)
                     scaleType = ImageView.ScaleType.CENTER_CROP
                     setBackgroundColor(Color.TRANSPARENT)
@@ -186,7 +267,7 @@ class TabSwitcherController(
                 val saturation = if (isNight) 0.5f else 0.6f
                 val luminance = if (isNight) 0.6f else 0.45f
                 val markColor = Color.HSVToColor(floatArrayOf(hue.toFloat(), saturation, luminance))
-                preview.addView(TextView(activity).apply {
+                previewContent.addView(TextView(activity).apply {
                     text = domain.take(1).uppercase()
                     textSize = 42f
                     setTypeface(null, android.graphics.Typeface.BOLD)
@@ -200,10 +281,11 @@ class TabSwitcherController(
                     text = "×"
                     textSize = 23f
                     gravity = Gravity.CENTER
-                    setTextColor(Color.WHITE)
+                    includeFontPadding = false
+                    setTextColor(Color.rgb(80, 80, 86))
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(Color.argb(190, 35, 35, 40))
+                        setColor(Color.argb(142, 255, 255, 255))
                     }
                 }
                 preview.addView(close, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.TOP or Gravity.END).apply {
@@ -229,7 +311,7 @@ class TabSwitcherController(
                         setColor(accentColor)
                     }
                 }
-                preview.addView(activeMark, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.TOP or Gravity.END).apply {
+                preview.addView(activeMark, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.TOP or Gravity.END).apply {
                     setMargins(0, dp(5), dp(5), 0)
                 })
             }
@@ -239,7 +321,7 @@ class TabSwitcherController(
                 text = tab.title.ifBlank { tab.url.ifBlank { "Tab mới" } }
                 textSize = 14f
                 setTypeface(null, android.graphics.Typeface.BOLD)
-                setTextColor(foregroundColor)
+                setTextColor(Color.BLACK)
                 maxLines = 1
                 setSingleLine(true)
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -248,7 +330,7 @@ class TabSwitcherController(
             card.addView(TextView(activity).apply {
                 text = shortUrl(tab.url).ifBlank { store.homeUrl }
                 textSize = 12f
-                setTextColor(Theme.safariGray(isNight))
+                setTextColor(Theme.safariGray(false))
                 maxLines = 1
                 setSingleLine(true)
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -286,41 +368,43 @@ class TabSwitcherController(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(8), dp(4), dp(4))
+            clipChildren = false
+            clipToPadding = false
         }
-        val addButton = createBlurButton("+", paddingH = 0, paddingV = 0) {
+        val addButton = createCircleIconButton(
+            symbol = "+",
+            iconColor = Theme.safariButtonBlue(false),
+            fillColor = Color.argb(105, 255, 255, 255),
+            strokeColor = Color.argb(135, 125, 125, 136),
+            textSize = 27f
+        ) {
             onCreateTab()
             dismissAnimated()
         }
-        bottomBar.addView(addButton, LinearLayout.LayoutParams(dp(52), dp(46)).apply {
+        bottomBar.addView(addButton, LinearLayout.LayoutParams(dp(52), dp(52)).apply {
             setMargins(dp(4), 0, dp(8), 0)
         })
 
-        val countPill = createBlurButton("${tabManager.count()} tab", paddingH = 18, paddingV = 8) { } 
-        bottomBar.addView(countPill, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+        val countPill = createGlassPill("${tabManager.count()} tab")
+        bottomBar.addView(countPill, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
             setMargins(dp(8), 0, dp(8), 0)
         })
 
-        val doneButton = FrameLayout(activity).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(accentColor)
-            }
-            setOnClickListener { dismissAnimated() }
-        }
-        doneButton.addView(TextView(activity).apply {
-            text = "✓"
-            textSize = 25f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            setTypeface(null, android.graphics.Typeface.BOLD)
-        }, FrameLayout.LayoutParams(-1, -1))
-        AnimationSystem.attachGlassPress(doneButton)
-        bottomBar.addView(doneButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+        val doneButton = createCircleIconButton(
+            symbol = "✓",
+            iconColor = Color.WHITE,
+            fillColor = accentColor,
+            strokeColor = Color.TRANSPARENT,
+            textSize = 27f
+        ) { dismissAnimated() }
+        bottomBar.addView(doneButton, LinearLayout.LayoutParams(dp(52), dp(52)).apply {
             setMargins(dp(8), 0, dp(4), 0)
         })
         root.addView(bottomBar)
 
         container.addView(root, FrameLayout.LayoutParams(-1, -1))
+        root.clipChildren = false
+        root.clipToPadding = false
         popup.setContentView(container)
         if (animate) container.alpha = 0f
         popup.show()
