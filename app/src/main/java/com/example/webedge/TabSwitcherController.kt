@@ -1,10 +1,19 @@
 package com.example.webedge
 
 import android.app.Dialog
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.transition.ChangeBounds
+import android.transition.TransitionManager
+import android.transition.TransitionSet
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -35,6 +44,31 @@ class TabSwitcherController(
     private val onCreateTab: () -> Unit,
     private val shortUrl: (String) -> String
 ) {
+    // TextView hiển thị "N tab"; cập nhật khi đóng tab mà không dựng lại bảng.
+    private var countLabel: TextView? = null
+
+    /** Nút ✓ kiểu Safari: tròn đặc màu nhấn, dấu tick trắng đậm, to hơn các nút khác. */
+    private fun createDoneButton(onClick: () -> Unit): FrameLayout {
+        val button = FrameLayout(activity).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(accentColor)
+            }
+            clipChildren = false
+            clipToPadding = false
+            isClickable = true
+            isFocusable = true
+            contentDescription = "Xong"
+        }
+        button.addView(ImageView(activity).apply {
+            setImageDrawable(StrokeGlyph(StrokeGlyph.Kind.CHECK, Color.WHITE, dp(3).toFloat()))
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+        }, FrameLayout.LayoutParams(-1, -1))
+        button.setOnClickListener { onClick() }
+        AnimationSystem.attachGlassPress(button)
+        return button
+    }
+
     private fun createBlurButton(
         text: String,
         paddingH: Int = Constants.BUTTON_PADDING_H,
@@ -137,6 +171,7 @@ class TabSwitcherController(
         })
         frame.addView(TextView(activity).apply {
             this.text = text
+            countLabel = this
             textSize = 16f
             setTypeface(null, android.graphics.Typeface.BOLD)
             setTextColor(Color.BLACK)
@@ -149,7 +184,14 @@ class TabSwitcherController(
     fun show(animate: Boolean = true) {
         // Chụp lại tab hiện tại ngay lúc mở lưới, không để thumbnail của lần trước bị cũ.
         captureActiveTab()
-        val popup = Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar)
+        // Back / vuốt back cũng phải đóng có hiệu ứng, nên chặn onBackPressed của Dialog.
+        var requestClose: () -> Unit = {}
+        val popup = object : Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar) {
+            @Suppress("OVERRIDE_DEPRECATION")
+            override fun onBackPressed() {
+                requestClose()
+            }
+        }
         popup.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         val container = FrameLayout(activity).apply {
@@ -162,6 +204,7 @@ class TabSwitcherController(
             closing = true
             AnimationSystem.popOut(container, 0.9f) { popup.dismiss() }
         }
+        requestClose = { dismissAnimated() }
 
         val dialogBlur = GlassSystem.createBlurView(
             activity, blurTarget, GlassSystem.Preset.TABS_DIALOG,
@@ -233,6 +276,48 @@ class TabSwitcherController(
         var rightHeight = 0
         var cardIndex = 0
         val previewHeights = intArrayOf(174, 214, 188, 156, 226, 180)
+        val cardViews = HashMap<Long, LinearLayout>()
+        val closeViews = HashMap<Long, View>()
+        val closingIds = HashSet<Long>()
+
+        // Cập nhật viền tab đang chọn, nút × và số tab sau khi đóng một tab.
+        fun refreshCards() {
+            val canClose = tabManager.count() > 1
+            for (t in tabManager.getAll()) {
+                (cardViews[t.id]?.background as? GradientDrawable)?.setStroke(
+                    dp(if (t.isActive) 2 else 1),
+                    if (t.isActive) accentColor else Color.argb(145, 195, 195, 205)
+                )
+                closeViews[t.id]?.visibility = if (canClose) View.VISIBLE else View.GONE
+            }
+            countLabel?.text = "${tabManager.count()} tab"
+        }
+
+        // Thẻ co lại + mờ dần, rồi các thẻ còn lại trượt lấp chỗ trống (không dựng lại cả bảng).
+        fun closeTabAnimated(tab: TabManager.Tab) {
+            val card = cardViews[tab.id] ?: return
+            if (tabManager.count() <= 1 || !closingIds.add(tab.id)) return
+            onCloseTab(tab)
+            refreshCards()
+            card.isClickable = false
+            card.pivotX = card.width / 2f
+            card.pivotY = card.height / 2f
+            AnimationSystem.popOut(card, 0.8f) {
+                TransitionManager.beginDelayedTransition(
+                    columns,
+                    TransitionSet()
+                        .addTransition(ChangeBounds())
+                        .setDuration(AnimationSystem.PAGE_DURATION)
+                        .setInterpolator(AnimationSystem.pageInterpolator)
+                )
+                (card.parent as? ViewGroup)?.removeView(card)
+                cardViews.remove(tab.id)
+                closeViews.remove(tab.id)
+                tab.thumbnail?.recycle()
+                tab.thumbnail = null
+                tab.thumbnailUrl = null
+            }
+        }
 
         for (tab in tabManager.getAll()) {
             val thisIndex = cardIndex++
@@ -295,45 +380,24 @@ class TabSwitcherController(
                 }, FrameLayout.LayoutParams(-1, -1))
             }
 
-            if (!tab.isActive) {
-                val close = TextView(activity).apply {
-                    text = "×"
-                    textSize = 23f
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setTextColor(Color.rgb(80, 80, 86))
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL
-                        setColor(Color.argb(142, 255, 255, 255))
-                    }
-                }
-                preview.addView(close, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.TOP or Gravity.END).apply {
-                    setMargins(0, dp(5), dp(5), 0)
-                })
-                AnimationSystem.attachGlassPress(close)
-                close.setOnClickListener {
-                    onCloseTab(tab)
-                    popup.dismiss()
-                    tab.thumbnail?.recycle()
-                    tab.thumbnail = null
-                    tab.thumbnailUrl = null
-                    show(false)
-                }
-            } else {
-                val activeMark = TextView(activity).apply {
-                    text = "✓"
-                    textSize = 15f
-                    gravity = Gravity.CENTER
-                    setTextColor(Color.WHITE)
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL
-                        setColor(accentColor)
-                    }
-                }
-                preview.addView(activeMark, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.TOP or Gravity.END).apply {
-                    setMargins(0, dp(5), dp(5), 0)
-                })
+            // Nút đóng kiểu Safari: dấu × đơn giản, không nền tròn; có quầng trắng mờ để đọc được trên mọi ảnh.
+            val close = ImageView(activity).apply {
+                setImageDrawable(
+                    StrokeGlyph(
+                        StrokeGlyph.Kind.CROSS, Color.rgb(72, 72, 78), dp(2).toFloat(),
+                        Color.argb(170, 255, 255, 255)
+                    )
+                )
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                contentDescription = "Đóng tab"
+                visibility = if (tabManager.count() > 1) View.VISIBLE else View.GONE
             }
+            preview.addView(close, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.TOP or Gravity.END).apply {
+                setMargins(0, dp(2), dp(2), 0)
+            })
+            AnimationSystem.attachGlassPress(close)
+            close.setOnClickListener { closeTabAnimated(tab) }
+            closeViews[tab.id] = close
 
             card.addView(preview, LinearLayout.LayoutParams(-1, dp(previewHeight)))
             card.addView(TextView(activity).apply {
@@ -356,7 +420,9 @@ class TabSwitcherController(
                 setPadding(dp(3), dp(3), dp(3), 0)
             })
 
+            cardViews[tab.id] = card
             card.setOnClickListener {
+                if (tab.id in closingIds) return@setOnClickListener
                 if (!tab.isActive) onActivateTab(tab)
                 dismissAnimated()
             }
@@ -409,14 +475,8 @@ class TabSwitcherController(
             setMargins(dp(8), 0, dp(8), 0)
         })
 
-        val doneButton = createCircleIconButton(
-            symbol = "✓",
-            iconColor = Color.WHITE,
-            fillColor = accentColor,
-            strokeColor = Color.argb(180, 255, 255, 255),
-            iconTextSize = 25f
-        ) { dismissAnimated() }
-        bottomBar.addView(doneButton, LinearLayout.LayoutParams(dp(52), dp(52)).apply {
+        val doneButton = createDoneButton { dismissAnimated() }
+        bottomBar.addView(doneButton, LinearLayout.LayoutParams(dp(60), dp(60)).apply {
             setMargins(dp(8), 0, dp(4), 0)
         })
         root.addView(bottomBar)
@@ -439,4 +499,56 @@ class TabSwitcherController(
         popup.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     }
 
+}
+
+/** Dấu ✓ / × vẽ bằng nét tròn đầu, đậm đều như SF Symbols; halo tuỳ chọn để nổi trên nền ảnh. */
+private class StrokeGlyph(
+    private val kind: Kind,
+    color: Int,
+    strokePx: Float,
+    haloColor: Int = Color.TRANSPARENT
+) : Drawable() {
+    enum class Kind { CHECK, CROSS }
+
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        this.color = color
+        strokeWidth = strokePx
+    }
+    private val halo = Paint(paint).apply {
+        this.color = haloColor
+        strokeWidth = strokePx * 2.4f
+    }
+    private val hasHalo = Color.alpha(haloColor) > 0
+    private val path = Path()
+
+    override fun draw(canvas: Canvas) {
+        val b = bounds
+        if (b.width() <= 0 || b.height() <= 0) return
+        val w = b.width().toFloat()
+        val h = b.height().toFloat()
+        path.reset()
+        when (kind) {
+            Kind.CHECK -> {
+                path.moveTo(b.left + w * 0.16f, b.top + h * 0.54f)
+                path.lineTo(b.left + w * 0.40f, b.top + h * 0.76f)
+                path.lineTo(b.left + w * 0.84f, b.top + h * 0.26f)
+            }
+            Kind.CROSS -> {
+                path.moveTo(b.left + w * 0.14f, b.top + h * 0.14f)
+                path.lineTo(b.left + w * 0.86f, b.top + h * 0.86f)
+                path.moveTo(b.left + w * 0.86f, b.top + h * 0.14f)
+                path.lineTo(b.left + w * 0.14f, b.top + h * 0.86f)
+            }
+        }
+        if (hasHalo) canvas.drawPath(path, halo)
+        canvas.drawPath(path, paint)
+    }
+
+    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
