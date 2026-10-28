@@ -34,8 +34,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
-import android.view.animation.DecelerateInterpolator
-import android.view.animation.OvershootInterpolator
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
@@ -631,7 +629,7 @@ handleSpecialUrl(url, view)
 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
 if (request.isForMainFrame && !isActivityDestroyed) {
 toast("Không tải được trang (${error.errorCode})")
-web.animate().alpha(1f).setDuration(120).start()
+AnimationSystem.fade(web, 1f)
 }
 }
 override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
@@ -655,12 +653,12 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
 
         override fun onPageCommitVisible(view: WebView, url: String) {
             injectInsets()
-            web.animate().alpha(1f).setDuration(220).start()
+            AnimationSystem.fade(web, 1f, AnimationSystem.SMOOTH)
         }
 
         override fun onPageFinished(view: WebView, url: String) {
             injectInsets()
-            web.animate().alpha(1f).setDuration(120).start()
+            AnimationSystem.fade(web, 1f)
             store.addHistory(view.title ?: "", url)
             tabManager.updateActive(url, view.title ?: url)
             updateTabBadge()
@@ -732,17 +730,16 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         v.setOnTouchListener { view, ev ->
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    view.animate().scaleX(scale).scaleY(scale).setDuration(90).start()
+                    AnimationSystem.pressDown(view, scale)
                 }
                 MotionEvent.ACTION_UP -> {
-                    view.animate().scaleX(1f).scaleY(1f).setDuration(180)
-                        .setInterpolator(OvershootInterpolator(2f)).start()
+                    AnimationSystem.pressUp(view)
                     if (ev.x >= 0f && ev.x <= view.width && ev.y >= 0f && ev.y <= view.height) {
                         view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                     }
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    view.animate().scaleX(1f).scaleY(1f).setDuration(180).start()
+                    AnimationSystem.pressUp(view)
                 }
             }
             false
@@ -770,13 +767,12 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         toastView = t
         t.alpha = 0f
         t.translationY = dp(24).toFloat()
-        t.animate().alpha(1f).translationY(0f).setDuration(220)
-            .setInterpolator(DecelerateInterpolator()).start()
+        AnimationSystem.slideIn(t)
         t.postDelayed({
-            t.animate().alpha(0f).translationY(dp(16).toFloat()).setDuration(200).withEndAction {
+            AnimationSystem.slideOut(t, dp(16).toFloat()) {
                 root.removeView(t)
                 if (toastView === t) toastView = null
-            }.start()
+            }
         }, 1800L)
     }
 
@@ -1260,24 +1256,19 @@ web.webViewClient = client
         if (hide && !store.autoHideBar) return
         if (hide == barHidden) return
         barHidden = hide
-        val ip = DecelerateInterpolator()
-        urlPillFrame.animate()
-            .scaleX(if (hide) 0.58f else 1f)
-            .scaleY(if (hide) 0.62f else 1f)
-            .setDuration(240).setInterpolator(ip).start()
-        urlBar.animate()
-            .scaleX(if (hide) 1.2f else 1f)
-            .scaleY(if (hide) 1.2f else 1f)
-            .setDuration(240).setInterpolator(ip).start()
+        AnimationSystem.scaleTo(
+            urlPillFrame, if (hide) 0.58f else 1f, if (hide) 0.62f else 1f
+        )
+        AnimationSystem.scaleTo(urlBar, if (hide) 1.2f else 1f)
         backBtn.isClickable = !hide
         menuBtn.isClickable = !hide
         reloadBtn.isClickable = !hide
-        backBtn.animate().alpha(if (hide) 0f else backAlpha())
-            .scaleX(if (hide) 0.5f else 1f).scaleY(if (hide) 0.5f else 1f).setDuration(200).start()
-        menuBtn.animate().alpha(if (hide) 0f else 1f)
-            .scaleX(if (hide) 0.5f else 1f).scaleY(if (hide) 0.5f else 1f).setDuration(200).start()
-        reloadBtn.animate().alpha(if (hide) 0f else 1f).setDuration(200).start()
-        bottomFade.animate().alpha(if (hide) 0.35f else 1f).setDuration(240).start()
+        AnimationSystem.fade(backBtn, if (hide) 0f else backAlpha(), AnimationSystem.SMOOTH)
+        AnimationSystem.scaleTo(backBtn, if (hide) 0.5f else 1f)
+        AnimationSystem.fade(menuBtn, if (hide) 0f else 1f, AnimationSystem.SMOOTH)
+        AnimationSystem.scaleTo(menuBtn, if (hide) 0.5f else 1f)
+        AnimationSystem.fade(reloadBtn, if (hide) 0f else 1f, AnimationSystem.SMOOTH)
+        AnimationSystem.fade(bottomFade, if (hide) 0.35f else 1f, AnimationSystem.SMOOTH)
         syncOrbMenuVisibility()
     }
 
@@ -1535,8 +1526,7 @@ web.webViewClient = client
         card.post {
             card.pivotX = card.width.toFloat()
             card.pivotY = card.height.toFloat()
-            card.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(260)
-                .setInterpolator(OvershootInterpolator(1.1f)).start()
+            AnimationSystem.popIn(card)
         }
     }
 
@@ -1550,8 +1540,7 @@ web.webViewClient = client
             root.removeView(layer)
             return
         }
-        card.animate().alpha(0f).scaleX(0.85f).scaleY(0.85f).setDuration(160)
-            .withEndAction { root.removeView(layer) }.start()
+        AnimationSystem.popOut(card) { root.removeView(layer) }
     }
 
     // Đặt vị trí khung menu ngay phía trên nút ba chấm
@@ -1572,8 +1561,8 @@ web.webViewClient = client
         val w = minOf(dp(widthDp), resources.displayMetrics.widthPixels - dp(28) - insetLeft - insetRight)
         if (animate) {
             val tr = AutoTransition()
-            tr.duration = 260
-            tr.interpolator = DecelerateInterpolator()
+            tr.duration = AnimationSystem.PAGE_DURATION
+            tr.interpolator = AnimationSystem.iosCurve
             TransitionManager.beginDelayedTransition(layer, tr)
         }
         // Giữ lớp kính ở child đầu tiên, chỉ thay nội dung trang menu.
@@ -2159,7 +2148,7 @@ web.webViewClient = client
         textSize: Float = Constants.TEXT_SIZE_XL,
         paddingH: Int = Constants.BUTTON_PADDING_H,
         paddingV: Int = Constants.BUTTON_PADDING_V,
-        pressScale: Float = Constants.PRESS_SCALE_SMALL,
+        pressScale: Float = AnimationSystem.PRESS_SCALE_SMALL,
         onClick: () -> Unit
     ): FrameLayout {
         val frame = FrameLayout(this)

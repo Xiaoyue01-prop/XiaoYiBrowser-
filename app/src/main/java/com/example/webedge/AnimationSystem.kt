@@ -1,100 +1,124 @@
 package com.example.webedge
 
 import android.view.View
-import android.view.animation.DecelerateInterpolator
-import android.view.animation.OvershootInterpolator
+import android.view.animation.PathInterpolator
+import androidx.dynamicanimation.animation.DynamicAnimation
+import androidx.dynamicanimation.animation.SpringAnimation
+import androidx.dynamicanimation.animation.SpringForce
+import java.util.WeakHashMap
 
 /**
- * Tập trung các hằng số và helper cho animation toàn app.
- * Chuẩn bị cho bản update animation lớn sắp tới.
+ * Hệ thống animation kiểu iOS (spring theo vật lý) cho toàn app.
+ *
+ * iOS mô tả spring bằng "response" (thời gian một chu kỳ, giây) và "damping ratio".
+ * Android dùng stiffness, nên đổi: stiffness = (2π / response)².
+ * Apple không công bố thông số số học cho từng animation của Safari iOS 27,
+ * các preset dưới đây được căn theo cảm giác spring mặc định của iOS (smooth / snappy / bouncy).
  */
 object AnimationSystem {
-    // === Duration (ms) ===
-    const val DURATION_FAST = 90L
-    const val DURATION_SHORT = 180L
-    const val DURATION_MEDIUM = 200L
-    const val DURATION_NORMAL = 240L
-    const val DURATION_SLOW = 260L
-    
-    // === Press scale (khi nhấn nút) ===
-    const val PRESS_SCALE_DEFAULT = 0.98f
-    const val PRESS_SCALE_MEDIUM = 0.95f
+
+    class SpringSpec(val response: Float, val dampingRatio: Float) {
+        val stiffness: Float = run {
+            val w = (2.0 * Math.PI / response).toFloat()
+            w * w
+        }
+    }
+
+    // === Preset spring ===
+    /** Mượt, không nảy: chuyển trạng thái, thu gọn thanh công cụ, fade. */
+    val SMOOTH = SpringSpec(0.45f, 1.0f)
+    /** Nhanh, nảy rất nhẹ: nhấn nút, mở menu/dialog. */
+    val SNAPPY = SpringSpec(0.32f, 0.88f)
+    /** Nảy rõ hơn: các nút con của orb. */
+    val BOUNCY = SpringSpec(0.45f, 0.72f)
+    /** Rất nhanh, không nảy: nhấn xuống, fade ngắn. */
+    val QUICK = SpringSpec(0.22f, 1.0f)
+    /** Đóng lại: nhanh, không nảy (tránh scale âm). */
+    val DISMISS = SpringSpec(0.18f, 1.0f)
+
+    // === Hằng số ===
     const val PRESS_SCALE_SMALL = 0.92f
-    const val PRESS_SCALE_BUTTON = 0.85f
-    const val PRESS_SCALE_ICON = 0.8f
-    
-    // === Dialog animation ===
-    const val DIALOG_FADE_DURATION = 200L
-    const val DIALOG_SCALE_FROM = 0.8f
-    
-    // === Interpolators dùng chung ===
-    val decelerateInterpolator = DecelerateInterpolator()
-    val overshootInterpolator = OvershootInterpolator(2.0f)
-    val overshootLight = OvershootInterpolator(1.1f)
-    
-    /**
-     * Fade in một view từ alpha 0 lên 1.
-     */
-    fun fadeIn(view: View, duration: Long = DURATION_MEDIUM) {
-        view.alpha = 0f
-        view.animate()
-            .alpha(1f)
-            .setDuration(duration)
-            .setInterpolator(decelerateInterpolator)
-            .start()
+
+    /** Đường cong iOS cho Transition của Android (đổi nội dung/kích thước card menu). */
+    val iosCurve = PathInterpolator(0.32f, 0.72f, 0f, 1f)
+    const val PAGE_DURATION = 350L
+
+    private val running =
+        WeakHashMap<View, HashMap<DynamicAnimation.ViewProperty, SpringAnimation>>()
+
+    /** Chạy một spring cho một thuộc tính của view; spring cũ cùng thuộc tính bị huỷ. */
+    fun spring(
+        view: View,
+        prop: DynamicAnimation.ViewProperty,
+        target: Float,
+        spec: SpringSpec = SMOOTH,
+        velocity: Float = 0f,
+        onEnd: (() -> Unit)? = null
+    ) {
+        val map = running.getOrPut(view) { HashMap() }
+        map.remove(prop)?.cancel()
+        val anim = SpringAnimation(view, prop)
+        anim.spring = SpringForce(target).apply {
+            stiffness = spec.stiffness
+            dampingRatio = spec.dampingRatio
+        }
+        anim.setStartVelocity(velocity)
+        if (prop === DynamicAnimation.ALPHA) {
+            anim.setMinValue(0f)
+            anim.setMaxValue(1f)
+        }
+        anim.addEndListener { _, canceled, _, _ ->
+            if (map[prop] === anim) map.remove(prop)
+            if (!canceled) onEnd?.invoke()
+        }
+        map[prop] = anim
+        anim.start()
     }
-    
-    /**
-     * Fade out một view từ alpha 1 xuống 0.
-     */
-    fun fadeOut(view: View, duration: Long = DURATION_MEDIUM) {
-        view.animate()
-            .alpha(0f)
-            .setDuration(duration)
-            .setInterpolator(decelerateInterpolator)
-            .start()
+
+    /** Huỷ mọi animation (spring và ViewPropertyAnimator) đang chạy trên view. */
+    fun cancel(view: View) {
+        running.remove(view)?.values?.toList()?.forEach { it.cancel() }
+        view.animate().cancel()
     }
-    
-    /**
-     * Slide up từ dưới lên + fade in.
-     */
-    fun slideUp(view: View, fromY: Float, duration: Long = DURATION_NORMAL) {
-        view.alpha = 0f
-        view.translationY = fromY
-        view.animate()
-            .alpha(1f)
-            .translationY(0f)
-            .setDuration(duration)
-            .setInterpolator(decelerateInterpolator)
-            .start()
+
+    fun fade(view: View, to: Float, spec: SpringSpec = QUICK, onEnd: (() -> Unit)? = null) =
+        spring(view, DynamicAnimation.ALPHA, to, spec, onEnd = onEnd)
+
+    fun scaleTo(view: View, sx: Float, sy: Float = sx, spec: SpringSpec = SMOOTH) {
+        spring(view, DynamicAnimation.SCALE_X, sx, spec)
+        spring(view, DynamicAnimation.SCALE_Y, sy, spec)
     }
-    
-    /**
-     * Scale + fade in (thường dùng cho dialog/menu mở ra).
-     */
-    fun scaleIn(view: View, fromScale: Float = DIALOG_SCALE_FROM, duration: Long = DURATION_SLOW) {
+
+    /** Nhấn xuống: co lại nhanh. */
+    fun pressDown(view: View, scale: Float) = scaleTo(view, scale, scale, QUICK)
+
+    /** Nhả tay: bật về kích thước gốc theo spring. */
+    fun pressUp(view: View) = scaleTo(view, 1f, 1f, SNAPPY)
+
+    /** Menu/dialog mở ra: scale + fade từ góc neo (đặt pivot trước khi gọi). */
+    fun popIn(view: View, fromScale: Float = 0.8f) {
         view.alpha = 0f
         view.scaleX = fromScale
         view.scaleY = fromScale
-        view.animate()
-            .alpha(1f)
-            .scaleX(1f)
-            .scaleY(1f)
-            .setDuration(duration)
-            .setInterpolator(overshootLight)
-            .start()
+        fade(view, 1f, QUICK)
+        scaleTo(view, 1f, 1f, SNAPPY)
     }
-    
-    /**
-     * Scale + fade out (thường dùng cho dialog/menu đóng lại).
-     */
-    fun scaleOut(view: View, toScale: Float = 0.85f, duration: Long = DURATION_MEDIUM) {
-        view.animate()
-            .alpha(0f)
-            .scaleX(toScale)
-            .scaleY(toScale)
-            .setDuration(duration)
-            .setInterpolator(decelerateInterpolator)
-            .start()
+
+    /** Menu/dialog đóng lại; onEnd chạy khi fade xong. */
+    fun popOut(view: View, toScale: Float = 0.85f, onEnd: (() -> Unit)? = null) {
+        scaleTo(view, toScale, toScale, DISMISS)
+        fade(view, 0f, DISMISS, onEnd)
+    }
+
+    /** Trượt vào từ translationY hiện tại (toast). */
+    fun slideIn(view: View) {
+        fade(view, 1f, QUICK)
+        spring(view, DynamicAnimation.TRANSLATION_Y, 0f, SMOOTH)
+    }
+
+    /** Trượt ra (toast); onEnd chạy khi fade xong. */
+    fun slideOut(view: View, toY: Float, onEnd: (() -> Unit)? = null) {
+        spring(view, DynamicAnimation.TRANSLATION_Y, toY, DISMISS)
+        fade(view, 0f, DISMISS, onEnd)
     }
 }

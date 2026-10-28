@@ -10,9 +10,9 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
-import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
+import androidx.dynamicanimation.animation.DynamicAnimation
 import eightbitlab.com.blurview.BlurTarget
 
 /** Orb chính dạng vòng nhẫn, phong cách HarmonyOS. */
@@ -172,14 +172,14 @@ class OrbMenuController(
         temporarilyHidden = hidden
         if (hidden) {
             collapseImmediately()
-            mainBtn.animate().cancel()
+            AnimationSystem.cancel(mainBtn)
             mainBtn.alpha = 0f
             mainBtn.isClickable = false
             mainBtn.isEnabled = false
             mainBtn.isFocusable = false
             mainBtn.visibility = View.GONE
             subBtns.forEach { btn ->
-                btn.animate().cancel()
+                AnimationSystem.cancel(btn)
                 btn.alpha = 0f
                 btn.scaleX = 0f
                 btn.scaleY = 0f
@@ -222,7 +222,7 @@ class OrbMenuController(
         mainBtn.isFocusable = available
         if (!available) {
             subBtns.forEach {
-                it.animate().cancel()
+                AnimationSystem.cancel(it)
                 it.visibility = View.GONE
                 it.isClickable = false
                 it.isEnabled = false
@@ -285,8 +285,8 @@ class OrbMenuController(
     private fun expand() {
         if (!isAvailable()) return
         isExpanded = true
-        mainBtn.animate().cancel()
-        mainBtn.animate().rotation(45f).setDuration(200).start()
+        AnimationSystem.cancel(mainBtn)
+        AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 45f, AnimationSystem.SNAPPY)
 
         val radius = dp(60).toFloat()
         val angles = listOf(-90.0, -45.0, 0.0)
@@ -295,46 +295,46 @@ class OrbMenuController(
             val dx = (radius * kotlin.math.cos(angle)).toFloat()
             val dy = (radius * kotlin.math.sin(angle)).toFloat()
             val btn = subBtns[i]
-            btn.animate().cancel()
+            AnimationSystem.cancel(btn)
             btn.visibility = View.VISIBLE
             btn.isClickable = true
             btn.isEnabled = true
             btn.alpha = 0f
             btn.scaleX = 0f
             btn.scaleY = 0f
-            btn.animate()
-                .translationX(dx).translationY(dy)
-                .scaleX(1f).scaleY(1f).alpha(1f)
-                .setDuration(300 + i * 50L)
-                .setInterpolator(OvershootInterpolator(2.0f))
-                .start()
+            // Mỗi nút con hơi chậm hơn nút trước, tạo cảm giác bung ra lần lượt như iOS.
+            val spec = AnimationSystem.SpringSpec(0.40f + i * 0.04f, AnimationSystem.BOUNCY.dampingRatio)
+            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, dx, spec)
+            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, dy, spec)
+            AnimationSystem.scaleTo(btn, 1f, 1f, spec)
+            AnimationSystem.fade(btn, 1f, AnimationSystem.QUICK)
         }
     }
 
     private fun collapse() {
         if (!isExpanded) return
         isExpanded = false
-        mainBtn.animate().cancel()
-        mainBtn.animate().rotation(0f).setDuration(200).start()
+        AnimationSystem.cancel(mainBtn)
+        AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 0f, AnimationSystem.SNAPPY)
         subBtns.forEach { btn ->
             btn.isClickable = false
             btn.isEnabled = false
-            btn.animate().cancel()
-            btn.animate()
-                .translationX(0f).translationY(0f)
-                .scaleX(0f).scaleY(0f).alpha(0f)
-                .setDuration(200)
-                .withEndAction { if (!isExpanded) btn.visibility = View.GONE }
-                .start()
+            AnimationSystem.cancel(btn)
+            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.SMOOTH)
+            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.SMOOTH)
+            AnimationSystem.scaleTo(btn, 0f, 0f, AnimationSystem.DISMISS)
+            AnimationSystem.fade(btn, 0f, AnimationSystem.DISMISS) {
+                if (!isExpanded) btn.visibility = View.GONE
+            }
         }
     }
 
     private fun collapseImmediately() {
         isExpanded = false
-        mainBtn.animate().cancel()
+        AnimationSystem.cancel(mainBtn)
         mainBtn.rotation = 0f
         subBtns.forEach { btn ->
-            btn.animate().cancel()
+            AnimationSystem.cancel(btn)
             btn.visibility = View.GONE
             btn.isClickable = false
             btn.isEnabled = false
@@ -353,10 +353,10 @@ class OrbMenuController(
         preDrawListener = null
         anchorView = null
         isExpanded = false
-        mainBtn.animate().cancel()
+        AnimationSystem.cancel(mainBtn)
         mainBtn.setOnClickListener(null)
         subBtns.forEach {
-            it.animate().cancel()
+            AnimationSystem.cancel(it)
             it.setOnClickListener(null)
             rootLayout.removeView(it)
         }
