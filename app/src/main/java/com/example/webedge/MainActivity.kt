@@ -2189,7 +2189,7 @@ web.webViewClient = client
 
         val title = TextView(this)
         title.text = "Tab đang mở"
-        title.textSize = 25f
+        title.textSize = 28f
         title.setTypeface(null, Typeface.BOLD)
         title.setTextColor(fg)
         heading.addView(title)
@@ -2204,9 +2204,9 @@ web.webViewClient = client
 
         val done = TextView(this)
         done.text = "Xong"
-        done.textSize = 16f
+        done.textSize = 17f
         done.setTypeface(null, Typeface.BOLD)
-        done.setTextColor(accent)
+        done.setTextColor(if (isNight) Color.rgb(10, 132, 255) else Color.rgb(0, 122, 255))
         done.gravity = Gravity.CENTER
         done.setPadding(dp(12), dp(10), dp(8), dp(10))
         done.setOnClickListener { popup.dismiss() }
@@ -2393,7 +2393,7 @@ web.webViewClient = client
 
                 val tabTitle = TextView(this)
                 tabTitle.text = tab.title.ifBlank { tab.url.ifBlank { "Tab mới" } }
-                tabTitle.textSize = 14f
+                tabTitle.textSize = 15f
                 tabTitle.setTypeface(null, Typeface.BOLD)
                 tabTitle.setTextColor(fg)
                 tabTitle.maxLines = 1
@@ -2404,8 +2404,8 @@ web.webViewClient = client
 
                 val url = TextView(this)
                 url.text = shortUrl(tab.url).ifBlank { store.homeUrl }
-                url.textSize = 11f
-                url.setTextColor(sub)
+                url.textSize = 12f
+                url.setTextColor(if (isNight) Color.rgb(152, 152, 157) else Color.rgb(142, 142, 147))
                 url.maxLines = 1
                 url.setSingleLine(true)
                 url.ellipsize = android.text.TextUtils.TruncateAt.END
@@ -2455,9 +2455,9 @@ web.webViewClient = client
 
         val add = TextView(this)
         add.text = "+  Tab mới"
-        add.textSize = 16f
+        add.textSize = 17f
         add.setTypeface(null, Typeface.BOLD)
-        add.setTextColor(accent)
+        add.setTextColor(if (isNight) Color.rgb(10, 132, 255) else Color.rgb(0, 122, 255))
         add.gravity = Gravity.CENTER
         add.setPadding(dp(12), dp(17), dp(12), dp(12))
         add.setOnClickListener {
