@@ -42,6 +42,7 @@ class TabManager {
         if (tabs.size <= 1) return
         val wasActive = tabs.find { it.id == id }?.isActive ?: false
         val idx = tabs.indexOfFirst { it.id == id }
+        if (idx < 0) return
         tabs.removeAt(idx)
         if (wasActive) {
             val newActive = if (idx < tabs.size) tabs[idx] else tabs.last()

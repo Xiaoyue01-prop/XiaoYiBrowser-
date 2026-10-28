@@ -30,7 +30,6 @@ object GlassSystem {
         SUGGESTIONS(22, 18f),
         FIND_BAR(28, 18f),
         MENU_CARD(26, 20f),
-        TABS_CARD(24, 20f),
         ORB_BUTTON(20, 16f),
         ORB_SUB_BUTTON(16, 14f)
     }

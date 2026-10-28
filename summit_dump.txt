@@ -1,14 +1,14 @@
 ======================================================================
 SUMMIT BROWSER - CODE DUMP
-Thoi gian: 2026-10-27 21:39:59
+Thoi gian: 2026-10-28 07:27:34
 Branch hien tai: summit-rebuild
 6 commit gan nhat:
+a56a60e Fix: OrbMenu an khi fullscreen (fix loi copy paste newline)
+3f13e46 Fix: an OrbMenu khi vao fullscreen video (elevation khien Orb noi tren lop fullscreen)
 59ceaf9 C4: quyen camera/mic/GPS co hop thoai + popup window.open isolated
 a0bbd99 C3: fullscreen video + xoay ngang (YouTube, Netflix, etc)
 61f66ec C2: tuong thich WebView - scheme la, cookie, mixed content, error toast, UA
 4a92ea1 C1: Manifest - quyen camera/mic/GPS + cleartext + hardwareAccelerated
-b0934d7 Apply Liquid Glass to address suggestions
-dbe2843 Rollback to Summit v1.1 source
 Working tree: SACH (khong con thay doi cho commit)
 ======================================================================
 ======================================================================
@@ -723,6 +723,7 @@ fullscreenContainer.removeAllViews()
 fullscreenContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
 fullscreenContainer.visibility = View.VISIBLE
 fullscreenContainer.bringToFront()
+orbController?.setTemporarilyHidden(true)
 WindowInsetsControllerCompat(window, root).hide(WindowInsetsCompat.Type.systemBars())
 }
 
@@ -740,6 +741,7 @@ previousRequestedOrientation = null
 if (!isActivityDestroyed && !isFinishing && !isDestroyed && ::root.isInitialized) {
 WindowInsetsControllerCompat(window, root).show(WindowInsetsCompat.Type.systemBars())
 }
+syncOrbMenuVisibility()
 callback?.onCustomViewHidden()
 }
 
@@ -1409,8 +1411,9 @@ web.webViewClient = client
         val findOn = findBarContainer.visibility == View.VISIBLE
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
         val toolbarAvailable = bar.visibility == View.VISIBLE && !barHidden
-        orbController?.setToolbarAvailable(toolbarAvailable)
-        orbController?.setTemporarilyHidden(findOn || pageTyping)
+        val inFullscreen = customVideoView != null
+        orbController?.setToolbarAvailable(toolbarAvailable && !inFullscreen)
+        orbController?.setTemporarilyHidden(findOn || pageTyping || inFullscreen)
     }
 
     // Ẩn thanh địa chỉ khi đang gõ trong ô nhập của trang (tránh che nội dung), hoặc khi đang tìm trong trang.

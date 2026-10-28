@@ -556,6 +556,7 @@ handleSpecialUrl(url, view)
 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
 if (request.isForMainFrame && !isActivityDestroyed) {
 toast("Không tải được trang (${error.errorCode})")
+web.animate().alpha(1f).setDuration(120).start()
 }
 }
 override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
@@ -1078,7 +1079,9 @@ web.webViewClient = client
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (menuLayer != null) {
+            if (customVideoView != null) exitFullscreenView()
+            else if (popupDialog?.isShowing == true) closePopupWindow()
+                else if (menuLayer != null) {
                     val b = menuBackAction
                     if (b != null) b() else closeMenu()
                 } else if (findBarContainer.visibility == View.VISIBLE) closeFind()
@@ -1978,6 +1981,11 @@ web.webViewClient = client
 
     override fun onDestroy() {
         isActivityDestroyed = true
+        denyPendingWebPermission()
+        pendingGeoCallback?.invoke(pendingGeoOrigin.orEmpty(), false, false)
+        pendingGeoCallback = null
+        pendingGeoOrigin = null
+        popupDialog?.dismiss()
         if (customVideoView != null) exitFullscreenView()
         suggestToken++
         // === CLEANUP DE TRANH MEMORY LEAK ===
