@@ -2447,13 +2447,13 @@ web.webViewClient = client
 
                         val target = tabManager.getActive()
 
-                        if (target?.bundle != null) {
+                        if (target != null && target.bundle != null) {
 
                             web.restoreState(target.bundle!!)
 
                         } else {
 
-                            load(tab.url.ifBlank { store.homeUrl })
+                            load(target?.url?.ifBlank { store.homeUrl } ?: store.homeUrl)
 
                         }
                     }
