@@ -2088,6 +2088,8 @@ web.webViewClient = client
         orbController = null
         
         // 6. Destroy WebView (phải làm CUỐI CÙNG)
+        // Giai phong thumbnail cua cac tab
+        tabManager.getAll().forEach { it.thumbnail?.recycle(); it.thumbnail = null }
         web.stopLoading()
         // Do not clear persistent WebView cache/history during ordinary Activity teardown.
         // The explicit "Xóa dữ liệu duyệt web" action remains responsible for data clearing.
@@ -2240,16 +2242,91 @@ web.webViewClient = client
                     cornerRadius = dp(13).toFloat()
                 }
 
-                val mark = TextView(this)
-                mark.text = "S"
-                mark.textSize = 46f
-                mark.setTypeface(null, Typeface.BOLD)
-                mark.setTextColor(if (isNight) Color.rgb(210, 218, 245) else Color.rgb(75, 91, 130))
-                mark.gravity = Gravity.CENTER
-                preview.addView(mark, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                ))
+                // Hien thumbnail neu co, nguoc lai hien chu cai dau voi mau sac rieng
+
+
+                if (tab.thumbnail != null) {
+
+
+                    val iv = ImageView(this)
+
+
+                    iv.setImageBitmap(tab.thumbnail)
+
+
+                    iv.scaleType = ImageView.ScaleType.CENTER_CROP
+
+
+                    iv.setBackgroundColor(Color.WHITE)
+
+
+                    preview.addView(iv, FrameLayout.LayoutParams(
+
+
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+
+
+                        ViewGroup.LayoutParams.MATCH_PARENT
+
+
+                    ))
+
+
+                } else {
+
+
+                    val domain = try { Uri.parse(tab.url).host?.removePrefix("www.") ?: "S" } catch (_: Exception) { "S" }
+
+
+                    val firstChar = domain.take(1).uppercase()
+
+
+                    val hash = tab.url.hashCode()
+
+
+                    val hue = (hash and 0xFF) % 360
+
+
+                    val sat = if (isNight) 0.5f else 0.6f
+
+
+                    val lum = if (isNight) 0.6f else 0.45f
+
+
+                    val color = android.graphics.Color.HSVToColor(floatArrayOf(hue.toFloat(), sat, lum))
+
+
+                    val mark = TextView(this)
+
+
+                    mark.text = firstChar
+
+
+                    mark.textSize = 46f
+
+
+                    mark.setTypeface(null, Typeface.BOLD)
+
+
+                    mark.setTextColor(color)
+
+
+                    mark.gravity = Gravity.CENTER
+
+
+                    preview.addView(mark, FrameLayout.LayoutParams(
+
+
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+
+
+                        ViewGroup.LayoutParams.MATCH_PARENT
+
+
+                    ))
+
+
+                }
 
                 if (!tab.isActive) {
                     val close = TextView(this)
@@ -2265,10 +2342,26 @@ web.webViewClient = client
                         setMargins(0, dp(5), dp(5), 0)
                     })
                     close.setOnClickListener {
+                        val wasActive = tab.isActive
+
+                        if (wasActive) tabManager.saveState(web)
+
                         tabManager.close(tab.id)
                         popup.dismiss()
                         val active = tabManager.getActive()
-                        if (active != null) load(active.url.ifBlank { store.homeUrl })
+                        if (active != null) {
+
+                            if (wasActive && active.bundle != null) {
+
+                                web.restoreState(active.bundle!!)
+
+                            } else {
+
+                                load(active.url.ifBlank { store.homeUrl })
+
+                            }
+
+                        }
                         openTabSwitcher()
                     }
                 } else {
@@ -2313,8 +2406,21 @@ web.webViewClient = client
 
                 card.setOnClickListener {
                     if (!tab.isActive) {
+                        tabManager.saveState(web)
+
                         tabManager.switchTo(tab.id)
-                        load(tab.url.ifBlank { store.homeUrl })
+
+                        val target = tabManager.getActive()
+
+                        if (target?.bundle != null) {
+
+                            web.restoreState(target.bundle!!)
+
+                        } else {
+
+                            load(tab.url.ifBlank { store.homeUrl })
+
+                        }
                     }
                     popup.dismiss()
                 }
@@ -2347,6 +2453,7 @@ web.webViewClient = client
         add.gravity = Gravity.CENTER
         add.setPadding(dp(12), dp(17), dp(12), dp(12))
         add.setOnClickListener {
+            tabManager.saveState(web)
             tabManager.addNew(url = store.homeUrl, title = "Tab mới")
             load(store.homeUrl)
             popup.dismiss()
