@@ -2158,7 +2158,14 @@ web.webViewClient = client
         popup.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         val container = FrameLayout(this)
-        container.setBackgroundColor(Color.argb(210, 0, 0, 0))
+        // Nen kinh mo Liquid Glass (blur tu noi dung web phia sau)
+        val dialogBlur = GlassSystem.createBlurView(
+            this, blurTarget, GlassSystem.Preset.TABS_DIALOG, d, isNight
+        ).apply {
+            isClickable = false
+            isFocusable = false
+        }
+        container.addView(dialogBlur, FrameLayout.LayoutParams(-1, -1))
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
@@ -2168,7 +2175,8 @@ web.webViewClient = client
             view.setPadding(dp(12), topInset + dp(8), dp(12), dp(12))
             insets
         }
-        root.setBackgroundColor(if (isNight) Color.rgb(24, 24, 28) else Color.rgb(245, 245, 250))
+        // Root trong suot de BlurView phia sau hien thi (chi tint nhe de doc chu de)
+        root.setBackgroundColor(if (isNight) Color.argb(100, 24, 24, 28) else Color.argb(90, 245, 245, 250))
         root.isClickable = true
 
         val header = LinearLayout(this)
@@ -2223,11 +2231,11 @@ web.webViewClient = client
                 card.background = android.graphics.drawable.GradientDrawable().apply {
                     shape = android.graphics.drawable.GradientDrawable.RECTANGLE
                     cornerRadius = dp(18).toFloat()
-                    setColor(if (isNight) Color.rgb(42, 42, 48) else Color.WHITE)
+                    setColor(if (isNight) Color.argb(180, 42, 42, 48) else Color.argb(200, 255, 255, 255))
                     setStroke(
                         dp(if (tab.isActive) 2 else 1),
                         if (tab.isActive) accent else
-                            if (isNight) Color.rgb(75, 75, 82) else Color.rgb(225, 225, 232)
+                            if (isNight) Color.argb(120, 120, 120, 130) else Color.argb(120, 225, 225, 232)
                     )
                 }
 
@@ -2235,9 +2243,9 @@ web.webViewClient = client
                 preview.background = android.graphics.drawable.GradientDrawable(
                     android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
                     if (isNight)
-                        intArrayOf(Color.rgb(63, 67, 82), Color.rgb(35, 39, 52))
+                        intArrayOf(Color.argb(180, 63, 67, 82), Color.argb(180, 35, 39, 52))
                     else
-                        intArrayOf(Color.rgb(225, 232, 246), Color.rgb(190, 204, 231))
+                        intArrayOf(Color.argb(200, 225, 232, 246), Color.argb(200, 190, 204, 231))
                 ).apply {
                     cornerRadius = dp(13).toFloat()
                 }

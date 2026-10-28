@@ -31,7 +31,8 @@ object GlassSystem {
         FIND_BAR(28, 18f),
         MENU_CARD(26, 20f),
         ORB_BUTTON(20, 16f),
-        ORB_SUB_BUTTON(16, 14f)
+        ORB_SUB_BUTTON(16, 14f),
+        TABS_DIALOG(0, 24f)
     }
 
     /**
