@@ -25,8 +25,10 @@ import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
 import android.text.TextWatcher
-import android.transition.AutoTransition
+import android.transition.ChangeBounds
+import android.transition.Fade
 import android.transition.TransitionManager
+import android.transition.TransitionSet
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -1467,7 +1469,7 @@ web.webViewClient = client
         val layer = FrameLayout(this)
         layer.setOnClickListener { closeMenu() }
 
-        val card = FrameLayout(this).apply {
+        val card = MenuCardLayout(this).apply {
             // Nền kính dự phòng + outline bo góc để menu không thành trong suốt
             // nếu BlurView chưa render kịp trong lần layout đầu tiên.
             background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight)
@@ -1475,6 +1477,8 @@ web.webViewClient = client
             clipChildren = true
             clipToPadding = true
             isClickable = true
+            // Lớp kính lớn hơn khung và bị cắt bo góc, nên viền kính vẽ đè lên trên.
+            foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, d, isNight)
         }
 
         val glass = GlassSystem.createBlurView(
@@ -1486,9 +1490,10 @@ web.webViewClient = client
         )
         glass.isClickable = false
         glass.isFocusable = false
-        // Ban đầu để lớp kính 0×0 để nó không ép card WRAP_CONTENT thành full màn hình.
-        // setMenuPage sẽ căn lớp kính theo kích thước card sau khi nội dung được đo.
-        card.addView(glass, FrameLayout.LayoutParams(0, 0))
+        // Kính có kích thước cố định, đủ lớn cho mọi trang; MenuCardLayout bỏ qua nó khi đo
+        // nên card vẫn ôm theo nội dung. Không đổi kích thước => blur có ngay, không bị trong suốt.
+        val glassW = minOf(dp(400), resources.displayMetrics.widthPixels - dp(28) - insetLeft - insetRight)
+        card.addView(glass, FrameLayout.LayoutParams(glassW, menuMaxHeight()))
 
         layer.addView(
             card,
@@ -1524,7 +1529,10 @@ web.webViewClient = client
             root.removeView(layer)
             return
         }
-        AnimationSystem.popOut(card) { root.removeView(layer) }
+        // Thu hồi: co lại về góc dưới bên phải, phía nút ba chấm.
+        card.pivotX = card.width.toFloat()
+        card.pivotY = card.height.toFloat()
+        AnimationSystem.popOut(card, 0.3f) { root.removeView(layer) }
     }
 
     // Đặt vị trí khung menu ngay phía trên nút ba chấm
@@ -1538,64 +1546,40 @@ web.webViewClient = client
         card.layoutParams = lp
     }
 
+    private fun menuMaxHeight(): Int {
+        val rootH = if (root.height > 0) root.height else resources.displayMetrics.heightPixels
+        val maxH = rootH - insetTop - dp(12) -
+            (maxOf(insetBottom, imeBottom) + dp(10) + dp(BOTTOM_BAR_HEIGHT_DP) + dp(8))
+        return maxOf(maxH, dp(120))
+    }
+
     // Thay nội dung khung menu bằng một trang khác, có hiệu ứng đổi kích thước
     private fun setMenuPage(page: View, widthDp: Int, animate: Boolean) {
         val layer = menuLayer ?: return
         val card = menuCard ?: return
         val w = minOf(dp(widthDp), resources.displayMetrics.widthPixels - dp(28) - insetLeft - insetRight)
+        val glass = card.getChildAt(0)
         if (animate) {
-            val tr = AutoTransition()
-            tr.duration = AnimationSystem.PAGE_DURATION
-            tr.interpolator = AnimationSystem.pageInterpolator
+            // Fade và đổi kích thước chạy đồng thời (AutoTransition chạy lần lượt nên rất chậm).
+            val tr = TransitionSet()
+            tr.ordering = TransitionSet.ORDERING_TOGETHER
+            tr.addTransition(Fade(Fade.OUT).setDuration(80))
+            tr.addTransition(
+                ChangeBounds()
+                    .setDuration(AnimationSystem.PAGE_DURATION)
+                    .setInterpolator(AnimationSystem.pageInterpolator)
+            )
+            tr.addTransition(Fade(Fade.IN).setDuration(180).setStartDelay(40))
+            // Lớp kính đổi kích thước ngay, không animate, để blur không phải dựng lại mỗi khung hình.
+            tr.excludeTarget(glass, true)
             TransitionManager.beginDelayedTransition(layer, tr)
-        }
-        // Giữ lớp kính ở child đầu tiên, chỉ thay nội dung trang menu.
-        // Reset kích thước kính để nội dung mới tự quyết định kích thước card.
-        if (card.childCount > 0) {
-            val glassParams = card.getChildAt(0).layoutParams as? FrameLayout.LayoutParams
-            if (glassParams != null && (glassParams.width != 0 || glassParams.height != 0)) {
-                glassParams.width = 0
-                glassParams.height = 0
-                card.getChildAt(0).layoutParams = glassParams
-            }
         }
         if (card.childCount > 1) {
             card.removeViews(1, card.childCount - 1)
         }
         card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
-        syncMenuGlassBounds(card)
+
         WindowCompat.getInsetsController(window, layer).hide(WindowInsetsCompat.Type.ime())
-    }
-
-    /** Size the BlurView after the wrap-content menu card has been measured. */
-    private fun syncMenuGlassBounds(card: FrameLayout) {
-        val observer = card.viewTreeObserver
-        observer.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
-            override fun onGlobalLayout() {
-                if (menuCard !== card || card.parent == null || card.childCount == 0) {
-                    if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
-                    return
-                }
-
-                val width = card.width
-                val height = card.height
-                if (width <= 0 || height <= 0) return
-
-                val glass = card.getChildAt(0)
-                val params = glass.layoutParams as? FrameLayout.LayoutParams ?: return
-                if (params.width == width && params.height == height) {
-                    if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
-                    return
-                }
-
-                params.width = width
-                params.height = height
-                glass.layoutParams = params
-                // Remove this listener after the first successful size sync.
-                // A new listener is registered whenever setMenuPage changes content.
-                if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
-            }
-        })
     }
 
     private fun showMainPage(animate: Boolean = true) {
@@ -1806,8 +1790,10 @@ web.webViewClient = client
         val p = makePanel(title, "Chạm để mở, giữ lâu để xóa", 340) { showMainPage() }
         val rp = ripple()
 
+        var fillGen = 0
         fun fill() {
             p.body.removeAllViews()
+            val myGen = ++fillGen
             val current = store.list(key).take(100)
             if (current.isEmpty()) {
                 val empty = TextView(this)
@@ -1818,7 +1804,8 @@ web.webViewClient = client
                 p.body.addView(empty)
                 return
             }
-            for (entry in current) {
+            // Dựng 10 hàng đầu ngay để trang hiện tức thì, phần còn lại dựng ngay sau đó.
+            fun build(from: Int, to: Int) { for (entry in current.subList(from, minOf(to, current.size))) {
                 val row = LinearLayout(this)
                 row.orientation = LinearLayout.VERTICAL
                 row.setPadding(dp(22), dp(10), dp(22), dp(10))
@@ -1851,6 +1838,10 @@ web.webViewClient = client
                 }
                 press(row, 0.98f)
                 p.body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            } }
+            build(0, 10)
+            if (current.size > 10) {
+                p.body.post { if (myGen == fillGen) build(10, current.size) }
             }
         }
         fill()

@@ -287,7 +287,6 @@ class OrbMenuController(
     private fun expand() {
         if (!isAvailable()) return
         isExpanded = true
-        AnimationSystem.cancel(mainBtn)
         AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 45f, AnimationSystem.SNAPPY)
 
         val radius = dp(60).toFloat()
@@ -316,7 +315,6 @@ class OrbMenuController(
     private fun collapse() {
         if (!isExpanded) return
         isExpanded = false
-        AnimationSystem.cancel(mainBtn)
         AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 0f, AnimationSystem.SNAPPY)
         subBtns.forEach { btn ->
             btn.isClickable = false

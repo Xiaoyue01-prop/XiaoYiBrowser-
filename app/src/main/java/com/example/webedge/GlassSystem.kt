@@ -64,6 +64,17 @@ object GlassSystem {
             )
         }
 
+    /** Viền kính mảnh vẽ đè lên nội dung (dùng khi lớp kính lớn hơn khung và bị cắt). */
+    fun createBorder(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
+        GradientDrawable().apply {
+            cornerRadius = radiusDp * density
+            setColor(Color.TRANSPARENT)
+            setStroke(
+                (density + 0.5f).toInt().coerceAtLeast(1),
+                if (isNight) Color.argb(68, 255, 255, 255) else Color.argb(46, 255, 255, 255)
+            )
+        }
+
     /** Create a BlurView configured for a named glass surface. */
     fun createBlurView(
         context: Context,

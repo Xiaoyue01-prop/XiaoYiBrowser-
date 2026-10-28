@@ -61,7 +61,7 @@ object AnimationSystem {
     }
 
     /** Đổi nội dung/kích thước card menu: nảy theo spring. */
-    const val PAGE_DURATION = 600L
+    const val PAGE_DURATION = 520L
     val pageInterpolator = SpringInterpolator(SNAPPY, PAGE_DURATION / 1000f)
 
     private val running =
@@ -127,8 +127,17 @@ object AnimationSystem {
     fun attachPress(touch: View, target: View = touch, scale: Float) {
         touch.setOnTouchListener { v, ev ->
             when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> pressDown(target, scale)
+                MotionEvent.ACTION_DOWN -> {
+                    unclipParents(target)
+                    pressDown(target, scale)
+                }
                 MotionEvent.ACTION_UP -> {
+                    // Chạm nhanh thì spring nhấn chưa kịp tới đích: đẩy tới ~70% để lần nhả luôn nảy rõ.
+                    val mid = 1f + (scale - 1f) * 0.7f
+                    if (Math.abs(target.scaleX - 1f) < Math.abs(mid - 1f)) {
+                        target.scaleX = mid
+                        target.scaleY = mid
+                    }
                     pressUp(target)
                     if (ev.x >= 0f && ev.x <= v.width && ev.y >= 0f && ev.y <= v.height) {
                         v.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
@@ -137,6 +146,15 @@ object AnimationSystem {
                 MotionEvent.ACTION_CANCEL -> pressUp(target)
             }
             false
+        }
+    }
+
+    /** View cha mặc định cắt phần con vẽ tràn ra ngoài, làm nút phồng lên bị mất bounce. */
+    private fun unclipParents(view: View) {
+        var p = view.parent
+        while (p is android.view.ViewGroup) {
+            if (p.clipChildren) p.clipChildren = false
+            p = p.parent
         }
     }
 
