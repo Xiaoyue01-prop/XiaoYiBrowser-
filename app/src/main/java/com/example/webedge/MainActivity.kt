@@ -74,6 +74,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
 import java.lang.ref.WeakReference
 
 class MainActivity : ComponentActivity() {
@@ -144,9 +149,9 @@ class MainActivity : ComponentActivity() {
     private var solidTop: Int? = null
     private var orbController: OrbMenuController? = null
     private var programmatic = false
-    private var suggestToken = 0
+    private var suggestJob: Job? = null
+    private val suggestionRepo = SuggestionRepository()
     private var isActivityDestroyed = false
-    private var suggestRunnable: Runnable? = null
     private val handler = Handler(Looper.getMainLooper())
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
 
@@ -1153,96 +1158,23 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     }
 
     // ---------------- Gợi ý tìm kiếm ----------------
-
     private fun scheduleSuggest(q: String) {
-        suggestRunnable?.let { handler.removeCallbacks(it) }
         val text = q.trim()
         if (text.isEmpty()) {
             hideSuggestions()
             return
         }
-        val r = Runnable { fetchSuggestions(text) }
-        suggestRunnable = r
-        handler.postDelayed(r, 150)
-    }
-
-    private fun fetchSuggestions(q: String) {
-        suggestToken++
-        val token = suggestToken
-        val engine = store.searchEngine
-        Thread {
-            val result = try {
-                requestSuggestions(engine, q)
-            } catch (e: Exception) {
-                emptyList<String>()
-            }
-            runOnUiThread {
-                if (!isActivityDestroyed && token == suggestToken && urlBar.hasFocus()) showSuggestions(result)
-            }
-        }.start()
-    }
-
-    private fun requestSuggestions(engine: Int, q: String): List<String> {
-        val enc = URLEncoder.encode(q, "UTF-8")
-        val link = when (engine) {
-            1 -> "https://api.bing.com/osjson.aspx?query=" + enc
-            2 -> "https://duckduckgo.com/ac/?type=list&q=" + enc
-            else -> "https://suggestqueries.google.com/complete/search?client=firefox&q=" + enc
+        // Hủy request cũ nếu đang chạy, tránh giật lag khi gõ nhanh
+        suggestJob?.cancel()
+        suggestJob = lifecycleScope.launch {
+            delay(150L) // Debounce 150ms
+            val result = suggestionRepo.fetch(store.searchEngine, text)
+            if (!isActivityDestroyed && urlBar.hasFocus()) showSuggestions(result)
         }
-        val conn = URL(link).openConnection() as HttpURLConnection
-        conn.connectTimeout = 3000
-        conn.readTimeout = 3000
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-        try {
-            val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val arr = JSONArray(body).getJSONArray(1)
-            val out = ArrayList<String>()
-            for (i in 0 until minOf(arr.length(), 6)) out.add(arr.getString(i))
-            return out
-        } finally {
-            conn.disconnect()
-        }
-    }
-
-    private fun showSuggestions(items: List<String>) {
-        suggestBox.removeAllViews()
-        if (items.isEmpty()) {
-            suggestBox.visibility = View.GONE
-            suggestBlurView.visibility = View.GONE
-            return
-        }
-        val rp = ripple()
-        for (text in items) {
-            val row = LinearLayout(this)
-            row.orientation = LinearLayout.HORIZONTAL
-            row.gravity = Gravity.CENTER_VERTICAL
-            row.setPadding(dp(18), 0, dp(18), 0)
-            row.setBackgroundResource(rp)
-            val ic = ImageView(this)
-            ic.setImageDrawable(PathIcon(Icons.SEARCH, sub))
-            row.addView(ic, LinearLayout.LayoutParams(dp(18), dp(18)))
-            val t = TextView(this)
-            t.text = text
-            t.textSize = 15f
-            t.setTextColor(fg)
-            t.setSingleLine()
-            t.ellipsize = TextUtils.TruncateAt.END
-            t.setPadding(dp(12), 0, 0, 0)
-            row.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            row.setOnClickListener {
-                load(text)
-                leaveEdit()
-            }
-            press(row, 0.98f)
-            suggestBox.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
-        }
-        suggestBlurView.visibility = View.VISIBLE
-        suggestBox.visibility = View.VISIBLE
     }
 
     private fun hideSuggestions() {
-        suggestToken++
-        suggestRunnable?.let { handler.removeCallbacks(it) }
+        suggestJob?.cancel()
         suggestBox.visibility = View.GONE
         suggestBlurView.visibility = View.GONE
         suggestBox.removeAllViews()
@@ -2011,7 +1943,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         pendingGeoOrigin = null
         popupDialog?.dismiss()
         if (customVideoView != null) exitFullscreenView()
-        suggestToken++
         // === CLEANUP DE TRANH MEMORY LEAK ===
         // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)
         web.removeJavascriptInterface("EdgeBridge")
@@ -2025,8 +1956,8 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
         // 3. Hủy tất cả Runnable đang chờ trong Handler
         handler.removeCallbacksAndMessages(null)
-        suggestRunnable?.let { handler.removeCallbacks(it) }
-        suggestRunnable = null
+        suggestJob?.cancel()
+        suggestJob = null
 
         // 4. Hủy callbacks
         pendingFileCallback?.onReceiveValue(null)
