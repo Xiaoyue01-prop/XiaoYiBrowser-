@@ -228,23 +228,24 @@ class TabSwitcherController(
             setBackgroundColor(Color.argb(178, 249, 243, 248))
         }, FrameLayout.LayoutParams(-1, -1))
 
-        // Lưới thẻ nằm trong BlurTarget riêng, toàn màn hình, để thẻ cuộn dưới status bar được làm mờ.
-        val cardsTarget = BlurTarget(activity).apply {
+        // Lưới thẻ toàn màn hình: thẻ cuộn dưới header/status bar/thanh đáy thay vì bị cắt cứng.
+        val cardsTarget = FrameLayout(activity).apply {
             clipChildren = false
             clipToPadding = false
         }
         container.addView(cardsTarget, FrameLayout.LayoutParams(-1, -1))
 
-        // Dải blur trên status bar, giống lớp mờ trên cùng của trình duyệt khi cuộn trang.
-        val statusBlur = GlassSystem.createBlurView(
-            activity, cardsTarget, GlassSystem.Preset.TABS_DIALOG,
-            activity.resources.displayMetrics.density, false,
-            Color.argb(120, 249, 243, 248)
-        ).apply {
+        // Lớp mờ dần trên status bar, cùng cơ chế với lớp mờ trên cùng của trình duyệt (topFade):
+        // gradient đậm ở mép trên rồi tan dần, nên thẻ cuộn lên chỉ mờ đi chứ không bị cắt cạnh cứng.
+        val statusFade = View(activity).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.argb(215, 249, 243, 248), Color.argb(0, 249, 243, 248))
+            )
             isClickable = false
             isFocusable = false
         }
-        container.addView(statusBlur, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
+        container.addView(statusFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
 
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -553,8 +554,9 @@ class TabSwitcherController(
             // Nền bảng tab sáng nên icon/đồng hồ status bar phải tối để đọc được.
             WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
             window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-                (statusBlur.layoutParams as FrameLayout.LayoutParams).height = insets.systemWindowInsetTop
-                statusBlur.requestLayout()
+                (statusFade.layoutParams as FrameLayout.LayoutParams).height =
+                    insets.systemWindowInsetTop + dp(16)
+                statusFade.requestLayout()
                 root.setPadding(dp(12), insets.systemWindowInsetTop + dp(8), dp(12), insets.systemWindowInsetBottom + dp(8))
                 view.onApplyWindowInsets(insets)
             }
