@@ -1720,13 +1720,55 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     private fun showList(title: String, key: String) {
         val p = makePanel(title, "Chạm để mở, giữ lâu để xóa", 340) { showMainPage() }
         val rp = ripple()
+        var allItems = store.list(key)
+        var displayedCount = 0
+        val chunkSize = 30 // ✅ BƯỚC 9: Chỉ tải 30 mục mỗi lần
 
-        var fillGen = 0
+        fun buildRow(entry: Entry) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.VERTICAL
+            row.setPadding(dp(22), dp(10), dp(22), dp(10))
+            row.setBackgroundResource(rp)
+            val t = TextView(this)
+            t.text = if (entry.title.isBlank() || entry.title == entry.url) shortUrl(entry.url) else entry.title
+            t.textSize = 15f
+            t.setTextColor(fg)
+            t.setSingleLine()
+            t.ellipsize = TextUtils.TruncateAt.END
+            row.addView(t)
+            val u = TextView(this)
+            u.text = shortUrl(entry.url)
+            u.textSize = 12f
+            u.setTextColor(sub)
+            u.setSingleLine()
+            u.ellipsize = TextUtils.TruncateAt.END
+            row.addView(u)
+            row.setOnClickListener {
+                closeMenu()
+                load(entry.url)
+            }
+            row.setOnLongClickListener {
+                store.remove(key, entry.url)
+                showList(title, key) // Tải lại trang sau khi xóa
+                true
+            }
+            press(row, 0.98f)
+            p.body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+
+        fun loadMore() {
+            val end = minOf(displayedCount + chunkSize, allItems.size)
+            for (i in displayedCount until end) {
+                buildRow(allItems[i])
+            }
+            displayedCount = end
+        }
+
         fun fill() {
             p.body.removeAllViews()
-            val myGen = ++fillGen
-            val current = store.list(key).take(100)
-            if (current.isEmpty()) {
+            displayedCount = 0
+            allItems = store.list(key)
+            if (allItems.isEmpty()) {
                 val empty = TextView(this)
                 empty.text = "Chưa có gì"
                 empty.textSize = 15f
@@ -1735,52 +1777,33 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 p.body.addView(empty)
                 return
             }
-            // Dựng 10 hàng đầu ngay để trang hiện tức thì, phần còn lại dựng ngay sau đó.
-            fun build(from: Int, to: Int) { for (entry in current.subList(from, minOf(to, current.size))) {
-                val row = LinearLayout(this)
-                row.orientation = LinearLayout.VERTICAL
-                row.setPadding(dp(22), dp(10), dp(22), dp(10))
-                row.setBackgroundResource(rp)
-
-                val t = TextView(this)
-                t.text = if (entry.title.isBlank() || entry.title == entry.url) shortUrl(entry.url) else entry.title
-                t.textSize = 15f
-                t.setTextColor(fg)
-                t.setSingleLine()
-                t.ellipsize = TextUtils.TruncateAt.END
-                row.addView(t)
-
-                val u = TextView(this)
-                u.text = shortUrl(entry.url)
-                u.textSize = 12f
-                u.setTextColor(sub)
-                u.setSingleLine()
-                u.ellipsize = TextUtils.TruncateAt.END
-                row.addView(u)
-
-                row.setOnClickListener {
-                    closeMenu()
-                    load(entry.url)
+            loadMore()
+            // ✅ Nút "Xem thêm" nếu còn ẩn
+            if (displayedCount < allItems.size) {
+                val moreBtn = TextView(this)
+                moreBtn.text = "Xem thêm ${allItems.size - displayedCount} mục..."
+                moreBtn.textSize = 14f
+                moreBtn.setTextColor(accent)
+                moreBtn.gravity = Gravity.CENTER
+                moreBtn.setPadding(dp(22), dp(12), dp(22), dp(12))
+                moreBtn.setOnClickListener {
+                    p.body.removeView(moreBtn)
+                    loadMore()
+                    if (displayedCount < allItems.size) {
+                        moreBtn.text = "Xem thêm ${allItems.size - displayedCount} mục..."
+                        p.body.addView(moreBtn)
+                    }
                 }
-                row.setOnLongClickListener {
-                    store.remove(key, entry.url)
-                    fill()
-                    true
-                }
-                press(row, 0.98f)
-                p.body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            } }
-            build(0, 10)
-            if (current.size > 10) {
-                p.body.post { if (myGen == fillGen) build(10, current.size) }
+                press(moreBtn, 0.98f)
+                p.body.addView(moreBtn)
             }
         }
-        fill()
 
+        fill()
         val left: TextView? = if (key == "history") {
             panelButton("Xóa tất cả", accent) {
                 store.clearHistory()
-                fill()
+                showList(title, key)
             }
         } else null
         addButtons(p, left, panelButton("Xong", accent) { closeMenu() })
@@ -2059,8 +2082,8 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             tabBtn.setImageDrawable(base)
             return
         }
-        val badgeColor = if (isNight) Color.rgb(50, 140, 255) else Color.rgb(10, 132, 255)
-        val textColor = if (isNight) Color.BLACK else Color.WHITE
+        val badgeColor = if (isNight) OptTheme.BADGE_DARK else OptTheme.BADGE_LIGHT
+        val textColor = if (isNight) OptTheme.BADGE_TEXT_ON_DARK else OptTheme.BADGE_TEXT_ON_LIGHT
         val layer = android.graphics.drawable.LayerDrawable(arrayOf(
             base,
             BadgeDrawable(count, badgeColor, textColor, d)
