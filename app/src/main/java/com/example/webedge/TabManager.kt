@@ -28,6 +28,57 @@ class TabManager {
     fun getForWebView(view: WebView): Tab? = tabs.find { it.webView === view }
     fun count(): Int = tabs.size
 
+    /** Xuất metadata để lưu bền vững; WebView được tạo lại khi cần. */
+    fun exportTabs(): List<PersistedTab> = tabs.map {
+        PersistedTab(
+            id = it.id,
+            url = it.webView?.url ?: it.url,
+            title = it.webView?.title ?: it.title,
+            isActive = it.isActive
+        )
+    }
+
+    /** Khôi phục danh sách tab đã lưu mà chưa tạo WebView cho tab nền. */
+    fun restoreTabs(saved: List<PersistedTab>) {
+        if (saved.isEmpty()) return
+
+        tabs.clear()
+        val restored = saved.takeLast(100)
+        val ids = mutableSetOf<Long>()
+
+        restored.forEachIndexed { index, item ->
+            var id = item.id
+            if (id == 0L || id in ids) {
+                id = System.nanoTime() + index + 1L
+                while (id == 0L || id in ids) id++
+            }
+            ids.add(id)
+
+            tabs.add(
+                Tab(
+                    id = id,
+                    url = item.url,
+                    title = item.title.ifBlank { item.url.ifBlank { "Tab mới" } },
+                    isActive = item.isActive
+                )
+            )
+        }
+
+        if (tabs.none { it.isActive }) {
+            tabs.first().isActive = true
+        } else {
+            var foundActive = false
+            tabs.forEach {
+                if (it.isActive && !foundActive) {
+                    foundActive = true
+                } else if (it.isActive) {
+                    it.isActive = false
+                }
+            }
+        }
+    }
+
+
     fun addNew(url: String = "", title: String = "Tab mới"): Tab {
         tabs.forEach { it.isActive = false }
         val tab = Tab(url = url, title = title, isActive = true)

@@ -6,6 +6,13 @@ import org.json.JSONObject
 
 data class Entry(val title: String, val url: String, val time: Long)
 
+data class PersistedTab(
+    val id: Long,
+    val url: String,
+    val title: String,
+    val isActive: Boolean
+)
+
 class Store(context: Context) {
     private val sp = context.getSharedPreferences("edge", Context.MODE_PRIVATE)
 
@@ -29,6 +36,42 @@ class Store(context: Context) {
     var autoHideBar: Boolean
         get() = sp.getBoolean("autohide", true)
         set(v) { sp.edit().putBoolean("autohide", v).apply() }
+
+    fun saveTabs(tabs: List<PersistedTab>) {
+        val arr = JSONArray()
+        for (tab in tabs.takeLast(100)) {
+            arr.put(
+                JSONObject()
+                    .put("id", tab.id)
+                    .put("url", tab.url)
+                    .put("title", tab.title)
+                    .put("active", tab.isActive)
+            )
+        }
+        sp.edit().putString("saved_tabs", arr.toString()).apply()
+    }
+
+    fun loadTabs(): List<PersistedTab> {
+        val arr = try {
+            JSONArray(sp.getString("saved_tabs", "[]") ?: "[]")
+        } catch (_: Exception) {
+            JSONArray()
+        }
+
+        val result = mutableListOf<PersistedTab>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            result.add(
+                PersistedTab(
+                    id = obj.optLong("id", 0L),
+                    url = obj.optString("url", ""),
+                    title = obj.optString("title", ""),
+                    isActive = obj.optBoolean("active", false)
+                )
+            )
+        }
+        return result
+    }
 
     fun list(key: String): MutableList<Entry> {
         val arr = try {

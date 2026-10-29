@@ -618,7 +618,11 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
         store = Store(this)
         tabManager = TabManager()
-        tabManager.setOnChangeListener { updateTabBadge() }
+        tabManager.restoreTabs(store.loadTabs())
+        tabManager.setOnChangeListener {
+            store.saveTabs(tabManager.exportTabs())
+            updateTabBadge()
+        }
         d = resources.displayMetrics.density
         isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
@@ -964,11 +968,18 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         })
 
         if (savedInstanceState == null) {
-            web.loadUrl(store.homeUrl)
+            val activeTab = tabManager.getActive()
+            val savedUrl = activeTab?.url.orEmpty()
+            val startUrl = savedUrl.ifBlank { store.homeUrl }
+            currentUrl = startUrl
+            web.loadUrl(startUrl)
         } else {
             val restored = runCatching { web.restoreState(savedInstanceState) }.getOrNull()
             if (restored == null) {
-                web.loadUrl(store.homeUrl)
+                val activeTab = tabManager.getActive()
+                val startUrl = activeTab?.url?.ifBlank { store.homeUrl } ?: store.homeUrl
+                currentUrl = startUrl
+                web.loadUrl(startUrl)
             } else {
                 currentUrl = web.url ?: store.homeUrl
                 tabManager.updateActive(currentUrl, web.title ?: currentUrl)
@@ -1939,12 +1950,21 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         showPanel(p)
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
+    override fun onPause() {
         if (::web.isInitialized) {
             tabManager.saveState(web)
+            store.saveTabs(tabManager.exportTabs())
+        }
+        super.onPause()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        if (::web.isInitialized) {
+            tabManager.saveState(web)
+            store.saveTabs(tabManager.exportTabs())
             web.saveState(outState)
         }
+        super.onSaveInstanceState(outState)
     }
 
     private fun setupOrbMenu() {
