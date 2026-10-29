@@ -132,23 +132,22 @@ class MainActivity : ComponentActivity() {
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingDownloadLiveUpdate: Pair<Long, String>? = null
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 4102) {
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             val pending = pendingDownloadLiveUpdate
             pendingDownloadLiveUpdate = null
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED && pending != null) {
+
+            if (granted && pending != null) {
                 DownloadLiveUpdate.track(this, pending.first, pending.second)
             }
         }
-    }
 
     private fun startDownloadLiveUpdate(downloadId: Long, fileName: String) {
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             pendingDownloadLiveUpdate = downloadId to fileName
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4102)
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             return
         }
         DownloadLiveUpdate.track(this, downloadId, fileName)
