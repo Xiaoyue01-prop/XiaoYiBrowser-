@@ -1180,6 +1180,43 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         suggestBox.removeAllViews()
     }
 
+    private fun showSuggestions(items: List<String>) {
+        suggestBox.removeAllViews()
+        if (items.isEmpty()) {
+            suggestBox.visibility = View.GONE
+            suggestBlurView.visibility = View.GONE
+            return
+        }
+        val rp = ripple()
+        for (text in items) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+            row.setPadding(dp(18), 0, dp(18), 0)
+            row.setBackgroundResource(rp)
+            val ic = ImageView(this)
+            ic.setImageDrawable(PathIcon(Icons.SEARCH, sub))
+            row.addView(ic, LinearLayout.LayoutParams(dp(18), dp(18)))
+            val t = TextView(this)
+            t.text = text
+            t.textSize = 15f
+            t.setTextColor(fg)
+            t.setSingleLine()
+            t.ellipsize = TextUtils.TruncateAt.END
+            t.setPadding(dp(12), 0, 0, 0)
+            row.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.setOnClickListener {
+                load(text)
+                leaveEdit()
+            }
+            press(row, 0.98f)
+            suggestBox.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        }
+        suggestBlurView.visibility = View.VISIBLE
+        suggestBox.visibility = View.VISIBLE
+    }
+
+
     // ---------------- Tìm trong trang ----------------
 
     private fun openFind() {
