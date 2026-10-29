@@ -74,6 +74,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
+import java.lang.ref.WeakReference
 
 class MainActivity : ComponentActivity() {
 
@@ -157,23 +158,31 @@ class MainActivity : ComponentActivity() {
         pendingFileCallback = null
     }
 
-    inner class Bridge(private val owner: WebView) {
-        @JavascriptInterface
-        fun setTopColor(r: Int, g: Int, b: Int) {
-            runOnUiThread {
-                if (owner === web && !isActivityDestroyed) {
-                    applyTopColor(Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255)))
-                }
-            }
-        }
+    private class Bridge(ownerRef: WeakReference<WebView>, activityRef: WeakReference<MainActivity>) {
+    private val ownerWeak = ownerRef
+    private val activityWeak = activityRef
 
-        @JavascriptInterface
-        fun clearTopColor() {
-            runOnUiThread {
-                if (owner === web && !isActivityDestroyed) applyTopColor(null)
+    @JavascriptInterface
+    fun setTopColor(r: Int, g: Int, b: Int) {
+        val activity = activityWeak.get() ?: return
+        val owner = ownerWeak.get() ?: return
+        activity.runOnUiThread {
+            if (owner === activity.web && !activity.isActivityDestroyed) {
+                activity.applyTopColor(Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255)))
             }
         }
     }
+
+    @JavascriptInterface
+    fun clearTopColor() {
+        val activity = activityWeak.get() ?: return
+        val owner = ownerWeak.get() ?: return
+        activity.runOnUiThread {
+            if (owner === activity.web && !activity.isActivityDestroyed) activity.applyTopColor(null)
+        }
+    }
+}
+
 
                 private val webPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -1319,7 +1328,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         }
         view.webViewClient = client
         view.webChromeClient = chromeClient
-        view.addJavascriptInterface(Bridge(view), "EdgeBridge")
+        view.addJavascriptInterface(Bridge(WeakReference(view), WeakReference(this)), "EdgeBridge")
         view.setFindListener { active, total, _ ->
             if (view === web) findCount.text = if (total == 0) "0" else "${active + 1}/$total"
         }
