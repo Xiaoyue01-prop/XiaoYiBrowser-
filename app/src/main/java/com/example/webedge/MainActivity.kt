@@ -999,7 +999,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             onActivateTab = ::activateTab,
             onCloseTab = ::closeBrowserTab,
             onCreateTab = ::createBrowserTab,
-            shortUrl = ::shortUrl
+            shortUrl = UrlUtils::shortUrl
         )
         setupOrbMenu()
 
