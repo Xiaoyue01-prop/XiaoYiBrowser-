@@ -503,6 +503,16 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
             AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
         }
 
+        override fun shouldInterceptRequest(
+            view: WebView,
+            request: WebResourceRequest
+        ): WebResourceResponse? {
+            if (store.adBlockEnabled && AdBlocker.isAdUrl(request.url.toString())) {
+                return AdBlocker.createEmptyResponse()
+            }
+            return super.shouldInterceptRequest(view, request)
+        }
+
         override fun onPageFinished(view: WebView, url: String) {
             tabManager.updateForWebView(view, url, view.title ?: url)
             store.addHistory(view.title ?: "", url)
@@ -511,6 +521,10 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
             AnimationSystem.fade(view, 1f)
             currentUrl = url
             updateTabBadge()
+            // Inject CSS ẩn quảng cáo còn sót
+            if (store.adBlockEnabled) {
+                view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
+            }
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
@@ -631,6 +645,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         super.onCreate(savedInstanceState)
 
         store = Store(this)
+        AdBlocker.init(this)
         tabManager = TabManager()
         tabManager.restoreTabs(store.loadTabs())
         tabManager.setOnChangeListener {
@@ -1855,6 +1870,11 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         addRow("Tràn viền nội dung (thử nghiệm)", onOff(store.edgeMode), fg) {
             store.edgeMode = !store.edgeMode
             applyInsets()
+            web.reload()
+            showSettings()
+        }
+        addRow("Chặn quảng cáo", onOff(store.adBlockEnabled), fg) {
+            store.adBlockEnabled = !store.adBlockEnabled
             web.reload()
             showSettings()
         }

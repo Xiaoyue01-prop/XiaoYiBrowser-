@@ -26,7 +26,11 @@ set(v) { sp.edit().putBoolean("desktop", v).apply() }
 var edgeMode: Boolean
 get() = sp.getBoolean("edge", true)
 set(v) { sp.edit().putBoolean("edge", v).apply() }
-var autoHideBar: Boolean
+var adBlockEnabled: Boolean
+        get() = sp.getBoolean("adblock", true)
+        set(v) { sp.edit().putBoolean("adblock", v).apply() }
+
+    var autoHideBar: Boolean
 get() = sp.getBoolean("autohide", true)
 set(v) { sp.edit().putBoolean("autohide", v).apply() }
 fun saveTabs(tabs: List<PersistedTab>) {
