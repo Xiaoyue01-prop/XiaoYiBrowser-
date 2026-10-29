@@ -13,6 +13,13 @@ object Theme {
     // Màu cảnh báo / xóa (đỏ)
     val DANGER_RED = Color.rgb(255, 69, 58)  // #FF453A
     
+    // Badge đếm tab
+    fun badgeColor(isNight: Boolean): Int =
+        if (isNight) Color.rgb(50, 140, 255) else Color.rgb(10, 132, 255)
+
+    fun badgeTextColor(isNight: Boolean): Int =
+        if (isNight) Color.BLACK else Color.WHITE
+
     // Màu chữ phụ (sub color)
     fun subColor(isNight: Boolean): Int =
         if (isNight) Color.argb(150, 255, 255, 255)

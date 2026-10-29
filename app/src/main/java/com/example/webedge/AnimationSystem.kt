@@ -64,6 +64,11 @@ object AnimationSystem {
     const val PAGE_DURATION = 520L
     val pageInterpolator = SpringInterpolator(SNAPPY, PAGE_DURATION / 1000f)
 
+    /** Crossfade khi đổi trang menu: Transition của Android chỉ nhận thời lượng, không nhận spring. */
+    const val PAGE_FADE_OUT_MS = 80L
+    const val PAGE_FADE_IN_MS = 180L
+    const val PAGE_FADE_IN_DELAY_MS = 40L
+
     private val running =
         WeakHashMap<View, HashMap<DynamicAnimation.ViewProperty, SpringAnimation>>()
 

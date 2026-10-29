@@ -50,7 +50,6 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.RenderProcessGoneDetail
-import android.webkit.WebSettings
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -109,7 +108,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var urlPillBlur: BlurView
     private lateinit var urlBar: EditText
     private lateinit var bar: LinearLayout
-    private lateinit var backBtn: ImageView
+    private lateinit var backBtn: FrameLayout
     private lateinit var menuBtn: FrameLayout
     private lateinit var reloadBtn: ImageView
     private lateinit var tabBtn: ImageView
@@ -298,14 +297,8 @@ class MainActivity : ComponentActivity() {
         if (popupWebView != null) return false
         val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
         val popup = WebView(this)
+        popup.settings.applyBrowserDefaults()
         popup.settings.apply {
-        javaScriptEnabled = true
-        domStorageEnabled = true
-        databaseEnabled = true
-        javaScriptCanOpenWindowsAutomatically = true
-        setSupportMultipleWindows(true)
-        mediaPlaybackRequiresUserGesture = false
-        mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         userAgentString = web.settings.userAgentString
         useWideViewPort = web.settings.useWideViewPort
         loadWithOverviewMode = web.settings.loadWithOverviewMode
@@ -498,6 +491,7 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
         }
 
         override fun onPageCommitVisible(view: WebView, url: String) {
+            if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
             if (view !== web) return
             injectInsets()
             AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
@@ -507,7 +501,7 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
             view: WebView,
             request: WebResourceRequest
         ): WebResourceResponse? {
-            if (store.adBlockEnabled && AdBlocker.isAdUrl(request.url.toString())) {
+            if (store.adBlockEnabled && AdBlocker.shouldBlock(request.url.toString(), request.isForMainFrame)) {
                 return AdBlocker.createEmptyResponse()
             }
             return super.shouldInterceptRequest(view, request)
@@ -516,15 +510,12 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
         override fun onPageFinished(view: WebView, url: String) {
             tabManager.updateForWebView(view, url, view.title ?: url)
             store.addHistory(view.title ?: "", url)
+            if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
             if (view !== web) return
             injectInsets()
             AnimationSystem.fade(view, 1f)
             currentUrl = url
             updateTabBadge()
-            // Inject CSS ẩn quảng cáo còn sót
-            if (store.adBlockEnabled) {
-                view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
-            }
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
@@ -603,21 +594,31 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
     // Nút kính (scale <= 0.9) phồng lên khi nhấn, hàng danh sách/thẻ co lại; cả hai nhả ra nảy.
     private fun press(v: View, scale: Float) {
-        if (scale <= 0.9f) AnimationSystem.attachGlassPress(v)
+        if (scale <= Constants.PRESS_SCALE_PILL) AnimationSystem.attachGlassPress(v)
         else AnimationSystem.attachPress(v, v, scale)
     }
 
-    private var toastView: TextView? = null
+    private var toastView: View? = null
 
     // Thông báo nhỏ dạng viên thuốc: trượt lên, tự rút lại
     private fun toast(msg: String) {
         toastView?.let { root.removeView(it) }
-        val t = TextView(this)
-        t.text = msg
-        t.textSize = 14f
-        t.setTextColor(fg)
-        t.background = GlassSystem.create(GlassSystem.Preset.TOAST, d, isNight)
-        t.setPadding(dp(18), dp(10), dp(18), dp(10))
+        val label = TextView(this).apply {
+            text = msg
+            textSize = 14f
+            setTextColor(fg)
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+        }
+        // Kính blur thật nằm sau chữ, cùng bộ render với thanh địa chỉ/Orb.
+        val t = FrameLayout(this)
+        t.addView(
+            GlassSystem.createBlurView(this, blurTarget, GlassSystem.Preset.TOAST, d, isNight).apply {
+                isClickable = false
+                isFocusable = false
+            },
+            FrameLayout.LayoutParams(-1, -1)
+        )
+        t.addView(label, FrameLayout.LayoutParams(-2, -2))
         val lp = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -634,7 +635,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 root.removeView(t)
                 if (toastView === t) toastView = null
             }
-        }, 1800L)
+        }, Constants.TOAST_DURATION_MS)
     }
 
     // ---------------- onCreate ----------------
@@ -675,13 +676,31 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         pillProgress = PillProgress(accent, 2.5f * d)
 
         // --- Thanh địa chỉ gọn: [‹]  tên miền  [⋯] ---
-        backBtn = ImageView(this)
-        backBtn.setImageDrawable(PathIcon(Icons.ARROW_BACK, fg))
-        backBtn.setPadding(dp(11), dp(11), dp(11), dp(11))
-        backBtn.background = GlassSystem.create(GlassSystem.Preset.TOOLBAR_BUTTON, d, isNight)
+        // Cùng kiểu với nút ba chấm: khung bo góc + BlurView gắn sau khi blurTarget được khởi tạo.
+        backBtn = FrameLayout(this).apply {
+            isClickable = true
+            isFocusable = true
+            clipChildren = true
+            clipToPadding = true
+            background = GradientDrawable().apply {
+                cornerRadius = GlassSystem.Preset.TOOLBAR_BUTTON.radiusDp * d
+                setColor(Color.TRANSPARENT)
+            }
+            clipToOutline = true
+            contentDescription = "Quay lại"
+        }
+        backBtn.addView(
+            ImageView(this).apply {
+                setImageDrawable(PathIcon(Icons.ARROW_BACK, fg))
+                setPadding(dp(11), dp(11), dp(11), dp(11))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            FrameLayout.LayoutParams(-1, -1)
+        )
         backBtn.alpha = 0.3f
         backBtn.setOnClickListener { if (web.canGoBack()) web.goBack() }
-        press(backBtn, 0.85f)
+        press(backBtn, Constants.PRESS_SCALE_BTN)
 
         // Nút ba chấm dùng cùng bộ render kính blur thật với OrbMenu.
         // BlurView được gắn sau khi blurTarget được khởi tạo bên dưới.
@@ -707,19 +726,19 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             FrameLayout.LayoutParams(-1, -1)
         )
         menuBtn.setOnClickListener { openMenu() }
-        press(menuBtn, 0.85f)
+        press(menuBtn, Constants.PRESS_SCALE_BTN)
 
         reloadBtn = ImageView(this)
         reloadBtn.setImageDrawable(PathIcon(Icons.REFRESH, fg))
         reloadBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
         reloadBtn.setOnClickListener { web.reload() }
-        press(reloadBtn, 0.8f)
+        press(reloadBtn, Constants.PRESS_SCALE_SMALL)
         // === Nút Multi-tab (đối xứng với reloadBtn) ===
         tabBtn = ImageView(this)
         tabBtn.setImageDrawable(PathIcon(Icons.TABS, fg))
         tabBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
         tabBtn.setOnClickListener { openTabSwitcher() }
-        press(tabBtn, 0.8f)
+        press(tabBtn, Constants.PRESS_SCALE_SMALL)
 
         urlBar = EditText(this)
         urlBar.setSingleLine()
@@ -845,12 +864,12 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         upBtn.setImageDrawable(PathIcon(Icons.ARROW_UP, fg))
         upBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
         upBtn.setOnClickListener { web.findNext(false) }
-        press(upBtn, 0.8f)
+        press(upBtn, Constants.PRESS_SCALE_SMALL)
         val downBtn = ImageView(this)
         downBtn.setImageDrawable(PathIcon(Icons.ARROW_DOWN, fg))
         downBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
         downBtn.setOnClickListener { web.findNext(true) }
-        press(downBtn, 0.8f)
+        press(downBtn, Constants.PRESS_SCALE_SMALL)
 
         val doneBtn = TextView(this)
         doneBtn.text = "Xong"
@@ -860,7 +879,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         doneBtn.gravity = Gravity.CENTER
         doneBtn.setPadding(dp(10), 0, dp(6), 0)
         doneBtn.setOnClickListener { closeFind() }
-        press(doneBtn, 0.9f)
+        press(doneBtn, Constants.PRESS_SCALE_PILL)
 
         findBar = LinearLayout(this)
         findBar.orientation = LinearLayout.HORIZONTAL
@@ -894,6 +913,21 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 this,
                 blurTarget,
                 GlassSystem.Preset.ORB_BUTTON,
+                d,
+                isNight
+            ).apply {
+                isClickable = false
+                isFocusable = false
+            },
+            0,
+            FrameLayout.LayoutParams(-1, -1)
+        )
+
+        backBtn.addView(
+            GlassSystem.createBlurView(
+                this,
+                blurTarget,
+                GlassSystem.Preset.TOOLBAR_BUTTON,
                 d,
                 isNight
             ).apply {
@@ -1182,7 +1216,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         // Hủy request cũ nếu đang chạy, tránh giật lag khi gõ nhanh
         suggestJob?.cancel()
         suggestJob = lifecycleScope.launch {
-            delay(150L) // Debounce 150ms
+            delay(Constants.SUGGEST_DEBOUNCE_MS)
             val result = suggestionRepo.fetch(store.searchEngine, text)
             if (!isActivityDestroyed && urlBar.hasFocus()) showSuggestions(result)
         }
@@ -1224,7 +1258,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 load(text)
                 leaveEdit()
             }
-            press(row, 0.98f)
+            press(row, Constants.PRESS_SCALE_ROW)
             suggestBox.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         }
         suggestBlurView.visibility = View.VISIBLE
@@ -1255,20 +1289,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
     // ---------------- Tải trang ----------------
 
-    private fun searchBase(): String = when (store.searchEngine) {
-        1 -> "https://www.bing.com/search?q="
-        2 -> "https://duckduckgo.com/?q="
-        else -> "https://www.google.com/search?q="
-    }
-
-    private fun toUrl(input: String): String {
-        val t = input.trim()
-        return when {
-            t.startsWith("http://") || t.startsWith("https://") -> t
-            t.contains(".") && !t.contains(" ") -> "https://" + t
-            else -> searchBase() + Uri.encode(t)
-        }
-    }
+    private fun toUrl(input: String): String = UrlUtils.toUrl(input, store.searchEngine)
 
     private fun load(input: String) {
         if (input.isBlank()) return
@@ -1293,18 +1314,8 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     private fun configureTabWebView(view: WebView) {
         view.setBackgroundColor(Color.WHITE)
         val settings = view.settings
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true
-        settings.databaseEnabled = true
-        settings.setSupportMultipleWindows(true)
-        settings.javaScriptCanOpenWindowsAutomatically = true
-        settings.mediaPlaybackRequiresUserGesture = false
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-        if (mobileUa.isBlank()) {
-            mobileUa = settings.userAgentString
-                .replace(Regex(""";\s*wv""", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("""\s*Version/4\.0""", RegexOption.IGNORE_CASE), "")
-        }
+        settings.applyBrowserDefaults()
+        if (mobileUa.isBlank()) mobileUa = cleanMobileUserAgent(settings.userAgentString)
         applyDesktopMode(view)
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -1401,7 +1412,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         (view.parent as? ViewGroup)?.removeView(view)
         runCatching { view.loadUrl("about:blank") }
         runCatching { view.removeAllViews() }
-        runCatching { view.destroyDrawingCache() }
         runCatching { view.destroy() }
     }
 
@@ -1509,13 +1519,13 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             // Fade và đổi kích thước chạy đồng thời (AutoTransition chạy lần lượt nên rất chậm).
             val tr = TransitionSet()
             tr.ordering = TransitionSet.ORDERING_TOGETHER
-            tr.addTransition(Fade(Fade.OUT).setDuration(80))
+            tr.addTransition(Fade(Fade.OUT).setDuration(AnimationSystem.PAGE_FADE_OUT_MS))
             tr.addTransition(
                 ChangeBounds()
                     .setDuration(AnimationSystem.PAGE_DURATION)
                     .setInterpolator(AnimationSystem.pageInterpolator)
             )
-            tr.addTransition(Fade(Fade.IN).setDuration(180).setStartDelay(40))
+            tr.addTransition(Fade(Fade.IN).setDuration(AnimationSystem.PAGE_FADE_IN_MS).setStartDelay(AnimationSystem.PAGE_FADE_IN_DELAY_MS))
             // Lớp kính đổi kích thước ngay, không animate, để blur không phải dựng lại mỗi khung hình.
             tr.excludeTarget(glass, true)
             TransitionManager.beginDelayedTransition(layer, tr)
@@ -1555,7 +1565,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 closeMenu()
                 action()
             }
-            press(c, 0.92f)
+            press(c, Constants.PRESS_SCALE_CELL)
             row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
 
@@ -1580,7 +1590,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 if (closes) closeMenu()
                 action()
             }
-            press(r, 0.98f)
+            press(r, Constants.PRESS_SCALE_ROW)
             box.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)))
         }
 
@@ -1661,7 +1671,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             back.setImageDrawable(PathIcon(Icons.ARROW_BACK, fg))
             back.setPadding(dp(9), dp(9), dp(9), dp(9))
             back.setOnClickListener { onBack() }
-            press(back, 0.85f)
+            press(back, Constants.PRESS_SCALE_BTN)
             head.addView(back, LinearLayout.LayoutParams(dp(40), dp(40)))
         }
         val t = TextView(this)
@@ -1710,7 +1720,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         b.setTextColor(color)
         b.setPadding(0, dp(6), 0, dp(6))
         b.setOnClickListener { onClick() }
-        press(b, 0.9f)
+        press(b, Constants.PRESS_SCALE_PILL)
         return b
     }
 
@@ -1718,18 +1728,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         if (left != null) p.buttons.addView(left)
         p.buttons.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         p.buttons.addView(right)
-    }
-
-    // Rút gọn link: chỉ hiện tên miền + đường dẫn, bỏ phần tham số dài
-    private fun shortUrl(url: String): String {
-        return try {
-            val u = Uri.parse(url)
-            val host = u.host?.removePrefix("www.") ?: return url
-            val path = u.path ?: ""
-            if (path.length > 1) host + path else host
-        } catch (e: Exception) {
-            url
-        }
     }
 
     private fun showList(title: String, key: String) {
@@ -1745,14 +1743,14 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             row.setPadding(dp(22), dp(10), dp(22), dp(10))
             row.setBackgroundResource(rp)
             val t = TextView(this)
-            t.text = if (entry.title.isBlank() || entry.title == entry.url) shortUrl(entry.url) else entry.title
+            t.text = if (entry.title.isBlank() || entry.title == entry.url) UrlUtils.shortUrl(entry.url) else entry.title
             t.textSize = 15f
             t.setTextColor(fg)
             t.setSingleLine()
             t.ellipsize = TextUtils.TruncateAt.END
             row.addView(t)
             val u = TextView(this)
-            u.text = shortUrl(entry.url)
+            u.text = UrlUtils.shortUrl(entry.url)
             u.textSize = 12f
             u.setTextColor(sub)
             u.setSingleLine()
@@ -1767,7 +1765,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 showList(title, key) // Tải lại trang sau khi xóa
                 true
             }
-            press(row, 0.98f)
+            press(row, Constants.PRESS_SCALE_ROW)
             p.body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
 
@@ -1809,7 +1807,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                         p.body.addView(moreBtn)
                     }
                 }
-                press(moreBtn, 0.98f)
+                press(moreBtn, Constants.PRESS_SCALE_ROW)
                 p.body.addView(moreBtn)
             }
         }
@@ -1855,12 +1853,12 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             v.maxWidth = dp(120)
             r.addView(v)
             r.setOnClickListener { onClick() }
-            press(r, 0.98f)
+            press(r, Constants.PRESS_SCALE_ROW)
             p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
         }
 
         addRow("Công cụ tìm kiếm", engines[store.searchEngine], fg) { chooseEngine() }
-        addRow("Trang chủ", shortUrl(store.homeUrl), fg) { editHome() }
+        addRow("Trang chủ", UrlUtils.shortUrl(store.homeUrl), fg) { editHome() }
         addRow("Trang web máy tính", onOff(store.desktopMode), fg) {
             store.desktopMode = !store.desktopMode
             applyDesktopMode()
@@ -1913,7 +1911,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 store.searchEngine = i
                 showSettings()
             }
-            press(r, 0.98f)
+            press(r, Constants.PRESS_SCALE_ROW)
             p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
         }
         addButtons(p, null, panelButton("Xong", accent) { closeMenu() })
@@ -1976,7 +1974,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
     private fun scheduleSaveTabs() {
         handler.removeCallbacks(saveTabsRunnable)
-        handler.postDelayed(saveTabsRunnable, 600)
+        handler.postDelayed(saveTabsRunnable, Constants.SAVE_TABS_DEBOUNCE_MS)
     }
 
     override fun onPause() {
@@ -2065,36 +2063,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     // ==========================================
     // MULTI-TAB: Badge + Tab Switcher
     // ==========================================
-    private class BadgeDrawable(
-        private val count: Int,
-        private val bgColor: Int,
-        private val textColor: Int,
-        private val d: Float
-    ) : android.graphics.drawable.Drawable() {
-        private val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = bgColor }
-        private val textPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            color = textColor
-            textAlign = android.graphics.Paint.Align.CENTER
-            textSize = 10 * d
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-        }
-        override fun draw(canvas: android.graphics.Canvas) {
-            val b = bounds
-            if (b.width() <= 0 || b.height() <= 0) return
-            val cx = b.exactCenterX()
-            val cy = b.exactCenterY()
-            val r = minOf(b.width(), b.height()) / 2f
-            canvas.drawCircle(cx, cy, r, bgPaint)
-            val text = if (count > 99) "99+" else count.toString()
-            val y = cy - (textPaint.descent() + textPaint.ascent()) / 2f
-            canvas.drawText(text, cx, y, textPaint)
-        }
-        override fun setAlpha(alpha: Int) {}
-        override fun setColorFilter(cf: android.graphics.ColorFilter?) {}
-        @Suppress("OVERRIDE_DEPRECATION")
-        override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
-    }
-
     private fun updateTabBadge() {
         val count = tabManager.count()
         val base = PathIcon(Icons.TABS, fg)
@@ -2102,8 +2070,8 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             tabBtn.setImageDrawable(base)
             return
         }
-        val badgeColor = if (isNight) OptTheme.BADGE_DARK else OptTheme.BADGE_LIGHT
-        val textColor = if (isNight) OptTheme.BADGE_TEXT_ON_DARK else OptTheme.BADGE_TEXT_ON_LIGHT
+        val badgeColor = Theme.badgeColor(isNight)
+        val textColor = Theme.badgeTextColor(isNight)
         val layer = android.graphics.drawable.LayerDrawable(arrayOf(
             base,
             BadgeDrawable(count, badgeColor, textColor, d)

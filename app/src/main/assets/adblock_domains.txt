@@ -4,7 +4,6 @@ doubleclick.net
 googlesyndication.com
 googleadservices.com
 google-analytics.com
-googletagmanager.com
 googletagservices.com
 adservice.google.com
 pagead2.googlesyndication.com
@@ -13,10 +12,7 @@ ad.doubleclick.net
 static.doubleclick.net
 
 # Facebook/Meta
-facebook.net
-connect.facebook.net
 analytics.facebook.com
-fbcdn.net
 pixel.facebook.com
 
 # Amazon
@@ -81,7 +77,7 @@ advertising.com
 adsrvr.org
 smaato.com
 inmobi.com
-unity3d.com
+unityads.unity3d.com
 applovin.com
 ironsource.com
 chartboost.com

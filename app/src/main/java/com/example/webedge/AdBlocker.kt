@@ -10,25 +10,25 @@ import java.io.ByteArrayInputStream
  * Danh sách domain lấy từ EasyList (rút gọn ~150 domain phổ biến nhất).
  */
 object AdBlocker {
-    private val blockedDomains = HashSet<String>()
-    private var initialized = false
+    @Volatile private var blockedDomains: Set<String> = emptySet()
+    @Volatile private var initialized = false
 
-    /** CSS selectors phổ biến để ẩn quảng cáo còn sót */
+    /**
+     * CSS ẩn quảng cáo còn sót. Dùng [class~=] (khớp nguyên từ) thay vì [class*=] để không ẩn nhầm
+     * các class như "head-container" hay "read-banner" (chứa chuỗi "ad-container"/"ad-banner").
+     */
     val HIDE_CSS = """
         (function(){
-            var s = document.getElementById('__adblock_hide');
-            if (s) return;
-            s = document.createElement('style');
+            if (document.getElementById('__adblock_hide')) return;
+            var s = document.createElement('style');
             s.id = '__adblock_hide';
             s.textContent = `
-                [class*="ad-banner"], [class*="ad-container"], [class*="ad-wrapper"],
-                [class*="adsbygoogle"], [class*="advert"], [class*="sponsor"],
-                [id*="ad-banner"], [id*="ad-container"], [id*="google_ads"],
+                [class~="ad-banner"], [class~="ad-container"], [class~="ad-wrapper"],
+                [class*="adsbygoogle"], [id*="google_ads"], [id~="ad-banner"], [id~="ad-container"],
                 .google-ad, .ad-slot, .sponsored-content,
                 iframe[src*="doubleclick"], iframe[src*="googlesyndication"],
-                iframe[src*="facebook.com/plugins"],
-                div[data-ad], div[data-ad-slot],
-                ins.adsbygoogle, .adsbygoogle-noablate
+                div[data-ad], div[data-ad-slot], ins.adsbygoogle
+                { display: none !important; }
             `;
             (document.head || document.documentElement).appendChild(s);
         })();
@@ -36,18 +36,22 @@ object AdBlocker {
 
     fun init(context: Context) {
         if (initialized) return
+        val loaded = HashSet<String>()
         try {
             context.assets.open("adblock_domains.txt").bufferedReader().use { reader ->
                 reader.forEachLine { line ->
                     val domain = line.trim().lowercase()
-                    if (domain.isNotEmpty() && !domain.startsWith("#")) {
-                        blockedDomains.add(domain)
-                    }
+                    if (domain.isNotEmpty() && !domain.startsWith("#")) loaded.add(domain)
                 }
             }
         } catch (_: Exception) { }
+        blockedDomains = loaded
         initialized = true
     }
+
+    /** Không chặn khi người dùng chủ động mở trang (vd. vào thẳng sentry.io); chỉ chặn tài nguyên con. */
+    fun shouldBlock(url: String, isMainFrame: Boolean): Boolean =
+        !isMainFrame && isAdUrl(url)
 
     fun isAdUrl(url: String): Boolean {
         val host = try {

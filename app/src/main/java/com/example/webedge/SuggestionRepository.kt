@@ -30,7 +30,7 @@ class SuggestionRepository {
                     val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                     val arr = JSONArray(body).getJSONArray(1)
                     val out = ArrayList<String>()
-                    for (i in 0 until minOf(arr.length(), 6)) {
+                    for (i in 0 until minOf(arr.length(), Constants.SUGGEST_MAX_ITEMS)) {
                         out.add(arr.getString(i))
                     }
                     out
