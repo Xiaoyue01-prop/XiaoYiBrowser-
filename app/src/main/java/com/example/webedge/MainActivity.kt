@@ -620,7 +620,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         tabManager = TabManager()
         tabManager.restoreTabs(store.loadTabs())
         tabManager.setOnChangeListener {
-            store.saveTabs(tabManager.exportTabs())
+            scheduleSaveTabs()
             updateTabBadge()
         }
         d = resources.displayMetrics.density
@@ -1950,9 +1950,18 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         showPanel(p)
     }
 
+    // Gom nhiều thay đổi liên tiếp (url/title đổi liên tục khi tải trang) thành một lần ghi.
+    private val saveTabsRunnable = Runnable { store.saveTabs(tabManager.exportTabs()) }
+
+    private fun scheduleSaveTabs() {
+        handler.removeCallbacks(saveTabsRunnable)
+        handler.postDelayed(saveTabsRunnable, 600)
+    }
+
     override fun onPause() {
         if (::web.isInitialized) {
             tabManager.saveState(web)
+            handler.removeCallbacks(saveTabsRunnable)
             store.saveTabs(tabManager.exportTabs())
         }
         super.onPause()

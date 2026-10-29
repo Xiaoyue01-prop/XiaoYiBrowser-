@@ -25,6 +25,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.core.view.WindowCompat
 import eightbitlab.com.blurview.BlurTarget
 
 /** UI đa tab tách riêng khỏi Activity để MainActivity tập trung điều phối trình duyệt. */
@@ -183,7 +184,14 @@ class TabSwitcherController(
         captureActiveTab()
         // Back / vuốt back cũng phải đóng có hiệu ứng, nên chặn onBackPressed của Dialog.
         var requestClose: () -> Unit = {}
+        var refreshBlur: () -> Unit = {}
         val popup = object : Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar) {
+            // Quay lại app từ nền: ép các lớp blur vẽ lại để không bị trong suốt lộ trang web phía sau.
+            override fun onWindowFocusChanged(hasFocus: Boolean) {
+                super.onWindowFocusChanged(hasFocus)
+                if (hasFocus) refreshBlur()
+            }
+
             @Suppress("OVERRIDE_DEPRECATION")
             override fun onBackPressed() {
                 requestClose()
@@ -194,6 +202,9 @@ class TabSwitcherController(
         val container = FrameLayout(activity).apply {
             clipChildren = false
             clipToPadding = false
+            // Nền đặc dự phòng: nếu lớp blur chưa/không vẽ được (vừa quay lại app) thì bảng tab
+            // vẫn là nền đặc thay vì trong suốt lộ trang web phía sau.
+            setBackgroundColor(Color.rgb(140, 136, 148))
         }
         var closing = false
         fun dismissAnimated() {
@@ -212,14 +223,34 @@ class TabSwitcherController(
         }
         container.addView(dialogBlur, FrameLayout.LayoutParams(-1, -1))
 
+        // Light, slightly rosy glass like Safari's tab overview; the browser itself keeps its theme.
+        container.addView(View(activity).apply {
+            setBackgroundColor(Color.argb(178, 249, 243, 248))
+        }, FrameLayout.LayoutParams(-1, -1))
+
+        // Lưới thẻ nằm trong BlurTarget riêng, toàn màn hình, để thẻ cuộn dưới status bar được làm mờ.
+        val cardsTarget = BlurTarget(activity).apply {
+            clipChildren = false
+            clipToPadding = false
+        }
+        container.addView(cardsTarget, FrameLayout.LayoutParams(-1, -1))
+
+        // Dải blur trên status bar, giống lớp mờ trên cùng của trình duyệt khi cuộn trang.
+        val statusBlur = GlassSystem.createBlurView(
+            activity, cardsTarget, GlassSystem.Preset.TABS_DIALOG,
+            activity.resources.displayMetrics.density, false,
+            Color.argb(120, 249, 243, 248)
+        ).apply {
+            isClickable = false
+            isFocusable = false
+        }
+        container.addView(statusBlur, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
+
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(24), dp(12), dp(12))
-            // Light, slightly rosy glass like Safari's tab overview; the browser itself keeps its theme.
-            setBackgroundColor(Color.argb(178, 249, 243, 248))
             clipChildren = false
             clipToPadding = false
-            isClickable = true
             setOnApplyWindowInsetsListener { view, insets ->
                 view.setPadding(dp(12), insets.systemWindowInsetTop + dp(8), dp(12), dp(12))
                 insets
@@ -447,7 +478,9 @@ class TabSwitcherController(
         }
 
         scroll.addView(columns)
-        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        cardsTarget.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+        // Khoảng trống đẩy thanh đáy xuống; lưới cuộn dưới header và thanh đáy qua padding của scroll.
+        root.addView(View(activity), LinearLayout.LayoutParams(-1, 0, 1f))
 
         // Thanh đáy cố định: tạo tab, số lượng tab và hoàn tất.
         val bottomBar = LinearLayout(activity).apply {
@@ -482,6 +515,32 @@ class TabSwitcherController(
         })
         root.addView(bottomBar)
 
+        header.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, _ ->
+            scroll.post {
+                val top = bottom + dp(2)
+                if (scroll.paddingTop != top) scroll.setPadding(0, top, 0, scroll.paddingBottom)
+            }
+        }
+        bottomBar.addOnLayoutChangeListener { _, _, top, _, _, _, _, _, _ ->
+            scroll.post {
+                val pad = (root.height - top) + dp(4)
+                if (scroll.paddingBottom != pad) scroll.setPadding(0, scroll.paddingTop, 0, pad)
+            }
+        }
+
+        fun invalidateAll(v: View) {
+            v.invalidate()
+            if (v is ViewGroup) for (i in 0 until v.childCount) invalidateAll(v.getChildAt(i))
+        }
+        refreshBlur = {
+            blurTarget.invalidate()
+            invalidateAll(container)
+            container.postDelayed({
+                blurTarget.invalidate()
+                invalidateAll(container)
+            }, 200)
+        }
+
         container.addView(root, FrameLayout.LayoutParams(-1, -1))
         root.clipChildren = false
         root.clipToPadding = false
@@ -491,7 +550,11 @@ class TabSwitcherController(
         if (animate) container.post { AnimationSystem.popIn(container, 0.88f) }
         popup.window?.let { window ->
             window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            // Nền bảng tab sáng nên icon/đồng hồ status bar phải tối để đọc được.
+            WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
             window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+                (statusBlur.layoutParams as FrameLayout.LayoutParams).height = insets.systemWindowInsetTop
+                statusBlur.requestLayout()
                 root.setPadding(dp(12), insets.systemWindowInsetTop + dp(8), dp(12), insets.systemWindowInsetBottom + dp(8))
                 view.onApplyWindowInsets(insets)
             }

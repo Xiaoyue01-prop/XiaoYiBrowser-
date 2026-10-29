@@ -81,7 +81,8 @@ object GlassSystem {
         target: BlurTarget,
         preset: Preset,
         density: Float,
-        isNight: Boolean
+        isNight: Boolean,
+        overlayColorOverride: Int? = null
     ): BlurView {
         val shape = GradientDrawable().apply {
             cornerRadius = preset.radiusDp * density
@@ -94,7 +95,7 @@ object GlassSystem {
             setStroke((density + 0.5f).toInt().coerceAtLeast(1), strokeColor)
         }
 
-        val overlayColor = if (isNight) {
+        val overlayColor = overlayColorOverride ?: if (isNight) {
             Color.argb(BLURRED_OVERLAY_ALPHA_DARK, 28, 28, 32)
         } else {
             Color.argb(BLURRED_OVERLAY_ALPHA_LIGHT, 255, 255, 255)
