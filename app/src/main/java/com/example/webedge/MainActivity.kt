@@ -1285,7 +1285,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     private fun applyDesktopMode(target: WebView = web) {
         val settings = target.settings
         if (store.desktopMode) {
-            settings.userAgentString = DESKTOP_UA
+            settings.userAgentString = desktopUserAgent(mobileUa)
             settings.useWideViewPort = true
             settings.loadWithOverviewMode = true
         } else {
