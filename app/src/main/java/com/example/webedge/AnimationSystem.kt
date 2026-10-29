@@ -120,6 +120,14 @@ object AnimationSystem {
     /** Nhấn xuống: đổi kích thước nhanh (scale < 1 là co lại, > 1 là phồng lên). */
     fun pressDown(view: View, scale: Float) = scaleTo(view, scale, scale, QUICK)
 
+    /**
+     * Gắn hiệu ứng nhấn theo loại view: nút kính (scale <= PRESS_SCALE_PILL) phồng lên khi nhấn,
+     * hàng danh sách/thẻ co lại. Cả hai nhả ra nảy.
+     */
+    fun press(v: View, scale: Float) {
+        if (scale <= Constants.PRESS_SCALE_PILL) attachGlassPress(v) else attachPress(v, v, scale)
+    }
+
     /** Nhả tay: bật về kích thước gốc, nảy mạnh. */
     fun pressUp(view: View) = scaleTo(view, 1f, 1f, PRESS_RELEASE)
 

@@ -20,6 +20,9 @@ object Constants {
     const val PRESS_SCALE_BTN = 0.85f
     const val PRESS_SCALE_SMALL = 0.8f
 
+    // === Kích thước chung ===
+    const val BOTTOM_BAR_HEIGHT_DP = 40
+
     // === Thời gian / giới hạn ===
     const val SUGGEST_DEBOUNCE_MS = 150L
     const val SUGGEST_MAX_ITEMS = 6
