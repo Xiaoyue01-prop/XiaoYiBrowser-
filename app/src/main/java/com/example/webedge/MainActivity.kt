@@ -130,6 +130,29 @@ class MainActivity : ComponentActivity() {
     private var isActivityDestroyed = false
     private val handler = Handler(Looper.getMainLooper())
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingDownloadLiveUpdate: Pair<Long, String>? = null
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 4102) {
+            val pending = pendingDownloadLiveUpdate
+            pendingDownloadLiveUpdate = null
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED && pending != null) {
+                DownloadLiveUpdate.track(this, pending.first, pending.second)
+            }
+        }
+    }
+
+    private fun startDownloadLiveUpdate(downloadId: Long, fileName: String) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingDownloadLiveUpdate = downloadId to fileName
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4102)
+            return
+        }
+        DownloadLiveUpdate.track(this, downloadId, fileName)
+    }
 
     private val fileLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -1337,11 +1360,10 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 CookieManager.getInstance().getCookie(dlUrl)?.let { req.addRequestHeader("cookie", it) }
                 req.addRequestHeader("User-Agent", userAgent)
                 req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                req.setDestinationInExternalPublicDir(
-                    Environment.DIRECTORY_DOWNLOADS,
-                    URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
-                )
-                (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+                val fileName = URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
+                req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                val downloadId = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+                startDownloadLiveUpdate(downloadId, fileName)
                 toast("Đang tải xuống...")
             } catch (_: Exception) {
                 toast("Không tải được file này")

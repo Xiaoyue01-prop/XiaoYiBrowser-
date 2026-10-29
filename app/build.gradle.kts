@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.example.webedge"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.webedge"
-        minSdk = 24
-        targetSdk = 35
+        minSdk = 36
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
     }
