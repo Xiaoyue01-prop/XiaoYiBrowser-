@@ -22,7 +22,7 @@ object DownloadConfirmationLiveUpdate {
     const val ACTION_DISMISS_CONFIRMATION =
         "com.example.webedge.action.DISMISS_DOWNLOAD_CONFIRMATION"
 
-    private const val CHANNEL_ID = "summit_download_confirmation"
+    private const val CHANNEL_ID = "summit_download_confirmation_v2"
     private const val CHANNEL_NAME = "Download confirmation"
 
     private const val EXTRA_NOTIFICATION_ID =
@@ -89,7 +89,7 @@ object DownloadConfirmationLiveUpdate {
             Notification.Builder(context, CHANNEL_ID)
         } else {
             Notification.Builder(context)
-                .setPriority(Notification.PRIORITY_LOW)
+                .setPriority(Notification.PRIORITY_HIGH)
         }
 
         builder
@@ -212,12 +212,11 @@ object DownloadConfirmationLiveUpdate {
         val channel = NotificationChannel(
             CHANNEL_ID,
             CHANNEL_NAME,
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Xác nhận trước khi tải file"
+            description = "Xác nhận tải xuống bằng banner nổi"
             setShowBadge(false)
             enableVibration(false)
-            setSound(null, null)
         }
 
         notificationManager(context).createNotificationChannel(channel)
