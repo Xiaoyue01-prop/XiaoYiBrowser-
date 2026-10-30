@@ -19,7 +19,10 @@ object GlassSystem {
     // One light-mode material system: consistent frost, edge and corner language.
     private const val BLUR_OVERLAY_ALPHA = 46
     private const val FALLBACK_FILL_ALPHA = 126
-    private val GLASS_EDGE: Int = Color.argb(72, 90, 90, 105)
+
+    // Một màu viền duy nhất cho mọi bề mặt kính. Viền trắng trên nền kính trắng bị chìm,
+    // nên dùng xám lạnh nhạt để nhìn thấy rõ mà vẫn mảnh và tinh tế.
+    private val GLASS_EDGE: Int = Color.argb(44, 90, 90, 105)
 
     enum class Preset(val radiusDp: Int, val blurRadiusDp: Float) {
         ADDRESS_BAR(28, 18f),
