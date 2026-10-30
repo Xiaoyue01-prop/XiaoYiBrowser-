@@ -114,6 +114,12 @@ object DownloadLiveUpdate {
 
                     when (status) {
                         DownloadManager.STATUS_SUCCESSFUL -> {
+                            // Keep the promoted Live Update visible briefly at 100%,
+                            // then replace it with the normal notification and file actions.
+                            postCompletionLiveUpdate(
+                                appContext, downloadId, fileName
+                            )
+                            delay(12_000L)
                             postComplete(
                                 appContext, downloadId, fileName,
                                 "Tải xuống hoàn tất",
@@ -466,6 +472,44 @@ object DownloadLiveUpdate {
             .setAutoCancel(false)
             .setContentIntent(openAppPendingIntent(context, id))
             .addAction(cancelAction)
+            .setExtras(extras)
+            .setStyle(progressStyle)
+            .build()
+
+        manager.notify(id.toInt(), notification)
+    }
+
+    /** Shows a short-lived promoted Live Update at 100% before the final actions notification. */
+    private fun postCompletionLiveUpdate(
+        context: Context,
+        id: Long,
+        name: String
+    ) {
+        if (Build.VERSION.SDK_INT < 36) return
+
+        val manager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val progressStyle = Notification.ProgressStyle()
+            .setStyledByProgress(true)
+            .setProgress(100)
+            .setProgressSegments(
+                listOf(Notification.ProgressStyle.Segment(100).setColor(progressColor))
+            )
+        val extras = Bundle().apply {
+            putBoolean("android.requestPromotedOngoing", true)
+        }
+
+        val notification = Notification.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setColor(progressColor)
+            .setContentTitle(name.ifBlank { "Tải file" })
+            .setContentText("Đã tải xuống hoàn tất · 100%")
+            .setSubText("Summit")
+            .setWhen(System.currentTimeMillis())
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(false)
+            .setContentIntent(openAppPendingIntent(context, id))
             .setExtras(extras)
             .setStyle(progressStyle)
             .build()
