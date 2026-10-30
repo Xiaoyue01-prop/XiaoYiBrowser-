@@ -60,7 +60,6 @@ object DownloadLiveUpdate {
 
         val appContext = context.applicationContext
         ensureChannel(appContext)
-        if (activeJobs[downloadId]?.isActive == true) return
         activeJobs.remove(downloadId)?.cancel()
 
         activeJobs[downloadId] = scope.launch {
@@ -72,9 +71,6 @@ object DownloadLiveUpdate {
             var lastUpdateAt = 0L
             // Hỏi thưa hơn khi tiến độ đứng yên (ít đánh thức CPU và ít truy vấn hơn).
             var nextDelayMs = 750L
-            var lastSampleBytes = -1L
-            var lastSampleAt = 0L
-            var speedBytesPerSecond = 0L
 
             try {
                 while (isActive) {
@@ -114,16 +110,9 @@ object DownloadLiveUpdate {
 
                     when (status) {
                         DownloadManager.STATUS_SUCCESSFUL -> {
-                            // Keep the promoted Live Update visible briefly at 100%,
-                            // then replace it with the normal notification and file actions.
-                            postCompletionLiveUpdate(
-                                appContext, downloadId, fileName
-                            )
-                            delay(12_000L)
                             postComplete(
                                 appContext, downloadId, fileName,
-                                "Tải xuống hoàn tất",
-                                openFile = true
+                                "Tải xuống hoàn tất"
                             )
                             break
                         }
@@ -131,7 +120,7 @@ object DownloadLiveUpdate {
                         DownloadManager.STATUS_FAILED -> {
                             postComplete(
                                 appContext, downloadId, fileName,
-                                describeDownloadError(reason)
+                                "Tải xuống thất bại ($reason)"
                             )
                             break
                         }
@@ -139,7 +128,7 @@ object DownloadLiveUpdate {
                         DownloadManager.STATUS_PAUSED -> {
                             postProgress(
                                 appContext, downloadId, fileName,
-                                describePausedReason(reason), downloaded, total, true
+                                "Đang tạm dừng", downloaded, total, true
                             )
                             nextDelayMs = 2000L
                         }
@@ -154,28 +143,14 @@ object DownloadLiveUpdate {
                                     -1
                                 }
 
-                            val now = System.currentTimeMillis()
-                            if (lastSampleAt > 0L && now > lastSampleAt &&
-                                downloaded >= lastSampleBytes
-                            ) {
-                                val elapsedMs = now - lastSampleAt
-                                val deltaBytes = downloaded - lastSampleBytes
-                                if (elapsedMs >= 500L) {
-                                    speedBytesPerSecond =
-                                        (deltaBytes * 1000L / elapsedMs).coerceAtLeast(0L)
-                                }
-                            }
-                            lastSampleBytes = downloaded
-                            lastSampleAt = now
-
                             nextDelayMs = if (percent != lastPercent) 750L else 1500L
+                            val now = System.currentTimeMillis()
                             if (percent != lastPercent ||
                                 now - lastUpdateAt >= 2500L
                             ) {
                                 postProgress(
                                     appContext, downloadId, fileName,
-                                    "Đang tải xuống", downloaded, total, false,
-                                    speedBytesPerSecond
+                                    "Đang tải xuống", downloaded, total, false
                                 )
                                 lastPercent = percent
                                 lastUpdateAt = now
@@ -198,26 +173,6 @@ object DownloadLiveUpdate {
                 // Notification permission may have been revoked.
             } finally {
                 activeJobs.remove(downloadId)
-            }
-        }
-    }
-
-    /** Reattaches Live Updates to active DownloadManager jobs after Summit is relaunched. */
-    fun recoverActiveDownloads(context: Context) {
-        if (Build.VERSION.SDK_INT < 36) return
-        val appContext = context.applicationContext
-        val dm = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val activeStatuses = DownloadManager.STATUS_PENDING or
-            DownloadManager.STATUS_RUNNING or DownloadManager.STATUS_PAUSED
-        runCatching {
-            dm.query(DownloadManager.Query().setFilterByStatus(activeStatuses))?.use { cursor ->
-                val idColumn = cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_ID)
-                val titleColumn = cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TITLE)
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idColumn)
-                    val title = cursor.getString(titleColumn).orEmpty()
-                    track(appContext, id, title.ifBlank { "Đang tải file" })
-                }
             }
         }
     }
@@ -256,8 +211,7 @@ object DownloadLiveUpdate {
             DownloadManager.STATUS_SUCCESSFUL -> {
                 postComplete(
                     appContext, downloadId, fileName,
-                    "Tải xuống đã hoàn tất",
-                    openFile = true
+                    "Tải xuống đã hoàn tất"
                 )
             }
 
@@ -296,7 +250,7 @@ object DownloadLiveUpdate {
     ) {
         when (queryStatus(dm, id)) {
             DownloadManager.STATUS_SUCCESSFUL ->
-                postComplete(context, id, name, "Tải xuống đã hoàn tất", openFile = true)
+                postComplete(context, id, name, "Tải xuống đã hoàn tất")
 
             DownloadManager.STATUS_FAILED ->
                 postComplete(context, id, name, "Tải xuống đã thất bại")
@@ -304,69 +258,6 @@ object DownloadLiveUpdate {
             else ->
                 postComplete(context, id, name, "Không thể hủy tác vụ này")
         }
-    }
-
-    private fun describePausedReason(reason: Int): String = when (reason) {
-        DownloadManager.PAUSED_WAITING_TO_RETRY -> "Đang chờ thử tải lại"
-        DownloadManager.PAUSED_WAITING_FOR_NETWORK -> "Đang chờ kết nối mạng"
-        DownloadManager.PAUSED_QUEUED_FOR_WIFI -> "Đang chờ Wi-Fi"
-        DownloadManager.PAUSED_UNKNOWN -> "Tạm dừng"
-        else -> "Tạm dừng"
-    }
-
-    private fun describeDownloadError(reason: Int): String = when (reason) {
-        DownloadManager.ERROR_CANNOT_RESUME -> "Không thể tiếp tục tải file"
-        DownloadManager.ERROR_DEVICE_NOT_FOUND -> "Không tìm thấy bộ nhớ lưu file"
-        DownloadManager.ERROR_FILE_ALREADY_EXISTS -> "File đã tồn tại"
-        DownloadManager.ERROR_FILE_ERROR -> "Lỗi ghi file"
-        DownloadManager.ERROR_HTTP_DATA_ERROR -> "Lỗi dữ liệu mạng"
-        DownloadManager.ERROR_INSUFFICIENT_SPACE -> "Không đủ dung lượng lưu file"
-        DownloadManager.ERROR_TOO_MANY_REDIRECTS -> "Quá nhiều lần chuyển hướng"
-        DownloadManager.ERROR_UNHANDLED_HTTP_CODE -> "Máy chủ trả về mã lỗi HTTP"
-        DownloadManager.ERROR_UNKNOWN -> "Lỗi tải xuống không xác định"
-        in 400..599 -> "Máy chủ trả về lỗi HTTP $reason"
-        else -> "Tải xuống thất bại (mã $reason)"
-    }
-
-    private fun formatSpeed(bytesPerSecond: Long): String =
-        if (bytesPerSecond <= 0L) "" else "${formatBytes(bytesPerSecond)}/s"
-
-    private fun formatEta(remainingBytes: Long, bytesPerSecond: Long): String {
-        if (remainingBytes <= 0L || bytesPerSecond <= 0L) return ""
-        val seconds = (remainingBytes / bytesPerSecond).coerceAtLeast(1L)
-        return when {
-            seconds < 60L -> "còn ${seconds} giây"
-            seconds < 3600L -> "còn ${seconds / 60L} phút"
-            else -> "còn ${seconds / 3600L} giờ ${(seconds % 3600L) / 60L} phút"
-        }
-    }
-
-    private fun openFilePendingIntent(
-        context: Context, id: Long, uri: android.net.Uri, mimeType: String
-    ): PendingIntent {
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mimeType)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        return PendingIntent.getActivity(
-            context, id.toInt() xor 0x13579, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-    }
-
-    private fun shareFilePendingIntent(
-        context: Context, id: Long, uri: android.net.Uri, mimeType: String
-    ): PendingIntent {
-        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-            type = mimeType
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        return PendingIntent.getActivity(
-            context, id.toInt() xor 0x24680,
-            Intent.createChooser(sendIntent, "Chia sẻ file"),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
     }
 
     private fun openAppPendingIntent(context: Context, id: Long): PendingIntent {
@@ -409,8 +300,7 @@ object DownloadLiveUpdate {
         state: String,
         downloaded: Long,
         total: Long,
-        paused: Boolean,
-        speedBytesPerSecond: Long = 0L
+        paused: Boolean
     ) {
         if (Build.VERSION.SDK_INT < 36) return
 
@@ -435,18 +325,12 @@ object DownloadLiveUpdate {
             )
             .setProgressIndeterminate(total <= 0L)
 
-        val sizeDetails = if (total > 0L) {
-            "$percent% · ${formatBytes(downloaded)} / ${formatBytes(total)}"
-        } else {
-            formatBytes(downloaded)
-        }
-        val speed = formatSpeed(speedBytesPerSecond)
-        val eta = if (total > downloaded) {
-            formatEta(total - downloaded, speedBytesPerSecond)
-        } else ""
-        val details = listOf(sizeDetails, speed, eta)
-            .filter { it.isNotBlank() }
-            .joinToString(" · ")
+        val details =
+            if (total > 0L) {
+                "$percent% · ${formatBytes(downloaded)} / ${formatBytes(total)}"
+            } else {
+                formatBytes(downloaded)
+            }
 
         val extras = Bundle().apply {
             putBoolean("android.requestPromotedOngoing", true)
@@ -463,7 +347,8 @@ object DownloadLiveUpdate {
             .setColor(progressColor)
             .setContentTitle(name.ifBlank { "Đang tải file" })
             .setContentText(
-                "$state · $details"
+                if (paused) "Tạm dừng · $details"
+                else "$state · $details"
             )
             .setSubText("Summit")
             .setWhen(System.currentTimeMillis())
@@ -479,57 +364,18 @@ object DownloadLiveUpdate {
         manager.notify(id.toInt(), notification)
     }
 
-    /** Shows a short-lived promoted Live Update at 100% before the final actions notification. */
-    private fun postCompletionLiveUpdate(
-        context: Context,
-        id: Long,
-        name: String
-    ) {
-        if (Build.VERSION.SDK_INT < 36) return
-
-        val manager =
-            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val progressStyle = Notification.ProgressStyle()
-            .setStyledByProgress(true)
-            .setProgress(100)
-            .setProgressSegments(
-                listOf(Notification.ProgressStyle.Segment(100).setColor(progressColor))
-            )
-        val extras = Bundle().apply {
-            putBoolean("android.requestPromotedOngoing", true)
-        }
-
-        val notification = Notification.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setColor(progressColor)
-            .setContentTitle(name.ifBlank { "Tải file" })
-            .setContentText("Đã tải xuống hoàn tất · 100%")
-            .setSubText("Summit")
-            .setWhen(System.currentTimeMillis())
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setAutoCancel(false)
-            .setContentIntent(openAppPendingIntent(context, id))
-            .setExtras(extras)
-            .setStyle(progressStyle)
-            .build()
-
-        manager.notify(id.toInt(), notification)
-    }
-
     private fun postComplete(
         context: Context,
         id: Long,
         name: String,
-        message: String,
-        openFile: Boolean = false
+        message: String
     ) {
         ensureChannel(context)
 
         val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        val builder = Notification.Builder(context, CHANNEL_ID)
+        val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setColor(progressColor)
             .setContentTitle(name.ifBlank { "Tải file" })
@@ -538,25 +384,9 @@ object DownloadLiveUpdate {
             .setContentIntent(openAppPendingIntent(context, id))
             .setAutoCancel(true)
             .setOngoing(false)
+            .build()
 
-        if (openFile) {
-            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            val uri = runCatching { dm.getUriForDownloadedFile(id) }.getOrNull()
-            if (uri != null) {
-                val mimeType = runCatching { dm.getMimeTypeForDownloadedFile(id) }
-                    .getOrNull()?.takeIf { it.isNotBlank() } ?: "*/*"
-                builder.addAction(Notification.Action.Builder(
-                    android.R.drawable.ic_menu_view, "Mở file",
-                    openFilePendingIntent(context, id, uri, mimeType)
-                ).build())
-                builder.addAction(Notification.Action.Builder(
-                    android.R.drawable.ic_menu_share, "Chia sẻ",
-                    shareFilePendingIntent(context, id, uri, mimeType)
-                ).build())
-            }
-        }
-
-        manager.notify(id.toInt(), builder.build())
+        manager.notify(id.toInt(), notification)
     }
 
     private fun formatBytes(value: Long): String {

@@ -5,7 +5,6 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.app.DownloadManager
-import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -132,32 +131,15 @@ class MainActivity : ComponentActivity() {
     private var isActivityDestroyed = false
     private val handler = Handler(Looper.getMainLooper())
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
-    private val pendingDownloadLiveUpdates = linkedMapOf<Long, String>()
-    private var downloadPromptController: DownloadPromptController? = null
-
-    private data class DownloadRequest(
-        val url: String,
-        val userAgent: String,
-        val cookie: String,
-        val mimeType: String,
-        val fileName: String
-    )
-
-    private var notificationPermissionRequestInFlight = false
+    private var pendingDownloadLiveUpdate: Pair<Long, String>? = null
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            notificationPermissionRequestInFlight = false
-            val pending = pendingDownloadLiveUpdates.toMap()
-            pendingDownloadLiveUpdates.clear()
+            val pending = pendingDownloadLiveUpdate
+            pendingDownloadLiveUpdate = null
 
-            if (granted) {
-                pending.forEach { (id, name) ->
-                    DownloadLiveUpdate.track(this, id, name)
-                }
-                DownloadLiveUpdate.recoverActiveDownloads(this)
-            } else if (pending.isNotEmpty()) {
-                toast("Tải xuống vẫn tiếp tục; thông báo tiến trình đang bị tắt.")
+            if (granted && pending != null) {
+                DownloadLiveUpdate.track(this, pending.first, pending.second)
             }
         }
 
@@ -165,11 +147,8 @@ class MainActivity : ComponentActivity() {
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
-            pendingDownloadLiveUpdates[downloadId] = fileName
-            if (!notificationPermissionRequestInFlight) {
-                notificationPermissionRequestInFlight = true
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
+            pendingDownloadLiveUpdate = downloadId to fileName
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             return
         }
         DownloadLiveUpdate.track(this, downloadId, fileName)
@@ -729,11 +708,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         }, Constants.TOAST_DURATION_MS)
     }
 
-    override fun onResume() {
-        super.onResume()
-        DownloadLiveUpdate.recoverActiveDownloads(this)
-    }
-
     // ---------------- onCreate ----------------
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -1081,16 +1055,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
         )
         setContentView(root)
-        downloadPromptController = DownloadPromptController(
-            activity = this,
-            root = root,
-            blurTarget = blurTarget,
-            density = d,
-            isNight = isNight,
-            foregroundColor = fg,
-            accentColor = accent,
-            topInset = { insetTop }
-        )
         menu = MenuController(
             activity = this,
             root = root,
@@ -1416,38 +1380,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
     // ---------------- Tải trang ----------------
 
-    private fun enqueueDownload(request: DownloadRequest) {
-        try {
-            val safeFileName = request.fileName
-                .replace('/', '_')
-                .replace('\\', '_')
-                .ifBlank { "download" }
-
-            val download = DownloadManager.Request(Uri.parse(request.url))
-            if (request.mimeType.isNotBlank()) download.setMimeType(request.mimeType)
-            if (request.cookie.isNotBlank()) {
-                download.addRequestHeader("Cookie", request.cookie)
-            }
-            if (request.userAgent.isNotBlank()) {
-                download.addRequestHeader("User-Agent", request.userAgent)
-            }
-            download.setNotificationVisibility(
-                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-            )
-            download.setDestinationInExternalPublicDir(
-                Environment.DIRECTORY_DOWNLOADS,
-                safeFileName
-            )
-
-            val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
-            val downloadId = manager.enqueue(download)
-            startDownloadLiveUpdate(downloadId, safeFileName)
-            toast("Đang tải xuống...")
-        } catch (_: Exception) {
-            toast("Không tải được file này")
-        }
-    }
-
     private fun toUrl(input: String): String = UrlUtils.toUrl(input, store.searchEngine)
 
     private fun load(input: String) {
@@ -1488,16 +1420,16 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         }
         view.setDownloadListener { dlUrl, userAgent, contentDisposition, mimetype, _ ->
             try {
-                val request = DownloadRequest(
-                    url = dlUrl,
-                    userAgent = userAgent.orEmpty(),
-                    cookie = CookieManager.getInstance().getCookie(dlUrl).orEmpty(),
-                    mimeType = mimetype.orEmpty(),
-                    fileName = URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
-                )
-                downloadPromptController?.show(request.fileName) {
-                    enqueueDownload(request)
-                } ?: toast("Summit chưa sẵn sàng để tải xuống")
+                val req = DownloadManager.Request(Uri.parse(dlUrl))
+                req.setMimeType(mimetype)
+                CookieManager.getInstance().getCookie(dlUrl)?.let { req.addRequestHeader("cookie", it) }
+                req.addRequestHeader("User-Agent", userAgent)
+                req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                val fileName = URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
+                req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                val downloadId = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+                startDownloadLiveUpdate(downloadId, fileName)
+                toast("Đang tải xuống...")
             } catch (_: Exception) {
                 toast("Không tải được file này")
             }
@@ -1606,7 +1538,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     }
 
     override fun onPause() {
-        downloadPromptController?.dismissAll()
         if (::store.isInitialized) store.flush()
         if (::web.isInitialized) {
             tabManager.saveState(web)
@@ -1645,8 +1576,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
     override fun onDestroy() {
         isActivityDestroyed = true
-        downloadPromptController?.dismissAll()
-        downloadPromptController = null
         // Trả lời mọi hộp thoại còn treo (JsResult, quyền) trước khi hủy WebView.
         if (::glassDialog.isInitialized) glassDialog.cancelAll()
         denyPendingWebPermission()
