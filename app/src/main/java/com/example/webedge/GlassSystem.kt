@@ -19,6 +19,7 @@ object GlassSystem {
     // One light-mode material system: consistent frost, edge and corner language.
     private const val BLUR_OVERLAY_ALPHA = 46
     private const val FALLBACK_FILL_ALPHA = 126
+    private val GLASS_EDGE: Int = Color.argb(72, 90, 90, 105)
 
     enum class Preset(val radiusDp: Int, val blurRadiusDp: Float) {
         ADDRESS_BAR(28, 18f),
@@ -44,14 +45,14 @@ object GlassSystem {
         GradientDrawable().apply {
             cornerRadius = radiusDp.coerceAtLeast(0) * density
             setColor(Color.argb(FALLBACK_FILL_ALPHA, 255, 255, 255))
-            setStroke((density + 0.5f).toInt().coerceAtLeast(1), Color.argb(58, 255, 255, 255))
+            setStroke((density + 0.5f).toInt().coerceAtLeast(1), GLASS_EDGE)
         }
 
     fun createInputField(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
         GradientDrawable().apply {
             cornerRadius = radiusDp.coerceAtLeast(0) * density
             setColor(Color.argb(24, 255, 255, 255))
-            setStroke((density + 0.5f).toInt().coerceAtLeast(1), Color.argb(34, 255, 255, 255))
+            setStroke((density + 0.5f).toInt().coerceAtLeast(1), GLASS_EDGE)
         }
 
 
@@ -61,7 +62,7 @@ object GlassSystem {
             background = GradientDrawable().apply {
                 cornerRadius = 12f * density
                 setColor(Color.TRANSPARENT)
-                setStroke((density + 0.5f).toInt().coerceAtLeast(1), Color.argb(48, 255, 255, 255))
+                setStroke((density + 0.5f).toInt().coerceAtLeast(1), GLASS_EDGE)
             }
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
@@ -77,7 +78,7 @@ object GlassSystem {
             setColor(Color.TRANSPARENT)
             setStroke(
                 (density + 0.5f).toInt().coerceAtLeast(1),
-                Color.argb(58, 255, 255, 255)
+                GLASS_EDGE
             )
         }
 
@@ -93,7 +94,7 @@ object GlassSystem {
         val shape = GradientDrawable().apply {
             cornerRadius = preset.radiusDp * density
             setColor(Color.TRANSPARENT)
-            val strokeColor = Color.argb(58, 255, 255, 255)
+            val strokeColor = GLASS_EDGE
             setStroke((density + 0.5f).toInt().coerceAtLeast(1), strokeColor)
         }
 
