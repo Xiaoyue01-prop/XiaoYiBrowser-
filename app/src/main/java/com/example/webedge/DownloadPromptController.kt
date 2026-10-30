@@ -206,15 +206,15 @@ class DownloadPromptController(
         // Start the download immediately on confirmation; the exit animation is cosmetic.
         if (confirmed) runCatching { prompt.onConfirm() }
 
-        val complete = {
+        val complete: () -> Unit = {
             if (active === prompt) {
                 active = null
                 activeView = null
                 finishing = false
-                view?.let { root.removeView(it) }
+                if (view != null) root.removeView(view)
                 showNext()
             } else {
-                view?.let { root.removeView(it) }
+                if (view != null) root.removeView(view)
             }
         }
 
