@@ -1,0 +1,9 @@
+build/
+.gradle/
+local.properties
+*.apk
+*.zip
+summit_*dump*.txt
+*.before-*
+
+code_dump.txt
