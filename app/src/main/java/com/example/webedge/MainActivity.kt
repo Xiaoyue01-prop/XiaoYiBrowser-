@@ -71,6 +71,7 @@ import java.lang.ref.WeakReference
 class MainActivity : ComponentActivity() {
 
     private lateinit var store: Store
+    private lateinit var pipController: PictureInPictureController
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
     private lateinit var fullscreenContainer: FrameLayout
@@ -459,12 +460,14 @@ fullscreenContainer.removeAllViews()
 fullscreenContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
 fullscreenContainer.visibility = View.VISIBLE
 fullscreenContainer.bringToFront()
+pipController.setVideoActive(true, view)
 orbController?.setTemporarilyHidden(true)
 WindowInsetsControllerCompat(window, root).hide(WindowInsetsCompat.Type.systemBars())
 }
 
 private fun exitFullscreenView() {
 val view = customVideoView ?: return
+pipController.setVideoActive(false)
 if (::fullscreenContainer.isInitialized) {
 fullscreenContainer.removeView(view)
 fullscreenContainer.visibility = View.GONE
@@ -729,6 +732,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        pipController = PictureInPictureController(this)
 
         store = Store(this)
         AdBlocker.init(this)
@@ -1585,6 +1589,23 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     private fun scheduleSaveTabs() {
         handler.removeCallbacks(saveTabsRunnable)
         handler.postDelayed(saveTabsRunnable, Constants.SAVE_TABS_DEBOUNCE_MS)
+    }
+
+    override fun onUserLeaveHint() {
+        // Android 12+ tự vào PiP nhờ auto-enter; Android 8–11 cần gọi thủ công.
+        pipController.enterIfNeeded()
+        super.onUserLeaveHint()
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        // Giữ nguyên fullscreen video; khi người dùng quay lại Summit có thể thoát fullscreen bình thường.
+        if (!isInPictureInPictureMode && customVideoView == null) {
+            pipController.setVideoActive(false)
+        }
     }
 
     override fun onPause() {
