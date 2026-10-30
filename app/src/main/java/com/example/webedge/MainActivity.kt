@@ -5,6 +5,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.app.DownloadManager
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -1437,9 +1438,21 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 val fileName = URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
                 req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                val downloadId = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
-                startDownloadLiveUpdate(downloadId, fileName)
-                toast("Đang tải xuống...")
+
+                AlertDialog.Builder(this)
+                    .setTitle("Tải xuống?")
+                    .setMessage("Bạn có muốn tải \"$fileName\" không? Tải xuống sẽ tự động hiển thị trên Đảo.")
+                    .setPositiveButton("Tải xuống") { _, _ ->
+                        try {
+                            val downloadId = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+                            startDownloadLiveUpdate(downloadId, fileName)
+                            toast("Đang tải xuống...")
+                        } catch (_: Exception) {
+                            toast("Không tải được file này")
+                        }
+                    }
+                    .setNegativeButton("Hủy", null)
+                    .show()
             } catch (_: Exception) {
                 toast("Không tải được file này")
             }
