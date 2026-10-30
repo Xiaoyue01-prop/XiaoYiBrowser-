@@ -69,6 +69,8 @@ object DownloadLiveUpdate {
 
             var lastPercent = -1
             var lastUpdateAt = 0L
+            // Hỏi thưa hơn khi tiến độ đứng yên (ít đánh thức CPU và ít truy vấn hơn).
+            var nextDelayMs = 750L
 
             try {
                 while (isActive) {
@@ -128,6 +130,7 @@ object DownloadLiveUpdate {
                                 appContext, downloadId, fileName,
                                 "Đang tạm dừng", downloaded, total, true
                             )
+                            nextDelayMs = 2000L
                         }
 
                         DownloadManager.STATUS_PENDING,
@@ -140,6 +143,7 @@ object DownloadLiveUpdate {
                                     -1
                                 }
 
+                            nextDelayMs = if (percent != lastPercent) 750L else 1500L
                             val now = System.currentTimeMillis()
                             if (percent != lastPercent ||
                                 now - lastUpdateAt >= 2500L
@@ -153,10 +157,17 @@ object DownloadLiveUpdate {
                             }
                         }
 
+                        -1 -> {
+                            // Dòng tải đã bị xóa (vd. từ app Tải xuống): gỡ thông báo đang chạy để không bị treo mãi.
+                            (appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                                .cancel(downloadId.toInt())
+                            break
+                        }
+
                         else -> break
                     }
 
-                    delay(750)
+                    delay(nextDelayMs)
                 }
             } catch (_: SecurityException) {
                 // Notification permission may have been revoked.

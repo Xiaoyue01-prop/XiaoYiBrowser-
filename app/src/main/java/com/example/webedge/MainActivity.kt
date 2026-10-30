@@ -1475,6 +1475,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             updateNav()
         }
         updateTabBadge()
+        trimBackgroundTabs()
     }
 
     private fun createBrowserTab() {
@@ -1505,6 +1506,29 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         runCatching { view.destroy() }
     }
 
+    /** Giải phóng WebView của các tab nền lâu không dùng để tiết kiệm RAM; mở lại tab sẽ tải lại từ URL đã lưu. */
+    private fun trimBackgroundTabs(max: Int = Constants.MAX_LIVE_WEBVIEWS) {
+        for (tab in tabManager.staleLiveTabs(max)) discardTabWebView(tab)
+    }
+
+    private fun discardTabWebView(tab: TabManager.Tab) {
+        val view = tab.webView ?: return
+        if (view === web) return
+        // Ghi lại URL/tiêu đề trước khi hủy để mở lại đúng trang (thumbnail giữ nguyên).
+        tab.url = view.url ?: tab.url
+        tab.title = view.title ?: tab.title
+        tab.webView = null
+        destroyTabWebView(view)
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        // Hệ thống thiếu RAM: chỉ giữ tab đang xem và một tab gần nhất.
+        if (::tabManager.isInitialized && ::web.isInitialized) {
+            trimBackgroundTabs(Constants.LOW_MEMORY_LIVE_WEBVIEWS)
+        }
+    }
+
     // Gom nhiều thay đổi liên tiếp (url/title đổi liên tục khi tải trang) thành một lần ghi.
     private val saveTabsRunnable = Runnable { store.saveTabs(tabManager.exportTabs()) }
 
@@ -1514,6 +1538,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     }
 
     override fun onPause() {
+        if (::store.isInitialized) store.flush()
         if (::web.isInitialized) {
             tabManager.saveState(web)
             handler.removeCallbacks(saveTabsRunnable)

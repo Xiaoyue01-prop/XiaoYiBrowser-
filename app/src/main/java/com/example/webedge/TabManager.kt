@@ -19,7 +19,9 @@ var title: String = "",
 var isActive: Boolean = false,
 var webView: WebView? = null,
 var thumbnail: Bitmap? = null,
-var thumbnailUrl: String? = null
+var thumbnailUrl: String? = null,
+/** Lần cuối người dùng rời/dùng tab (nanoTime), để biết tab nền nào lâu không dùng nhất. */
+var lastActiveAt: Long = 0L
 )
 private val tabs = mutableListOf<Tab>()
 private var listener: (() -> Unit)? = null
@@ -30,6 +32,12 @@ fun getActive(): Tab? = tabs.find { it.isActive }
 fun getById(id: Long): Tab? = tabs.find { it.id == id }
 fun getForWebView(view: WebView): Tab? = tabs.find { it.webView === view }
 fun count(): Int = tabs.size
+/** Tab nền còn WebView sống nhưng lâu không dùng nhất, khi số WebView vượt [max]. Tab đang xem luôn được giữ. */
+fun staleLiveTabs(max: Int): List<Tab> {
+val live = tabs.filter { it.webView != null }
+if (live.size <= max) return emptyList()
+return live.filter { !it.isActive }.sortedBy { it.lastActiveAt }.take(live.size - max)
+}
 /** Xuất metadata để lưu bền vững; WebView được tạo lại khi cần. */
 fun exportTabs(): List<PersistedTab> = tabs.map {
 PersistedTab(
@@ -74,15 +82,22 @@ it.isActive = false
 }
 }
 fun addNew(url: String = "", title: String = "Tab mới"): Tab {
-tabs.forEach { it.isActive = false }
-val tab = Tab(url = url, title = title, isActive = true)
+val now = System.nanoTime()
+tabs.forEach {
+if (it.isActive) it.lastActiveAt = now
+it.isActive = false
+}
+val tab = Tab(url = url, title = title, isActive = true, lastActiveAt = now)
 tabs.add(tab)
 listener?.invoke()
 return tab
 }
 fun switchTo(id: Long): Tab? {
 val target = tabs.find { it.id == id } ?: return null
+val now = System.nanoTime()
+tabs.forEach { if (it.isActive) it.lastActiveAt = now }
 tabs.forEach { it.isActive = (it.id == id) }
+target.lastActiveAt = now
 listener?.invoke()
 return target
 }

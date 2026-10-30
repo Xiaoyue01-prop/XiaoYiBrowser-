@@ -28,4 +28,9 @@ object Constants {
     const val SUGGEST_MAX_ITEMS = 6
     const val TOAST_DURATION_MS = 1800L
     const val SAVE_TABS_DEBOUNCE_MS = 600L
+    const val HISTORY_PERSIST_DELAY_MS = 2000L
+
+    // === Bộ nhớ: số WebView tab nền được giữ sống (tab vượt mức bị giải phóng, mở lại sẽ tải lại từ URL) ===
+    const val MAX_LIVE_WEBVIEWS = 6
+    const val LOW_MEMORY_LIVE_WEBVIEWS = 2
 }

@@ -1,5 +1,7 @@
 package com.example.webedge
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import org.json.JSONArray
 import org.json.JSONObject
 data class Entry(val title: String, val url: String, val time: Long)
@@ -13,6 +15,17 @@ class Store(context: Context) {
 private val sp = context.getSharedPreferences("edge", Context.MODE_PRIVATE)
 // ✅ BƯỚC 2: cache trong RAM, không parse JSON lại mỗi lần đọc
 private val listCache = mutableMapOf<String, MutableList<Entry>>()
+// Lịch sử đổi liên tục khi duyệt web: gom lại, ghi xuống ổ cứng một lần sau vài giây thay vì mỗi trang.
+private val handler = Handler(Looper.getMainLooper())
+private var historyDirty = false
+private val persistHistory = Runnable { flush() }
+/** Ghi ngay mọi thay đổi còn chờ (gọi khi app rời màn hình để không mất lịch sử). */
+fun flush() {
+handler.removeCallbacks(persistHistory)
+if (!historyDirty) return
+historyDirty = false
+writeList("history")
+}
 var homeUrl: String
 get() = sp.getString("home", "https://www.google.com") ?: "https://www.google.com"
 set(v) { sp.edit().putString("home", v).apply() }
@@ -86,8 +99,12 @@ listCache[key] = out
 return out
 }
 private fun save(key: String, items: List<Entry>) {
-// ✅ Cập nhật cache trước, rồi mới ghi xuống ổ cứng
-listCache[key] = items.toMutableList()
+// Cache là nguồn dữ liệu chính; chỉ sao chép khi nhận một danh sách khác với danh sách đang cache.
+if (listCache[key] !== items) listCache[key] = items.toMutableList()
+writeList(key)
+}
+private fun writeList(key: String) {
+val items = listCache[key] ?: return
 val arr = JSONArray()
 for (e in items) {
 arr.put(JSONObject().put("t", e.title).put("u", e.url).put("d", e.time))
@@ -104,7 +121,9 @@ l[0] = entry
 l.add(0, entry)
 }
 while (l.size > 300) l.removeAt(l.size - 1)
-save("history", l)
+historyDirty = true
+handler.removeCallbacks(persistHistory)
+handler.postDelayed(persistHistory, Constants.HISTORY_PERSIST_DELAY_MS)
 }
 fun remove(key: String, url: String) {
 val l = list(key)
@@ -112,6 +131,8 @@ l.removeAll { it.url == url }
 save(key, l)
 }
 fun clearHistory() {
+historyDirty = false
+handler.removeCallbacks(persistHistory)
 save("history", emptyList())
 }
 fun isBookmarked(url: String): Boolean = list("bookmarks").any { it.url == url }
