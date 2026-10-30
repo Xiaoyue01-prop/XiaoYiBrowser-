@@ -131,15 +131,17 @@ class MainActivity : ComponentActivity() {
     private var isActivityDestroyed = false
     private val handler = Handler(Looper.getMainLooper())
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
-    private var pendingDownloadLiveUpdate: Pair<Long, String>? = null
+    private val pendingDownloadLiveUpdates = linkedMapOf<Long, String>()
+    private var notificationPermissionRequestInFlight = false
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            val pending = pendingDownloadLiveUpdate
-            pendingDownloadLiveUpdate = null
-
-            if (granted && pending != null) {
-                DownloadLiveUpdate.track(this, pending.first, pending.second)
+            notificationPermissionRequestInFlight = false
+            val pending = pendingDownloadLiveUpdates.toMap()
+            pendingDownloadLiveUpdates.clear()
+            if (granted) {
+                pending.forEach { (id, name) -> DownloadLiveUpdate.track(this, id, name) }
+                DownloadLiveUpdate.recoverActiveDownloads(this)
             }
         }
 
@@ -147,8 +149,11 @@ class MainActivity : ComponentActivity() {
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
-            pendingDownloadLiveUpdate = downloadId to fileName
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            pendingDownloadLiveUpdates[downloadId] = fileName
+            if (!notificationPermissionRequestInFlight) {
+                notificationPermissionRequestInFlight = true
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
             return
         }
         DownloadLiveUpdate.track(this, downloadId, fileName)
@@ -706,6 +711,11 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 if (toastView === t) toastView = null
             }
         }, Constants.TOAST_DURATION_MS)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        DownloadLiveUpdate.recoverActiveDownloads(this)
     }
 
     // ---------------- onCreate ----------------
