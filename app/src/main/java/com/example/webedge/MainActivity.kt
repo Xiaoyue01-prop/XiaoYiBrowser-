@@ -3,7 +3,6 @@ package com.example.webedge
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.AlertDialog
 import android.app.Dialog
 import android.app.DownloadManager
 import android.content.Intent
@@ -31,6 +30,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
 import android.webkit.GeolocationPermissions
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -218,11 +219,20 @@ class MainActivity : ComponentActivity() {
         if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in supported) add("micro")
         }.joinToString(" và ")
         val origin = request.origin.host ?: request.origin.toString()
-        AlertDialog.Builder(this)
-        .setTitle("Quyền trang web")
-        .setMessage("$origin muốn sử dụng $requestedLabels. Chỉ cho phép nếu bạn tin tưởng trang này.")
-        .setNegativeButton("Từ chối") { _, _ -> denyPendingWebPermission() }
-        .setPositiveButton("Cho phép") { _, _ ->
+        // Hộp thoại kính mờ nằm trong cửa sổ chính; cửa sổ popup đăng nhập sẽ che nó nên từ chối luôn.
+        if (popupDialog?.isShowing == true) {
+        denyPendingWebPermission()
+        return
+        }
+        glassDialog.show(
+        title = "Quyền trang web",
+        message = "$origin muốn sử dụng $requestedLabels. Chỉ cho phép nếu bạn tin tưởng trang này.",
+        positive = "Cho phép",
+        negative = "Từ chối"
+        ) { allowed, _ ->
+        if (!allowed) {
+        denyPendingWebPermission()
+        } else {
         val missing = mutableListOf<String>()
         if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in supported &&
         !hasRuntimePermission(Manifest.permission.CAMERA)) {
@@ -235,8 +245,7 @@ class MainActivity : ComponentActivity() {
         if (missing.isEmpty()) finishWebPermissionRequest()
         else webPermissionLauncher.launch(missing.toTypedArray())
         }
-        .setOnCancelListener { denyPendingWebPermission() }
-        .show()
+        }
         }
         private fun finishWebPermissionRequest() {
         val request = pendingWebPermissionRequest ?: return
@@ -266,11 +275,19 @@ class MainActivity : ComponentActivity() {
         return
         }
         val host = runCatching { Uri.parse(origin).host }.getOrNull() ?: origin
-        AlertDialog.Builder(this)
-        .setTitle("Vị trí của bạn")
-        .setMessage("$host muốn truy cập vị trí của bạn. Vị trí chỉ được cấp cho yêu cầu này.")
-        .setNegativeButton("Từ chối") { _, _ -> callback.invoke(origin, false, false) }
-        .setPositiveButton("Cho phép") { _, _ ->
+        if (popupDialog?.isShowing == true) {
+        callback.invoke(origin, false, false)
+        return
+        }
+        glassDialog.show(
+        title = "Vị trí của bạn",
+        message = "$host muốn truy cập vị trí của bạn. Vị trí chỉ được cấp cho yêu cầu này.",
+        positive = "Cho phép",
+        negative = "Từ chối"
+        ) { allowed, _ ->
+        if (!allowed) {
+        callback.invoke(origin, false, false)
+        } else {
         pendingGeoOrigin = origin
         pendingGeoCallback = callback
         val missing = listOf(
@@ -280,8 +297,7 @@ class MainActivity : ComponentActivity() {
         if (missing.isEmpty()) finishGeoPermissionRequest()
         else geoPermissionLauncher.launch(missing.toTypedArray())
         }
-        .setOnCancelListener { callback.invoke(origin, false, false) }
-        .show()
+        }
         }
         private fun finishGeoPermissionRequest() {
         val origin = pendingGeoOrigin ?: return
@@ -549,6 +565,39 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
         if (window === popupWebView) closePopupWindow()
         else super.onCloseWindow(window)
         }
+        // Hộp thoại JavaScript của trang: dùng chung hộp kính mờ. Trả lời JsResult là bắt buộc, nếu không trang sẽ đơ.
+        // Trang trong cửa sổ popup trả false để hệ thống tự hiện (hộp kính nằm sau cửa sổ popup nên sẽ bị che).
+        override fun onJsAlert(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
+        if (view === popupWebView) return false
+        if (isActivityDestroyed) { result.cancel(); return true }
+        glassDialog.show(jsTitle(url), message.orEmpty(), "OK") { _, _ -> result.confirm() }
+        return true
+        }
+        override fun onJsConfirm(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
+        if (view === popupWebView) return false
+        if (isActivityDestroyed) { result.cancel(); return true }
+        glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy") { ok, _ ->
+        if (ok) result.confirm() else result.cancel()
+        }
+        return true
+        }
+        override fun onJsPrompt(view: WebView, url: String?, message: String?, defaultValue: String?, result: JsPromptResult): Boolean {
+        if (view === popupWebView) return false
+        if (isActivityDestroyed) { result.cancel(); return true }
+        glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy", defaultValue.orEmpty()) { ok, text ->
+        if (ok) result.confirm(text.orEmpty()) else result.cancel()
+        }
+        return true
+        }
+        override fun onJsBeforeUnload(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
+        if (view === popupWebView) return false
+        if (isActivityDestroyed) { result.cancel(); return true }
+        val text = message?.takeIf { it.isNotBlank() } ?: "Các thay đổi bạn đã thực hiện có thể chưa được lưu."
+        glassDialog.show("Rời khỏi trang này?", text, "Rời khỏi", "Ở lại") { ok, _ ->
+        if (ok) result.confirm() else result.cancel()
+        }
+        return true
+        }
         override fun onPermissionRequest(request: PermissionRequest) {
         runOnUiThread { requestWebPermissions(request) }
         }
@@ -593,6 +642,13 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     private fun press(v: View, scale: Float) = AnimationSystem.press(v, scale)
 
     private lateinit var menu: MenuController
+    private lateinit var glassDialog: GlassDialogController
+
+    // Tiêu đề hộp thoại của trang: "tenmien.com cho biết".
+    private fun jsTitle(url: String?): String {
+        val host = runCatching { Uri.parse(url.orEmpty()).host }.getOrNull()?.removePrefix("www.")
+        return if (host.isNullOrBlank()) "Trang web cho biết" else "$host cho biết"
+    }
 
     // Cầu nối cho MenuController: đọc giá trị mới nhất của Activity mỗi lần cần.
     private val menuHost = object : MenuHost {
@@ -1012,6 +1068,15 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             sub = sub,
             accent = accent
         )
+        glassDialog = GlassDialogController(
+            activity = this,
+            root = root,
+            blurTarget = blurTarget,
+            d = d,
+            isNight = isNight,
+            fg = fg,
+            accent = accent
+        )
         tabSwitcherController = TabSwitcherController(
             activity = this,
             tabManager = tabManager,
@@ -1045,7 +1110,8 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-            if (customVideoView != null) exitFullscreenView()
+            if (glassDialog.isShowing) glassDialog.cancelCurrent()
+            else if (customVideoView != null) exitFullscreenView()
             else if (popupDialog?.isShowing == true) closePopupWindow()
                 else if (menu.isOpen) menu.handleBack()
                 else if (findBarContainer.visibility == View.VISIBLE) closeFind()
@@ -1485,6 +1551,8 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
     override fun onDestroy() {
         isActivityDestroyed = true
+        // Trả lời mọi hộp thoại còn treo (JsResult, quyền) trước khi hủy WebView.
+        if (::glassDialog.isInitialized) glassDialog.cancelAll()
         denyPendingWebPermission()
         pendingGeoCallback?.invoke(pendingGeoOrigin.orEmpty(), false, false)
         pendingGeoCallback = null

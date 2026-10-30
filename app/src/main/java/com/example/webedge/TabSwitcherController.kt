@@ -304,15 +304,8 @@ class TabSwitcherController(
         var leftHeight = 0
         var rightHeight = 0
         var cardIndex = 0
-        // ✅ BƯỚC 6: Tính chiều cao động dựa trên tỷ lệ ảnh thumbnail
-        fun getPreviewHeight(tab: TabManager.Tab): Int {
-            val thumb = tab.thumbnail
-            if (thumb != null && thumb.width > 0) {
-                val ratio = thumb.height.toFloat() / thumb.width
-                return (180 * ratio).toInt().coerceIn(140, 260)
-            }
-            return 180
-        }
+        // Chiều cao xem trước xoay vòng để lưới hai cột so le kiểu Safari (cỡ gọn như bản cũ).
+        val previewHeights = intArrayOf(174, 214, 188, 156, 226, 180)
         val cardViews = HashMap<Long, LinearLayout>()
         val closeViews = HashMap<Long, View>()
         val closingIds = HashSet<Long>()
@@ -363,7 +356,7 @@ class TabSwitcherController(
 
         for (tab in tabManager.getAll()) {
             val thisIndex = cardIndex++
-            val previewHeight = getPreviewHeight(tab)
+            val previewHeight = previewHeights[thisIndex % previewHeights.size]
             val card = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(6), dp(6), dp(6), dp(9))
