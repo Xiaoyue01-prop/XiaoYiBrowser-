@@ -133,6 +133,18 @@ class MainActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
     private val pendingDownloadLiveUpdates = linkedMapOf<Long, String>()
+
+    private data class PendingDownloadConfirmation(
+        val url: String,
+        val userAgent: String,
+        val cookie: String,
+        val mimeType: String,
+        val fileName: String
+    )
+
+    private val pendingDownloadConfirmations =
+        mutableListOf<PendingDownloadConfirmation>()
+
     private var notificationPermissionRequestInFlight = false
 
     private val notificationPermissionLauncher =
@@ -140,9 +152,28 @@ class MainActivity : ComponentActivity() {
             notificationPermissionRequestInFlight = false
             val pending = pendingDownloadLiveUpdates.toMap()
             pendingDownloadLiveUpdates.clear()
+
+            val confirmations = pendingDownloadConfirmations.toList()
+            pendingDownloadConfirmations.clear()
+
             if (granted) {
-                pending.forEach { (id, name) -> DownloadLiveUpdate.track(this, id, name) }
+                confirmations.forEach { request ->
+                    DownloadConfirmationLiveUpdate.show(
+                        this,
+                        request.url,
+                        request.userAgent,
+                        request.cookie,
+                        request.mimeType,
+                        request.fileName
+                    )
+                }
+
+                pending.forEach { (id, name) ->
+                    DownloadLiveUpdate.track(this, id, name)
+                }
                 DownloadLiveUpdate.recoverActiveDownloads(this)
+            } else if (confirmations.isNotEmpty()) {
+                toast("Hãy bật quyền thông báo để xác nhận tải xuống.")
             }
         }
 
@@ -1431,28 +1462,45 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         }
         view.setDownloadListener { dlUrl, userAgent, contentDisposition, mimetype, _ ->
             try {
-                val req = DownloadManager.Request(Uri.parse(dlUrl))
-                req.setMimeType(mimetype)
-                CookieManager.getInstance().getCookie(dlUrl)?.let { req.addRequestHeader("cookie", it) }
-                req.addRequestHeader("User-Agent", userAgent)
-                req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                val fileName = URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
-                req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                val fileName = URLUtil.guessFileName(
+                    dlUrl,
+                    contentDisposition,
+                    mimetype
+                )
 
-                AlertDialog.Builder(this)
-                    .setTitle("Tải xuống?")
-                    .setMessage("Bạn có muốn tải \"$fileName\" không? Tải xuống sẽ tự động hiển thị trên Đảo.")
-                    .setPositiveButton("Tải xuống") { _, _ ->
-                        try {
-                            val downloadId = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
-                            startDownloadLiveUpdate(downloadId, fileName)
-                            toast("Đang tải xuống...")
-                        } catch (_: Exception) {
-                            toast("Không tải được file này")
-                        }
+                val request = PendingDownloadConfirmation(
+                    url = dlUrl,
+                    userAgent = userAgent.orEmpty(),
+                    cookie = CookieManager.getInstance().getCookie(dlUrl).orEmpty(),
+                    mimeType = mimetype.orEmpty(),
+                    fileName = fileName
+                )
+
+                if (
+                    android.os.Build.VERSION.SDK_INT >= 33 &&
+                    ContextCompat.checkSelfPermission(
+                        this,
+                        Manifest.permission.POST_NOTIFICATIONS
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    pendingDownloadConfirmations.add(request)
+
+                    if (!notificationPermissionRequestInFlight) {
+                        notificationPermissionRequestInFlight = true
+                        notificationPermissionLauncher.launch(
+                            Manifest.permission.POST_NOTIFICATIONS
+                        )
                     }
-                    .setNegativeButton("Hủy", null)
-                    .show()
+                } else {
+                    DownloadConfirmationLiveUpdate.show(
+                        this,
+                        request.url,
+                        request.userAgent,
+                        request.cookie,
+                        request.mimeType,
+                        request.fileName
+                    )
+                }
             } catch (_: Exception) {
                 toast("Không tải được file này")
             }
