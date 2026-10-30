@@ -151,7 +151,8 @@ class GlassDialogController(
         val messageView = TextView(activity).apply {
             text = req.message
             textSize = 14f
-            setTextColor(fg)
+            setTextColor(Color.BLACK)
+            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
             gravity = Gravity.CENTER
             val top = if (req.title != null) dp(8) else dp(22)
             val bottom = if (req.defaultInput != null) dp(12) else dp(20)
@@ -166,7 +167,8 @@ class GlassDialogController(
                 setSingleLine()
                 setText(req.defaultInput)
                 setSelectAllOnFocus(true)
-                setTextColor(fg)
+                setTextColor(Color.BLACK)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 textSize = 15f
                 setPadding(dp(14), 0, dp(14), 0)
                 background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)

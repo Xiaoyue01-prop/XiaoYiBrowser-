@@ -128,7 +128,8 @@ class DownloadPromptController(
         fileText.addView(TextView(activity).apply {
             text = "Trang web muốn tải file xuống"
             textSize = 12f
-            setTextColor(if (isNight) Color.argb(180, 255, 255, 255) else Color.DKGRAY)
+            setTextColor(Color.DKGRAY)
+            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
             maxLines = 1
         })
         heading.addView(

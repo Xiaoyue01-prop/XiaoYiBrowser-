@@ -2,6 +2,7 @@ package com.example.webedge
 
 import android.app.Activity
 import android.app.DownloadManager
+import android.graphics.Color
 import android.content.Intent
 import android.graphics.Typeface
 import android.text.InputType
@@ -74,6 +75,7 @@ class MenuController(
     private var menuLayer: FrameLayout? = null
     private var menuCard: FrameLayout? = null
     private var menuBackAction: (() -> Unit)? = null
+    private var menuAnimationStarted = false
 
     val isOpen: Boolean get() = menuLayer != null
 
@@ -84,6 +86,16 @@ class MenuController(
     }
 
     private fun dp(v: Int): Int = (v * d).toInt()
+
+    private fun stylePrimary(view: TextView, color: Int = Color.BLACK) {
+        view.setTextColor(color)
+        view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    }
+
+    private fun styleSecondary(view: TextView) {
+        view.setTextColor(Color.rgb(82, 82, 88))
+        view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    }
 
     private fun ripple(): Int {
         val tv = TypedValue()
@@ -119,14 +131,12 @@ class MenuController(
             blurTarget,
             GlassSystem.Preset.MENU_CARD,
             d,
-            isNight
+            false
         )
         glass.isClickable = false
         glass.isFocusable = false
-        // Kính có kích thước cố định, đủ lớn cho mọi trang; MenuCardLayout bỏ qua nó khi đo
-        // nên card vẫn ôm theo nội dung. Không đổi kích thước => blur có ngay, không bị trong suốt.
-        val glassW = minOf(dp(400), activity.resources.displayMetrics.widthPixels - dp(28) - host.insetLeft - host.insetRight)
-        card.addView(glass, FrameLayout.LayoutParams(glassW, menuMaxHeight()))
+        // Kính khớp chính xác kích thước thẻ, tránh phần blur chỉ phủ một dải bên phải.
+        card.addView(glass, FrameLayout.LayoutParams(-1, -1))
 
         layer.addView(
             card,
@@ -136,20 +146,41 @@ class MenuController(
                 Gravity.BOTTOM or Gravity.END
             )
         )
+        // Keep the card almost invisible while BlurView draws its first real frame.
+        // This prevents the translucent fallback from flashing before the frosted layer.
+        card.alpha = 0.01f
+        card.scaleX = 0.8f
+        card.scaleY = 0.8f
         root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         menuLayer = layer
         menuCard = card
+        menuAnimationStarted = false
         relayout()
         showMainPage(false)
 
-        card.alpha = 0f
-        card.scaleX = 0.8f
-        card.scaleY = 0.8f
-        card.post {
+        fun startMenuAnimation() {
+            if (menuCard !== card || menuAnimationStarted) return
+            menuAnimationStarted = true
             card.pivotX = card.width.toFloat()
             card.pivotY = card.height.toFloat()
             AnimationSystem.popIn(card, 0.6f)
         }
+
+        // Wait for the attached BlurView to reach its first pre-draw before revealing the card.
+        val glassObserver = glass.viewTreeObserver
+        if (glassObserver.isAlive) {
+            glassObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    if (glass.viewTreeObserver.isAlive) {
+                        glass.viewTreeObserver.removeOnPreDrawListener(this)
+                    }
+                    glass.post { startMenuAnimation() }
+                    return true
+                }
+            })
+        }
+        // Safety fallback in case a device skips the first pre-draw callback.
+        card.postDelayed({ startMenuAnimation() }, 120L)
     }
 
     fun close() {
@@ -158,6 +189,7 @@ class MenuController(
         menuLayer = null
         menuCard = null
         menuBackAction = null
+        menuAnimationStarted = false
         if (card == null) {
             root.removeView(layer)
             return
@@ -178,13 +210,6 @@ class MenuController(
         lp.rightMargin = host.insetRight + dp(14)
         lp.bottomMargin = maxOf(host.insetBottom, host.imeBottom) + dp(10) + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
         card.layoutParams = lp
-    }
-
-    private fun menuMaxHeight(): Int {
-        val rootH = if (root.height > 0) root.height else activity.resources.displayMetrics.heightPixels
-        val maxH = rootH - host.insetTop - dp(12) -
-            (maxOf(host.insetBottom, host.imeBottom) + dp(10) + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8))
-        return maxOf(maxH, dp(120))
     }
 
     // Thay nội dung khung menu bằng một trang khác, có hiệu ứng đổi kích thước
@@ -235,7 +260,7 @@ class MenuController(
             val t = TextView(activity)
             t.text = label
             t.textSize = 11.5f
-            t.setTextColor(fg)
+            stylePrimary(t)
             t.gravity = Gravity.CENTER
             t.setPadding(0, dp(5), 0, 0)
             c.addView(t, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -257,7 +282,7 @@ class MenuController(
             val t = TextView(activity)
             t.text = label
             t.textSize = 15f
-            t.setTextColor(fg)
+            stylePrimary(t)
             r.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             if (path != null) {
                 val iv = ImageView(activity)
@@ -355,7 +380,7 @@ class MenuController(
         val t = TextView(activity)
         t.text = title
         t.textSize = 18f
-        t.setTextColor(fg)
+        stylePrimary(t)
         t.setTypeface(null, Typeface.BOLD)
         t.setPadding(if (onBack != null) dp(4) else 0, 0, 0, 0)
         head.addView(t)
@@ -365,7 +390,7 @@ class MenuController(
             val h = TextView(activity)
             h.text = hint
             h.textSize = 12f
-            h.setTextColor(sub)
+            styleSecondary(h)
             h.setPadding(dp(22), 0, dp(22), dp(6))
             page.addView(h)
         }
@@ -423,14 +448,14 @@ class MenuController(
             val t = TextView(activity)
             t.text = if (entry.title.isBlank() || entry.title == entry.url) UrlUtils.shortUrl(entry.url) else entry.title
             t.textSize = 15f
-            t.setTextColor(fg)
+            stylePrimary(t)
             t.setSingleLine()
             t.ellipsize = TextUtils.TruncateAt.END
             row.addView(t)
             val u = TextView(activity)
             u.text = UrlUtils.shortUrl(entry.url)
             u.textSize = 12f
-            u.setTextColor(sub)
+            styleSecondary(u)
             u.setSingleLine()
             u.ellipsize = TextUtils.TruncateAt.END
             row.addView(u)
@@ -463,7 +488,7 @@ class MenuController(
                 val empty = TextView(activity)
                 empty.text = "Chưa có gì"
                 empty.textSize = 15f
-                empty.setTextColor(sub)
+                styleSecondary(empty)
                 empty.setPadding(dp(22), dp(16), dp(22), dp(16))
                 p.body.addView(empty)
                 return
@@ -475,6 +500,7 @@ class MenuController(
                 moreBtn.text = "Xem thêm ${allItems.size - displayedCount} mục..."
                 moreBtn.textSize = 14f
                 moreBtn.setTextColor(accent)
+                moreBtn.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
                 moreBtn.gravity = Gravity.CENTER
                 moreBtn.setPadding(dp(22), dp(12), dp(22), dp(12))
                 moreBtn.setOnClickListener {
@@ -519,12 +545,12 @@ class MenuController(
             val l = TextView(activity)
             l.text = label
             l.textSize = 16f
-            l.setTextColor(labelColor)
+            stylePrimary(l, labelColor)
             r.addView(l, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val v = TextView(activity)
             v.text = value
             v.textSize = 14f
-            v.setTextColor(sub)
+            styleSecondary(v)
         v.gravity = Gravity.END
             v.setSingleLine()
             v.ellipsize = TextUtils.TruncateAt.END
@@ -578,7 +604,7 @@ class MenuController(
             val l = TextView(activity)
             l.text = names[i]
             l.textSize = 16f
-            l.setTextColor(fg)
+            stylePrimary(l)
             r.addView(l, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             if (store.searchEngine == i) {
                 val ic = ImageView(activity)
@@ -602,7 +628,8 @@ class MenuController(
         input.setSingleLine()
         input.inputType = InputType.TYPE_TEXT_VARIATION_URI
         input.setText(store.homeUrl)
-        input.setTextColor(fg)
+        input.setTextColor(Color.BLACK)
+        input.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
         input.textSize = 15f
         input.setPadding(dp(14), 0, dp(14), 0)
         input.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
@@ -632,7 +659,7 @@ class MenuController(
         val msg = TextView(activity)
         msg.text = "Xóa lịch sử, cookie, bộ nhớ đệm và dữ liệu trang web. Bạn sẽ bị đăng xuất khỏi các trang đang đăng nhập."
         msg.textSize = 14f
-        msg.setTextColor(sub)
+        styleSecondary(msg)
         msg.setPadding(dp(22), dp(4), dp(22), dp(12))
         p.body.addView(msg)
         addButtons(

@@ -5,48 +5,43 @@ import android.view.View
 import android.widget.FrameLayout
 
 /**
- * Khung của menu ba chấm.
- *
- * Con thứ 0 là lớp kính (BlurView) với kích thước CỐ ĐỊNH, đủ lớn cho mọi trang menu;
- * khung chỉ đo kích thước theo các con còn lại (trang hiện tại) và bị cắt bo góc bởi outline.
- * Nhờ đó khi đổi trang, kính không bị đổi kích thước nên BlurView không phải dựng lại buffer
- * (nguyên nhân khiến kính mờ hiện chậm, lúc đầu chỉ trong suốt).
- * Lớp kính luôn neo ở góc dưới bên phải, cùng góc neo của khung.
+ * Khung menu ba chấm: con thứ 0 là BlurView, các con sau là trang menu hiện tại.
+ * Khung đo theo nội dung trang rồi ép BlurView khớp chính xác toàn bộ kích thước thẻ.
  */
 class MenuCardLayout(context: Context) : FrameLayout(context) {
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        var w = 0
-        var h = 0
+        var contentWidth = 0
+        var contentHeight = 0
         for (i in 1 until childCount) {
-            val c = getChildAt(i)
-            if (c.visibility == View.GONE) continue
-            measureChild(c, widthMeasureSpec, heightMeasureSpec)
-            w = maxOf(w, c.measuredWidth)
-            h = maxOf(h, c.measuredHeight)
+            val child = getChildAt(i)
+            if (child.visibility == View.GONE) continue
+            measureChild(child, widthMeasureSpec, heightMeasureSpec)
+            contentWidth = maxOf(contentWidth, child.measuredWidth)
+            contentHeight = maxOf(contentHeight, child.measuredHeight)
         }
+
         setMeasuredDimension(
-            resolveSize(maxOf(w, suggestedMinimumWidth), widthMeasureSpec),
-            resolveSize(maxOf(h, suggestedMinimumHeight), heightMeasureSpec)
+            resolveSize(maxOf(contentWidth, suggestedMinimumWidth), widthMeasureSpec),
+            resolveSize(maxOf(contentHeight, suggestedMinimumHeight), heightMeasureSpec)
         )
-        val glass = getChildAt(0)
-        if (glass != null) {
-            val lp = glass.layoutParams
-            glass.measure(
-                MeasureSpec.makeMeasureSpec(lp.width, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(lp.height, MeasureSpec.EXACTLY)
-            )
-        }
+
+        // The BlurView must match the visible card bounds exactly. An oversized, clipped
+        // BlurView can leave only part of the menu frosted on some device densities.
+        getChildAt(0)?.measure(
+            MeasureSpec.makeMeasureSpec(measuredWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(measuredHeight, MeasureSpec.EXACTLY)
+        )
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        val w = right - left
-        val h = bottom - top
-        getChildAt(0)?.let { it.layout(w - it.measuredWidth, h - it.measuredHeight, w, h) }
+        val width = right - left
+        val height = bottom - top
+        getChildAt(0)?.layout(0, 0, width, height)
         for (i in 1 until childCount) {
-            val c = getChildAt(i)
-            if (c.visibility == View.GONE) continue
-            c.layout(0, 0, c.measuredWidth, c.measuredHeight)
+            val child = getChildAt(i)
+            if (child.visibility == View.GONE) continue
+            child.layout(0, 0, child.measuredWidth, child.measuredHeight)
         }
     }
 }

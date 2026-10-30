@@ -448,7 +448,8 @@ class TabSwitcherController(
             card.addView(TextView(activity).apply {
                 text = shortUrl(tab.url).ifBlank { store.homeUrl }
                 textSize = 12f
-                setTextColor(Theme.safariGray(false))
+                setTextColor(Color.rgb(82, 82, 88))
+                setTypeface(null, android.graphics.Typeface.BOLD)
                 maxLines = 1
                 setSingleLine(true)
                 ellipsize = android.text.TextUtils.TruncateAt.END
