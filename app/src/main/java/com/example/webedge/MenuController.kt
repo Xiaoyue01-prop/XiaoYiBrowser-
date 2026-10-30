@@ -16,6 +16,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.widget.EditText
@@ -563,11 +564,8 @@ class MenuController(
 
         addRow("Công cụ tìm kiếm", engines[store.searchEngine], fg) { chooseEngine() }
         addRow("Trang chủ", UrlUtils.shortUrl(store.homeUrl), fg) { editHome() }
-        addRow("Trang web máy tính", onOff(store.desktopMode), fg) {
-            store.desktopMode = !store.desktopMode
-            host.applyDesktopMode()
-            host.web.reload()
-            showSettings()
+        addRow("Quyền trang web", currentSiteLabel(), fg) {
+            showSitePermissions()
         }
         addRow("Tràn viền nội dung (thử nghiệm)", onOff(store.edgeMode), fg) {
             store.edgeMode = !store.edgeMode
@@ -588,6 +586,87 @@ class MenuController(
         addRow("Xóa dữ liệu duyệt web", "", Theme.DANGER_RED) { confirmClear() }
 
         addButtons(p, null, panelButton("Xong", accent) { close() })
+        showPanel(p)
+    }
+
+    private fun currentSiteLabel(): String {
+        val hostName = runCatching {
+            android.net.Uri.parse(host.currentUrl).host?.removePrefix("www.")
+        }.getOrNull()
+        return hostName?.takeIf { it.isNotBlank() } ?: "Trang hiện tại"
+    }
+
+    private fun showSitePermissions() {
+        val origin = runCatching {
+            val uri = android.net.Uri.parse(host.currentUrl)
+            if (uri.scheme == null || uri.host == null) null
+            else "${uri.scheme}://${uri.host}${if (uri.port != -1) ":${uri.port}" else ""}"
+        }.getOrNull()
+        val p = makePanel("Quyền trang web", null, 320) { showSettings() }
+        val site = currentSiteLabel()
+
+        fun addInfoRow(label: String, value: String) {
+            val row = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(20), dp(10), dp(20), dp(10))
+            }
+            val name = TextView(activity).apply {
+                text = label
+                textSize = 15f
+                setTextColor(Color.BLACK)
+                setTypeface(typeface, Typeface.BOLD)
+            }
+            row.addView(name, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val status = TextView(activity).apply {
+                text = value
+                textSize = 13f
+                setTextColor(Color.DKGRAY)
+            }
+            row.addView(status)
+            p.body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        }
+
+        val heading = TextView(activity).apply {
+            text = site
+            textSize = 16f
+            setTextColor(Color.BLACK)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(20), dp(12), dp(20), dp(8))
+        }
+        p.body.addView(heading)
+        addInfoRow("Camera", "Hỏi khi sử dụng")
+        addInfoRow("Micro", "Hỏi khi sử dụng")
+        addInfoRow("Vị trí", "Theo quyền website")
+
+        val reset = TextView(activity).apply {
+            text = "Đặt lại quyền trang web"
+            textSize = 15f
+            setTextColor(Color.BLACK)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setBackgroundResource(ripple())
+            setOnClickListener {
+                if (origin == null) {
+                    host.toast("Không xác định được website hiện tại")
+                } else {
+                    GeolocationPermissions.getInstance().clear(origin)
+                    host.toast("Đã đặt lại quyền vị trí của $site")
+                }
+                showSitePermissions()
+            }
+        }
+        p.body.addView(reset, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)))
+
+        val note = TextView(activity).apply {
+            text = "Camera và micro sẽ tiếp tục hỏi xác nhận khi website yêu cầu. Quyền vị trí được quản lý theo website."
+            textSize = 12f
+            setTextColor(Color.DKGRAY)
+            setPadding(dp(20), dp(4), dp(20), dp(12))
+        }
+        p.body.addView(note)
+        addButtons(p, null, panelButton("Xong", accent) { showSettings() })
         showPanel(p)
     }
 
