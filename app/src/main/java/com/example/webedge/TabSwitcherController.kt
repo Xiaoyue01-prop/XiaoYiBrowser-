@@ -223,9 +223,10 @@ class TabSwitcherController(
         }
         container.addView(dialogBlur, FrameLayout.LayoutParams(-1, -1))
 
-        // Light, slightly rosy glass like Safari's tab overview; the browser itself keeps its theme.
+        // A restrained translucent tint preserves the live blur instead of masking it.
         container.addView(View(activity).apply {
-            setBackgroundColor(Color.argb(178, 249, 243, 248))
+            setBackgroundColor(Color.argb(54, 249, 243, 248))
+            isClickable = false
         }, FrameLayout.LayoutParams(-1, -1))
 
         // Lưới thẻ toàn màn hình: thẻ cuộn dưới header/status bar/thanh đáy thay vì bị cắt cứng.
@@ -240,7 +241,7 @@ class TabSwitcherController(
         val statusFade = View(activity).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.argb(215, 249, 243, 248), Color.argb(0, 249, 243, 248))
+                intArrayOf(Color.argb(112, 249, 243, 248), Color.argb(0, 249, 243, 248))
             )
             isClickable = false
             isFocusable = false
@@ -366,7 +367,7 @@ class TabSwitcherController(
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
                     cornerRadius = dp(22).toFloat()
-                    setColor(Color.argb(218, 255, 255, 255))
+                    setColor(Color.argb(154, 255, 255, 255))
                     setStroke(
                         dp(if (tab.isActive) 2 else 1),
                         if (tab.isActive) accentColor else Color.argb(145, 195, 195, 205)

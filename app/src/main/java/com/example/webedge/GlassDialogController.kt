@@ -169,11 +169,17 @@ class GlassDialogController(
                 setTextColor(fg)
                 textSize = 15f
                 setPadding(dp(14), 0, dp(14), 0)
-                background = GlassSystem.createInputField(12, d, isNight)
+                background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
             }
             activeInput = input
+            val inputGlass = FrameLayout(activity).apply {
+                clipToOutline = true
+                background = GlassSystem.createInputField(12, d, false)
+                addView(GlassSystem.createInputBlurView(activity, blurTarget, d), FrameLayout.LayoutParams(-1, -1))
+                addView(input, FrameLayout.LayoutParams(-1, -1))
+            }
             content.addView(
-                input,
+                inputGlass,
                 LinearLayout.LayoutParams(-1, dp(44)).apply { setMargins(dp(22), 0, dp(22), dp(18)) }
             )
         } else {

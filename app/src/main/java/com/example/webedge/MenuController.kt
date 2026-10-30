@@ -605,10 +605,16 @@ class MenuController(
         input.setTextColor(fg)
         input.textSize = 15f
         input.setPadding(dp(14), 0, dp(14), 0)
-        input.background = GlassSystem.createInputField(12, d, isNight)
+        input.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        val inputGlass = FrameLayout(activity).apply {
+            clipToOutline = true
+            background = GlassSystem.createInputField(12, d, false)
+            addView(GlassSystem.createInputBlurView(activity, blurTarget, d), FrameLayout.LayoutParams(-1, -1))
+            addView(input, FrameLayout.LayoutParams(-1, -1))
+        }
         val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46))
         lp.setMargins(dp(22), dp(4), dp(22), dp(8))
-        p.body.addView(input, lp)
+        p.body.addView(inputGlass, lp)
         addButtons(
             p,
             panelButton("Hủy", accent) { showSettings() },
