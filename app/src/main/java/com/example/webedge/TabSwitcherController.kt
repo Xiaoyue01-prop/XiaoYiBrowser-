@@ -7,8 +7,6 @@ import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
-import android.graphics.RenderEffect
-import android.graphics.RuntimeShader
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -39,40 +37,6 @@ private const val TAB_TOP_FADE = 40   // dải mờ dần dưới thanh trạng 
 // không bị cắt cứng. Đơn vị dp / hệ số 0–1.
 private const val EDGE_BLUR_RADIUS_DP = 14   // độ mờ tối đa ở sát mép (lớn hơn = mờ hơn)
 private const val EDGE_BLUR_VEIL = 0.30f     // độ phủ trắng nhẹ ở sát mép (0 = không phủ)
-private const val EDGE_BLUR_AGSL = """
-uniform shader content;
-uniform float2 viewSize;
-uniform float topH;
-uniform float bottomH;
-uniform float maxR;
-uniform float veil;
-
-half4 main(float2 coord) {
-    float t = 0.0;
-    if (coord.y < topH) {
-        t = 1.0 - coord.y / max(topH, 1.0);
-    } else if (coord.y > viewSize.y - bottomH) {
-        t = (coord.y - (viewSize.y - bottomH)) / max(bottomH, 1.0);
-    }
-    t = clamp(t, 0.0, 1.0);
-    t = t * t * (3.0 - 2.0 * t);
-    float4 base = float4(content.eval(coord));
-    if (t < 0.01) return half4(base);
-    float r = maxR * t;
-    float4 sum = base;
-    for (int i = 1; i < 24; i++) {
-        float fi = float(i);
-        float a = fi * 2.39996323;
-        float rad = r * sqrt(fi / 24.0);
-        sum += float4(content.eval(coord + float2(cos(a), sin(a)) * rad));
-    }
-    float4 blurred = sum / 24.0;
-    float v = veil * t;
-    float4 outc = blurred * (1.0 - v) + float4(v, v, v, v);
-    return half4(outc);
-}
-"""
-
 class TabSwitcherController(
     private val activity: ComponentActivity,
     private val tabManager: TabManager,
@@ -221,19 +185,6 @@ class TabSwitcherController(
             setPadding(dp(14), dp(7), dp(14), dp(7))
         }, FrameLayout.LayoutParams(-1, -1))
         return frame
-    }
-
-    private fun applyEdgeBlur(target: View, topPx: Int, bottomPx: Int) {
-        if (target.width <= 0 || target.height <= 0) return
-        runCatching {
-            val shader = RuntimeShader(EDGE_BLUR_AGSL)
-            shader.setFloatUniform("viewSize", target.width.toFloat(), target.height.toFloat())
-            shader.setFloatUniform("topH", topPx.toFloat())
-            shader.setFloatUniform("bottomH", bottomPx.toFloat())
-            shader.setFloatUniform("maxR", dp(EDGE_BLUR_RADIUS_DP).toFloat())
-            shader.setFloatUniform("veil", EDGE_BLUR_VEIL)
-            target.setRenderEffect(RenderEffect.createRuntimeShaderEffect(shader, "content"))
-        }
     }
 
     fun show(animate: Boolean = true) {
@@ -589,7 +540,7 @@ class TabSwitcherController(
             val key = "${cardsTarget.width}x${cardsTarget.height}:$edgeTopPx:$edgeBottomPx"
             if (key == edgeKey) return
             edgeKey = key
-            applyEdgeBlur(cardsTarget, edgeTopPx, edgeBottomPx)
+            GlassSystem.applyEdgeBlur(cardsTarget, edgeTopPx, edgeBottomPx, dp(EDGE_BLUR_RADIUS_DP).toFloat(), EDGE_BLUR_VEIL)
         }
         cardsTarget.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> refreshEdgeBlur() }
 

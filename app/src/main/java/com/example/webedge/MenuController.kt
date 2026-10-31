@@ -15,7 +15,6 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.WebStorage
@@ -406,7 +405,7 @@ class MenuController(
         // Chừa một dải đệm ở trên và dưới: lúc chưa cuộn, mục đầu và mục cuối không bị mờ; cuộn tới sát mép thì mờ dần.
         scroll.clipToPadding = false
         scroll.setPadding(0, dp(EDGE_ZONE_DP), 0, dp(EDGE_ZONE_DP))
-        EdgeBlur.install(scroll, dp(EDGE_ZONE_DP), dp(EDGE_ZONE_DP), dp(7).toFloat(), 0f, 0.9f)
+        GlassSystem.installEdgeBlur(scroll, dp(EDGE_ZONE_DP), dp(EDGE_ZONE_DP), dp(7).toFloat(), 0f, 0.9f)
         scroll.addView(body)
         page.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -426,23 +425,7 @@ class MenuController(
 
     // Mỗi nút là một viên kính mờ riêng (bo tròn, có viền), không còn là chữ trần trên nền menu.
     private fun panelButton(text: String, color: Int, onClick: () -> Unit): View {
-        val preset = GlassSystem.Preset.TABS_BUTTON
-        val b = FrameLayout(activity)
-        b.background = GlassSystem.create(preset, d, isNight)
-        b.outlineProvider = ViewOutlineProvider.BACKGROUND
-        b.clipToOutline = true
-        val glass = GlassSystem.createBlurView(activity, blurTarget, preset, d, false)
-        glass.isClickable = false
-        glass.isFocusable = false
-        b.addView(glass, FrameLayout.LayoutParams(-1, -1))
-        val label = TextView(activity)
-        label.text = text
-        label.textSize = 15f
-        label.setTypeface(null, Typeface.BOLD)
-        label.setTextColor(color)
-        label.gravity = Gravity.CENTER
-        label.setPadding(dp(22), 0, dp(22), 0)
-        b.addView(label, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        val b = GlassSystem.createGlassButton(activity, blurTarget, text, color, d, isNight)
         b.setOnClickListener { onClick() }
         AnimationSystem.press(b, Constants.PRESS_SCALE_PILL)
         return b
