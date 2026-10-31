@@ -10,6 +10,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+
+enum class PermissionState { ASK, ALLOW, DENY }
 data class Entry(val title: String, val url: String, val time: Long)
 data class PersistedTab(
 val id: Long,
@@ -240,4 +242,45 @@ save("bookmarks", l)
 true
 }
 }
+
+    // =================== Quyền trang web ===================
+    private fun permKey(kind: String, origin: String) = "perm_${kind}_$origin"
+
+    fun getMediaPermission(origin: String): PermissionState =
+        when (sp.getString(permKey("media", origin), null)) {
+            "allow" -> PermissionState.ALLOW
+            "deny"  -> PermissionState.DENY
+            else    -> PermissionState.ASK
+        }
+
+    fun setMediaPermission(origin: String, state: PermissionState) {
+        val editor = sp.edit()
+        if (state == PermissionState.ASK) editor.remove(permKey("media", origin))
+        else editor.putString(permKey("media", origin), state.name.lowercase())
+        editor.apply()
+    }
+
+    fun getGeoPermission(origin: String): PermissionState =
+        when (sp.getString(permKey("geo", origin), null)) {
+            "allow" -> PermissionState.ALLOW
+            "deny"  -> PermissionState.DENY
+            else    -> PermissionState.ASK
+        }
+
+    fun setGeoPermission(origin: String, state: PermissionState) {
+        val editor = sp.edit()
+        if (state == PermissionState.ASK) editor.remove(permKey("geo", origin))
+        else editor.putString(permKey("geo", origin), state.name.lowercase())
+        editor.apply()
+    }
+
+    fun clearSitePermissions(origin: String?) {
+        val all = sp.all.keys.filter { it.startsWith("perm_") }
+        val toRemove = if (origin == null) all else all.filter { it.endsWith("_$origin") }
+        if (toRemove.isEmpty()) return
+        val editor = sp.edit()
+        toRemove.forEach { editor.remove(it) }
+        editor.apply()
+    }
+
 }
