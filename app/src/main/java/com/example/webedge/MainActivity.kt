@@ -425,6 +425,18 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
             tabManager.updateForWebView(view, url, view.title ?: url)
             store.addHistory(view.title ?: "", url)
             if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
+            // WebView có thể báo onPageFinished trước khi khung hình cuối cùng được vẽ.
+            // Chụp trễ một nhịp để tránh lưu thumbnail trắng/đang tải; áp dụng cả tab nền.
+            view.postDelayed({
+                if (!isActivityDestroyed &&
+                    !view.isDestroyed &&
+                    view.progress >= 100 &&
+                    view.url == url
+                ) {
+                    tabManager.saveState(view)
+                }
+            }, 1000L)
+
             if (view !== web) return
             injectInsets()
             AnimationSystem.fade(view, 1f)
