@@ -429,7 +429,6 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
             // Chụp trễ một nhịp để tránh lưu thumbnail trắng/đang tải; áp dụng cả tab nền.
             view.postDelayed({
                 if (!isActivityDestroyed &&
-                    !view.isDestroyed &&
                     view.progress >= 100 &&
                     view.url == url
                 ) {
