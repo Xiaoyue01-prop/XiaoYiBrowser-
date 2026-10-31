@@ -20,6 +20,7 @@ var isActive: Boolean = false,
 var webView: WebView? = null,
 var thumbnail: Bitmap? = null,
 var thumbnailUrl: String? = null,
+var thumbnailVersion: Long = 0L,
 /** Lần cuối người dùng rời/dùng tab (nanoTime), để biết tab nền nào lâu không dùng nhất. */
 var lastActiveAt: Long = 0L
 )
@@ -44,7 +45,10 @@ PersistedTab(
 id = it.id,
 url = it.webView?.url ?: it.url,
 title = it.webView?.title ?: it.title,
-isActive = it.isActive
+isActive = it.isActive,
+thumbnail = it.thumbnail?.takeUnless { bitmap -> bitmap.isRecycled },
+thumbnailUrl = it.thumbnailUrl.orEmpty(),
+thumbnailVersion = it.thumbnailVersion
 )
 }
 /** Khôi phục danh sách tab đã lưu mà chưa tạo WebView cho tab nền. */
@@ -64,7 +68,10 @@ Tab(
 id = id,
 url = item.url,
 title = item.title.ifBlank { item.url.ifBlank { "Tab mới" } },
-isActive = item.isActive
+isActive = item.isActive,
+thumbnail = item.thumbnail,
+thumbnailUrl = item.thumbnailUrl.takeIf { it.isNotBlank() },
+thumbnailVersion = item.thumbnailVersion
 )
 )
 }
@@ -139,6 +146,7 @@ web.draw(canvas)
 tab.thumbnail?.takeIf { it !== scaled }?.recycle()
 tab.thumbnail = scaled
 tab.thumbnailUrl = tab.url
+tab.thumbnailVersion = maxOf(System.currentTimeMillis(), tab.thumbnailVersion + 1L)
 } catch (e: Exception) {
 // ✅ BƯỚC 3: Log thay vì nuốt lỗi im lặng
 Log.w(TAG, "Không chụp được thumbnail", e)

@@ -1446,6 +1446,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         val wasActive = tab.isActive
         if (wasActive) captureActiveTab()
         val removed = tabManager.close(tab.id) ?: return
+        store.deleteTabThumbnail(removed.id)
         if (wasActive) tabManager.getActive()?.let(::activateTab)
         removed.webView?.let { view -> if (view !== web) destroyTabWebView(view) }
     }
@@ -1491,6 +1492,17 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     // Gom nhiều thay đổi liên tiếp (url/title đổi liên tục khi tải trang) thành một lần ghi.
     private val saveTabsRunnable = Runnable { store.saveTabs(tabManager.exportTabs()) }
 
+    private fun persistTabsNow() {
+        if (!::store.isInitialized || !::tabManager.isInitialized) return
+        handler.removeCallbacks(saveTabsRunnable)
+        if (::web.isInitialized) {
+            tabManager.saveState(web)
+            // saveState thông báo listener và đặt lịch debounce; lần ghi đồng bộ bên dưới đã thay thế nó.
+            handler.removeCallbacks(saveTabsRunnable)
+        }
+        store.saveTabs(tabManager.exportTabs())
+    }
+
     private fun scheduleSaveTabs() {
         handler.removeCallbacks(saveTabsRunnable)
         handler.postDelayed(saveTabsRunnable, Constants.SAVE_TABS_DEBOUNCE_MS)
@@ -1516,18 +1528,13 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     override fun onPause() {
         downloadPromptController?.dismissAll()
         if (::store.isInitialized) store.flush()
-        if (::web.isInitialized) {
-            tabManager.saveState(web)
-            handler.removeCallbacks(saveTabsRunnable)
-            store.saveTabs(tabManager.exportTabs())
-        }
+        persistTabsNow()
         super.onPause()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         if (::web.isInitialized) {
-            tabManager.saveState(web)
-            store.saveTabs(tabManager.exportTabs())
+            persistTabsNow()
             web.saveState(outState)
         }
         super.onSaveInstanceState(outState)
@@ -1552,6 +1559,8 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     }
 
     override fun onDestroy() {
+        // Bảo toàn session và thumbnail trước khi giải phóng Bitmap/WebView.
+        persistTabsNow()
         isActivityDestroyed = true
         downloadPromptController?.dismissAll()
         downloadPromptController = null
