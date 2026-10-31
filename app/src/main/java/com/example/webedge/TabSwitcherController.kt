@@ -29,6 +29,11 @@ import androidx.core.view.WindowCompat
 import eightbitlab.com.blurview.BlurTarget
 
 /** UI đa tab tách riêng khỏi Activity để MainActivity tập trung điều phối trình duyệt. */
+// Độ "trong" của nền menu tab (0–255). Số càng nhỏ thì càng trong, nhìn rõ trang phía sau.
+private const val TAB_BG_WHITE = 10   // lớp phủ trắng trên nền mờ (bản cũ: 68)
+private const val TAB_BG_TINT = 0     // lớp phủ màu hồng nhạt thêm (bản cũ: 54, 0 = bỏ hẳn)
+private const val TAB_TOP_FADE = 40   // dải mờ dần dưới thanh trạng thái (bản cũ: 112)
+
 class TabSwitcherController(
     private val activity: ComponentActivity,
     private val tabManager: TabManager,
@@ -216,18 +221,23 @@ class TabSwitcherController(
 
         val dialogBlur = GlassSystem.createBlurView(
             activity, blurTarget, GlassSystem.Preset.TABS_DIALOG,
-            activity.resources.displayMetrics.density, false
+            activity.resources.displayMetrics.density, false,
+            overlayColorOverride = Color.argb(TAB_BG_WHITE, 255, 255, 255)
         ).apply {
+            // Nền menu tab phủ cả màn hình nên không cần viền; bỏ viền để khỏi có khung xám quanh màn hình.
+            background = GradientDrawable().apply { setColor(Color.TRANSPARENT) }
             isClickable = false
             isFocusable = false
         }
         container.addView(dialogBlur, FrameLayout.LayoutParams(-1, -1))
 
         // A restrained translucent tint preserves the live blur instead of masking it.
-        container.addView(View(activity).apply {
-            setBackgroundColor(Color.argb(54, 249, 243, 248))
-            isClickable = false
-        }, FrameLayout.LayoutParams(-1, -1))
+        if (TAB_BG_TINT > 0) {
+            container.addView(View(activity).apply {
+                setBackgroundColor(Color.argb(TAB_BG_TINT, 249, 243, 248))
+                isClickable = false
+            }, FrameLayout.LayoutParams(-1, -1))
+        }
 
         // Lưới thẻ toàn màn hình: thẻ cuộn dưới header/status bar/thanh đáy thay vì bị cắt cứng.
         val cardsTarget = FrameLayout(activity).apply {
@@ -236,21 +246,17 @@ class TabSwitcherController(
         }
         container.addView(cardsTarget, FrameLayout.LayoutParams(-1, -1))
 
-        // Dải Liquid Glass cố định ở đầu MenuTabs: blur thật nội dung phía sau,
-        // giống lớp kính dưới status bar khi duyệt web. Giữ tint rất nhẹ để ảnh/nền
-        // vẫn nhìn xuyên qua; header và chữ được vẽ phía trên lớp kính.
-        val headerBlur = GlassSystem.createBlurView(
-            activity,
-            blurTarget,
-            GlassSystem.Preset.TABS_DIALOG,
-            activity.resources.displayMetrics.density,
-            isNight,
-            Color.argb(28, 249, 243, 248)
-        ).apply {
+        // Lớp mờ dần trên status bar, cùng cơ chế với lớp mờ trên cùng của trình duyệt (topFade):
+        // gradient đậm ở mép trên rồi tan dần, nên thẻ cuộn lên chỉ mờ đi chứ không bị cắt cạnh cứng.
+        val statusFade = View(activity).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.argb(TAB_TOP_FADE, 249, 243, 248), Color.argb(0, 249, 243, 248))
+            )
             isClickable = false
             isFocusable = false
         }
-        container.addView(headerBlur, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
+        container.addView(statusFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
 
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -524,13 +530,6 @@ class TabSwitcherController(
         root.addView(bottomBar)
 
         header.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, _ ->
-            // Header bottom đã bao gồm system-bar inset trong padding của root.
-            // Đồng bộ chiều cao lớp blur để nó kết thúc ngay dưới dòng tiêu đề.
-            val blurLp = headerBlur.layoutParams as FrameLayout.LayoutParams
-            if (blurLp.height != bottom) {
-                blurLp.height = bottom
-                headerBlur.layoutParams = blurLp
-            }
             scroll.post {
                 val top = bottom + dp(2)
                 if (scroll.paddingTop != top) scroll.setPadding(0, top, 0, scroll.paddingBottom)
@@ -546,11 +545,9 @@ class TabSwitcherController(
         // ✅ BƯỚC 6: Bỏ hàm đệ quy invalidateAll, chỉ vẽ lại lớp blur và container
         refreshBlur = {
             blurTarget.invalidate()
-            headerBlur.invalidate()
             container.invalidate()
             container.postDelayed({
                 blurTarget.invalidate()
-                headerBlur.invalidate()
                 container.invalidate()
             }, 200)
         }
@@ -567,6 +564,9 @@ class TabSwitcherController(
             // Nền bảng tab sáng nên icon/đồng hồ status bar phải tối để đọc được.
             WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
             window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+                (statusFade.layoutParams as FrameLayout.LayoutParams).height =
+                    insets.systemWindowInsetTop + dp(16)
+                statusFade.requestLayout()
                 root.setPadding(dp(12), insets.systemWindowInsetTop + dp(8), dp(12), insets.systemWindowInsetBottom + dp(8))
                 view.onApplyWindowInsets(insets)
             }
