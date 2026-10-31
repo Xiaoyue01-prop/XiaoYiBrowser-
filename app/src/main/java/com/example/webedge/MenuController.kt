@@ -593,10 +593,11 @@ class MenuController(
         showPanel(p)
     }
 
+
     private fun permLabel(state: PermissionState): String = when (state) {
-        PermissionState.ALLOW -> "Đã cho phép"
-        PermissionState.DENY  -> "Đã chặn"
-        PermissionState.ASK   -> "Hỏi khi sử dụng"
+        PermissionState.ALLOW -> "Luôn cho phép"
+        PermissionState.DENY  -> "Không được phép"
+        PermissionState.ASK   -> "Hỏi lại mỗi lần"
     }
 
     private fun currentSiteLabel(): String {
@@ -694,12 +695,6 @@ class MenuController(
         p.body.addView(note)
         addButtons(p, null, panelButton("Xong", accent) { showSettings() })
         showPanel(p)
-    }
-
-    private fun permLabel(state: PermissionState): String = when (state) {
-        PermissionState.ALLOW -> "Luôn cho phép"
-        PermissionState.DENY  -> "Không được phép"
-        PermissionState.ASK   -> "Hỏi lại mỗi lần"
     }
 
     private fun showPermissionChoice(label: String, kind: String, origin: String?, current: PermissionState) {
