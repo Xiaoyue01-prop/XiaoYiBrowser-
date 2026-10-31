@@ -615,11 +615,14 @@ class MenuController(
         val p = makePanel("Quyền trang web", null, 320) { showSettings() }
         val site = currentSiteLabel()
 
-        fun addInfoRow(label: String, value: String) {
+        fun addPermissionRow(label: String, state: PermissionState, onClick: () -> Unit) {
             val row = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(20), dp(10), dp(20), dp(10))
+                setBackgroundResource(ripple())
+                isClickable = true
+                isFocusable = true
             }
             val name = TextView(activity).apply {
                 text = label
@@ -629,11 +632,13 @@ class MenuController(
             }
             row.addView(name, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val status = TextView(activity).apply {
-                text = value
+                text = permLabel(state)
                 textSize = 13f
                 setTextColor(Color.DKGRAY)
             }
             row.addView(status)
+            row.setOnClickListener { onClick() }
+            AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
             p.body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         }
 
@@ -645,10 +650,20 @@ class MenuController(
             setPadding(dp(20), dp(12), dp(20), dp(8))
         }
         p.body.addView(heading)
+
         val originKey = origin ?: ""
-        addInfoRow("Camera", permLabel(store.getMediaPermission(originKey)))
-        addInfoRow("Micro",  permLabel(store.getMediaPermission(originKey)))
-        addInfoRow("Vị trí", permLabel(store.getGeoPermission(originKey)))
+        val mediaState = store.getMediaPermission(originKey)
+        val geoState = store.getGeoPermission(originKey)
+
+        addPermissionRow("Camera", mediaState) {
+            showPermissionChoice("Camera", "media", origin, mediaState)
+        }
+        addPermissionRow("Micro", mediaState) {
+            showPermissionChoice("Micro", "media", origin, mediaState)
+        }
+        addPermissionRow("Vị trí", geoState) {
+            showPermissionChoice("Vị trí", "geo", origin, geoState)
+        }
 
         val reset = TextView(activity).apply {
             text = "Đặt lại quyền trang web"
@@ -670,15 +685,75 @@ class MenuController(
             }
         }
         p.body.addView(reset, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)))
-
         val note = TextView(activity).apply {
-            text = "Camera và micro sẽ tiếp tục hỏi xác nhận khi website yêu cầu. Quyền vị trí được quản lý theo website."
+            text = "Chọn quyền cho từng website. Lựa chọn sẽ được ghi nhớ cho những lần sau."
             textSize = 12f
             setTextColor(Color.DKGRAY)
             setPadding(dp(20), dp(4), dp(20), dp(12))
         }
         p.body.addView(note)
         addButtons(p, null, panelButton("Xong", accent) { showSettings() })
+        showPanel(p)
+    }
+
+    private fun permLabel(state: PermissionState): String = when (state) {
+        PermissionState.ALLOW -> "Luôn cho phép"
+        PermissionState.DENY  -> "Không được phép"
+        PermissionState.ASK   -> "Hỏi lại mỗi lần"
+    }
+
+    private fun showPermissionChoice(label: String, kind: String, origin: String?, current: PermissionState) {
+        val p = makePanel(label, null, 320) { showSitePermissions() }
+        val rp = ripple()
+        val options = listOf(
+            Triple("Không được phép", PermissionState.DENY, "Chặn hoàn toàn quyền này"),
+            Triple("Hỏi lại mỗi lần dùng", PermissionState.ASK, "Hỏi mỗi khi trang web yêu cầu"),
+            Triple("Luôn cho phép", PermissionState.ALLOW, "Tự động cấp quyền khi được yêu cầu")
+        )
+        for ((title, state, desc) in options) {
+            val r = LinearLayout(activity)
+            r.orientation = LinearLayout.VERTICAL
+            r.gravity = Gravity.CENTER_VERTICAL
+            r.setPadding(dp(22), dp(8), dp(22), dp(8))
+            r.setBackgroundResource(rp)
+            val titleRow = LinearLayout(activity)
+            titleRow.orientation = LinearLayout.HORIZONTAL
+            titleRow.gravity = Gravity.CENTER_VERTICAL
+            val t = TextView(activity)
+            t.text = title
+            t.textSize = 15f
+            stylePrimary(t)
+            titleRow.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (current == state) {
+                val ic = ImageView(activity)
+                ic.setImageDrawable(PathIcon(Icons.CHECK, accent))
+                titleRow.addView(ic, LinearLayout.LayoutParams(dp(22), dp(22)))
+            }
+            r.addView(titleRow)
+            val d = TextView(activity)
+            d.text = desc
+            d.textSize = 12f
+            styleSecondary(d)
+            r.addView(d)
+            r.setOnClickListener {
+                if (origin == null) {
+                    host.toast("Không xác định được website hiện tại")
+                } else {
+                    when (kind) {
+                        "media" -> store.setMediaPermission(origin, state)
+                        "geo"   -> store.setGeoPermission(origin, state)
+                    }
+                    if (state == PermissionState.DENY && kind == "geo") {
+                        GeolocationPermissions.getInstance().clear(origin)
+                    }
+                    host.toast("Đã cập nhật quyền")
+                }
+                showSitePermissions()
+            }
+            AnimationSystem.press(r, Constants.PRESS_SCALE_ROW)
+            p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        addButtons(p, null, panelButton("Xong", accent) { showSitePermissions() })
         showPanel(p)
     }
 
