@@ -86,7 +86,8 @@ class DownloadPromptController(
                 blurTarget,
                 GlassSystem.Preset.TOAST,
                 density,
-                isNight
+                isNight,
+                rim = false
             ).apply {
                 isClickable = false
                 isFocusable = false

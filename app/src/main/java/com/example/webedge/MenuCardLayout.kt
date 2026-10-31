@@ -10,7 +10,11 @@ import android.widget.FrameLayout
  */
 class MenuCardLayout(context: Context) : FrameLayout(context) {
 
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    /** Chiều cao tối đa của thẻ (px); nội dung dài hơn thì danh sách bên trong tự co lại và cuộn. */
+    var maxHeightPx: Int = Int.MAX_VALUE
+
+    override fun onMeasure(widthMeasureSpec: Int, rawHeightSpec: Int) {
+        val heightMeasureSpec = capHeight(rawHeightSpec)
         var contentWidth = 0
         var contentHeight = 0
         for (i in 1 until childCount) {
@@ -32,6 +36,15 @@ class MenuCardLayout(context: Context) : FrameLayout(context) {
             MeasureSpec.makeMeasureSpec(measuredWidth, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(measuredHeight, MeasureSpec.EXACTLY)
         )
+    }
+
+    private fun capHeight(spec: Int): Int {
+        val mode = MeasureSpec.getMode(spec)
+        val size = MeasureSpec.getSize(spec)
+        return when (mode) {
+            MeasureSpec.UNSPECIFIED -> MeasureSpec.makeMeasureSpec(maxHeightPx, MeasureSpec.AT_MOST)
+            else -> MeasureSpec.makeMeasureSpec(minOf(size, maxHeightPx), MeasureSpec.AT_MOST)
+        }
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {

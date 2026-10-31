@@ -119,6 +119,7 @@ class MenuController(
         layer.setOnClickListener { close() }
 
         val card = MenuCardLayout(activity).apply {
+            maxHeightPx = (activity.resources.displayMetrics.heightPixels * Constants.MENU_MAX_HEIGHT_FRACTION).toInt()
             // Nền kính dự phòng + outline bo góc để menu không thành trong suốt
             // nếu BlurView chưa render kịp trong lần layout đầu tiên.
             background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight)
@@ -135,7 +136,8 @@ class MenuController(
             blurTarget,
             GlassSystem.Preset.MENU_CARD,
             d,
-            false
+            false,
+            rim = false
         )
         glass.isClickable = false
         glass.isFocusable = false
@@ -380,13 +382,15 @@ class MenuController(
         val head = LinearLayout(activity)
         head.orientation = LinearLayout.HORIZONTAL
         head.gravity = Gravity.CENTER_VERTICAL
-        head.setPadding(if (onBack != null) dp(6) else dp(22), dp(12), dp(22), dp(2))
+        head.clipChildren = false
+        head.clipToPadding = false
+        head.setPadding(if (onBack != null) dp(14) else dp(22), dp(12), dp(22), dp(2))
         if (onBack != null) {
-            val back = ImageView(activity)
-            back.setImageDrawable(PathIcon(Icons.ARROW_BACK, fg))
-            back.setPadding(dp(9), dp(9), dp(9), dp(9))
+            val back = GlassSystem.createGlassIconButton(
+                activity, blurTarget, PathIcon(Icons.ARROW_BACK, fg), d, isNight, "Quay lại"
+            )
             back.setOnClickListener { onBack() }
-            AnimationSystem.press(back, Constants.PRESS_SCALE_BTN)
+            AnimationSystem.press(back, Constants.PRESS_SCALE_PILL)
             head.addView(back, LinearLayout.LayoutParams(dp(40), dp(40)))
         }
         val t = TextView(activity)
@@ -394,7 +398,7 @@ class MenuController(
         t.textSize = 18f
         stylePrimary(t)
         t.setTypeface(null, Typeface.BOLD)
-        t.setPadding(if (onBack != null) dp(4) else 0, 0, 0, 0)
+        t.setPadding(if (onBack != null) dp(12) else 0, 0, 0, 0)
         head.addView(t)
         page.addView(head)
 

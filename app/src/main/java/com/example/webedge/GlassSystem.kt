@@ -1,7 +1,17 @@
 package com.example.webedge
 
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.LinearGradient
+import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.RectF
+import android.graphics.Shader
+import android.graphics.drawable.Drawable
+import android.widget.ImageView
 import android.graphics.Rect
 import android.graphics.RenderEffect
 import android.graphics.RuntimeShader
@@ -31,9 +41,10 @@ object GlassSystem {
     private const val BLUR_OVERLAY_ALPHA = 68
     private const val FALLBACK_FILL_ALPHA = 126
 
-    // Một màu viền duy nhất cho mọi bề mặt kính. Viền trắng trên nền kính trắng bị chìm,
-    // nên dùng xám lạnh nhạt để nhìn thấy rõ mà vẫn mảnh và tinh tế.
-    private val GLASS_EDGE: Int = Color.argb(44, 90, 90, 105)
+    // Viền kính kiểu liquid glass: một vòng ngoài xám lạnh (giữ nét trên nền trắng) và một vành sáng mảnh
+    // bên trong, sáng nhất ở góc trên-trái và dưới-phải. Chỉnh độ đậm viền toàn app ở hai hằng số này.
+    private const val RIM_OUTER_DP = 1.25f
+    private const val RIM_HIGHLIGHT_DP = 0.8f
 
     enum class Preset(val radiusDp: Int, val blurRadiusDp: Float) {
         ADDRESS_BAR(28, 18f),
@@ -59,14 +70,12 @@ object GlassSystem {
         GradientDrawable().apply {
             cornerRadius = radiusDp.coerceAtLeast(0) * density
             setColor(Color.argb(FALLBACK_FILL_ALPHA, 255, 255, 255))
-            setStroke((density + 0.5f).toInt().coerceAtLeast(1), GLASS_EDGE)
         }
 
     fun createInputField(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
         GradientDrawable().apply {
             cornerRadius = radiusDp.coerceAtLeast(0) * density
             setColor(Color.argb(24, 255, 255, 255))
-            setStroke((density + 0.5f).toInt().coerceAtLeast(1), GLASS_EDGE)
         }
 
 
@@ -76,8 +85,8 @@ object GlassSystem {
             background = GradientDrawable().apply {
                 cornerRadius = 12f * density
                 setColor(Color.TRANSPARENT)
-                setStroke((density + 0.5f).toInt().coerceAtLeast(1), GLASS_EDGE)
             }
+            foreground = GlassRimDrawable(12f * density, density)
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
             setupWith(target)
@@ -85,16 +94,82 @@ object GlassSystem {
                 .setOverlayColor(Color.argb(34, 255, 255, 255))
         }
 
-    /** Viền kính mảnh vẽ đè lên nội dung (dùng khi lớp kính lớn hơn khung và bị cắt). */
-    fun createBorder(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
-        GradientDrawable().apply {
-            cornerRadius = radiusDp * density
-            setColor(Color.TRANSPARENT)
-            setStroke(
-                (density + 0.5f).toInt().coerceAtLeast(1),
-                GLASS_EDGE
+    /** Viền kính liquid glass vẽ đè lên nội dung (foreground của thẻ kính). */
+    fun createBorder(radiusDp: Int, density: Float, isNight: Boolean): Drawable =
+        GlassRimDrawable(radiusDp * density, density)
+
+    /**
+     * Viền liquid glass: vòng ngoài xám lạnh dạng gradient + vành sáng mảnh bên trong.
+     * Vẽ như một Drawable độc lập nên dùng được cho mọi bề mặt kính; phần trong để trống.
+     */
+    private class GlassRimDrawable(private val radiusPx: Float, density: Float) : Drawable() {
+        private val outerW = RIM_OUTER_DP * density
+        private val hiW = RIM_HIGHLIGHT_DP * density
+        private val outerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = outerW
+        }
+        private val hiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = hiW
+        }
+        private val rect = RectF()
+
+        override fun onBoundsChange(b: android.graphics.Rect) {
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            outerPaint.shader = LinearGradient(
+                b.left.toFloat(), b.top.toFloat(), b.left + w, b.top + h,
+                intArrayOf(
+                    Color.argb(84, 80, 80, 98),
+                    Color.argb(118, 80, 80, 98),
+                    Color.argb(84, 80, 80, 98)
+                ),
+                floatArrayOf(0f, 0.5f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            hiPaint.shader = LinearGradient(
+                b.left.toFloat(), b.top.toFloat(), b.left + w, b.top + h,
+                intArrayOf(
+                    Color.argb(245, 255, 255, 255),
+                    Color.argb(0, 255, 255, 255),
+                    Color.argb(0, 255, 255, 255),
+                    Color.argb(210, 255, 255, 255)
+                ),
+                floatArrayOf(0f, 0.38f, 0.62f, 1f),
+                Shader.TileMode.CLAMP
             )
         }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            if (b.width() <= 0 || b.height() <= 0) return
+            val o = outerW / 2f
+            rect.set(b.left + o, b.top + o, b.right - o, b.bottom - o)
+            canvas.drawRoundRect(rect, (radiusPx - o).coerceAtLeast(0f), (radiusPx - o).coerceAtLeast(0f), outerPaint)
+            val i = outerW + hiW / 2f
+            rect.set(b.left + i, b.top + i, b.right - i, b.bottom - i)
+            val ri = (radiusPx - i).coerceAtLeast(0f)
+            canvas.drawRoundRect(rect, ri, ri, hiPaint)
+        }
+
+        override fun getOutline(outline: Outline) {
+            outline.setRoundRect(bounds, radiusPx)
+        }
+
+        override fun setAlpha(alpha: Int) {
+            outerPaint.alpha = alpha
+            hiPaint.alpha = alpha
+        }
+
+        override fun setColorFilter(colorFilter: ColorFilter?) {
+            outerPaint.colorFilter = colorFilter
+            hiPaint.colorFilter = colorFilter
+        }
+
+        @Suppress("OVERRIDE_DEPRECATION")
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
 
     // ---------------- Mờ dần ở mép (kiểu Safari) ----------------
 
@@ -258,20 +333,63 @@ half4 main(float2 coord) {
         }
     }
 
-    /** Create a BlurView configured for a named glass surface. */
+    /**
+     * Nút tròn bằng kính mờ chứa một icon (ví dụ nút quay lại trong menu). Kích thước 40dp (bo tròn hẳn).
+     * Người gọi tự gắn sự kiện bấm và hiệu ứng nhấn.
+     */
+    fun createGlassIconButton(
+        context: Context,
+        target: BlurTarget,
+        icon: Drawable,
+        density: Float,
+        isNight: Boolean,
+        description: String? = null
+    ): FrameLayout {
+        val preset = Preset.TOOLBAR_BUTTON
+        val button = FrameLayout(context).apply {
+            background = create(preset, density, isNight)
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            clipToOutline = true
+            isClickable = true
+            isFocusable = true
+            contentDescription = description
+        }
+        button.addView(
+            createBlurView(context, target, preset, density, isNight).apply {
+                isClickable = false
+                isFocusable = false
+            },
+            FrameLayout.LayoutParams(-1, -1)
+        )
+        val pad = (10 * density).toInt()
+        button.addView(
+            ImageView(context).apply {
+                setImageDrawable(icon)
+                setPadding(pad, pad, pad, pad)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            FrameLayout.LayoutParams(-1, -1)
+        )
+        return button
+    }
+
+    /**
+     * Create a BlurView configured for a named glass surface.
+     * [rim] = false khi bề mặt đã có viền riêng vẽ đè bằng [createBorder] (tránh viền chồng đôi).
+     */
     fun createBlurView(
         context: Context,
         target: BlurTarget,
         preset: Preset,
         density: Float,
         isNight: Boolean,
-        overlayColorOverride: Int? = null
+        overlayColorOverride: Int? = null,
+        rim: Boolean = true
     ): BlurView {
         val shape = GradientDrawable().apply {
             cornerRadius = preset.radiusDp * density
             setColor(Color.TRANSPARENT)
-            val strokeColor = GLASS_EDGE
-            setStroke((density + 0.5f).toInt().coerceAtLeast(1), strokeColor)
         }
 
         val overlayColor = overlayColorOverride ?: Color.argb(
@@ -280,6 +398,9 @@ half4 main(float2 coord) {
 
         return BlurView(context).apply {
             background = shape
+            if (rim && preset.radiusDp > 0) {
+                foreground = GlassRimDrawable(preset.radiusDp * density, density)
+            }
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
             setupWith(target)

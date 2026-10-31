@@ -126,7 +126,7 @@ class GlassDialogController(
         }
         card.addView(
             GlassSystem.createBlurView(
-                activity, blurTarget, GlassSystem.Preset.MENU_CARD, d, isNight
+                activity, blurTarget, GlassSystem.Preset.MENU_CARD, d, isNight, rim = false
             ).apply {
                 isClickable = false
                 isFocusable = false

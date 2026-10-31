@@ -133,7 +133,7 @@ class TabSwitcherController(
         // parent remain unclipped so the press animation can expand smoothly.
         button.addView(GlassSystem.createBlurView(
             activity, blurTarget, GlassSystem.Preset.TABS_BUTTON,
-            activity.resources.displayMetrics.density, false
+            activity.resources.displayMetrics.density, false, rim = false
         ).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -167,7 +167,7 @@ class TabSwitcherController(
         }
         frame.addView(GlassSystem.createBlurView(
             activity, blurTarget, GlassSystem.Preset.TABS_BUTTON,
-            activity.resources.displayMetrics.density, false
+            activity.resources.displayMetrics.density, false, rim = false
         ).apply {
             isClickable = false
             isFocusable = false

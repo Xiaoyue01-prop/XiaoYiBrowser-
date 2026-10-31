@@ -23,6 +23,9 @@ object Constants {
     // === Kích thước chung ===
     const val BOTTOM_BAR_HEIGHT_DP = 40
 
+    // Chiều cao tối đa của thẻ menu, tính theo tỉ lệ chiều cao màn hình (vượt thì danh sách bên trong cuộn).
+    const val MENU_MAX_HEIGHT_FRACTION = 0.70f
+
     // === Thời gian / giới hạn ===
     const val SUGGEST_DEBOUNCE_MS = 150L
     const val SUGGEST_MAX_ITEMS = 6
