@@ -80,10 +80,12 @@ class MainActivity : ComponentActivity() {
     private var previousRequestedOrientation: Int? = null
     private var popupDialog: Dialog? = null
     private var popupWebView: WebView? = null
-    private var pendingWebPermissionRequest: PermissionRequest? = null
-    private var pendingWebPermissionResources: Array<String> = emptyArray()
-    private var pendingGeoOrigin: String? = null
-    private var pendingGeoCallback: GeolocationPermissions.Callback? = null
+    private val webPermissions = WebPermissionController(
+        activity = this,
+        dialog = { glassDialog },
+        isActivityDestroyed = { isActivityDestroyed },
+        isPopupShowing = { popupDialog?.isShowing == true }
+    )
     private lateinit var blurTarget: BlurTarget
     private lateinit var urlPillFrame: FrameLayout
     private lateinit var urlPillBlur: BlurView
@@ -203,126 +205,6 @@ class MainActivity : ComponentActivity() {
 }
 
 
-                private val webPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-        ) { _ -> finishWebPermissionRequest() }
-        private val geoPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-        ) { _ -> finishGeoPermissionRequest() }
-        private fun hasRuntimePermission(permission: String): Boolean =
-        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
-        private fun requestWebPermissions(request: PermissionRequest) {
-        if (isActivityDestroyed) {
-        request.deny()
-        return
-        }
-        val supported = request.resources.filter {
-        it == PermissionRequest.RESOURCE_VIDEO_CAPTURE ||
-        it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
-        }.toTypedArray()
-        if (supported.isEmpty()) {
-        request.deny()
-        return
-        }
-        pendingWebPermissionRequest?.let { previous ->
-        if (previous !== request) previous.deny()
-        }
-        pendingWebPermissionRequest = request
-        pendingWebPermissionResources = supported
-        val requestedLabels = buildList {
-        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in supported) add("camera")
-        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in supported) add("micro")
-        }.joinToString(" và ")
-        val origin = request.origin.host ?: request.origin.toString()
-        // Hộp thoại kính mờ nằm trong cửa sổ chính; cửa sổ popup đăng nhập sẽ che nó nên từ chối luôn.
-        if (popupDialog?.isShowing == true) {
-        denyPendingWebPermission()
-        return
-        }
-        glassDialog.show(
-        title = "Quyền trang web",
-        message = "$origin muốn sử dụng $requestedLabels. Chỉ cho phép nếu bạn tin tưởng trang này.",
-        positive = "Cho phép",
-        negative = "Từ chối"
-        ) { allowed, _ ->
-        if (!allowed) {
-        denyPendingWebPermission()
-        } else {
-        val missing = mutableListOf<String>()
-        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in supported &&
-        !hasRuntimePermission(Manifest.permission.CAMERA)) {
-        missing.add(Manifest.permission.CAMERA)
-        }
-        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in supported &&
-        !hasRuntimePermission(Manifest.permission.RECORD_AUDIO)) {
-        missing.add(Manifest.permission.RECORD_AUDIO)
-        }
-        if (missing.isEmpty()) finishWebPermissionRequest()
-        else webPermissionLauncher.launch(missing.toTypedArray())
-        }
-        }
-        }
-        private fun finishWebPermissionRequest() {
-        val request = pendingWebPermissionRequest ?: return
-        val resources = pendingWebPermissionResources
-        pendingWebPermissionRequest = null
-        pendingWebPermissionResources = emptyArray()
-        val allowed = resources.filter {
-        when (it) {
-        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> hasRuntimePermission(Manifest.permission.CAMERA)
-        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> hasRuntimePermission(Manifest.permission.RECORD_AUDIO)
-        else -> false
-        }
-        }.toTypedArray()
-        runCatching {
-        if (allowed.isEmpty()) request.deny() else request.grant(allowed)
-        }
-        }
-        private fun denyPendingWebPermission() {
-        val request = pendingWebPermissionRequest ?: return
-        pendingWebPermissionRequest = null
-        pendingWebPermissionResources = emptyArray()
-        runCatching { request.deny() }
-        }
-        private fun requestWebGeolocation(origin: String, callback: GeolocationPermissions.Callback) {
-        if (isActivityDestroyed) {
-        callback.invoke(origin, false, false)
-        return
-        }
-        val host = runCatching { Uri.parse(origin).host }.getOrNull() ?: origin
-        if (popupDialog?.isShowing == true) {
-        callback.invoke(origin, false, false)
-        return
-        }
-        glassDialog.show(
-        title = "Vị trí của bạn",
-        message = "$host muốn truy cập vị trí của bạn. Vị trí chỉ được cấp cho yêu cầu này.",
-        positive = "Cho phép",
-        negative = "Từ chối"
-        ) { allowed, _ ->
-        if (!allowed) {
-        callback.invoke(origin, false, false)
-        } else {
-        pendingGeoOrigin = origin
-        pendingGeoCallback = callback
-        val missing = listOf(
-        Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.ACCESS_FINE_LOCATION
-        ).filterNot(::hasRuntimePermission)
-        if (missing.isEmpty()) finishGeoPermissionRequest()
-        else geoPermissionLauncher.launch(missing.toTypedArray())
-        }
-        }
-        }
-        private fun finishGeoPermissionRequest() {
-        val origin = pendingGeoOrigin ?: return
-        val callback = pendingGeoCallback
-        pendingGeoOrigin = null
-        pendingGeoCallback = null
-        val allowed = hasRuntimePermission(Manifest.permission.ACCESS_FINE_LOCATION) ||
-        hasRuntimePermission(Manifest.permission.ACCESS_COARSE_LOCATION)
-        callback?.invoke(origin, allowed, false)
-        }
         private fun createPopupWindow(resultMsg: Message?): Boolean {
         if (popupWebView != null) return false
         val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
@@ -533,7 +415,7 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
             view: WebView,
             request: WebResourceRequest
         ): WebResourceResponse? {
-            if (store.adBlockEnabled && AdBlocker.shouldBlock(request.url.toString(), request.isForMainFrame)) {
+            if (store.adBlockEnabled && AdBlocker.shouldBlock(request)) {
                 return AdBlocker.createEmptyResponse()
             }
             return super.shouldInterceptRequest(view, request)
@@ -616,10 +498,10 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
         return true
         }
         override fun onPermissionRequest(request: PermissionRequest) {
-        runOnUiThread { requestWebPermissions(request) }
+        runOnUiThread { webPermissions.requestMedia(request) }
         }
         override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
-        runOnUiThread { requestWebGeolocation(origin, callback) }
+        runOnUiThread { webPermissions.requestGeolocation(origin, callback) }
         }
 
 override fun onProgressChanged(view: WebView, newProgress: Int) {
@@ -1157,7 +1039,9 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             val savedUrl = activeTab?.url.orEmpty()
             val startUrl = savedUrl.ifBlank { store.homeUrl }
             currentUrl = startUrl
-            web.loadUrl(startUrl)
+            // Mở từ app khác (Summit là trình duyệt mặc định): mở link ở tab mới, khỏi tải trang chủ rồi bỏ.
+            val linkFromOtherApp = incomingLink(intent)
+            if (linkFromOtherApp != null) openLinkInNewTab(linkFromOtherApp) else web.loadUrl(startUrl)
         } else {
             val restored = runCatching { web.restoreState(savedInstanceState) }.getOrNull()
             if (restored == null) {
@@ -1537,6 +1421,27 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         activateTab(tab)
     }
 
+    /** Link http/https do app khác gửi tới (bấm link trong Telegram, Messages...). */
+    private fun incomingLink(source: Intent?): String? {
+        val received = source ?: return null
+        if (received.action != Intent.ACTION_VIEW) return null
+        val scheme = received.data?.scheme?.lowercase(Locale.ROOT)
+        return if (scheme == "http" || scheme == "https") received.dataString else null
+    }
+
+    private fun openLinkInNewTab(url: String) {
+        captureActiveTab()
+        val tab = tabManager.addNew(url = url, title = url)
+        activateTab(tab)
+    }
+
+    // launchMode=singleTask: link mới tới khi app đang chạy sẽ vào đây thay vì mở thêm một cửa sổ.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        incomingLink(intent)?.let(::openLinkInNewTab)
+    }
+
     private fun closeBrowserTab(tab: TabManager.Tab) {
         val wasActive = tab.isActive
         if (wasActive) captureActiveTab()
@@ -1652,10 +1557,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         downloadPromptController = null
         // Trả lời mọi hộp thoại còn treo (JsResult, quyền) trước khi hủy WebView.
         if (::glassDialog.isInitialized) glassDialog.cancelAll()
-        denyPendingWebPermission()
-        pendingGeoCallback?.invoke(pendingGeoOrigin.orEmpty(), false, false)
-        pendingGeoCallback = null
-        pendingGeoOrigin = null
+        webPermissions.cancelAll()
         popupDialog?.dismiss()
         if (customVideoView != null) exitFullscreenView()
         // === CLEANUP DE TRANH MEMORY LEAK ===
