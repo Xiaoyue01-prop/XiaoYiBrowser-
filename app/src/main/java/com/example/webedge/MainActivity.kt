@@ -425,17 +425,6 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
             tabManager.updateForWebView(view, url, view.title ?: url)
             store.addHistory(view.title ?: "", url)
             if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
-            // WebView có thể báo onPageFinished trước khi khung hình cuối cùng được vẽ.
-            // Chụp trễ một nhịp để tránh lưu thumbnail trắng/đang tải; áp dụng cả tab nền.
-            view.postDelayed({
-                if (!isActivityDestroyed &&
-                    view.progress >= 100 &&
-                    view.url == url
-                ) {
-                    tabManager.saveState(view)
-                }
-            }, 1000L)
-
             if (view !== web) return
             injectInsets()
             AnimationSystem.fade(view, 1f)
@@ -1148,7 +1137,25 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         web.evaluateJavascript(js, null)
         web.evaluateJavascript(
             EDGE_JS.replace("%INSET%", (insetTop / d).toInt().toString())
-                .replace("%MODE%", if (edge) "1" else "0"),
+                .replace("%MODE%", if (edge) "1" else "0")
+                .replace("%BOTTOM%", bottomReserveCss().toString()),
+            null
+        )
+    }
+
+    // Khoảng (px CSS) từ mép dưới WebView lên tới đỉnh thanh địa chỉ nổi. Các thanh cố định ở đáy trang
+    // được nâng lên đúng khoảng này để không bị thanh địa chỉ đè lên, giống Safari.
+    private fun bottomReserveCss(): Int {
+        if (!::bar.isInitialized || bar.visibility != View.VISIBLE || customVideoView != null) return 0
+        val half = dp(BOTTOM_BAR_HEIGHT_DP) / 2f
+        val barTop = maxOf(insetBottom, imeBottom) + dp(10) + half + half * (if (barHidden) 0.62f else 1f) + dp(6)
+        return (maxOf(0f, barTop - imeBottom) / d).toInt()
+    }
+
+    private fun pushBottomReserve() {
+        if (!::web.isInitialized) return
+        web.evaluateJavascript(
+            "window.__edgeBottom=" + bottomReserveCss() + ";window.__edgeLift&&window.__edgeLift();",
             null
         )
     }
@@ -1172,6 +1179,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         AnimationSystem.fade(reloadBtn, if (hide) 0f else 1f, AnimationSystem.SMOOTH)
         AnimationSystem.fade(bottomFade, if (hide) 0.35f else 1f, AnimationSystem.SMOOTH)
         syncOrbMenuVisibility()
+        pushBottomReserve()
     }
 
     // OrbMenu có trạng thái riêng, không suy diễn từ alpha của nút quay lại:
@@ -1193,6 +1201,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         bar.visibility = if (findOn || pageTyping) View.GONE else View.VISIBLE
         bottomFade.visibility = if (pageTyping) View.GONE else View.VISIBLE
         syncOrbMenuVisibility()
+        pushBottomReserve()
     }
 
     private fun backAlpha(): Float = if (web.canGoBack()) 1f else 0.3f
@@ -1457,7 +1466,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         val wasActive = tab.isActive
         if (wasActive) captureActiveTab()
         val removed = tabManager.close(tab.id) ?: return
-        store.deleteTabThumbnail(removed.id)
         if (wasActive) tabManager.getActive()?.let(::activateTab)
         removed.webView?.let { view -> if (view !== web) destroyTabWebView(view) }
     }
@@ -1503,17 +1511,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     // Gom nhiều thay đổi liên tiếp (url/title đổi liên tục khi tải trang) thành một lần ghi.
     private val saveTabsRunnable = Runnable { store.saveTabs(tabManager.exportTabs()) }
 
-    private fun persistTabsNow() {
-        if (!::store.isInitialized || !::tabManager.isInitialized) return
-        handler.removeCallbacks(saveTabsRunnable)
-        if (::web.isInitialized) {
-            tabManager.saveState(web)
-            // saveState thông báo listener và đặt lịch debounce; lần ghi đồng bộ bên dưới đã thay thế nó.
-            handler.removeCallbacks(saveTabsRunnable)
-        }
-        store.saveTabs(tabManager.exportTabs())
-    }
-
     private fun scheduleSaveTabs() {
         handler.removeCallbacks(saveTabsRunnable)
         handler.postDelayed(saveTabsRunnable, Constants.SAVE_TABS_DEBOUNCE_MS)
@@ -1539,13 +1536,18 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     override fun onPause() {
         downloadPromptController?.dismissAll()
         if (::store.isInitialized) store.flush()
-        persistTabsNow()
+        if (::web.isInitialized) {
+            tabManager.saveState(web)
+            handler.removeCallbacks(saveTabsRunnable)
+            store.saveTabs(tabManager.exportTabs())
+        }
         super.onPause()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         if (::web.isInitialized) {
-            persistTabsNow()
+            tabManager.saveState(web)
+            store.saveTabs(tabManager.exportTabs())
             web.saveState(outState)
         }
         super.onSaveInstanceState(outState)
@@ -1570,8 +1572,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     }
 
     override fun onDestroy() {
-        // Bảo toàn session và thumbnail trước khi giải phóng Bitmap/WebView.
-        persistTabsNow()
         isActivityDestroyed = true
         downloadPromptController?.dismissAll()
         downloadPromptController = null

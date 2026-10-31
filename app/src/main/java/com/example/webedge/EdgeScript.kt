@@ -8,6 +8,7 @@ internal const val EDGE_JS = """
 (function(){
 window.__edgeInset = %INSET%;
 window.__edgeMode = %MODE%;
+window.__edgeBottom = %BOTTOM%;
 if (window.__edgeStarted) { if (window.__edgeRun) window.__edgeRun(); return; }
 window.__edgeStarted = true;
 
@@ -157,12 +158,125 @@ function sched(){
   });
 }
 
-window.__edgeRun = run;
+
+// ---- Nâng các thanh cố định ở đáy trang lên trên thanh địa chỉ nổi (giống Safari) ----
+var lifted = [];
+var liftTimer = null, liftLast = 0;
+
+function fixedOf(el){
+  while (el && el !== document.documentElement && el !== document.body) {
+    try {
+      var s = getComputedStyle(el);
+      if (s.position === 'fixed' && s.display !== 'none' && parseFloat(s.opacity) >= 0.1) return el;
+    } catch (e) { return null; }
+    el = el.parentElement;
+  }
+  return null;
+}
+
+function findRec(el){
+  for (var i = 0; i < lifted.length; i++) { if (lifted[i].el === el) return lifted[i]; }
+  return null;
+}
+
+function liftEl(el){
+  var cs = getComputedStyle(el);
+  var base = '';
+  var durs = (cs.transitionDuration || '0s').split(',');
+  for (var i = 0; i < durs.length; i++) { if (parseFloat(durs[i]) > 0) { base = cs.transition + ', '; break; } }
+  lifted.push({
+    el: el,
+    cur: 0,
+    savedTranslate: el.style.getPropertyValue('translate'),
+    savedTransition: el.style.getPropertyValue('transition')
+  });
+  el.style.setProperty('transition', base + 'translate 250ms cubic-bezier(0.2, 0.8, 0.2, 1)', 'important');
+}
+
+function release(rec){
+  var el = rec.el;
+  try {
+    if (rec.savedTranslate) el.style.setProperty('translate', rec.savedTranslate);
+    else el.style.removeProperty('translate');
+    if (rec.savedTransition) el.style.setProperty('transition', rec.savedTransition);
+    else el.style.removeProperty('transition');
+  } catch (e) {}
+}
+
+function applyLift(){
+  var R = window.__edgeBottom || 0;
+  var want = R > 0 ? ('0px -' + R + 'px') : '';
+  for (var i = 0; i < lifted.length; i++) {
+    var rec = lifted[i];
+    rec.cur = R;
+    var now = rec.el.style.getPropertyValue('translate');
+    if (R > 0) {
+      if (now !== want) rec.el.style.setProperty('translate', want, 'important');
+    } else if (rec.savedTranslate) {
+      if (now !== rec.savedTranslate) rec.el.style.setProperty('translate', rec.savedTranslate);
+    } else if (now) {
+      rec.el.style.removeProperty('translate');
+    }
+  }
+}
+
+function runLift(){
+  var R = window.__edgeBottom || 0;
+  var H = window.innerHeight, W = window.innerWidth;
+  var zone = 200;
+  var keep = [];
+  for (var i = 0; i < lifted.length; i++) {
+    var rec = lifted[i], ok = false;
+    try {
+      if (rec.el.isConnected) {
+        var r0 = rec.el.getBoundingClientRect();
+        var s0 = getComputedStyle(rec.el);
+        if (r0.width > 1 && r0.height > 1 && s0.position === 'fixed' && s0.display !== 'none' &&
+            r0.bottom + rec.cur >= H - zone && r0.height < H * 0.45) ok = true;
+      }
+    } catch (e) {}
+    if (ok) keep.push(rec); else release(rec);
+  }
+  lifted = keep;
+  if (R > 0 && document.elementsFromPoint) {
+    var ys = [H - 4, H - 30, H - 70, H - 120, H - 170];
+    var xs = [0.08, 0.3, 0.5, 0.7, 0.92];
+    for (var a = 0; a < ys.length; a++) {
+      for (var b = 0; b < xs.length; b++) {
+        var stack = document.elementsFromPoint(W * xs[b], ys[a]);
+        for (var c = 0; c < stack.length; c++) {
+          var f = fixedOf(stack[c]);
+          if (!f) continue;
+          if (findRec(f)) break;
+          var covered = false;
+          for (var k = 0; k < lifted.length; k++) { if (lifted[k].el.contains(f)) { covered = true; break; } }
+          if (covered) break;
+          var r = f.getBoundingClientRect();
+          if (r.height >= H * 0.45 || r.width < 1 || r.top < H * 0.4) break;
+          liftEl(f);
+          break;
+        }
+      }
+    }
+  }
+  applyLift();
+}
+
+function schedLift(){
+  if (liftTimer) return;
+  var wait = Math.max(0, 250 - (Date.now() - liftLast));
+  liftTimer = setTimeout(function(){ liftTimer = null; liftLast = Date.now(); runLift(); }, wait);
+}
+
+function schedAll(){ sched(); schedLift(); }
+
+window.__edgeRun = function(){ run(); runLift(); };
+window.__edgeLift = function(){ runLift(); };
 window.addEventListener('scroll', sched, {passive: true});
-window.addEventListener('resize', sched);
+window.addEventListener('resize', schedAll);
 
 try {
-  var observer = new MutationObserver(sched);
+  var observer = new MutationObserver(schedAll);
   observer.observe(document.documentElement,
     {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style']});
   window.addEventListener('beforeunload', function(){
@@ -171,9 +285,9 @@ try {
   });
 } catch (e) {}
 
-setTimeout(run, 100);
-setTimeout(run, 800);
-setTimeout(run, 2000);
-run();
+setTimeout(window.__edgeRun, 100);
+setTimeout(window.__edgeRun, 800);
+setTimeout(window.__edgeRun, 2000);
+window.__edgeRun();
 })();
 """
