@@ -641,9 +641,10 @@ class MenuController(
             setPadding(dp(20), dp(12), dp(20), dp(8))
         }
         p.body.addView(heading)
-        addInfoRow("Camera", "Hỏi khi sử dụng")
-        addInfoRow("Micro", "Hỏi khi sử dụng")
-        addInfoRow("Vị trí", "Theo quyền website")
+        val originKey = origin ?: ""
+        addInfoRow("Camera", permLabel(store.getMediaPermission(originKey)))
+        addInfoRow("Micro",  permLabel(store.getMediaPermission(originKey)))
+        addInfoRow("Vị trí", permLabel(store.getGeoPermission(originKey)))
 
         val reset = TextView(activity).apply {
             text = "Đặt lại quyền trang web"
@@ -658,7 +659,8 @@ class MenuController(
                     host.toast("Không xác định được website hiện tại")
                 } else {
                     GeolocationPermissions.getInstance().clear(origin)
-                    host.toast("Đã đặt lại quyền vị trí của $site")
+                    store.clearSitePermissions(origin)
+                    host.toast("Đã đặt lại quyền của $site")
                 }
                 showSitePermissions()
             }
