@@ -130,37 +130,45 @@ object AnimationSystem {
 
     /** Nhả tay: bật về kích thước gốc, nảy mạnh. */
     fun pressUp(view: View) = scaleTo(view, 1f, 1f, PRESS_RELEASE)
-
-    /**
-     * Gắn hiệu ứng nhấn cho [touch]; animation chạy trên [target] (mặc định chính nó).
-     * Truyền [target] khác khi view được chạm là con của khung cần nảy (vd. TextView trong nút kính).
-     * Trả false nên onClick vẫn hoạt động bình thường.
-     */
-    @SuppressLint("ClickableViewAccessibility")
-    fun attachPress(touch: View, target: View = touch, scale: Float) {
-        touch.setOnTouchListener { v, ev ->
-            when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    unclipParents(target)
-                    pressDown(target, scale)
-                }
-                MotionEvent.ACTION_UP -> {
-                    // Chạm nhanh thì spring nhấn chưa kịp tới đích: đẩy tới ~70% để lần nhả luôn nảy rõ.
-                    val mid = 1f + (scale - 1f) * 0.7f
-                    if (Math.abs(target.scaleX - 1f) < Math.abs(mid - 1f)) {
-                        target.scaleX = mid
-                        target.scaleY = mid
-                    }
-                    pressUp(target)
-                    if (ev.x >= 0f && ev.x <= v.width && ev.y >= 0f && ev.y <= v.height) {
-                        v.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                    }
-                }
-                MotionEvent.ACTION_CANCEL -> pressUp(target)
+@SuppressLint("ClickableViewAccessibility")
+fun attachPress(touch: View, target: View = touch, scale: Float) {
+    touch.setOnTouchListener { v, ev ->
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                // Bung ra từ chính điểm chạm (Spatial Awareness)
+                target.pivotX = ev.x.coerceIn(0f, target.width.toFloat())
+                target.pivotY = ev.y.coerceIn(0f, target.height.toFloat())
+                unclipParents(target)
+                pressDown(target, scale)
             }
-            false
+            MotionEvent.ACTION_UP -> {
+                // Chạm nhanh thì spring nhấn chưa kịp tới đích: đẩy tới ~70% để lần nhả luôn nảy rõ.
+                val mid = 1f + (scale - 1f) * 0.7f
+                if (Math.abs(target.scaleX - 1f) < Math.abs(mid - 1f)) {
+                    target.scaleX = mid
+                    target.scaleY = mid
+                }
+                pressUp(target)
+                // Trả pivot về giữa để không ảnh hưởng layout lần sau
+                target.post {
+                    target.pivotX = target.width / 2f
+                    target.pivotY = target.height / 2f
+                }
+                if (ev.x >= 0f && ev.x <= v.width && ev.y >= 0f && ev.y <= v.height) {
+                    v.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                pressUp(target)
+                target.post {
+                    target.pivotX = target.width / 2f
+                    target.pivotY = target.height / 2f
+                }
+            }
         }
+        false
     }
+}
 
     /** View cha mặc định cắt phần con vẽ tràn ra ngoài, làm nút phồng lên bị mất bounce. */
     private fun unclipParents(view: View) {
