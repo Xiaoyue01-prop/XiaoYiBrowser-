@@ -587,9 +587,8 @@ class MenuController(
             if (!store.autoHideBar) host.setBarHidden(false)
             showSettings()
         }
-        addRow("Xóa dữ liệu duyệt web", "", Theme.DANGER_RED) { confirmClear() }
 
-        addButtons(p, null, panelButton("Xong", accent) { close() })
+        addButtons(p, panelButton("Xóa dữ liệu app", Theme.DANGER_RED) { confirmClear() }, panelButton("Xong", accent) { close() })
         showPanel(p)
     }
 
@@ -816,9 +815,9 @@ class MenuController(
     }
 
     private fun confirmClear() {
-        val p = makePanel("Xóa dữ liệu duyệt web?", null, 320) { showSettings() }
+        val p = makePanel("Xóa dữ liệu app?", null, 320) { showSettings() }
         val msg = TextView(activity)
-        msg.text = "Xóa lịch sử, cookie, bộ nhớ đệm và dữ liệu trang web. Bạn sẽ bị đăng xuất khỏi các trang đang đăng nhập."
+        msg.text = "Xóa toàn bộ lịch sử, cookie, bộ nhớ đệm, quyền trang web đã nhớ và mọi dữ liệu khác của Summit. Hành động này không thể hoàn tác."
         msg.textSize = 14f
         styleSecondary(msg)
         msg.setPadding(dp(22), dp(4), dp(22), dp(12))
