@@ -15,6 +15,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.WebStorage
@@ -52,6 +53,9 @@ interface MenuHost {
  * Menu ba chấm: khung kính nổi phía trên nút, gồm trang chính, danh sách (dấu trang/lịch sử),
  * cài đặt và các hộp xác nhận. Mọi trang đổi ngay trong cùng một khung.
  */
+// Chiều cao (dp) dải mờ dần ở mép trên và dưới của danh sách trong menu.
+private const val EDGE_ZONE_DP = 16
+
 class MenuController(
     private val activity: Activity,
     private val root: FrameLayout,
@@ -399,13 +403,17 @@ class MenuController(
         val body = LinearLayout(activity)
         body.orientation = LinearLayout.VERTICAL
         val scroll = ScrollView(activity)
+        // Chừa một dải đệm ở trên và dưới: lúc chưa cuộn, mục đầu và mục cuối không bị mờ; cuộn tới sát mép thì mờ dần.
+        scroll.clipToPadding = false
+        scroll.setPadding(0, dp(EDGE_ZONE_DP), 0, dp(EDGE_ZONE_DP))
+        EdgeBlur.install(scroll, dp(EDGE_ZONE_DP), dp(EDGE_ZONE_DP), dp(7).toFloat(), 0f, 0.9f)
         scroll.addView(body)
         page.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         val buttons = LinearLayout(activity)
         buttons.orientation = LinearLayout.HORIZONTAL
         buttons.gravity = Gravity.CENTER_VERTICAL
-        buttons.setPadding(dp(22), dp(4), dp(22), dp(10))
+        buttons.setPadding(dp(16), dp(6), dp(16), dp(14))
         page.addView(buttons)
 
         return Panel(page, body, buttons, widthDp, onBack)
@@ -416,22 +424,35 @@ class MenuController(
         setMenuPage(p.page, p.widthDp, true)
     }
 
-    private fun panelButton(text: String, color: Int, onClick: () -> Unit): TextView {
-        val b = TextView(activity)
-        b.text = text
-        b.textSize = 15f
-        b.setTypeface(null, Typeface.BOLD)
-        b.setTextColor(color)
-        b.setPadding(0, dp(6), 0, dp(6))
+    // Mỗi nút là một viên kính mờ riêng (bo tròn, có viền), không còn là chữ trần trên nền menu.
+    private fun panelButton(text: String, color: Int, onClick: () -> Unit): View {
+        val preset = GlassSystem.Preset.TABS_BUTTON
+        val b = FrameLayout(activity)
+        b.background = GlassSystem.create(preset, d, isNight)
+        b.outlineProvider = ViewOutlineProvider.BACKGROUND
+        b.clipToOutline = true
+        val glass = GlassSystem.createBlurView(activity, blurTarget, preset, d, false)
+        glass.isClickable = false
+        glass.isFocusable = false
+        b.addView(glass, FrameLayout.LayoutParams(-1, -1))
+        val label = TextView(activity)
+        label.text = text
+        label.textSize = 15f
+        label.setTypeface(null, Typeface.BOLD)
+        label.setTextColor(color)
+        label.gravity = Gravity.CENTER
+        label.setPadding(dp(22), 0, dp(22), 0)
+        b.addView(label, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
         b.setOnClickListener { onClick() }
         AnimationSystem.press(b, Constants.PRESS_SCALE_PILL)
         return b
     }
 
-    private fun addButtons(p: Panel, left: TextView?, right: TextView) {
-        if (left != null) p.buttons.addView(left)
+    private fun addButtons(p: Panel, left: View?, right: View) {
+        val h = dp(44)
+        if (left != null) p.buttons.addView(left, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, h))
         p.buttons.addView(View(activity), LinearLayout.LayoutParams(0, 1, 1f))
-        p.buttons.addView(right)
+        p.buttons.addView(right, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, h))
     }
 
     private fun showList(title: String, key: String) {
@@ -518,7 +539,7 @@ class MenuController(
         }
 
         fill()
-        val left: TextView? = if (key == "history") {
+        val left: View? = if (key == "history") {
             panelButton("Xóa tất cả", accent) {
                 store.clearHistory()
                 showList(title, key)
