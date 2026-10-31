@@ -249,24 +249,9 @@ class MenuController(
     }
 
 
-    // ==== CÁCH CỰC ĐOAN: ép kính mờ chụp lại nền MỖI khung hình trong suốt animation ====
-    // BlurView là "máy ảnh" chụp nền theo lịch pre-draw riêng; khi thẻ menu nhún nhảy,
-    // ảnh chụp có thể trễ 1 khung hình nên lớp kính bị lệch so với viền và nội dung.
-    // Ở đây: suốt thời gian animation, mỗi frame đều bắt nền vẽ lại để kính chụp
-    // ảnh mới khớp chính xác kích thước/vị trí hiện tại của thẻ. Hết animation thì dừng.
-    private var blurSyncActive = false
-    private val blurSyncFrame = object : android.view.Choreographer.FrameCallback {
-        override fun doFrame(frameTimeNanos: Long) {
-            if (!blurSyncActive) return
-            blurTarget.invalidate()
-            android.view.Choreographer.getInstance().postFrameCallback(this)
-        }
-    }
-    private fun syncBlurFor(durationMs: Long) {
-        blurSyncActive = true
-        android.view.Choreographer.getInstance().postFrameCallback(blurSyncFrame)
-        menuCard?.postDelayed({ blurSyncActive = false }, durationMs)
-    }
+    // Kính mờ chụp lại nền mỗi khung hình trong lúc thẻ menu chuyển động (logic nằm ở GlassSystem).
+    private val blurSync = GlassSystem.BlurSync(blurTarget)
+    private fun syncBlurFor(durationMs: Long) = blurSync.hold(durationMs)
 
     private fun showMainPage(animate: Boolean = true) {
         val gapColor = Theme.gapColor(isNight)

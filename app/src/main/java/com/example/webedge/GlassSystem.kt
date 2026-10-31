@@ -6,6 +6,8 @@ import android.graphics.Rect
 import android.graphics.RenderEffect
 import android.graphics.RuntimeShader
 import android.graphics.Typeface
+import android.os.SystemClock
+import android.view.Choreographer
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
@@ -220,6 +222,40 @@ half4 main(float2 coord) {
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER)
         )
         return button
+    }
+
+    /**
+     * Ép kính mờ chụp lại nền MỖI khung hình trong lúc một bề mặt kính đang chuyển động.
+     * Dùng mốc thời gian kết thúc (gọi chồng nhau thì lấy mốc muộn nhất) và đúng một callback,
+     * nên các lần gọi liên tiếp (mở menu rồi đổi trang ngay) không cắt cụt nhau.
+     */
+    class BlurSync(private val target: View) {
+        private var until = 0L
+        private var running = false
+        private val frame = object : Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                if (SystemClock.uptimeMillis() >= until) {
+                    running = false
+                    return
+                }
+                target.invalidate()
+                Choreographer.getInstance().postFrameCallback(this)
+            }
+        }
+
+        fun hold(durationMs: Long) {
+            until = maxOf(until, SystemClock.uptimeMillis() + durationMs)
+            if (!running) {
+                running = true
+                Choreographer.getInstance().postFrameCallback(frame)
+            }
+        }
+
+        fun stop() {
+            until = 0L
+            Choreographer.getInstance().removeFrameCallback(frame)
+            running = false
+        }
     }
 
     /** Create a BlurView configured for a named glass surface. */

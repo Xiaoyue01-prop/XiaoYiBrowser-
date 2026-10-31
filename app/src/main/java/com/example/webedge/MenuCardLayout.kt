@@ -44,4 +44,21 @@ class MenuCardLayout(context: Context) : FrameLayout(context) {
             child.layout(0, 0, child.measuredWidth, child.measuredHeight)
         }
     }
+
+    /**
+     * ChangeBounds đổi khung của thẻ bằng setLeftTopRightBottom nên onMeasure/onLayout không chạy lại,
+     * còn lớp kính (loại khỏi Transition) thì đã nhảy ngay sang kích thước cuối. Kết quả: kính mờ
+     * ngắn/dài hơn thẻ trong suốt. Ở đây ép lớp kính khớp theo từng khung hình của thẻ.
+     */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        val glass = getChildAt(0) ?: return
+        if (w <= 0 || h <= 0) return
+        if (glass.width == w && glass.height == h) return
+        glass.measure(
+            MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY)
+        )
+        glass.layout(0, 0, w, h)
+    }
 }
