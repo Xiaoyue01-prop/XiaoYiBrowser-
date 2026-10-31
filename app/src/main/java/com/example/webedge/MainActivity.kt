@@ -68,6 +68,9 @@ import kotlinx.coroutines.launch
 
 import java.lang.ref.WeakReference
 
+// Các scheme do WebView tự xử lý, không chuyển sang app khác. Tạo một lần thay vì mỗi lần mở link.
+private val INTERNAL_URL_SCHEMES = setOf("http", "https", "about", "javascript", "data", "blob", "file")
+
 class MainActivity : ComponentActivity() {
 
     private lateinit var store: Store
@@ -80,7 +83,12 @@ class MainActivity : ComponentActivity() {
     private var previousRequestedOrientation: Int? = null
     private var popupDialog: Dialog? = null
     private var popupWebView: WebView? = null
-    private lateinit var webPermissions: WebPermissionController
+    private val webPermissions = WebPermissionController(
+        activity = this,
+        dialog = { glassDialog },
+        isActivityDestroyed = { isActivityDestroyed },
+        isPopupShowing = { popupDialog?.isShowing == true }
+    )
     private lateinit var blurTarget: BlurTarget
     private lateinit var urlPillFrame: FrameLayout
     private lateinit var urlPillBlur: BlurView
@@ -282,7 +290,7 @@ class MainActivity : ComponentActivity() {
 private fun handleSpecialUrl(url: String, fallbackView: WebView = web): Boolean {
     val uri = try { Uri.parse(url) } catch (_: Exception) { return false }
     val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
-    if (scheme in setOf("http", "https", "about", "javascript", "data", "blob", "file")) {
+    if (scheme in INTERNAL_URL_SCHEMES) {
     return false
     }
     return try {
@@ -1120,8 +1128,10 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
     // Chừa chỗ đầu/cuối trang cho các thanh và chạy script xử lý thanh menu cố định
     private fun injectInsets() {
+        val target = web
         val edge = store.edgeMode
-        val topCss = if (edge) (insetTop / d).toInt() else 0
+        val insetCss = (insetTop / d).toInt()
+        val topCss = if (edge) insetCss else 0
         val bottomCss = (insetBottom / d).toInt() + 64
         val rule = (if (edge) "padding-top:" + topCss + "px!important;" else "") +
             "padding-bottom:" + bottomCss + "px!important;box-sizing:border-box!important"
@@ -1129,13 +1139,24 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             "if(!s){s=document.createElement('style');s.id='__edge';" +
             "(document.head||document.documentElement).appendChild(s);}" +
             "s.textContent='html{" + rule + "}';})();"
-        web.evaluateJavascript(js, null)
-        web.evaluateJavascript(
-            EDGE_JS.replace("%INSET%", (insetTop / d).toInt().toString())
-                .replace("%MODE%", if (edge) "1" else "0")
-                .replace("%BOTTOM%", bottomReserveCss().toString()),
-            null
-        )
+        target.evaluateJavascript(js, null)
+        val mode = if (edge) "1" else "0"
+        val bottom = bottomReserveCss()
+        // Trang đã nạp script rồi thì chỉ cập nhật vài con số; chỉ gửi cả đoạn script dài khi trang chưa có.
+        target.evaluateJavascript(
+            "(function(){if(!window.__edgeStarted)return 0;window.__edgeInset=" + insetCss +
+                ";window.__edgeMode=" + mode + ";window.__edgeBottom=" + bottom +
+                ";if(window.__edgeRun)window.__edgeRun();return 1})()"
+        ) { result ->
+            if (result != "1" && !isActivityDestroyed) {
+                target.evaluateJavascript(
+                    EDGE_JS.replace("%INSET%", insetCss.toString())
+                        .replace("%MODE%", mode)
+                        .replace("%BOTTOM%", bottom.toString()),
+                    null
+                )
+            }
+        }
     }
 
     // Khoảng (px CSS) từ mép dưới WebView lên tới đỉnh thanh địa chỉ nổi. Các thanh cố định ở đáy trang

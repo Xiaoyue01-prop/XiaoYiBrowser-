@@ -589,12 +589,6 @@ class MenuController(
         showPanel(p)
     }
 
-        private fun permLabel(state: PermissionState): String = when (state) {
-        PermissionState.ALLOW -> "Đã cho phép"
-        PermissionState.DENY  -> "Đã chặn"
-        PermissionState.ASK   -> "Hỏi khi sử dụng"
-    }
-
     private fun currentSiteLabel(): String {
         val hostName = runCatching {
             android.net.Uri.parse(host.currentUrl).host?.removePrefix("www.")
@@ -641,10 +635,9 @@ class MenuController(
             setPadding(dp(20), dp(12), dp(20), dp(8))
         }
         p.body.addView(heading)
-        val originKey = origin ?: ""
-        addInfoRow("Camera", permLabel(store.getMediaPermission(originKey)))
-        addInfoRow("Micro",  permLabel(store.getMediaPermission(originKey)))
-        addInfoRow("Vị trí", permLabel(store.getGeoPermission(originKey)))
+        addInfoRow("Camera", "Hỏi khi sử dụng")
+        addInfoRow("Micro", "Hỏi khi sử dụng")
+        addInfoRow("Vị trí", "Theo quyền website")
 
         val reset = TextView(activity).apply {
             text = "Đặt lại quyền trang web"
@@ -659,8 +652,7 @@ class MenuController(
                     host.toast("Không xác định được website hiện tại")
                 } else {
                     GeolocationPermissions.getInstance().clear(origin)
-                    store.clearSitePermissions(origin)
-                    host.toast("Đã đặt lại quyền của $site")
+                    host.toast("Đã đặt lại quyền vị trí của $site")
                 }
                 showSitePermissions()
             }
