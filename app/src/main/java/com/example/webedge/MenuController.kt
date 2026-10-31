@@ -589,6 +589,12 @@ class MenuController(
         showPanel(p)
     }
 
+        private fun permLabel(state: PermissionState): String = when (state) {
+        PermissionState.ALLOW -> "Đã cho phép"
+        PermissionState.DENY  -> "Đã chặn"
+        PermissionState.ASK   -> "Hỏi khi sử dụng"
+    }
+
     private fun currentSiteLabel(): String {
         val hostName = runCatching {
             android.net.Uri.parse(host.currentUrl).host?.removePrefix("www.")

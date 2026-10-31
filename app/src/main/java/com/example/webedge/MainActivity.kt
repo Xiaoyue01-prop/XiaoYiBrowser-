@@ -80,12 +80,7 @@ class MainActivity : ComponentActivity() {
     private var previousRequestedOrientation: Int? = null
     private var popupDialog: Dialog? = null
     private var popupWebView: WebView? = null
-    private val webPermissions = WebPermissionController(
-        activity = this,
-        dialog = { glassDialog },
-        isActivityDestroyed = { isActivityDestroyed },
-        isPopupShowing = { popupDialog?.isShowing == true }
-    )
+    private lateinit var webPermissions: WebPermissionController
     private lateinit var blurTarget: BlurTarget
     private lateinit var urlPillFrame: FrameLayout
     private lateinit var urlPillBlur: BlurView
