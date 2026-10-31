@@ -413,6 +413,10 @@ class MenuController(
         buttons.orientation = LinearLayout.HORIZONTAL
         buttons.gravity = Gravity.CENTER_VERTICAL
         buttons.setPadding(dp(16), dp(6), dp(16), dp(14))
+        // Nút kính phồng 1.12x khi nhấn tràn ~3dp ra ngoài ô 44dp;
+        // mặc định ViewGroup clip con vào vùng padding nên viền trên/dưới bị cắt.
+        buttons.clipChildren = false
+        buttons.clipToPadding = false
         page.addView(buttons)
 
         return Panel(page, body, buttons, widthDp, onBack)
