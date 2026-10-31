@@ -168,6 +168,7 @@ class MenuController(
             card.pivotX = card.width.toFloat()
             card.pivotY = card.height.toFloat()
             AnimationSystem.popIn(card, 0.6f)
+            syncBlurFor(700)
         }
 
         // Wait for the attached BlurView to reach its first pre-draw before revealing the card.
@@ -201,6 +202,7 @@ class MenuController(
         // Thu hồi: co lại về góc dưới bên phải, phía nút ba chấm.
         card.pivotX = card.width.toFloat()
         card.pivotY = card.height.toFloat()
+        syncBlurFor(450)
         AnimationSystem.popOut(card, 0.3f) { root.removeView(layer) }
     }
 
@@ -236,6 +238,7 @@ class MenuController(
             // Lớp kính đổi kích thước ngay, không animate, để blur không phải dựng lại mỗi khung hình.
             tr.excludeTarget(glass, true)
             TransitionManager.beginDelayedTransition(layer, tr)
+            syncBlurFor(AnimationSystem.PAGE_DURATION + 120)
         }
         if (card.childCount > 1) {
             card.removeViews(1, card.childCount - 1)
@@ -243,6 +246,26 @@ class MenuController(
         card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         WindowCompat.getInsetsController(activity.window, layer).hide(WindowInsetsCompat.Type.ime())
+    }
+
+
+    // ==== CÁCH CỰC ĐOAN: ép kính mờ chụp lại nền MỖI khung hình trong suốt animation ====
+    // BlurView là "máy ảnh" chụp nền theo lịch pre-draw riêng; khi thẻ menu nhún nhảy,
+    // ảnh chụp có thể trễ 1 khung hình nên lớp kính bị lệch so với viền và nội dung.
+    // Ở đây: suốt thời gian animation, mỗi frame đều bắt nền vẽ lại để kính chụp
+    // ảnh mới khớp chính xác kích thước/vị trí hiện tại của thẻ. Hết animation thì dừng.
+    private var blurSyncActive = false
+    private val blurSyncFrame = object : android.view.Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!blurSyncActive) return
+            blurTarget.invalidate()
+            android.view.Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+    private fun syncBlurFor(durationMs: Long) {
+        blurSyncActive = true
+        android.view.Choreographer.getInstance().postFrameCallback(blurSyncFrame)
+        menuCard?.postDelayed({ blurSyncActive = false }, durationMs)
     }
 
     private fun showMainPage(animate: Boolean = true) {
