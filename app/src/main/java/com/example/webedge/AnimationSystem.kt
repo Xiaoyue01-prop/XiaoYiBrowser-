@@ -135,9 +135,12 @@ fun attachPress(touch: View, target: View = touch, scale: Float) {
     touch.setOnTouchListener { v, ev ->
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                // Bung ra từ chính điểm chạm (Spatial Awareness)
-                target.pivotX = ev.x.coerceIn(0f, target.width.toFloat())
-                target.pivotY = ev.y.coerceIn(0f, target.height.toFloat())
+                // Chỉ áp dụng Spatial Awareness (bung từ điểm chạm) cho hiệu ứng co lại (scale < 1).
+                // Các nút kính phồng lên (scale > 1) giữ pivot ở tâm để phồng đều, tránh cảm giác "bay".
+                if (scale < 1f) {
+                    target.pivotX = ev.x.coerceIn(0f, target.width.toFloat())
+                    target.pivotY = ev.y.coerceIn(0f, target.height.toFloat())
+                }
                 unclipParents(target)
                 pressDown(target, scale)
             }
@@ -149,10 +152,12 @@ fun attachPress(touch: View, target: View = touch, scale: Float) {
                     target.scaleY = mid
                 }
                 pressUp(target)
-                // Trả pivot về giữa để không ảnh hưởng layout lần sau
-                target.post {
-                    target.pivotX = target.width / 2f
-                    target.pivotY = target.height / 2f
+                // Trả pivot về giữa chỉ khi đã thay đổi pivot (scale < 1)
+                if (scale < 1f) {
+                    target.post {
+                        target.pivotX = target.width / 2f
+                        target.pivotY = target.height / 2f
+                    }
                 }
                 if (ev.x >= 0f && ev.x <= v.width && ev.y >= 0f && ev.y <= v.height) {
                     v.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
@@ -160,9 +165,11 @@ fun attachPress(touch: View, target: View = touch, scale: Float) {
             }
             MotionEvent.ACTION_CANCEL -> {
                 pressUp(target)
-                target.post {
-                    target.pivotX = target.width / 2f
-                    target.pivotY = target.height / 2f
+                if (scale < 1f) {
+                    target.post {
+                        target.pivotX = target.width / 2f
+                        target.pivotY = target.height / 2f
+                    }
                 }
             }
         }
