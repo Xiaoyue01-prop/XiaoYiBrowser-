@@ -182,9 +182,6 @@ class TabSwitcherController(
             // sau khi blur để chỗ nào lớp mờ chưa phủ tới cũng không lộ mảng tối.
             setBackgroundColor(Color.rgb(226, 225, 232))
         }
-        // Lớp mờ phải chụp lại nền mỗi khung hình trong lúc bảng bung/thu, không thì nó đứng yên ở khung đầu
-        // trong khi nền đặc đã phóng to (kính trong chạy trước, kính mờ chạy sau).
-        val blurSync = GlassSystem.BlurSync(blurTarget, container)
         var closing = false
         fun dismissAnimated() {
             if (closing) return
@@ -207,6 +204,11 @@ class TabSwitcherController(
             isFocusable = false
         }
         container.addView(dialogBlur, FrameLayout.LayoutParams(-1, -1))
+
+        // Đồng bộ đúng lớp BlurView đang nhìn thấy: invalidate container không bắt buộc
+        // khiến con BlurView vẽ lại, nên trước đây lớp kính có thể giữ texture của frame đầu
+        // trong khi container đã morph lớn lên. Ép chính dialogBlur cập nhật từng frame.
+        val blurSync = GlassSystem.BlurSync(blurTarget, dialogBlur)
 
         // A restrained translucent tint preserves the live blur instead of masking it.
         if (TAB_BG_TINT > 0) {
@@ -535,9 +537,11 @@ class TabSwitcherController(
         // ✅ BƯỚC 6: Bỏ hàm đệ quy invalidateAll, chỉ vẽ lại lớp blur và container
         refreshBlur = {
             blurTarget.invalidate()
+            dialogBlur.invalidate()
             container.invalidate()
             container.postDelayed({
                 blurTarget.invalidate()
+                dialogBlur.invalidate()
                 container.invalidate()
             }, 200)
         }
