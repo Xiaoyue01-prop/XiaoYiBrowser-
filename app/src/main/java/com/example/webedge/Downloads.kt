@@ -348,13 +348,15 @@ object DownloadLiveUpdate {
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setColor(progressColor)
-            .setContentTitle(name.ifBlank { "Đang tải file" })
+            .setContentTitle(shortName(name).ifBlank { "Đang tải file" })
             .setContentText(
                 if (paused) "Tạm dừng · $details"
                 else "$state · $details"
             )
             .setSubText("Summit")
-            .setWhen(System.currentTimeMillis())
+            // Chip trên đảo/thanh trạng thái: hiện % (hoặc dung lượng đã tải) thay vì bộ đếm giây mặc định.
+            .setShortCriticalText(chipText(percent, total, downloaded))
+            .setShowWhen(false)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setAutoCancel(false)
@@ -381,7 +383,7 @@ object DownloadLiveUpdate {
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setColor(progressColor)
-            .setContentTitle(name.ifBlank { "Tải file" })
+            .setContentTitle(shortName(name).ifBlank { "Tải file" })
             .setContentText(message)
             .setSubText("Summit")
             .setContentIntent(openAppPendingIntent(context, id))
@@ -390,6 +392,17 @@ object DownloadLiveUpdate {
             .build()
 
         manager.notify(id.toInt(), notification)
+    }
+
+    // Chip chỉ chứa được vài ký tự: biết tổng dung lượng thì hiện %, không thì hiện dung lượng đã tải.
+    private fun chipText(percent: Int, total: Long, downloaded: Long): String =
+        if (total > 0L) "$percent%" else formatBytes(downloaded).replace(" ", "")
+
+    // Tên file dài: cắt ở giữa, giữ phần đầu và phần đuôi (có đuôi mở rộng) cho dễ nhận ra.
+    private fun shortName(name: String, max: Int = 30): String {
+        if (name.length <= max) return name
+        val tail = 11
+        return name.take(max - tail - 1) + "…" + name.takeLast(tail)
     }
 
     private fun formatBytes(value: Long): String {
