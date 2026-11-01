@@ -190,7 +190,7 @@ function liftEl(el){
     savedTranslate: el.style.getPropertyValue('translate'),
     savedTransition: el.style.getPropertyValue('transition')
   });
-  el.style.setProperty('transition', base + 'translate 420ms cubic-bezier(0.2, 0.8, 0.2, 1)', 'important');
+  el.style.setProperty('transition', base + 'translate 250ms cubic-bezier(0.2, 0.8, 0.2, 1)', 'important');
 }
 
 function release(rec){

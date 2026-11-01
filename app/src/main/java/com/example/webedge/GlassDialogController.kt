@@ -43,8 +43,6 @@ class GlassDialogController(
     private val queue = ArrayDeque<Request>()
     private var active: Request? = null
     private var activeLayer: FrameLayout? = null
-    private var activeCard: FrameLayout? = null
-    private var activeScrim: View? = null
     private var activeInput: EditText? = null
     private var finishing = false
 
@@ -77,12 +75,8 @@ class GlassDialogController(
         pending.addAll(queue)
         queue.clear()
         active = null
-        activeCard?.let { OriginTransitionController.cancel(it) }
-        activeScrim?.let { AnimationSystem.cancel(it) }
         activeLayer?.let { runCatching { root.removeView(it) } }
         activeLayer = null
-        activeCard = null
-        activeScrim = null
         activeInput = null
         for (r in pending) runCatching { r.onResult(false, null) }
     }
@@ -219,23 +213,11 @@ class GlassDialogController(
         layer.addView(card, FrameLayout.LayoutParams(width, -2, Gravity.CENTER))
         root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         activeLayer = layer
-        activeCard = card
-        activeScrim = scrim
         ViewCompat.requestApplyInsets(layer)
 
         AnimationSystem.fade(scrim, 1f, AnimationSystem.SMOOTH)
         card.alpha = 0f
-        OriginTransitionController.runWhenLaidOut(card) {
-            if (activeCard === card) {
-                OriginTransitionController.open(
-                    view = card,
-                    origin = null,
-                    durationMs = 360L,
-                    endCornerRadiusPx = dp(GlassSystem.Preset.MENU_CARD.radiusDp).toFloat(),
-                    fallbackScale = 0.86f
-                )
-            }
-        }
+        card.post { AnimationSystem.popIn(card, 0.8f) }
 
         activeInput?.let { input ->
             input.post {
@@ -272,17 +254,15 @@ class GlassDialogController(
             if (active === req) {
                 active = null
                 activeLayer = null
-                activeCard = null
-                activeScrim = null
                 activeInput = null
             }
             showNext()
         }
         // Thẻ là con thứ hai của lớp phủ (sau lớp tối): thu nhỏ rồi gỡ ra.
-        val card = activeCard ?: layer.getChildAt(1)
-        val scrim = activeScrim ?: layer.getChildAt(0)
-        AnimationSystem.fade(scrim, 0f, AnimationSystem.DISMISS)
-        OriginTransitionController.close(card) { complete() }
+        val card = layer.getChildAt(1)
+        val scrim = layer.getChildAt(0)
+        AnimationSystem.fade(scrim, 0f)
+        AnimationSystem.popOut(card, 0.9f) { complete() }
         // Phòng hờ: nếu animation không báo kết thúc thì vẫn dọn để hàng đợi không bị kẹt.
         layer.postDelayed({ complete() }, 1000L)
     }

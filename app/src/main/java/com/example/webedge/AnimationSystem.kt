@@ -36,6 +36,8 @@ object AnimationSystem {
     val SNAPPY = SpringSpec(0.45f, 0.42f)
     /** Orb, thẻ tab xuất hiện: nảy mạnh nhất. */
     val BOUNCY = SpringSpec(0.50f, 0.35f)
+    /** Menu lớn bung quá đích rồi đàn hồi nhẹ về đúng kích thước; giữ response như SNAPPY. */
+    val MORPH_BOUNCY = SpringSpec(0.45f, 0.30f)
     /** Thu gọn thanh công cụ, toast, đổi trạng thái: nảy vừa. */
     val SMOOTH = SpringSpec(0.50f, 0.55f)
     /** Đóng lại: vẫn nảy nhẹ (scale/alpha được chặn ở 0 nên không bị lật). */
@@ -50,27 +52,13 @@ object AnimationSystem {
         private val zeta = spec.dampingRatio.coerceAtMost(0.999f).toDouble()
         private val w = 2.0 * Math.PI / spec.response
         private val wd = w * Math.sqrt(1.0 - zeta * zeta)
-        private val endValue = springValue(durationSec.toDouble()).takeIf { Math.abs(it) > 0.0001 } ?: 1.0
-
-        private fun springValue(t: Double): Double {
-            val decay = Math.exp(-zeta * w * t)
-            return 1.0 - decay * (Math.cos(wd * t) + (zeta * w / wd) * Math.sin(wd * t))
-        }
 
         override fun getInterpolation(input: Float): Float {
-            if (input <= 0f) return 0f
             if (input >= 1f) return 1f
-
-            // Normalize to the exact value at the configured duration. The old hard snap to 1f
-            // could jump several percent on the final frame when the spring had not settled yet.
-            val normalized = (springValue((input * durationSec).toDouble()) / endValue).coerceAtLeast(0.0)
-            // Keep a restrained physical overshoot without letting ChangeBounds grow too far.
-            val eased = if (normalized > 1.0) {
-                1.0 + 0.08 * (1.0 - Math.exp(-(normalized - 1.0) / 0.08))
-            } else {
-                normalized
-            }
-            return eased.toFloat()
+            val t = input * durationSec
+            val decay = Math.exp(-zeta * w * t)
+            val v = 1.0 - decay * (Math.cos(wd * t) + (zeta * w / wd) * Math.sin(wd * t))
+            return v.toFloat()
         }
     }
 
@@ -204,13 +192,19 @@ fun attachPress(touch: View, target: View = touch, scale: Float) {
     fun attachGlassPress(touch: View, target: View = touch) =
         attachPress(touch, target, GLASS_PRESS_SCALE)
 
-    /** Menu/dialog mở ra: scale + fade từ góc neo (đặt pivot trước khi gọi). */
-    fun popIn(view: View, fromScale: Float = 0.8f) {
+    /** Menu/dialog mở ra: scale + fade từ góc neo (đặt pivot trước khi gọi).
+     * springSpec cho phép bề mặt menu lớn có thêm độ vượt đích mà không đổi fade/morph gốc.
+     */
+    fun popIn(
+        view: View,
+        fromScale: Float = 0.8f,
+        springSpec: SpringSpec = SNAPPY
+    ) {
         view.alpha = 0f
         view.scaleX = fromScale
         view.scaleY = fromScale
         fade(view, 1f, QUICK)
-        scaleTo(view, 1f, 1f, SNAPPY)
+        scaleTo(view, 1f, 1f, springSpec)
     }
 
     /** Menu/dialog đóng lại; onEnd chạy khi fade xong. */

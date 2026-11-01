@@ -53,7 +53,6 @@ import androidx.core.view.WindowInsetsCompat
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 import java.util.Locale
-import java.util.WeakHashMap
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -115,9 +114,6 @@ class MainActivity : ComponentActivity() {
     private var orbController: OrbMenuController? = null
     private var programmatic = false
     private var suggestJob: Job? = null
-    private var suggestionsVisible = false
-    private var suggestTransitionToken = 0
-    private var findBarClosing = false
     private val suggestionRepo = SuggestionRepository()
     private var isActivityDestroyed = false
     private val handler = Handler(Looper.getMainLooper())
@@ -216,15 +212,6 @@ class MainActivity : ComponentActivity() {
     }
 
 
-    private val pageRevealStarted = WeakHashMap<WebView, Boolean>()
-
-    /** Reveal the active page once; commit-visible and page-finished can both fire. */
-    private fun revealPageOnce(view: WebView) {
-        if (view !== web || pageRevealStarted[view] == true) return
-        pageRevealStarted[view] = true
-        AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
-    }
-
     private val client: WebViewClient = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             if (!request.isForMainFrame) return false
@@ -236,7 +223,7 @@ class MainActivity : ComponentActivity() {
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             if (request.isForMainFrame && !isActivityDestroyed && view === web) {
                 toast("Không tải được trang (${error.errorCode})")
-                revealPageOnce(view)
+                AnimationSystem.fade(view, 1f)
             }
         }
         override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
@@ -248,8 +235,6 @@ class MainActivity : ComponentActivity() {
             tabManager.updateForWebView(view, url, view.title ?: url)
             if (view !== web) return
             currentUrl = url
-            AnimationSystem.cancel(view)
-            pageRevealStarted[view] = false
             view.alpha = 0.6f
             if (!urlBar.hasFocus()) showDomain()
             setBarHidden(false)
@@ -268,7 +253,7 @@ class MainActivity : ComponentActivity() {
             if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
             if (view !== web) return
             injectInsets()
-            revealPageOnce(view)
+            AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
         }
 
         override fun shouldInterceptRequest(
@@ -287,7 +272,7 @@ class MainActivity : ComponentActivity() {
             if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
             if (view !== web) return
             injectInsets()
-            revealPageOnce(view)
+            AnimationSystem.fade(view, 1f)
             currentUrl = url
             updateTabBadge()
         }
@@ -415,7 +400,7 @@ class MainActivity : ComponentActivity() {
 
         override fun toast(msg: String) = this@MainActivity.toast(msg)
         override fun load(input: String) = this@MainActivity.load(input)
-        override fun openFind(origin: View?) = this@MainActivity.openFind(origin)
+        override fun openFind() = this@MainActivity.openFind()
         override fun applyDesktopMode() = this@MainActivity.applyDesktopMode()
         override fun applyInsets() = this@MainActivity.applyInsets()
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
@@ -534,7 +519,7 @@ class MainActivity : ComponentActivity() {
         menuBtn = glassToolbarButton(
             GlassSystem.Preset.ORB_BUTTON, Icons.MORE_HORIZ, 10, "Mở menu"
         )
-        menuBtn.setOnClickListener { menu.toggle(menuBtn) }
+        menuBtn.setOnClickListener { menu.toggle() }
         press(menuBtn, Constants.PRESS_SCALE_BTN)
 
         reloadBtn = ImageView(this)
@@ -546,7 +531,7 @@ class MainActivity : ComponentActivity() {
         tabBtn = ImageView(this)
         tabBtn.setImageDrawable(PathIcon(Icons.TABS, fg))
         tabBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
-        tabBtn.setOnClickListener { openTabSwitcher(origin = tabBtn) }
+        tabBtn.setOnClickListener { openTabSwitcher() }
         press(tabBtn, Constants.PRESS_SCALE_SMALL)
 
         urlBar = EditText(this)
@@ -857,7 +842,6 @@ class MainActivity : ComponentActivity() {
             tabManager = tabManager,
             store = store,
             blurTarget = blurTarget,
-            hostRoot = root,
             isNight = isNight,
             foregroundColor = fg,
             secondaryColor = sub,
@@ -867,9 +851,7 @@ class MainActivity : ComponentActivity() {
             onActivateTab = ::activateTab,
             onCloseTab = ::closeBrowserTab,
             onCreateTab = ::createBrowserTab,
-            shortUrl = UrlUtils::shortUrl,
-            onOverlayOpened = { orbController?.setTemporarilyHidden(true) },
-            onOverlayClosed = { syncOrbMenuVisibility() }
+            shortUrl = UrlUtils::shortUrl
         )
         setupOrbMenu()
     }
@@ -892,7 +874,6 @@ class MainActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (glassDialog.isShowing) glassDialog.cancelCurrent()
-                else if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
                 else if (customVideoView != null) exitFullscreenView()
                 else if (popup.isShowing) popup.close()
                 else if (menu.isOpen) menu.handleBack()
@@ -1135,48 +1116,19 @@ class MainActivity : ComponentActivity() {
 
     private fun hideSuggestions() {
         suggestJob?.cancel()
-        if (!suggestionsVisible && suggestBox.visibility != View.VISIBLE && suggestBlurView.visibility != View.VISIBLE) {
-            suggestBox.removeAllViews()
-            return
-        }
-
-        suggestionsVisible = false
-        val token = ++suggestTransitionToken
-        var pending = 0
-        fun finishOne() {
-            pending--
-            if (pending <= 0 && token == suggestTransitionToken && !suggestionsVisible) {
-                suggestBox.visibility = View.GONE
-                suggestBlurView.visibility = View.GONE
-                suggestBox.removeAllViews()
-            }
-        }
-
-        if (suggestBlurView.visibility == View.VISIBLE) {
-            pending++
-            OriginTransitionController.close(suggestBlurView, onEnd = ::finishOne)
-        } else {
-            suggestBlurView.visibility = View.GONE
-        }
-        if (suggestBox.visibility == View.VISIBLE) {
-            pending++
-            OriginTransitionController.close(suggestBox, onEnd = ::finishOne)
-        } else {
-            suggestBox.visibility = View.GONE
-        }
-        if (pending == 0) suggestBox.removeAllViews()
+        suggestBox.visibility = View.GONE
+        suggestBlurView.visibility = View.GONE
+        suggestBox.removeAllViews()
     }
 
     private fun showSuggestions(items: List<String>) {
+        suggestBox.removeAllViews()
         if (items.isEmpty()) {
-            hideSuggestions()
+            suggestBox.visibility = View.GONE
+            suggestBlurView.visibility = View.GONE
             return
         }
-
-        val wasVisible = suggestionsVisible &&
-            suggestBox.visibility == View.VISIBLE && suggestBlurView.visibility == View.VISIBLE
         val rp = selectableItemBackgroundRes()
-        suggestBox.removeAllViews()
         for (text in items) {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
@@ -1202,97 +1154,31 @@ class MainActivity : ComponentActivity() {
             press(row, Constants.PRESS_SCALE_ROW)
             suggestBox.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         }
-
         suggestBlurView.visibility = View.VISIBLE
         suggestBox.visibility = View.VISIBLE
-        suggestionsVisible = true
-        if (!wasVisible) {
-            val token = ++suggestTransitionToken
-            // Both glass and content share the URL field as their visual source.
-            OriginTransitionController.runWhenLaidOut(suggestBlurView) {
-                if (token == suggestTransitionToken && suggestionsVisible) {
-                    OriginTransitionController.open(
-                        view = suggestBlurView,
-                        origin = urlBar,
-                        durationMs = 360L,
-                        endCornerRadiusPx = dp(GlassSystem.Preset.SUGGESTIONS.radiusDp).toFloat()
-                    )
-                }
-            }
-            OriginTransitionController.runWhenLaidOut(suggestBox) {
-                if (token == suggestTransitionToken && suggestionsVisible) {
-                    OriginTransitionController.open(
-                        view = suggestBox,
-                        origin = urlBar,
-                        durationMs = 360L,
-                        endCornerRadiusPx = dp(GlassSystem.Preset.SUGGESTIONS.radiusDp).toFloat()
-                    )
-                }
-            }
-        }
     }
 
 
     // ---------------- Tìm trong trang ----------------
 
-    private fun openFind(origin: View? = null) {
-        // The source row belongs to the menu that is already closing. Snapshot it now, before
-        // that parent starts moving and the menu layer is detached.
-        val originRect = origin?.let { OriginTransitionController.captureBoundsOnScreen(it) }
-        // Reopening during the closing morph must interrupt that close and start a fresh open.
-        val wasClosing = findBarClosing
-        val wasVisible = findBarContainer.visibility == View.VISIBLE
+    private fun openFind() {
         // Hide OrbMenu before requesting the keyboard so neither its ring nor its sub-buttons
-        // can remain above the FindBar during the IME transition.
-        findBarClosing = false
+        // can remain visible/touchable over FindBar during the IME animation.
         findBarContainer.visibility = View.VISIBLE
-        findBarContainer.isClickable = true
         orbController?.setTemporarilyHidden(true)
         updateBarVisibility()
-        if (!wasVisible || wasClosing) {
-            OriginTransitionController.runWhenLaidOut(findBarContainer) {
-                if (findBarContainer.visibility == View.VISIBLE && !findBarClosing) {
-                    if (originRect != null) {
-                        OriginTransitionController.openFromRect(
-                            view = findBarContainer,
-                            originRectOnScreen = originRect,
-                            durationMs = 380L,
-                            endCornerRadiusPx = dp(GlassSystem.Preset.FIND_BAR.radiusDp).toFloat()
-                        )
-                    } else {
-                        OriginTransitionController.open(
-                            view = findBarContainer,
-                            origin = null,
-                            durationMs = 380L,
-                            endCornerRadiusPx = dp(GlassSystem.Preset.FIND_BAR.radiusDp).toFloat(),
-                            fallbackScale = 0.90f
-                        )
-                    }
-                }
-            }
-        }
         findInput.requestFocus()
         WindowCompat.getInsetsController(window, findInput).show(WindowInsetsCompat.Type.ime())
     }
 
     private fun closeFind() {
-        if (findBarContainer.visibility != View.VISIBLE || findBarClosing) return
-        findBarClosing = true
         web.clearMatches()
         findInput.setText("")
-        findBarContainer.isClickable = false
+        findBarContainer.visibility = View.GONE
+        updateBarVisibility()
         root.requestFocus()
         WindowCompat.getInsetsController(window, findInput).hide(WindowInsetsCompat.Type.ime())
-        OriginTransitionController.close(findBarContainer) {
-            if (findBarClosing) {
-                findBarContainer.visibility = View.GONE
-                findBarContainer.isClickable = true
-                findBarClosing = false
-                updateBarVisibility()
-            }
-        }
     }
-
 
     // ---------------- Tải trang ----------------
 
@@ -1546,17 +1432,11 @@ class MainActivity : ComponentActivity() {
         pendingFileCallback?.onReceiveValue(null)
         pendingFileCallback = null
 
-        // 5. Cancel origin morphs before detaching their views.
-        if (::suggestBox.isInitialized) OriginTransitionController.cancel(suggestBox)
-        if (::suggestBlurView.isInitialized) OriginTransitionController.cancel(suggestBlurView)
-        if (::findBarContainer.isInitialized) OriginTransitionController.cancel(findBarContainer)
-        if (::menu.isInitialized) menu.destroy()
-
-        // 6. Cleanup Orb Menu Controller (gỡ PreDrawListener)
+        // 5. Cleanup Orb Menu Controller (gỡ PreDrawListener)
         orbController?.destroy()
         orbController = null
 
-        // 7. Destroy every tab WebView last, including views detached in the background.
+        // 6. Destroy every tab WebView last, including views detached in the background.
         val tabViews = tabManager.getAll().mapNotNull { it.webView }.distinct()
         tabManager.getAll().forEach {
             it.thumbnail?.recycle()
@@ -1594,7 +1474,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var tabSwitcherController: TabSwitcherController
 
-    private fun openTabSwitcher(animate: Boolean = true, origin: View? = null) {
-        tabSwitcherController.show(animate, origin)
+    private fun openTabSwitcher(animate: Boolean = true) {
+        tabSwitcherController.show(animate)
     }
 }

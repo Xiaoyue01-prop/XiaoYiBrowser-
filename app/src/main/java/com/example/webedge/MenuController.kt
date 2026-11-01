@@ -41,7 +41,7 @@ interface MenuHost {
 
     fun toast(msg: String)
     fun load(input: String)
-    fun openFind(origin: View? = null)
+    fun openFind()
     fun applyDesktopMode()
     fun applyInsets()
     fun setBarHidden(hide: Boolean)
@@ -79,7 +79,6 @@ class MenuController(
     private var menuCard: FrameLayout? = null
     private var menuBackAction: (() -> Unit)? = null
     private var menuAnimationStarted = false
-    private var menuOrigin: View? = null
 
     val isOpen: Boolean get() = menuLayer != null
 
@@ -106,12 +105,11 @@ class MenuController(
     private fun onOff(b: Boolean): String = if (b) "Bật" else "Tắt"
 
     /** Mở menu; nếu đang mở thì đóng. */
-    fun toggle(origin: View? = null) {
+    fun toggle() {
         if (menuLayer != null) {
             close()
             return
         }
-        menuOrigin = origin
         val layer = FrameLayout(activity)
         layer.setOnClickListener { close() }
 
@@ -152,6 +150,8 @@ class MenuController(
         // Keep the card almost invisible while BlurView draws its first real frame.
         // This prevents the translucent fallback from flashing before the frosted layer.
         card.alpha = 0.01f
+        card.scaleX = 0.8f
+        card.scaleY = 0.8f
         root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         menuLayer = layer
         menuCard = card
@@ -162,12 +162,9 @@ class MenuController(
         fun startMenuAnimation() {
             if (menuCard !== card || menuAnimationStarted) return
             menuAnimationStarted = true
-            OriginTransitionController.open(
-                view = card,
-                origin = menuOrigin,
-                durationMs = OriginTransitionController.OPEN_DURATION_MS,
-                endCornerRadiusPx = dp(GlassSystem.Preset.MENU_CARD.radiusDp).toFloat()
-            )
+            card.pivotX = card.width.toFloat()
+            card.pivotY = card.height.toFloat()
+            AnimationSystem.popIn(card, 0.6f, AnimationSystem.MORPH_BOUNCY)
             syncBlurFor(700)
         }
 
@@ -188,38 +185,22 @@ class MenuController(
         card.postDelayed({ startMenuAnimation() }, 120L)
     }
 
-    /** Immediate teardown when the owning Activity is destroyed. */
-    fun destroy() {
-        menuCard?.let { OriginTransitionController.cancel(it) }
-        menuLayer?.let { root.removeView(it) }
-        menuLayer = null
-        menuCard = null
-        menuOrigin = null
-        menuBackAction = null
-        menuAnimationStarted = false
-    }
-
     fun close() {
         val layer = menuLayer ?: return
         val card = menuCard
-        val closingOrigin = menuOrigin
         menuLayer = null
         menuCard = null
         menuBackAction = null
         menuAnimationStarted = false
         if (card == null) {
-            menuOrigin = null
             root.removeView(layer)
             return
         }
-        // Stop any in-card page resize before capturing the final morph bounds.
-        TransitionManager.endTransitions(layer)
-        // Reverse morph về đúng nút đã mở menu (fallback tâm nếu menu không có nguồn).
+        // Thu hồi: co lại về góc dưới bên phải, phía nút ba chấm.
+        card.pivotX = card.width.toFloat()
+        card.pivotY = card.height.toFloat()
         syncBlurFor(450)
-        OriginTransitionController.close(card) {
-            root.removeView(layer)
-            if (menuLayer == null && menuOrigin === closingOrigin) menuOrigin = null
-        }
+        AnimationSystem.popOut(card, 0.3f) { root.removeView(layer) }
     }
 
     // Đặt vị trí khung menu ngay phía trên nút ba chấm
@@ -301,7 +282,7 @@ class MenuController(
         }
 
         // closes = true: đóng menu rồi thực hiện; false: mở trang mới ngay trong khung menu
-        fun item(label: String, path: String?, closes: Boolean, action: (View) -> Unit) {
+        fun item(label: String, path: String?, closes: Boolean, action: () -> Unit) {
             val r = LinearLayout(activity)
             r.orientation = LinearLayout.HORIZONTAL
             r.gravity = Gravity.CENTER_VERTICAL
@@ -319,7 +300,7 @@ class MenuController(
             }
             r.setOnClickListener {
                 if (closes) close()
-                action(r)
+                action()
             }
             AnimationSystem.press(r, Constants.PRESS_SCALE_ROW)
             box.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)))
@@ -351,7 +332,7 @@ class MenuController(
         item("Tải xuống", Icons.DOWNLOAD, true) { openDownloads() }
 
         gap()
-        item("Tìm trong trang", Icons.SEARCH, true) { source -> host.openFind(source) }
+        item("Tìm trong trang", Icons.SEARCH, true) { host.openFind() }
         item("Trang web máy tính", if (store.desktopMode) Icons.CHECK else null, true) {
             store.desktopMode = !store.desktopMode
             host.applyDesktopMode()
