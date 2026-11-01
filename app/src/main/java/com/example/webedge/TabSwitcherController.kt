@@ -27,7 +27,6 @@ import eightbitlab.com.blurview.BlurTarget
 
 /** UI đa tab tách riêng khỏi Activity để MainActivity tập trung điều phối trình duyệt. */
 // Độ "trong" của nền menu tab (0–255). Số càng nhỏ thì càng trong, nhìn rõ trang phía sau.
-private const val TAB_BG_WHITE = 10   // lớp phủ trắng trên nền mờ (bản cũ: 68)
 private const val TAB_BG_TINT = 0     // lớp phủ màu hồng nhạt thêm (bản cũ: 54, 0 = bỏ hẳn)
 private const val TAB_TOP_FADE = 40   // dải mờ dần dưới thanh trạng thái (bản cũ: 112)
 
@@ -50,7 +49,9 @@ class TabSwitcherController(
     private val onActivateTab: (TabManager.Tab) -> Unit,
     private val onCloseTab: (TabManager.Tab) -> Unit,
     private val onCreateTab: () -> Unit,
-    private val shortUrl: (String) -> String
+    private val shortUrl: (String) -> String,
+    private val onOverlayOpened: () -> Unit = {},
+    private val onOverlayClosed: () -> Unit = {}
 ) {
     // TextView hiển thị "N tab"; cập nhật khi đóng tab mà không dựng lại bảng.
     private var countLabel: TextView? = null
@@ -163,13 +164,25 @@ class TabSwitcherController(
 
     fun show(animate: Boolean = true, origin: View? = null) {
         if (isShowing) return
+        // OrbMenu uses elevated sibling views; detach it while this same-window overlay is open
+        // so its ring/sub-buttons cannot float above or bleed through the tab glass.
+        onOverlayOpened()
+        var overlayRestored = false
+        fun restoreOverlayState() {
+            if (overlayRestored) return
+            overlayRestored = true
+            onOverlayClosed()
+        }
+
         // Chụp lại tab hiện tại ngay lúc mở lưới, không để thumbnail của lần trước bị cũ.
         captureActiveTab()
 
         val container = FrameLayout(activity).apply {
             clipChildren = false
             clipToPadding = false
-            // Fallback nhẹ trong frame đầu; BlurView bên trên lấy nền thật từ BlurTarget.
+            // Keep this modal overlay above elevated toolbar/OrbMenu siblings in the Activity root.
+            elevation = dp(12).toFloat()
+            // Soft first-frame fallback; the BlurView below supplies the shared glass material.
             setBackgroundColor(Color.argb(112, 249, 246, 250))
         }
         var closing = false
@@ -187,6 +200,7 @@ class TabSwitcherController(
                             .isAppearanceLightStatusBars = it
                     }
                     previousLightStatusBars = null
+                    restoreOverlayState()
                 }
             } else {
                 OriginTransitionController.cancel(container)
@@ -198,6 +212,7 @@ class TabSwitcherController(
                         .isAppearanceLightStatusBars = it
                 }
                 previousLightStatusBars = null
+                restoreOverlayState()
             }
         }
         activeContainer = container
@@ -206,7 +221,7 @@ class TabSwitcherController(
         val dialogBlur = GlassSystem.createBlurView(
             activity, blurTarget, GlassSystem.Preset.TABS_DIALOG,
             activity.resources.displayMetrics.density, false,
-            overlayColorOverride = Color.argb(TAB_BG_WHITE, 255, 255, 255),
+            // Use GlassSystem's shared overlay/tint so MenuTabs matches the other native glass menus.
             rim = false
         ).apply {
             background = GradientDrawable().apply { setColor(Color.TRANSPARENT) }

@@ -867,7 +867,9 @@ class MainActivity : ComponentActivity() {
             onActivateTab = ::activateTab,
             onCloseTab = ::closeBrowserTab,
             onCreateTab = ::createBrowserTab,
-            shortUrl = UrlUtils::shortUrl
+            shortUrl = UrlUtils::shortUrl,
+            onOverlayOpened = { orbController?.setTemporarilyHidden(true) },
+            onOverlayClosed = { syncOrbMenuVisibility() }
         )
         setupOrbMenu()
     }

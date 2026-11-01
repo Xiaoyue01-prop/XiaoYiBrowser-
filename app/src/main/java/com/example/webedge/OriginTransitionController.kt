@@ -23,6 +23,7 @@ object OriginTransitionController {
     const val OPEN_DURATION_MS = 420L
     const val CLOSE_DURATION_MS = 310L
 
+    private val openInterpolator = PathInterpolator(0.16f, 0.78f, 0.22f, 1f)
     private val closeInterpolator = PathInterpolator(0.35f, 0.02f, 0.78f, 0.38f)
 
     private data class State(
@@ -170,19 +171,10 @@ object OriginTransitionController {
         view.alpha = state.startAlpha
         view.invalidateOutline()
 
-        // Match OrbMenu's physical spring, but cap the panel's overshoot to a restrained 8%.
-        // The same progress drives scale, translation and corner morph, so the surface briefly
-        // passes its final bounds and then settles back instead of simply easing to a stop.
-        val openingDuration = durationMs.coerceAtLeast(1L)
-        val openingSpring = AnimationSystem.SpringInterpolator(
-            AnimationSystem.BOUNCY,
-            openingDuration.toFloat() / 1000f
-        )
-
         lateinit var animator: ValueAnimator
         animator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = openingDuration
-            interpolator = openingSpring
+            duration = durationMs.coerceAtLeast(1L)
+            interpolator = openInterpolator
             addUpdateListener { animation ->
                 val f = animation.animatedValue as Float
                 view.scaleX = lerp(sx, 1f, f)
