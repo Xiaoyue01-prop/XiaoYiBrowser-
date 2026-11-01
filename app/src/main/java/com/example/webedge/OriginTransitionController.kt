@@ -36,7 +36,8 @@ object OriginTransitionController {
         val endRadius: Float,
         val originalOutline: ViewOutlineProvider?,
         val originalClip: Boolean,
-        val fadeIn: Boolean
+        val fadeIn: Boolean,
+        val counterTransformView: View?
     ) {
         var opening = true
         var sx = 1f
@@ -71,7 +72,8 @@ object OriginTransitionController {
         endCornerRadiusPx: Float = 0f,
         fallbackScale: Float = 0.88f,
         onEnd: (() -> Unit)? = null,
-        fadeIn: Boolean = true
+        fadeIn: Boolean = true,
+        counterTransformView: View? = null
     ): Boolean {
         val target = boundsOnScreen(view) ?: return false
         val old = morphs[view]
@@ -87,7 +89,8 @@ object OriginTransitionController {
             endRadius = endCornerRadiusPx.coerceAtLeast(0f),
             originalOutline = old?.originalOutline ?: view.outlineProvider,
             originalClip = old?.originalClip ?: view.clipToOutline,
-            fadeIn = fadeIn
+            fadeIn = fadeIn,
+            counterTransformView = counterTransformView
         )
         morphs[view] = m
         place(m, target)
@@ -155,6 +158,7 @@ object OriginTransitionController {
         v.scaleY = lerp(m.sy, 1f, p).coerceAtLeast(0.02f)
         v.translationX = lerp(m.tx, 0f, p)
         v.translationY = lerp(m.ty, 0f, p)
+        syncCounterTransform(m)
         // Mặc định thẻ hiện nhanh để nối tiếp nút nguồn. Một số bề mặt kính toàn màn hình
         // cần giữ alpha = 1 khi bung để nền web sắc nét không xuyên qua lớp blur ở đầu morph.
         v.alpha = if (m.opening && !m.fadeIn) 1f else (p / 0.3f).coerceIn(0f, 1f)
@@ -194,6 +198,34 @@ object OriginTransitionController {
     }
 
     /** Mở xong: trả transform về đúng 1:1 nhưng giữ lại trạng thái để lúc đóng biết quay về đâu. */
+    /**
+     * Giữ một lớp con (dùng cho BlurView toàn màn hình) đứng yên theo toạ độ cửa sổ,
+     * trong khi view cha vẫn co/di chuyển và clip thành hình bung từ nút nguồn.
+     * Nếu không bù ngược, BlurView bị scale cùng container nên ảnh nền kính bị kéo
+     * theo một hệ toạ độ khác với nội dung WebView trong lúc morph.
+     */
+    private fun syncCounterTransform(m: Morph) {
+        val child = m.counterTransformView ?: return
+        val parent = m.view
+        val sx = parent.scaleX.coerceAtLeast(0.02f)
+        val sy = parent.scaleY.coerceAtLeast(0.02f)
+        child.pivotX = parent.pivotX
+        child.pivotY = parent.pivotY
+        child.scaleX = 1f / sx
+        child.scaleY = 1f / sy
+        child.translationX = -parent.translationX / sx
+        child.translationY = -parent.translationY / sy
+    }
+
+    private fun resetCounterTransform(m: Morph) {
+        m.counterTransformView?.apply {
+            scaleX = 1f
+            scaleY = 1f
+            translationX = 0f
+            translationY = 0f
+        }
+    }
+
     private fun settle(m: Morph) {
         val v = m.view
         v.scaleX = 1f
@@ -201,6 +233,7 @@ object OriginTransitionController {
         v.translationX = 0f
         v.translationY = 0f
         v.alpha = 1f
+        resetCounterTransform(m)
         restoreOutline(m)
     }
 
@@ -211,6 +244,7 @@ object OriginTransitionController {
         v.translationX = 0f
         v.translationY = 0f
         v.alpha = 1f
+        resetCounterTransform(m)
         restoreOutline(m)
         showSource(m)
         morphs.remove(v)

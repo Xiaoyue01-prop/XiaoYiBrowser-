@@ -598,7 +598,14 @@ class TabSwitcherController(
                 if (container.width <= 0 || container.height <= 0) return
                 morphStarted = true
                 blurSync.hold(900)
-                if (!OriginTransitionController.open(container, origin, fadeIn = false)) {
+                if (!OriginTransitionController.open(
+                        container,
+                        origin,
+                        fadeIn = false,
+                        // Container tiếp tục morph/clip từ nút, nhưng ảnh blur được bù transform
+                        // để luôn khớp hệ toạ độ WebView thay vì bị phóng to cùng lớp vỏ.
+                        counterTransformView = dialogBlur
+                    )) {
                     AnimationSystem.popIn(container, 0.88f)
                 }
             }
