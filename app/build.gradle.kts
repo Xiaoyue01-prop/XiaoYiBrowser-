@@ -53,4 +53,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     // Media3 (bản ổn định mới nhất): MediaSessionService + MediaSession cho media của trang web
     implementation("androidx.media3:media3-session:1.11.1")
+    // WebViewCompat.addDocumentStartJavaScript: chạy script ở mọi khung của trang
+    implementation("androidx.webkit:webkit:1.15.0")
 }

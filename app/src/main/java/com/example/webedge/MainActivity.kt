@@ -23,6 +23,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import android.webkit.JsPromptResult
 import android.webkit.JsResult
 import android.webkit.GeolocationPermissions
@@ -178,6 +180,16 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Nút PiP của trình phát trang web: video sắp vào toàn màn hình, app sẽ vào PiP ngay sau đó.
+        @JavascriptInterface
+        fun requestPip() {
+            val activity = activityWeak.get() ?: return
+            val owner = ownerWeak.get() ?: return
+            activity.runOnUiThread {
+                if (owner === activity.web && !activity.isActivityDestroyed) activity.armPendingPip()
+            }
+        }
+
         @JavascriptInterface
         fun clearTopColor() {
             val activity = activityWeak.get() ?: return
@@ -190,6 +202,14 @@ class MainActivity : ComponentActivity() {
 
 
     // Trạng thái media của tab đang xem: đẩy sang MediaSession và cập nhật cửa sổ PiP.
+    private var pendingPip = false
+
+    private fun armPendingPip() {
+        pendingPip = true
+        // Nếu trang không vào được toàn màn hình (không có thao tác bấm) thì bỏ yêu cầu sau 2 giây.
+        handler.postDelayed({ pendingPip = false }, 2000L)
+    }
+
     private fun onWebMediaState(info: WebMediaInfo) {
         webMedia.onPageState(info)
         if (info.active) pipController.setVideoInfo(info.videoWidth, info.videoHeight, info.title, info.artist)
@@ -225,6 +245,10 @@ class MainActivity : ComponentActivity() {
         fullscreenContainer.visibility = View.VISIBLE
         fullscreenContainer.bringToFront()
         pipController.setVideoActive(true, view)
+        if (pendingPip) {
+            pendingPip = false
+            view.post { pipController.enterNow() }
+        }
         orbController?.setTemporarilyHidden(true)
         WindowInsetsControllerCompat(window, root).hide(WindowInsetsCompat.Type.systemBars())
     }
@@ -1290,6 +1314,10 @@ class MainActivity : ComponentActivity() {
         }
         view.webViewClient = client
         view.webChromeClient = chromeClient
+        // Chạy script media ở mọi khung (kể cả iframe chứa trình phát) ngay từ đầu tài liệu.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            WebViewCompat.addDocumentStartJavaScript(view, MEDIA_JS, setOf("*"))
+        }
         view.addJavascriptInterface(Bridge(WeakReference(view), WeakReference(this)), "EdgeBridge")
         view.setFindListener { active, total, _ ->
             if (view === web) findCount.text = if (total == 0) "0" else "${active + 1}/$total"

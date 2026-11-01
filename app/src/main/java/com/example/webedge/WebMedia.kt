@@ -236,6 +236,23 @@ internal const val MEDIA_JS = """
 if (window.__summitMedia) return;
 var cur = null, lastSent = 0;
 
+// WebView không hỗ trợ Picture-in-Picture của web (nút PiP trong trình phát bấm không có tác dụng).
+// Giả lập: chuyển video sang toàn màn hình rồi nhờ app vào PiP của Android.
+try {
+  Object.defineProperty(document, 'pictureInPictureEnabled', { get: function(){ return true; }, configurable: true });
+  Object.defineProperty(HTMLVideoElement.prototype, 'disablePictureInPicture',
+    { get: function(){ return false; }, set: function(){}, configurable: true });
+  HTMLVideoElement.prototype.requestPictureInPicture = function(){
+    var v = this;
+    cur = v;
+    try { EdgeBridge.requestPip(); } catch (e) {}
+    var p;
+    try { p = v.requestFullscreen ? v.requestFullscreen() : (v.webkitRequestFullscreen && v.webkitRequestFullscreen()); } catch (e) {}
+    return Promise.resolve(p).then(function(){ return { width: v.videoWidth, height: v.videoHeight }; });
+  };
+  document.exitPictureInPicture = function(){ return Promise.resolve(); };
+} catch (e) {}
+
 function info(){
   var md = null;
   try { md = navigator.mediaSession && navigator.mediaSession.metadata; } catch (e) {}

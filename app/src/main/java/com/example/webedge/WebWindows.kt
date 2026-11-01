@@ -54,7 +54,26 @@ class PictureInPictureController(
         if (videoActive) updateParams()
     }
 
+    /** Vào PiP ngay (dùng cho nút PiP của trình phát trang web, sau khi video đã vào toàn màn hình). */
+    fun enterNow() {
+        if (!videoActive || activity.isInPictureInPictureMode) return
+        try {
+            activity.enterPictureInPictureMode(buildParams())
+        } catch (e: Exception) {
+            Log.w("SummitPiP", "enterPictureInPictureMode thất bại", e)
+        }
+    }
+
     private fun updateParams() {
+        try {
+            activity.setPictureInPictureParams(buildParams())
+        } catch (e: Exception) {
+            // Không nuốt lỗi âm thầm nữa: có thể xem bằng logcat (tag SummitPiP).
+            Log.w("SummitPiP", "setPictureInPictureParams thất bại", e)
+        }
+    }
+
+    private fun buildParams(): PictureInPictureParams {
         val builder = PictureInPictureParams.Builder()
             .setAspectRatio(Rational((aspect * RATIO_BASE).toInt(), RATIO_BASE))
             .setAutoEnterEnabled(videoActive)
@@ -77,12 +96,7 @@ class PictureInPictureController(
             if (!rect.isEmpty) builder.setSourceRectHint(rect)
         }
 
-        try {
-            activity.setPictureInPictureParams(builder.build())
-        } catch (e: Exception) {
-            // Không nuốt lỗi âm thầm nữa: có thể xem bằng logcat (tag SummitPiP).
-            Log.w("SummitPiP", "setPictureInPictureParams thất bại", e)
-        }
+        return builder.build()
     }
 
     private companion object {
