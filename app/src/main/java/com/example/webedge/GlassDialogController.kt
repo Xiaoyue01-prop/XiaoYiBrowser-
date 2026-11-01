@@ -3,7 +3,6 @@ package com.example.webedge
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
@@ -84,11 +83,7 @@ class GlassDialogController(
 
     private fun dp(v: Int): Int = (v * d).toInt()
 
-    private fun ripple(): Int {
-        val tv = TypedValue()
-        activity.theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
-        return tv.resourceId
-    }
+    private fun ripple(): Int = activity.selectableItemBackgroundRes()
 
     private fun showNext() {
         val req = queue.removeFirstOrNull() ?: return

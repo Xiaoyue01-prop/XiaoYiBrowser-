@@ -78,38 +78,6 @@ class TabSwitcherController(
         return button
     }
 
-    private fun createBlurButton(
-        text: String,
-        paddingH: Int = Constants.BUTTON_PADDING_H,
-        paddingV: Int = Constants.BUTTON_PADDING_V,
-        onClick: () -> Unit
-    ): FrameLayout {
-        val frame = FrameLayout(activity)
-        frame.addView(
-            GlassSystem.createBlurView(
-                activity, blurTarget, GlassSystem.Preset.TABS_BUTTON,
-                activity.resources.displayMetrics.density, isNight
-            ).apply {
-                isClickable = false
-                isFocusable = false
-            },
-            FrameLayout.LayoutParams(-1, -1)
-        )
-
-        val label = TextView(activity).apply {
-            this.text = text
-            textSize = Constants.TEXT_SIZE_XL
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            setTextColor(Theme.safariButtonBlue(isNight))
-            gravity = Gravity.CENTER
-            setPadding(dp(paddingH), dp(paddingV), dp(paddingH), dp(paddingV))
-            setOnClickListener { onClick() }
-        }
-        frame.addView(label, FrameLayout.LayoutParams(-1, -1))
-        AnimationSystem.attachGlassPress(label, frame)
-        return frame
-    }
-
     private fun createCircleIconButton(
         symbol: String,
         iconColor: Int,

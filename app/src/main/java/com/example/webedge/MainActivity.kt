@@ -1,13 +1,9 @@
 package com.example.webedge
 
 
-import android.Manifest
 import android.annotation.SuppressLint
-import android.app.Dialog
-import android.app.DownloadManager
 import android.content.Intent
 import android.content.pm.ActivityInfo
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
@@ -15,7 +11,6 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
@@ -23,7 +18,6 @@ import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
 import android.text.TextWatcher
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -34,7 +28,6 @@ import android.webkit.JsResult
 import android.webkit.GeolocationPermissions
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
-import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -52,7 +45,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -68,9 +60,6 @@ import kotlinx.coroutines.launch
 
 import java.lang.ref.WeakReference
 
-// Các scheme do WebView tự xử lý, không chuyển sang app khác. Tạo một lần thay vì mỗi lần mở link.
-private val INTERNAL_URL_SCHEMES = setOf("http", "https", "about", "javascript", "data", "blob", "file")
-
 class MainActivity : ComponentActivity() {
 
     private lateinit var store: Store
@@ -81,8 +70,6 @@ class MainActivity : ComponentActivity() {
     private var customVideoView: View? = null
     private var customVideoCallback: WebChromeClient.CustomViewCallback? = null
     private var previousRequestedOrientation: Int? = null
-    private var popupDialog: Dialog? = null
-    private var popupWebView: WebView? = null
     private lateinit var webPermissions: WebPermissionController
     private lateinit var blurTarget: BlurTarget
     private lateinit var urlPillFrame: FrameLayout
@@ -131,43 +118,17 @@ class MainActivity : ComponentActivity() {
     private var isActivityDestroyed = false
     private val handler = Handler(Looper.getMainLooper())
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
-    private val pendingDownloadLiveUpdates = linkedMapOf<Long, String>()
-    private var notificationPermissionRequestInFlight = false
     private var downloadPromptController: DownloadPromptController? = null
 
-    private data class DownloadRequest(
-        val url: String,
-        val userAgent: String,
-        val cookie: String,
-        val mimeType: String,
-        val fileName: String
+    private val downloads = DownloadController(this) { toast(it) }
+    private val popup: PopupWindowController = PopupWindowController(
+        activity = this,
+        dp = ::dp,
+        mainWebView = { web },
+        chromeClient = { chromeClient },
+        openExternal = { url, view -> handleSpecialUrl(url, view) },
+        toast = { toast(it) }
     )
-
-    private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            notificationPermissionRequestInFlight = false
-            val pending = pendingDownloadLiveUpdates.toMap()
-            pendingDownloadLiveUpdates.clear()
-            if (granted) {
-                pending.forEach { (id, name) -> DownloadLiveUpdate.track(this, id, name) }
-            } else if (pending.isNotEmpty()) {
-                toast("Tải xuống vẫn tiếp tục; thông báo tiến trình đang bị tắt.")
-            }
-        }
-
-    private fun startDownloadLiveUpdate(downloadId: Long, fileName: String) {
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            pendingDownloadLiveUpdates[downloadId] = fileName
-            if (!notificationPermissionRequestInFlight) {
-                notificationPermissionRequestInFlight = true
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-            return
-        }
-        DownloadLiveUpdate.track(this, downloadId, fileName)
-    }
 
     private val fileLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -178,212 +139,98 @@ class MainActivity : ComponentActivity() {
     }
 
     private class Bridge(ownerRef: WeakReference<WebView>, activityRef: WeakReference<MainActivity>) {
-    private val ownerWeak = ownerRef
-    private val activityWeak = activityRef
+        private val ownerWeak = ownerRef
+        private val activityWeak = activityRef
 
-    @JavascriptInterface
-    fun setTopColor(r: Int, g: Int, b: Int) {
-        val activity = activityWeak.get() ?: return
-        val owner = ownerWeak.get() ?: return
-        activity.runOnUiThread {
-            if (owner === activity.web && !activity.isActivityDestroyed) {
-                activity.applyTopColor(Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255)))
+        @JavascriptInterface
+        fun setTopColor(r: Int, g: Int, b: Int) {
+            val activity = activityWeak.get() ?: return
+            val owner = ownerWeak.get() ?: return
+            activity.runOnUiThread {
+                if (owner === activity.web && !activity.isActivityDestroyed) {
+                    activity.applyTopColor(Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255)))
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun clearTopColor() {
+            val activity = activityWeak.get() ?: return
+            val owner = ownerWeak.get() ?: return
+            activity.runOnUiThread {
+                if (owner === activity.web && !activity.isActivityDestroyed) activity.applyTopColor(null)
             }
         }
     }
 
-    @JavascriptInterface
-    fun clearTopColor() {
-        val activity = activityWeak.get() ?: return
-        val owner = ownerWeak.get() ?: return
-        activity.runOnUiThread {
-            if (owner === activity.web && !activity.isActivityDestroyed) activity.applyTopColor(null)
+
+    private fun handleSpecialUrl(url: String, fallbackView: WebView = web): Boolean =
+        openExternalUrl(url, fallbackView, ::toast)
+
+    private fun showFullscreenView(
+        view: View,
+        callback: WebChromeClient.CustomViewCallback,
+        requestedOrientationValue: Int? = null
+    ) {
+        if (!::fullscreenContainer.isInitialized || customVideoView != null) {
+            callback.onCustomViewHidden()
+            return
         }
+        customVideoView = view
+        customVideoCallback = callback
+        previousRequestedOrientation = requestedOrientation
+        requestedOrientationValue?.let {
+            if (it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) requestedOrientation = it
+        }
+        (view.parent as? ViewGroup)?.removeView(view)
+        fullscreenContainer.removeAllViews()
+        fullscreenContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
+        fullscreenContainer.visibility = View.VISIBLE
+        fullscreenContainer.bringToFront()
+        pipController.setVideoActive(true, view)
+        orbController?.setTemporarilyHidden(true)
+        WindowInsetsControllerCompat(window, root).hide(WindowInsetsCompat.Type.systemBars())
     }
-}
+
+    private fun exitFullscreenView() {
+        val view = customVideoView ?: return
+        pipController.setVideoActive(false)
+        if (::fullscreenContainer.isInitialized) {
+            fullscreenContainer.removeView(view)
+            fullscreenContainer.visibility = View.GONE
+        }
+        customVideoView = null
+        val callback = customVideoCallback
+        customVideoCallback = null
+        previousRequestedOrientation?.let { requestedOrientation = it }
+        previousRequestedOrientation = null
+        if (!isActivityDestroyed && !isFinishing && !isDestroyed && ::root.isInitialized) {
+            WindowInsetsControllerCompat(window, root).show(WindowInsetsCompat.Type.systemBars())
+        }
+        syncOrbMenuVisibility()
+        callback?.onCustomViewHidden()
+    }
 
 
-        private fun createPopupWindow(resultMsg: Message?): Boolean {
-        if (popupWebView != null) return false
-        val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
-        val popup = WebView(this)
-        popup.settings.applyBrowserDefaults()
-        popup.settings.apply {
-        userAgentString = web.settings.userAgentString
-        useWideViewPort = web.settings.useWideViewPort
-        loadWithOverviewMode = web.settings.loadWithOverviewMode
-        }
-        CookieManager.getInstance().apply {
-        setAcceptCookie(true)
-        setAcceptThirdPartyCookies(popup, true)
-        }
-        popup.webViewClient = object : WebViewClient() {
+    private val client: WebViewClient = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        if (!request.isForMainFrame) return false
-        return handleSpecialUrl(request.url.toString(), view)
+            if (!request.isForMainFrame) return false
+            return handleSpecialUrl(request.url.toString(), view)
         }
         @Deprecated("Deprecated in Java")
         override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
-        handleSpecialUrl(url, view)
+            handleSpecialUrl(url, view)
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-        if (request.isForMainFrame) toast("Không tải được cửa sổ đăng nhập (${error.errorCode})")
+            if (request.isForMainFrame && !isActivityDestroyed && view === web) {
+                toast("Không tải được trang (${error.errorCode})")
+                AnimationSystem.fade(view, 1f)
+            }
         }
+        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+            if (request.isForMainFrame && response.statusCode >= 400 && !isActivityDestroyed && view === web) {
+                toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
+            }
         }
-        popup.webChromeClient = chromeClient
-        val dialog = Dialog(this)
-        val content = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setBackgroundColor(Color.WHITE)
-        }
-        val header = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setBackgroundColor(Color.rgb(245, 245, 247))
-        setPadding(dp(16), 0, dp(12), 0)
-        }
-        val title = TextView(this).apply {
-        text = "Cửa sổ mới"
-        textSize = 14f
-        setTextColor(Color.BLACK)
-        }
-        header.addView(title, LinearLayout.LayoutParams(0, dp(44), 1f))
-        val close = TextView(this).apply {
-        text = "✕"
-        textSize = 18f
-        gravity = Gravity.CENTER
-        setTextColor(Color.BLACK)
-        setOnClickListener { dialog.dismiss() }
-        }
-        header.addView(close, LinearLayout.LayoutParams(dp(44), dp(44)))
-        content.addView(header, LinearLayout.LayoutParams(-1, dp(44)))
-        content.addView(popup, LinearLayout.LayoutParams(-1, 0, 1f))
-        dialog.setContentView(content)
-        dialog.setOnDismissListener {
-        if (popupWebView === popup) {
-        popup.stopLoading()
-        (popup.parent as? ViewGroup)?.removeView(popup)
-        popup.webChromeClient = WebChromeClient()
-        popup.webViewClient = WebViewClient()
-        popup.destroy()
-        popupWebView = null
-        popupDialog = null
-        }
-        }
-        popupWebView = popup
-        popupDialog = dialog
-        dialog.show()
-        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        transport.webView = popup
-        resultMsg?.sendToTarget()
-        return true
-        }
-        private fun closePopupWindow() {
-        popupDialog?.dismiss()
-        }
-
-
-private fun handleSpecialUrl(url: String, fallbackView: WebView = web): Boolean {
-    val uri = try { Uri.parse(url) } catch (_: Exception) { return false }
-    val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
-    if (scheme in INTERNAL_URL_SCHEMES) {
-    return false
-    }
-    return try {
-    val intent = if (scheme == "intent") {
-    Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
-    } else {
-    Intent(Intent.ACTION_VIEW, uri)
-    }
-    intent.component = null
-    intent.addCategory(Intent.CATEGORY_BROWSABLE)
-    val fallback = intent.getStringExtra("browser_fallback_url")?.let {
-    val fallbackUri = runCatching { Uri.parse(it) }.getOrNull()
-    if (fallbackUri?.scheme.equals("https", ignoreCase = true) ||
-    fallbackUri?.scheme.equals("http", ignoreCase = true)) it else null
-    }
-    when {
-    intent.resolveActivity(packageManager) != null -> {
-    startActivity(intent)
-    true
-    }
-    !fallback.isNullOrBlank() -> {
-    fallbackView.loadUrl(fallback)
-    true
-    }
-    else -> {
-    toast("Không tìm thấy ứng dụng để mở liên kết này")
-    true
-    }
-    }
-    } catch (_: Exception) {
-    toast("Không thể mở liên kết bên ngoài")
-    true
-    }
-    }
-private fun showFullscreenView(
-view: View,
-callback: WebChromeClient.CustomViewCallback,
-requestedOrientationValue: Int? = null
-) {
-if (!::fullscreenContainer.isInitialized || customVideoView != null) {
-callback.onCustomViewHidden()
-return
-}
-customVideoView = view
-customVideoCallback = callback
-previousRequestedOrientation = requestedOrientation
-requestedOrientationValue?.let {
-if (it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) requestedOrientation = it
-}
-(view.parent as? ViewGroup)?.removeView(view)
-fullscreenContainer.removeAllViews()
-fullscreenContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
-fullscreenContainer.visibility = View.VISIBLE
-fullscreenContainer.bringToFront()
-pipController.setVideoActive(true, view)
-orbController?.setTemporarilyHidden(true)
-WindowInsetsControllerCompat(window, root).hide(WindowInsetsCompat.Type.systemBars())
-}
-
-private fun exitFullscreenView() {
-val view = customVideoView ?: return
-pipController.setVideoActive(false)
-if (::fullscreenContainer.isInitialized) {
-fullscreenContainer.removeView(view)
-fullscreenContainer.visibility = View.GONE
-}
-customVideoView = null
-val callback = customVideoCallback
-customVideoCallback = null
-previousRequestedOrientation?.let { requestedOrientation = it }
-previousRequestedOrientation = null
-if (!isActivityDestroyed && !isFinishing && !isDestroyed && ::root.isInitialized) {
-WindowInsetsControllerCompat(window, root).show(WindowInsetsCompat.Type.systemBars())
-}
-syncOrbMenuVisibility()
-callback?.onCustomViewHidden()
-}
-
-
-private val client = object : WebViewClient() {
-override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-if (!request.isForMainFrame) return false
-return handleSpecialUrl(request.url.toString(), view)
-}
-@Deprecated("Deprecated in Java")
-override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
-handleSpecialUrl(url, view)
-override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-if (request.isForMainFrame && !isActivityDestroyed && view === web) {
-toast("Không tải được trang (${error.errorCode})")
-AnimationSystem.fade(view, 1f)
-}
-}
-override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-if (request.isForMainFrame && response.statusCode >= 400 && !isActivityDestroyed && view === web) {
-toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
-}
-}
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             tabManager.updateForWebView(view, url, view.title ?: url)
             if (view !== web) return
@@ -445,64 +292,64 @@ toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
         }
     }
 
-    private val chromeClient = object : WebChromeClient() {
-    override fun onShowCustomView(view: View, callback: CustomViewCallback) {
-    showFullscreenView(view, callback)
-    }
-    override fun onShowCustomView(view: View, requestedOrientation: Int, callback: CustomViewCallback) {
-    showFullscreenView(view, callback, requestedOrientation)
-    }
-    override fun onHideCustomView() {
-    exitFullscreenView()
-    }
-                override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
-        return createPopupWindow(resultMsg)
+    private val chromeClient: WebChromeClient = object : WebChromeClient() {
+        override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+            showFullscreenView(view, callback)
+        }
+        override fun onShowCustomView(view: View, requestedOrientation: Int, callback: CustomViewCallback) {
+            showFullscreenView(view, callback, requestedOrientation)
+        }
+        override fun onHideCustomView() {
+            exitFullscreenView()
+        }
+        override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
+            return popup.create(resultMsg)
         }
         override fun onCloseWindow(window: WebView) {
-        if (window === popupWebView) closePopupWindow()
-        else super.onCloseWindow(window)
+            if (window === popup.webView) popup.close()
+            else super.onCloseWindow(window)
         }
         // Hộp thoại JavaScript của trang: dùng chung hộp kính mờ. Trả lời JsResult là bắt buộc, nếu không trang sẽ đơ.
         // Trang trong cửa sổ popup trả false để hệ thống tự hiện (hộp kính nằm sau cửa sổ popup nên sẽ bị che).
         override fun onJsAlert(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-        if (view === popupWebView) return false
-        if (isActivityDestroyed) { result.cancel(); return true }
-        glassDialog.show(jsTitle(url), message.orEmpty(), "OK") { _, _ -> result.confirm() }
-        return true
+            if (view === popup.webView) return false
+            if (isActivityDestroyed) { result.cancel(); return true }
+            glassDialog.show(jsTitle(url), message.orEmpty(), "OK") { _, _ -> result.confirm() }
+            return true
         }
         override fun onJsConfirm(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-        if (view === popupWebView) return false
-        if (isActivityDestroyed) { result.cancel(); return true }
-        glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy") { ok, _ ->
-        if (ok) result.confirm() else result.cancel()
-        }
-        return true
+            if (view === popup.webView) return false
+            if (isActivityDestroyed) { result.cancel(); return true }
+            glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy") { ok, _ ->
+                if (ok) result.confirm() else result.cancel()
+            }
+            return true
         }
         override fun onJsPrompt(view: WebView, url: String?, message: String?, defaultValue: String?, result: JsPromptResult): Boolean {
-        if (view === popupWebView) return false
-        if (isActivityDestroyed) { result.cancel(); return true }
-        glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy", defaultValue.orEmpty()) { ok, text ->
-        if (ok) result.confirm(text.orEmpty()) else result.cancel()
-        }
-        return true
+            if (view === popup.webView) return false
+            if (isActivityDestroyed) { result.cancel(); return true }
+            glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy", defaultValue.orEmpty()) { ok, text ->
+                if (ok) result.confirm(text.orEmpty()) else result.cancel()
+            }
+            return true
         }
         override fun onJsBeforeUnload(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-        if (view === popupWebView) return false
-        if (isActivityDestroyed) { result.cancel(); return true }
-        val text = message?.takeIf { it.isNotBlank() } ?: "Các thay đổi bạn đã thực hiện có thể chưa được lưu."
-        glassDialog.show("Rời khỏi trang này?", text, "Rời khỏi", "Ở lại") { ok, _ ->
-        if (ok) result.confirm() else result.cancel()
-        }
-        return true
+            if (view === popup.webView) return false
+            if (isActivityDestroyed) { result.cancel(); return true }
+            val text = message?.takeIf { it.isNotBlank() } ?: "Các thay đổi bạn đã thực hiện có thể chưa được lưu."
+            glassDialog.show("Rời khỏi trang này?", text, "Rời khỏi", "Ở lại") { ok, _ ->
+                if (ok) result.confirm() else result.cancel()
+            }
+            return true
         }
         override fun onPermissionRequest(request: PermissionRequest) {
-        runOnUiThread { webPermissions.requestMedia(request) }
+            runOnUiThread { webPermissions.requestMedia(request) }
         }
         override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
-        runOnUiThread { webPermissions.requestGeolocation(origin, callback) }
+            runOnUiThread { webPermissions.requestGeolocation(origin, callback) }
         }
 
-override fun onProgressChanged(view: WebView, newProgress: Int) {
+        override fun onProgressChanged(view: WebView, newProgress: Int) {
             if (view === web) pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
         }
 
@@ -526,12 +373,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
     // ---------------- Tiện ích giao diện ----------------
 
     private fun dp(v: Int): Int = (v * d).toInt()
-
-    private fun ripple(): Int {
-        val tv = TypedValue()
-        theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
-        return tv.resourceId
-    }
 
     // ---------------- Hiệu ứng ----------------
 
@@ -620,7 +461,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             store = store,
             dialog = { glassDialog },
             isActivityDestroyed = { isActivityDestroyed },
-            isPopupShowing = { popupDialog?.isShowing == true }
+            isPopupShowing = { popup.isShowing }
         )
         AdBlocker.init(this)
         tabManager = TabManager()
@@ -634,9 +475,20 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         isNight = false
         fg = Color.rgb(18, 18, 20)
         sub = Color.rgb(82, 82, 88)
-        val pageColor = Color.WHITE
         pageBg = Color.WHITE
 
+        createFades()
+        createToolbar()
+        createSuggestBox()
+        createFindBar()
+        createRootAndGlass()
+        createControllers()
+        installWindowHandlers()
+        loadStartPage(savedInstanceState)
+    }
+
+    /** Dải mờ dần dưới thanh trạng thái và trên thanh địa chỉ. */
+    private fun createFades() {
         // Lớp mờ dần dưới thanh trạng thái (khi trang không có thanh menu cố định)
         val fadeStart = Theme.fadeStart(isNight)
         val fadeEnd = Theme.fadeEnd(isNight)
@@ -650,29 +502,13 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         bottomFade.background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(botStart, botEnd))
 
         pillProgress = PillProgress(accent, 2.5f * d)
+    }
 
-        // --- Thanh địa chỉ gọn: [‹]  tên miền  [⋯] ---
+    /** Thanh địa chỉ gọn: [‹]  tên miền  [⋯]. */
+    private fun createToolbar() {
         // Cùng kiểu với nút ba chấm: khung bo góc + BlurView gắn sau khi blurTarget được khởi tạo.
-        backBtn = FrameLayout(this).apply {
-            isClickable = true
-            isFocusable = true
-            clipChildren = true
-            clipToPadding = true
-            background = GradientDrawable().apply {
-                cornerRadius = GlassSystem.Preset.TOOLBAR_BUTTON.radiusDp * d
-                setColor(Color.TRANSPARENT)
-            }
-            clipToOutline = true
-            contentDescription = "Quay lại"
-        }
-        backBtn.addView(
-            ImageView(this).apply {
-                setImageDrawable(PathIcon(Icons.ARROW_BACK, fg))
-                setPadding(dp(11), dp(11), dp(11), dp(11))
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            },
-            FrameLayout.LayoutParams(-1, -1)
+        backBtn = glassToolbarButton(
+            GlassSystem.Preset.TOOLBAR_BUTTON, Icons.ARROW_BACK, 11, "Quay lại"
         )
         backBtn.alpha = 0.3f
         backBtn.setOnClickListener { if (web.canGoBack()) web.goBack() }
@@ -680,26 +516,8 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
         // Nút ba chấm dùng cùng bộ render kính blur thật với OrbMenu.
         // BlurView được gắn sau khi blurTarget được khởi tạo bên dưới.
-        menuBtn = FrameLayout(this).apply {
-            isClickable = true
-            isFocusable = true
-            clipChildren = true
-            clipToPadding = true
-            background = GradientDrawable().apply {
-                cornerRadius = GlassSystem.Preset.ORB_BUTTON.radiusDp * d
-                setColor(Color.TRANSPARENT)
-            }
-            clipToOutline = true
-            contentDescription = "Mở menu"
-        }
-        menuBtn.addView(
-            ImageView(this).apply {
-                setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
-                setPadding(dp(10), dp(10), dp(10), dp(10))
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            },
-            FrameLayout.LayoutParams(-1, -1)
+        menuBtn = glassToolbarButton(
+            GlassSystem.Preset.ORB_BUTTON, Icons.MORE_HORIZ, 10, "Mở menu"
         )
         menuBtn.setOnClickListener { menu.toggle() }
         press(menuBtn, Constants.PRESS_SCALE_BTN)
@@ -792,8 +610,50 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         urlPillFrame.addView(urlPill, FrameLayout.LayoutParams(-1, -1))
         bar.addView(urlPillFrame, pillLp)
         bar.addView(menuBtn, LinearLayout.LayoutParams(dp(BOTTOM_BAR_HEIGHT_DP), dp(BOTTOM_BAR_HEIGHT_DP)))
+    }
 
-        // --- Danh sách gợi ý tìm kiếm (hiện phía trên thanh địa chỉ) ---
+    /** Nút tròn của thanh dưới: khung bo góc trong suốt + icon; lớp kính gắn sau bằng [addGlassLayer]. */
+    private fun glassToolbarButton(
+        preset: GlassSystem.Preset,
+        iconPath: String,
+        iconPaddingDp: Int,
+        description: String
+    ): FrameLayout = FrameLayout(this).apply {
+        isClickable = true
+        isFocusable = true
+        clipChildren = true
+        clipToPadding = true
+        background = GradientDrawable().apply {
+            cornerRadius = preset.radiusDp * d
+            setColor(Color.TRANSPARENT)
+        }
+        clipToOutline = true
+        contentDescription = description
+        addView(
+            ImageView(context).apply {
+                setImageDrawable(PathIcon(iconPath, fg))
+                setPadding(dp(iconPaddingDp), dp(iconPaddingDp), dp(iconPaddingDp), dp(iconPaddingDp))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            FrameLayout.LayoutParams(-1, -1)
+        )
+    }
+
+    /** Đặt lớp kính mờ (BlurView) xuống dưới cùng của một nút; chỉ gọi được sau khi blurTarget đã tạo. */
+    private fun addGlassLayer(button: FrameLayout, preset: GlassSystem.Preset) {
+        button.addView(
+            GlassSystem.createBlurView(this, blurTarget, preset, d, isNight).apply {
+                isClickable = false
+                isFocusable = false
+            },
+            0,
+            FrameLayout.LayoutParams(-1, -1)
+        )
+    }
+
+    /** Danh sách gợi ý tìm kiếm (hiện phía trên thanh địa chỉ). */
+    private fun createSuggestBox() {
         suggestBox = LinearLayout(this)
         suggestBox.orientation = LinearLayout.VERTICAL
         // Real Liquid Glass is rendered by a BlurView behind the suggestion rows.
@@ -801,8 +661,10 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         suggestBox.background = ColorDrawable(Color.TRANSPARENT)
         suggestBox.setPadding(0, dp(6), 0, dp(6))
         suggestBox.visibility = View.GONE
+    }
 
-        // --- Thanh tìm trong trang (thay thế thanh địa chỉ khi đang tìm) ---
+    /** Thanh tìm trong trang (thay thế thanh địa chỉ khi đang tìm). */
+    private fun createFindBar() {
         findInput = EditText(this)
         findInput.setSingleLine()
         findInput.hint = "Tìm trong trang"
@@ -869,14 +731,17 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         findBar.addView(upBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
         findBar.addView(downBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
         findBar.addView(doneBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
 
+    /** Gốc giao diện: WebView của tab đầu, BlurTarget và các lớp kính nằm trên nó. */
+    private fun createRootAndGlass() {
         // --- WebView của tab đầu tiên; các tab mới có WebView riêng ---
         web = WebView(this)
         configureTabWebView(web)
         tabManager.getActive()?.webView = web
 
         root = FrameLayout(this)
-        root.setBackgroundColor(pageColor)
+        root.setBackgroundColor(pageBg)
         root.isFocusable = true
         root.isFocusableInTouchMode = true
 
@@ -885,36 +750,9 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         blurTarget.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
 
-        // Nền kính của nút ba chấm phải lấy blur từ cùng BlurTarget như thanh địa chỉ/Orb.
-        menuBtn.addView(
-            GlassSystem.createBlurView(
-                this,
-                blurTarget,
-                GlassSystem.Preset.ORB_BUTTON,
-                d,
-                isNight
-            ).apply {
-                isClickable = false
-                isFocusable = false
-            },
-            0,
-            FrameLayout.LayoutParams(-1, -1)
-        )
-
-        backBtn.addView(
-            GlassSystem.createBlurView(
-                this,
-                blurTarget,
-                GlassSystem.Preset.TOOLBAR_BUTTON,
-                d,
-                isNight
-            ).apply {
-                isClickable = false
-                isFocusable = false
-            },
-            0,
-            FrameLayout.LayoutParams(-1, -1)
-        )
+        // Nền kính của hai nút tròn lấy blur từ cùng BlurTarget như thanh địa chỉ/Orb.
+        addGlassLayer(menuBtn, GlassSystem.Preset.ORB_BUTTON)
+        addGlassLayer(backBtn, GlassSystem.Preset.TOOLBAR_BUTTON)
 
         urlPillBlur = GlassSystem.createBlurView(
             this, blurTarget, GlassSystem.Preset.ADDRESS_BAR, d, isNight
@@ -943,9 +781,9 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         }
         root.addView(bar, FrameLayout.LayoutParams(-1, dp(BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM))
         fullscreenContainer = FrameLayout(this).apply {
-        setBackgroundColor(Color.BLACK)
-        visibility = View.GONE
-        isClickable = true
+            setBackgroundColor(Color.BLACK)
+            visibility = View.GONE
+            isClickable = true
         }
         root.addView(fullscreenContainer, FrameLayout.LayoutParams(-1, -1))
         findBarContainer = FrameLayout(this)
@@ -963,6 +801,10 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
         )
         setContentView(root)
+    }
+
+    /** Các controller dùng chung BlurTarget (tải xuống, menu, hộp thoại, tab, Orb). */
+    private fun createControllers() {
         downloadPromptController = DownloadPromptController(
             activity = this,
             root = root,
@@ -1012,7 +854,10 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             shortUrl = UrlUtils::shortUrl
         )
         setupOrbMenu()
+    }
 
+    /** Lắng nghe insets hệ thống và nút Back. */
+    private fun installWindowHandlers() {
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
@@ -1028,9 +873,9 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-            if (glassDialog.isShowing) glassDialog.cancelCurrent()
-            else if (customVideoView != null) exitFullscreenView()
-            else if (popupDialog?.isShowing == true) closePopupWindow()
+                if (glassDialog.isShowing) glassDialog.cancelCurrent()
+                else if (customVideoView != null) exitFullscreenView()
+                else if (popup.isShowing) popup.close()
                 else if (menu.isOpen) menu.handleBack()
                 else if (findBarContainer.visibility == View.VISIBLE) closeFind()
                 else if (urlBar.hasFocus()) leaveEdit()
@@ -1038,7 +883,10 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
                 else finish()
             }
         })
+    }
 
+    /** Nạp trang đầu: link từ app khác, tab đã lưu hoặc trạng thái WebView được khôi phục. */
+    private fun loadStartPage(savedInstanceState: Bundle?) {
         if (savedInstanceState == null) {
             val activeTab = tabManager.getActive()
             val savedUrl = activeTab?.url.orEmpty()
@@ -1280,7 +1128,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
             suggestBlurView.visibility = View.GONE
             return
         }
-        val rp = ripple()
+        val rp = selectableItemBackgroundRes()
         for (text in items) {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
@@ -1334,28 +1182,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
 
     // ---------------- Tải trang ----------------
 
-    private fun enqueueDownload(request: DownloadRequest) {
-        try {
-            val safeFileName = request.fileName
-                .replace('/', '_')
-                .replace('\\', '_')
-                .ifBlank { "download" }
-            val download = DownloadManager.Request(Uri.parse(request.url))
-            if (request.mimeType.isNotBlank()) download.setMimeType(request.mimeType)
-            if (request.cookie.isNotBlank()) download.addRequestHeader("Cookie", request.cookie)
-            if (request.userAgent.isNotBlank()) download.addRequestHeader("User-Agent", request.userAgent)
-            download.setNotificationVisibility(
-                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-            )
-            download.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, safeFileName)
-            val downloadId = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(download)
-            startDownloadLiveUpdate(downloadId, safeFileName)
-            toast("Đang tải xuống...")
-        } catch (_: Exception) {
-            toast("Không tải được file này")
-        }
-    }
-
     private fun toUrl(input: String): String = UrlUtils.toUrl(input, store.searchEngine)
 
     private fun load(input: String) {
@@ -1396,15 +1222,9 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         }
         view.setDownloadListener { dlUrl, userAgent, contentDisposition, mimetype, _ ->
             try {
-                val request = DownloadRequest(
-                    url = dlUrl,
-                    userAgent = userAgent.orEmpty(),
-                    cookie = CookieManager.getInstance().getCookie(dlUrl).orEmpty(),
-                    mimeType = mimetype.orEmpty(),
-                    fileName = URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
-                )
+                val request = downloads.buildRequest(dlUrl, userAgent, contentDisposition, mimetype)
                 downloadPromptController?.show(request.fileName) {
-                    enqueueDownload(request)
+                    downloads.enqueue(request)
                 } ?: toast("Summit chưa sẵn sàng để tải xuống")
             } catch (_: Exception) {
                 toast("Không tải được file này")
@@ -1534,12 +1354,6 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         handler.postDelayed(saveTabsRunnable, Constants.SAVE_TABS_DEBOUNCE_MS)
     }
 
-    override fun onUserLeaveHint() {
-        // Android 12+ tự vào PiP nhờ auto-enter; Android 8–11 cần gọi thủ công.
-        pipController.enterIfNeeded()
-        super.onUserLeaveHint()
-    }
-
     override fun onPictureInPictureModeChanged(
         isInPictureInPictureMode: Boolean,
         newConfig: android.content.res.Configuration
@@ -1596,7 +1410,7 @@ override fun onProgressChanged(view: WebView, newProgress: Int) {
         // Trả lời mọi hộp thoại còn treo (JsResult, quyền) trước khi hủy WebView.
         if (::glassDialog.isInitialized) glassDialog.cancelAll()
         webPermissions.cancelAll()
-        popupDialog?.dismiss()
+        popup.close()
         if (customVideoView != null) exitFullscreenView()
         // === CLEANUP DE TRANH MEMORY LEAK ===
         // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)

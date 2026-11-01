@@ -325,12 +325,6 @@ half4 main(float2 coord) {
                 Choreographer.getInstance().postFrameCallback(frame)
             }
         }
-
-        fun stop() {
-            until = 0L
-            Choreographer.getInstance().removeFrameCallback(frame)
-            running = false
-        }
     }
 
     /**

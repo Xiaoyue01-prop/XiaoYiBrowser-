@@ -1,0 +1,81 @@
+package com.example.webedge
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.webkit.WebSettings
+import android.webkit.WebView
+import java.util.Locale
+
+// Tiện ích dùng chung cho WebView: cấu hình mặc định, user agent và mở link ngoài app.
+
+/** Cấu hình chung cho mọi WebView của app (tab chính và cửa sổ popup đăng nhập). */
+@SuppressLint("SetJavaScriptEnabled")
+fun WebSettings.applyBrowserDefaults() {
+    javaScriptEnabled = true
+    domStorageEnabled = true
+    databaseEnabled = true
+    setSupportMultipleWindows(true)
+    javaScriptCanOpenWindowsAutomatically = true
+    mediaPlaybackRequiresUserGesture = false
+    mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+}
+
+private const val FALLBACK_DESKTOP_UA =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+
+private val WV_MARKER = Regex(""";\s*wv""", RegexOption.IGNORE_CASE)
+private val VERSION_4_0 = Regex("""\s*Version/4\.0""", RegexOption.IGNORE_CASE)
+private val ANDROID_TOKEN = Regex(""";\s*Android[^;)]*""", RegexOption.IGNORE_CASE)
+private val VERSION_ANY = Regex("""\s*Version/[\d.]+""", RegexOption.IGNORE_CASE)
+
+/** UA mobile "giống Chrome": bỏ dấu hiệu WebView (wv, Version/4.0) để trang không phục vụ bản hạn chế. */
+fun cleanMobileUserAgent(raw: String): String =
+    raw.replace(WV_MARKER, "").replace(VERSION_4_0, "")
+
+/** UA desktop suy ra từ UA mobile thật của máy, nên tự cập nhật theo phiên bản Chromium. */
+fun desktopUserAgent(mobileUa: String): String {
+    if (mobileUa.isBlank()) return FALLBACK_DESKTOP_UA
+    return mobileUa
+        .replace(ANDROID_TOKEN, "")
+        .replace(VERSION_ANY, "")
+        .replace(WV_MARKER, "")
+        .replace("Mobile ", "")
+}
+
+// Các scheme do WebView tự xử lý, không chuyển sang app khác. Tạo một lần thay vì mỗi lần mở link.
+private val INTERNAL_URL_SCHEMES = setOf("http", "https", "about", "javascript", "data", "blob", "file")
+
+/**
+ * Link không phải web (intent:, tel:, mailto:, scheme của app khác) thì mở bằng app tương ứng.
+ * Trả true nếu đã xử lý (WebView không tải link này nữa), false nếu để WebView tự tải.
+ */
+fun Activity.openExternalUrl(url: String, fallbackView: WebView, toast: (String) -> Unit): Boolean {
+    val uri = try { Uri.parse(url) } catch (_: Exception) { return false }
+    val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
+    if (scheme in INTERNAL_URL_SCHEMES) return false
+    return try {
+        val intent = if (scheme == "intent") {
+            Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+        } else {
+            Intent(Intent.ACTION_VIEW, uri)
+        }
+        intent.component = null
+        intent.addCategory(Intent.CATEGORY_BROWSABLE)
+        val fallback = intent.getStringExtra("browser_fallback_url")?.takeIf {
+            val fallbackScheme = runCatching { Uri.parse(it).scheme }.getOrNull()
+            fallbackScheme.equals("https", ignoreCase = true) || fallbackScheme.equals("http", ignoreCase = true)
+        }
+        when {
+            intent.resolveActivity(packageManager) != null -> startActivity(intent)
+            !fallback.isNullOrBlank() -> fallbackView.loadUrl(fallback)
+            else -> toast("Không tìm thấy ứng dụng để mở liên kết này")
+        }
+        true
+    } catch (_: Exception) {
+        toast("Không thể mở liên kết bên ngoài")
+        true
+    }
+}
