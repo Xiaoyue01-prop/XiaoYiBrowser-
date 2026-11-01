@@ -300,6 +300,9 @@ class OrbMenuController(
             btn.visibility = View.VISIBLE
             btn.isClickable = true
             btn.isEnabled = true
+            // Each sub-button scales from the exact center of the main Orb, not its own center.
+            btn.pivotX = mainBtn.width / 2f - dp(4).toFloat()
+            btn.pivotY = mainBtn.height / 2f - dp(4).toFloat()
             btn.alpha = 0f
             btn.scaleX = 0f
             btn.scaleY = 0f

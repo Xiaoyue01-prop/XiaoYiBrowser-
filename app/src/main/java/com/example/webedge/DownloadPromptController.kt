@@ -2,6 +2,7 @@ package com.example.webedge
 
 import android.app.Activity
 import android.graphics.Color
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
@@ -51,7 +52,7 @@ class DownloadPromptController(
         activeView = null
         finishing = false
         if (view != null) {
-            view.animate().cancel()
+            OriginTransitionController.cancel(view)
             root.removeView(view)
         }
     }
@@ -195,8 +196,28 @@ class DownloadPromptController(
         activeView = card
 
         card.alpha = 0f
-        card.translationY = -dp(150).toFloat()
-        AnimationSystem.slideIn(card)
+        OriginTransitionController.runWhenLaidOut(card) {
+            if (activeView !== card) return@runWhenLaidOut
+            val location = IntArray(2)
+            card.getLocationOnScreen(location)
+            // Download requests have no native button source; use a compact anchor at the
+            // top-center edge, where the in-app download prompt appears.
+            val anchorSize = dp(24).toFloat()
+            val centerX = location[0] + card.width / 2f
+            val centerY = location[1] + dp(12)
+            val anchor = RectF(
+                centerX - anchorSize / 2f,
+                centerY - anchorSize / 2f,
+                centerX + anchorSize / 2f,
+                centerY + anchorSize / 2f
+            )
+            OriginTransitionController.openFromRect(
+                view = card,
+                originRectOnScreen = anchor,
+                durationMs = 380L,
+                endCornerRadiusPx = dp(GlassSystem.Preset.TOAST.radiusDp).toFloat()
+            )
+        }
     }
 
     private fun finish(confirmed: Boolean) {
@@ -223,7 +244,7 @@ class DownloadPromptController(
         if (view == null) {
             complete()
         } else {
-            AnimationSystem.slideOut(view, -dp(130).toFloat(), complete)
+            OriginTransitionController.close(view, onEnd = complete)
         }
     }
 }

@@ -155,7 +155,7 @@ class TabSwitcherController(
         return frame
     }
 
-    fun show(animate: Boolean = true) {
+    fun show(animate: Boolean = true, origin: View? = null) {
         // Chụp lại tab hiện tại ngay lúc mở lưới, không để thumbnail của lần trước bị cũ.
         captureActiveTab()
         // Back / vuốt back cũng phải đóng có hiệu ứng, nên chặn onBackPressed của Dialog.
@@ -182,11 +182,16 @@ class TabSwitcherController(
             // vẫn là nền đặc thay vì trong suốt lộ trang web phía sau.
             setBackgroundColor(Color.rgb(140, 136, 148))
         }
+        popup.setOnDismissListener { OriginTransitionController.cancel(container) }
         var closing = false
         fun dismissAnimated() {
             if (closing) return
             closing = true
-            AnimationSystem.popOut(container, 0.9f) { popup.dismiss() }
+            if (animate) {
+                OriginTransitionController.close(container) { popup.dismiss() }
+            } else {
+                popup.dismiss()
+            }
         }
         requestClose = { dismissAnimated() }
 
@@ -545,7 +550,6 @@ class TabSwitcherController(
         popup.setContentView(container)
         if (animate) container.alpha = 0f
         popup.show()
-        if (animate) container.post { AnimationSystem.popIn(container, 0.88f) }
         popup.window?.let { window ->
             window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             // Nền bảng tab sáng nên icon/đồng hồ status bar phải tối để đọc được.
@@ -560,6 +564,39 @@ class TabSwitcherController(
             window.decorView.requestApplyInsets()
         }
         popup.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        if (animate) {
+            var morphStarted = false
+            fun startMorph() {
+                if (morphStarted || closing || !container.isAttachedToWindow) return
+                if (container.width <= 0 || container.height <= 0) return
+                morphStarted = true
+                OriginTransitionController.open(
+                    view = container,
+                    origin = origin,
+                    durationMs = 450L,
+                    endCornerRadiusPx = 0f,
+                    fallbackScale = 0.92f
+                )
+            }
+            container.post {
+                startMorph()
+                if (!morphStarted) {
+                    val observer = container.viewTreeObserver
+                    if (observer.isAlive) {
+                        val listener = object : android.view.ViewTreeObserver.OnPreDrawListener {
+                            override fun onPreDraw(): Boolean {
+                                if (container.viewTreeObserver.isAlive) {
+                                    container.viewTreeObserver.removeOnPreDrawListener(this)
+                                }
+                                container.post { startMorph() }
+                                return true
+                            }
+                        }
+                        observer.addOnPreDrawListener(listener)
+                    }
+                }
+            }
+        }
     }
 
 }

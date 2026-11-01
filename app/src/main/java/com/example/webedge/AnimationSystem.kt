@@ -50,13 +50,27 @@ object AnimationSystem {
         private val zeta = spec.dampingRatio.coerceAtMost(0.999f).toDouble()
         private val w = 2.0 * Math.PI / spec.response
         private val wd = w * Math.sqrt(1.0 - zeta * zeta)
+        private val endValue = springValue(durationSec.toDouble()).takeIf { Math.abs(it) > 0.0001 } ?: 1.0
+
+        private fun springValue(t: Double): Double {
+            val decay = Math.exp(-zeta * w * t)
+            return 1.0 - decay * (Math.cos(wd * t) + (zeta * w / wd) * Math.sin(wd * t))
+        }
 
         override fun getInterpolation(input: Float): Float {
+            if (input <= 0f) return 0f
             if (input >= 1f) return 1f
-            val t = input * durationSec
-            val decay = Math.exp(-zeta * w * t)
-            val v = 1.0 - decay * (Math.cos(wd * t) + (zeta * w / wd) * Math.sin(wd * t))
-            return v.toFloat()
+
+            // Normalize to the exact value at the configured duration. The old hard snap to 1f
+            // could jump several percent on the final frame when the spring had not settled yet.
+            val normalized = (springValue((input * durationSec).toDouble()) / endValue).coerceAtLeast(0.0)
+            // Keep a restrained physical overshoot without letting ChangeBounds grow too far.
+            val eased = if (normalized > 1.0) {
+                1.0 + 0.08 * (1.0 - Math.exp(-(normalized - 1.0) / 0.08))
+            } else {
+                normalized
+            }
+            return eased.toFloat()
         }
     }
 
