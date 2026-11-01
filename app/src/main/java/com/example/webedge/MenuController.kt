@@ -8,10 +8,6 @@ import android.content.Intent
 import android.graphics.Typeface
 import android.text.InputType
 import android.text.TextUtils
-import android.transition.ChangeBounds
-import android.transition.Fade
-import android.transition.TransitionManager
-import android.transition.TransitionSet
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -26,6 +22,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.view.WindowCompat
+import androidx.dynamicanimation.animation.DynamicAnimation
+import androidx.dynamicanimation.animation.FloatValueHolder
+import androidx.dynamicanimation.animation.SpringAnimation
+import androidx.dynamicanimation.animation.SpringForce
 import androidx.core.view.WindowInsetsCompat
 import eightbitlab.com.blurview.BlurTarget
 
@@ -220,32 +220,30 @@ class MenuController(
         card.layoutParams = lp
     }
 
-    // Thay nội dung khung menu bằng một trang khác, có hiệu ứng đổi kích thước
+    // Thay nội dung khung menu bằng một trang khác: thẻ đổi kích thước bằng spring, trang cũ mờ đi, trang mới hiện lên.
     private fun setMenuPage(page: View, widthDp: Int, animate: Boolean) {
         val layer = menuLayer ?: return
-        val card = menuCard ?: return
+        val card = menuCard as? MenuCardLayout ?: return
         val w = minOf(dp(widthDp), activity.resources.displayMetrics.widthPixels - dp(28) - host.insetLeft - host.insetRight)
-        val glass = card.getChildAt(0)
-        if (animate) {
-            // Fade và đổi kích thước chạy đồng thời (AutoTransition chạy lần lượt nên rất chậm).
-            val tr = TransitionSet()
-            tr.ordering = TransitionSet.ORDERING_TOGETHER
-            tr.addTransition(Fade(Fade.OUT).setDuration(AnimationSystem.PAGE_FADE_OUT_MS))
-            tr.addTransition(
-                ChangeBounds()
-                    .setDuration(AnimationSystem.PAGE_DURATION)
-                    .setInterpolator(AnimationSystem.pageInterpolator)
-            )
-            tr.addTransition(Fade(Fade.IN).setDuration(AnimationSystem.PAGE_FADE_IN_MS).setStartDelay(AnimationSystem.PAGE_FADE_IN_DELAY_MS))
-            // Lớp kính đổi kích thước ngay, không animate, để blur không phải dựng lại mỗi khung hình.
-            tr.excludeTarget(glass, true)
-            TransitionManager.beginDelayedTransition(layer, tr)
-            syncBlurFor(AnimationSystem.PAGE_DURATION + 120)
+        card.dropLeavingPages()
+        val oldW = card.width
+        val oldH = card.height
+        val leaving = (1 until card.childCount).map { card.getChildAt(it) }
+        if (animate && oldW > 0 && oldH > 0 && leaving.isNotEmpty()) {
+            // Trang cũ giữ nguyên kích thước và chỉ mờ đi, không còn tham gia đo kích thước thẻ.
+            card.holdLeaving(leaving)
+            leaving.forEach { old ->
+                AnimationSystem.fade(old, 0f, AnimationSystem.QUICK) { card.removeLeaving(old) }
+            }
+            card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
+            page.alpha = 0f
+            page.postDelayed({ AnimationSystem.fade(page, 1f, AnimationSystem.SMOOTH) }, 40L)
+            card.animateSizeFrom(oldW, oldH)
+            syncBlurFor(900)
+        } else {
+            if (card.childCount > 1) card.removeViews(1, card.childCount - 1)
+            card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        if (card.childCount > 1) {
-            card.removeViews(1, card.childCount - 1)
-        }
-        card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         WindowCompat.getInsetsController(activity.window, layer).hide(WindowInsetsCompat.Type.ime())
     }
@@ -866,22 +864,86 @@ class MenuCardLayout(context: Context) : FrameLayout(context) {
     /** Chiều cao tối đa của thẻ (px); nội dung dài hơn thì danh sách bên trong tự co lại và cuộn. */
     var maxHeightPx: Int = Int.MAX_VALUE
 
+    // --- Đổi kích thước bằng spring khi chuyển trang ---
+    private var sizeSpring: SpringAnimation? = null
+    private var sizeProgress = 1f
+    private var fromW = 0
+    private var fromH = 0
+    private val leavingPages = ArrayList<View>()
+
+    /** Thẻ chạy từ kích thước cũ sang kích thước tự nhiên của trang mới; spring vượt nhẹ rồi đứng yên. */
+    fun animateSizeFrom(w: Int, h: Int) {
+        sizeSpring?.cancel()
+        fromW = w
+        fromH = h
+        sizeProgress = 0f
+        val anim = SpringAnimation(FloatValueHolder(0f))
+        anim.spring = SpringForce(1f).apply {
+            stiffness = AnimationSystem.SETTLE.stiffness
+            dampingRatio = AnimationSystem.SETTLE.dampingRatio
+        }
+        anim.setMinimumVisibleChange(DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE)
+        anim.addUpdateListener { _, value, _ ->
+            sizeProgress = value
+            requestLayout()
+        }
+        anim.addEndListener { _, canceled, _, _ ->
+            if (sizeSpring === anim) sizeSpring = null
+            if (!canceled) {
+                sizeProgress = 1f
+                requestLayout()
+            }
+        }
+        sizeSpring = anim
+        anim.start()
+    }
+
+    /** Đánh dấu các trang đang mờ đi: không đo, không nhận chạm, chỉ còn vẽ cho tới khi biến mất. */
+    fun holdLeaving(pages: List<View>) {
+        leavingPages.addAll(pages)
+    }
+
+    fun removeLeaving(page: View) {
+        leavingPages.remove(page)
+        removeView(page)
+    }
+
+    fun dropLeavingPages() {
+        leavingPages.toList().forEach {
+            AnimationSystem.cancel(it)
+            removeLeaving(it)
+        }
+    }
+
+    override fun onInterceptTouchEvent(ev: android.view.MotionEvent): Boolean =
+        leavingPages.isNotEmpty() || super.onInterceptTouchEvent(ev)
+
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean =
+        leavingPages.isNotEmpty() || super.onTouchEvent(event)
+
     override fun onMeasure(widthMeasureSpec: Int, rawHeightSpec: Int) {
         val heightMeasureSpec = capHeight(rawHeightSpec)
         var contentWidth = 0
         var contentHeight = 0
         for (i in 1 until childCount) {
             val child = getChildAt(i)
-            if (child.visibility == View.GONE) continue
+            if (child.visibility == View.GONE || child in leavingPages) continue
             measureChild(child, widthMeasureSpec, heightMeasureSpec)
             contentWidth = maxOf(contentWidth, child.measuredWidth)
             contentHeight = maxOf(contentHeight, child.measuredHeight)
         }
 
-        setMeasuredDimension(
-            resolveSize(maxOf(contentWidth, suggestedMinimumWidth), widthMeasureSpec),
-            resolveSize(maxOf(contentHeight, suggestedMinimumHeight), heightMeasureSpec)
-        )
+        val naturalW = resolveSize(maxOf(contentWidth, suggestedMinimumWidth), widthMeasureSpec)
+        val naturalH = resolveSize(maxOf(contentHeight, suggestedMinimumHeight), heightMeasureSpec)
+        if (sizeProgress != 1f) {
+            val p = sizeProgress
+            setMeasuredDimension(
+                (fromW + (naturalW - fromW) * p).toInt().coerceAtLeast(1),
+                (fromH + (naturalH - fromH) * p).toInt().coerceAtLeast(1)
+            )
+        } else {
+            setMeasuredDimension(naturalW, naturalH)
+        }
 
         // The BlurView must match the visible card bounds exactly. An oversized, clipped
         // BlurView can leave only part of the menu frosted on some device densities.
@@ -907,14 +969,14 @@ class MenuCardLayout(context: Context) : FrameLayout(context) {
         for (i in 1 until childCount) {
             val child = getChildAt(i)
             if (child.visibility == View.GONE) continue
+            // Trang cũ giữ kích thước đã đo lần trước (lúc này nó không được đo lại).
             child.layout(0, 0, child.measuredWidth, child.measuredHeight)
         }
     }
 
     /**
-     * ChangeBounds đổi khung của thẻ bằng setLeftTopRightBottom nên onMeasure/onLayout không chạy lại,
-     * còn lớp kính (loại khỏi Transition) thì đã nhảy ngay sang kích thước cuối. Kết quả: kính mờ
-     * ngắn/dài hơn thẻ trong suốt. Ở đây ép lớp kính khớp theo từng khung hình của thẻ.
+     * Lớp kính phải luôn khớp đúng khung thẻ ở từng khung hình khi thẻ đang đổi kích thước,
+     * không thì kính mờ ngắn/dài hơn thẻ trong suốt.
      */
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)

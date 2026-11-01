@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
-import android.view.animation.Interpolator
 import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
@@ -28,52 +27,24 @@ object AnimationSystem {
     }
 
     // === Preset spring (dùng chung toàn app, dampingRatio càng thấp càng nảy) ===
-    /** Nhấn xuống: nhanh, không nảy. */
+    /** Nhấn xuống, hiện nhanh: không nảy. */
     val QUICK = SpringSpec(0.20f, 1.0f)
-    /** Nhả tay sau khi nhấn: nảy rất mạnh. */
+    /** Nhả tay sau khi nhấn: nảy rõ, đúng cảm giác nút kính của iOS. */
     val PRESS_RELEASE = SpringSpec(0.40f, 0.30f)
-    /** Mở menu/dialog, nút xoay, chuyển trang menu: nảy mạnh. */
-    val SNAPPY = SpringSpec(0.45f, 0.42f)
-    /** Orb, thẻ tab xuất hiện: nảy mạnh nhất. */
-    val BOUNCY = SpringSpec(0.50f, 0.35f)
-    /** Bề mặt mở ra (menu, dialog, thẻ): vượt đích chừng 4-5% rồi đứng yên, kiểu iOS 26. */
+    /** Bề mặt mở ra (menu, dialog, thẻ, nút Orb): vượt đích chừng 4-5% rồi đứng yên, kiểu iOS 26. */
     val SETTLE = SpringSpec(0.42f, 0.70f)
     /** Bung từ nút bấm ra bề mặt lớn: cùng độ vượt đích với SETTLE nhưng chậm hơn một chút. */
     val MORPH = SpringSpec(0.46f, 0.72f)
     /** Thu ngược về nút: gần như không nảy để không chạy lố qua nút. */
     val MORPH_CLOSE = SpringSpec(0.34f, 0.90f)
-    /** Thu gọn thanh công cụ, toast, đổi trạng thái: nảy vừa. */
-    val SMOOTH = SpringSpec(0.50f, 0.55f)
-    /** Đóng lại: vẫn nảy nhẹ (scale/alpha được chặn ở 0 nên không bị lật). */
-    val DISMISS = SpringSpec(0.30f, 0.60f)
+    /** Thu gọn thanh công cụ, toast, đổi trạng thái: vượt nhẹ hơn SETTLE một chút. */
+    val SMOOTH = SpringSpec(0.50f, 0.62f)
+    /** Đóng lại (scale/alpha được chặn ở 0 nên không bị lật): chỉ nảy rất nhẹ. */
+    val DISMISS = SpringSpec(0.30f, 0.78f)
 
     // === Hằng số ===
     /** Nút kính phồng lên khi nhấn (như Liquid Glass của iOS 26). */
     const val GLASS_PRESS_SCALE = 1.12f
-
-    /** Interpolator mô phỏng spring thiếu giảm chấn, dùng cho Transition của Android. */
-    class SpringInterpolator(spec: SpringSpec, private val durationSec: Float) : Interpolator {
-        private val zeta = spec.dampingRatio.coerceAtMost(0.999f).toDouble()
-        private val w = 2.0 * Math.PI / spec.response
-        private val wd = w * Math.sqrt(1.0 - zeta * zeta)
-
-        override fun getInterpolation(input: Float): Float {
-            if (input >= 1f) return 1f
-            val t = input * durationSec
-            val decay = Math.exp(-zeta * w * t)
-            val v = 1.0 - decay * (Math.cos(wd * t) + (zeta * w / wd) * Math.sin(wd * t))
-            return v.toFloat()
-        }
-    }
-
-    /** Đổi nội dung/kích thước card menu: nảy theo spring. */
-    const val PAGE_DURATION = 520L
-    val pageInterpolator = SpringInterpolator(SNAPPY, PAGE_DURATION / 1000f)
-
-    /** Crossfade khi đổi trang menu: Transition của Android chỉ nhận thời lượng, không nhận spring. */
-    const val PAGE_FADE_OUT_MS = 80L
-    const val PAGE_FADE_IN_MS = 180L
-    const val PAGE_FADE_IN_DELAY_MS = 40L
 
     private val running =
         WeakHashMap<View, HashMap<DynamicAnimation.ViewProperty, SpringAnimation>>()
@@ -224,7 +195,7 @@ object AnimationSystem {
     /** Trượt vào từ translationY hiện tại (toast). */
     fun slideIn(view: View) {
         fade(view, 1f, QUICK)
-        spring(view, DynamicAnimation.TRANSLATION_Y, 0f, SMOOTH)
+        spring(view, DynamicAnimation.TRANSLATION_Y, 0f, SETTLE)
     }
 
     /** Trượt ra (toast); onEnd chạy khi fade xong. */
@@ -276,5 +247,40 @@ object AnimationSystem {
             view.scaleY = 1f
             onEnd?.invoke()
         }
+    }
+
+    /**
+     * Khi [change] làm các view trong [views] đổi chỗ (xoá một thẻ, sắp xếp lại), cho từng view trượt từ vị trí cũ
+     * về vị trí mới bằng spring thay vì nhảy cóc (kỹ thuật FLIP). Vị trí lấy theo màn hình, tính cả transform đang chạy.
+     */
+    fun reflow(container: android.view.ViewGroup, views: Collection<View>, spec: SpringSpec = SETTLE, change: () -> Unit) {
+        val before = HashMap<View, IntArray>()
+        val loc = IntArray(2)
+        for (v in views) {
+            if (!v.isAttachedToWindow) continue
+            v.getLocationOnScreen(loc)
+            before[v] = intArrayOf(loc[0], loc[1])
+        }
+        change()
+        val observer = container.viewTreeObserver
+        if (!observer.isAlive) return
+        observer.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (container.viewTreeObserver.isAlive) container.viewTreeObserver.removeOnPreDrawListener(this)
+                val now = IntArray(2)
+                for ((v, old) in before) {
+                    if (!v.isAttachedToWindow) continue
+                    v.getLocationOnScreen(now)
+                    val dx = old[0] - now[0]
+                    val dy = old[1] - now[1]
+                    if (dx == 0 && dy == 0) continue
+                    v.translationX += dx
+                    v.translationY += dy
+                    spring(v, DynamicAnimation.TRANSLATION_X, 0f, spec)
+                    spring(v, DynamicAnimation.TRANSLATION_Y, 0f, spec)
+                }
+                return true
+            }
+        })
     }
 }

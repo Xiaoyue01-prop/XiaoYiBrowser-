@@ -305,7 +305,7 @@ class OrbMenuController(
     private fun expand() {
         if (!isAvailable()) return
         isExpanded = true
-        AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 45f, AnimationSystem.SNAPPY)
+        AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 45f, AnimationSystem.SETTLE)
 
         val radius = dp(60).toFloat()
         val angles = listOf(-90.0, -45.0, 0.0)
@@ -322,7 +322,7 @@ class OrbMenuController(
             btn.scaleX = 0f
             btn.scaleY = 0f
             // Mỗi nút con hơi chậm hơn nút trước, tạo cảm giác bung ra lần lượt như iOS.
-            val spec = AnimationSystem.SpringSpec(0.40f + i * 0.04f, AnimationSystem.BOUNCY.dampingRatio)
+            val spec = AnimationSystem.SpringSpec(0.40f + i * 0.04f, AnimationSystem.SETTLE.dampingRatio)
             AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, dx, spec)
             AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, dy, spec)
             AnimationSystem.scaleTo(btn, 1f, 1f, spec)
@@ -333,13 +333,13 @@ class OrbMenuController(
     private fun collapse() {
         if (!isExpanded) return
         isExpanded = false
-        AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 0f, AnimationSystem.SNAPPY)
+        AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 0f, AnimationSystem.MORPH_CLOSE)
         subBtns.forEach { btn ->
             btn.isClickable = false
             btn.isEnabled = false
             AnimationSystem.cancel(btn)
-            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.SMOOTH)
-            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.SMOOTH)
+            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MORPH_CLOSE)
+            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MORPH_CLOSE)
             AnimationSystem.scaleTo(btn, 0f, 0f, AnimationSystem.DISMISS)
             AnimationSystem.fade(btn, 0f, AnimationSystem.DISMISS) {
                 if (!isExpanded) btn.visibility = View.GONE

@@ -11,9 +11,6 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
-import android.transition.ChangeBounds
-import android.transition.TransitionManager
-import android.transition.TransitionSet
 import android.view.Gravity
 import android.view.View
 import android.view.ViewTreeObserver
@@ -329,19 +326,16 @@ class TabSwitcherController(
             card.pivotX = card.width / 2f
             card.pivotY = card.height / 2f
             AnimationSystem.popOut(card, 0.8f) {
-                TransitionManager.beginDelayedTransition(
-                    columns,
-                    TransitionSet()
-                        .addTransition(ChangeBounds())
-                        .setDuration(AnimationSystem.PAGE_DURATION)
-                        .setInterpolator(AnimationSystem.pageInterpolator)
-                )
-                (card.parent as? ViewGroup)?.removeView(card)
-                cardViews.remove(tab.id)
-                closeViews.remove(tab.id)
-                tab.thumbnail?.recycle()
-                tab.thumbnail = null
-                tab.thumbnailUrl = null
+                // Các thẻ còn lại trượt lấp chỗ trống bằng spring (không dùng Transition của Android).
+                val others = cardViews.values.filter { it !== card }
+                AnimationSystem.reflow(columns, others) {
+                    (card.parent as? ViewGroup)?.removeView(card)
+                    cardViews.remove(tab.id)
+                    closeViews.remove(tab.id)
+                    tab.thumbnail?.recycle()
+                    tab.thumbnail = null
+                    tab.thumbnailUrl = null
+                }
             }
         }
 
