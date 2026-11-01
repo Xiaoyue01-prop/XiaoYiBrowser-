@@ -182,11 +182,13 @@ class TabSwitcherController(
             // sau khi blur để chỗ nào lớp mờ chưa phủ tới cũng không lộ mảng tối.
             setBackgroundColor(Color.rgb(226, 225, 232))
         }
+        // Khởi tạo sau khi tạo dialogBlur bên dưới; các callback chỉ được gọi sau khi popup hiển thị.
+        var blurSync: GlassSystem.BlurSync? = null
         var closing = false
         fun dismissAnimated() {
             if (closing) return
             closing = true
-            blurSync.hold(700)
+            blurSync?.hold(700)
             OriginTransitionController.close(container) { popup.dismiss() }
         }
         requestClose = { dismissAnimated() }
@@ -203,12 +205,9 @@ class TabSwitcherController(
             isClickable = false
             isFocusable = false
         }
+        // Đồng bộ cả BlurTarget lẫn chính lớp kính trong cửa sổ Dialog ở từng frame.
+        blurSync = GlassSystem.BlurSync(blurTarget, dialogBlur)
         container.addView(dialogBlur, FrameLayout.LayoutParams(-1, -1))
-
-        // Đồng bộ đúng lớp BlurView đang nhìn thấy: invalidate container không bắt buộc
-        // khiến con BlurView vẽ lại, nên trước đây lớp kính có thể giữ texture của frame đầu
-        // trong khi container đã morph lớn lên. Ép chính dialogBlur cập nhật từng frame.
-        val blurSync = GlassSystem.BlurSync(blurTarget, dialogBlur)
 
         // A restrained translucent tint preserves the live blur instead of masking it.
         if (TAB_BG_TINT > 0) {
@@ -537,11 +536,9 @@ class TabSwitcherController(
         // ✅ BƯỚC 6: Bỏ hàm đệ quy invalidateAll, chỉ vẽ lại lớp blur và container
         refreshBlur = {
             blurTarget.invalidate()
-            dialogBlur.invalidate()
             container.invalidate()
             container.postDelayed({
                 blurTarget.invalidate()
-                dialogBlur.invalidate()
                 container.invalidate()
             }, 200)
         }
@@ -558,7 +555,7 @@ class TabSwitcherController(
             fun startOpen() {
                 if (started) return
                 started = true
-                blurSync.hold(900)
+                blurSync?.hold(900)
                 if (!OriginTransitionController.open(container, origin)) AnimationSystem.popIn(container, 0.88f)
             }
             val observer = dialogBlur.viewTreeObserver
