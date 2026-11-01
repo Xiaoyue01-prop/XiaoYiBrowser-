@@ -1,13 +1,11 @@
 package com.example.webedge
 
-import android.app.Dialog
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
-import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -17,7 +15,6 @@ import android.transition.TransitionSet
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.Window
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -25,6 +22,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
 import eightbitlab.com.blurview.BlurTarget
 
 /** UI đa tab tách riêng khỏi Activity để MainActivity tập trung điều phối trình duyệt. */
@@ -42,6 +40,7 @@ class TabSwitcherController(
     private val tabManager: TabManager,
     private val store: Store,
     private val blurTarget: BlurTarget,
+    private val hostRoot: FrameLayout,
     private val isNight: Boolean,
     private val foregroundColor: Int,
     private val secondaryColor: Int,
@@ -55,6 +54,13 @@ class TabSwitcherController(
 ) {
     // TextView hiển thị "N tab"; cập nhật khi đóng tab mà không dựng lại bảng.
     private var countLabel: TextView? = null
+    private var activeContainer: FrameLayout? = null
+    private var activeClose: (() -> Unit)? = null
+    private var previousLightStatusBars: Boolean? = null
+
+    val isShowing: Boolean get() = activeContainer?.isAttachedToWindow == true
+
+    fun close() { activeClose?.invoke() }
 
     /** Nút ✓ kiểu Safari: tròn đặc màu nhấn, dấu tick trắng đậm, to hơn các nút khác. */
     private fun createDoneButton(onClick: () -> Unit): FrameLayout {
@@ -156,58 +162,60 @@ class TabSwitcherController(
     }
 
     fun show(animate: Boolean = true, origin: View? = null) {
+        if (isShowing) return
         // Chụp lại tab hiện tại ngay lúc mở lưới, không để thumbnail của lần trước bị cũ.
         captureActiveTab()
-        // Back / vuốt back cũng phải đóng có hiệu ứng, nên chặn onBackPressed của Dialog.
-        var requestClose: () -> Unit = {}
-        var refreshBlur: () -> Unit = {}
-        val popup = object : Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar) {
-            // Quay lại app từ nền: ép các lớp blur vẽ lại để không bị trong suốt lộ trang web phía sau.
-            override fun onWindowFocusChanged(hasFocus: Boolean) {
-                super.onWindowFocusChanged(hasFocus)
-                if (hasFocus) refreshBlur()
-            }
-
-            @Suppress("OVERRIDE_DEPRECATION")
-            override fun onBackPressed() {
-                requestClose()
-            }
-        }
-        popup.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         val container = FrameLayout(activity).apply {
             clipChildren = false
             clipToPadding = false
-            // Nền đặc dự phòng: nếu lớp blur chưa/không vẽ được (vừa quay lại app) thì bảng tab
-            // vẫn là nền đặc thay vì trong suốt lộ trang web phía sau.
-            setBackgroundColor(Color.rgb(140, 136, 148))
+            // Fallback nhẹ trong frame đầu; BlurView bên trên lấy nền thật từ BlurTarget.
+            setBackgroundColor(Color.argb(112, 249, 246, 250))
         }
-        popup.setOnDismissListener { OriginTransitionController.cancel(container) }
         var closing = false
         fun dismissAnimated() {
             if (closing) return
             closing = true
             if (animate) {
-                OriginTransitionController.close(container) { popup.dismiss() }
+                OriginTransitionController.close(container) {
+                    OriginTransitionController.cancel(container)
+                    hostRoot.removeView(container)
+                    activeContainer = null
+                    activeClose = null
+                    previousLightStatusBars?.let {
+                        WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+                            .isAppearanceLightStatusBars = it
+                    }
+                    previousLightStatusBars = null
+                }
             } else {
-                popup.dismiss()
+                OriginTransitionController.cancel(container)
+                hostRoot.removeView(container)
+                activeContainer = null
+                activeClose = null
+                previousLightStatusBars?.let {
+                    WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+                        .isAppearanceLightStatusBars = it
+                }
+                previousLightStatusBars = null
             }
         }
-        requestClose = { dismissAnimated() }
+        activeContainer = container
+        activeClose = { dismissAnimated() }
 
         val dialogBlur = GlassSystem.createBlurView(
             activity, blurTarget, GlassSystem.Preset.TABS_DIALOG,
             activity.resources.displayMetrics.density, false,
-            overlayColorOverride = Color.argb(TAB_BG_WHITE, 255, 255, 255)
+            overlayColorOverride = Color.argb(TAB_BG_WHITE, 255, 255, 255),
+            rim = false
         ).apply {
-            // Nền menu tab phủ cả màn hình nên không cần viền; bỏ viền để khỏi có khung xám quanh màn hình.
             background = GradientDrawable().apply { setColor(Color.TRANSPARENT) }
             isClickable = false
             isFocusable = false
         }
         container.addView(dialogBlur, FrameLayout.LayoutParams(-1, -1))
 
-        // A restrained translucent tint preserves the live blur instead of masking it.
+        // Backdrop tint rất nhẹ; phần blur thật được lấy trực tiếp từ BlurTarget cùng cửa sổ.
         if (TAB_BG_TINT > 0) {
             container.addView(View(activity).apply {
                 setBackgroundColor(Color.argb(TAB_BG_TINT, 249, 243, 248))
@@ -239,10 +247,6 @@ class TabSwitcherController(
             setPadding(dp(12), dp(24), dp(12), dp(12))
             clipChildren = false
             clipToPadding = false
-            setOnApplyWindowInsetsListener { view, insets ->
-                view.setPadding(dp(12), insets.systemWindowInsetTop + dp(8), dp(12), dp(12))
-                insets
-            }
         }
 
         // Header gọn hơn để dành nhiều diện tích cho lưới tab kiểu Safari.
@@ -534,36 +538,42 @@ class TabSwitcherController(
             }
         }
 
-        // ✅ BƯỚC 6: Bỏ hàm đệ quy invalidateAll, chỉ vẽ lại lớp blur và container
-        refreshBlur = {
+        // BlurTarget chỉ bao WebView trong cửa sổ Activity. Gắn Tab Switcher lên root
+        // cùng cửa sổ giúp BlurView lấy đúng nền, tránh lớp kính trắng đục/ghost như Dialog riêng.
+        fun refreshBlur() {
             blurTarget.invalidate()
+            dialogBlur.invalidate()
             container.invalidate()
             container.postDelayed({
                 blurTarget.invalidate()
+                dialogBlur.invalidate()
                 container.invalidate()
-            }, 200)
+            }, 120)
         }
 
         container.addView(root, FrameLayout.LayoutParams(-1, -1))
         root.clipChildren = false
         root.clipToPadding = false
-        popup.setContentView(container)
-        if (animate) container.alpha = 0f
-        popup.show()
-        popup.window?.let { window ->
-            window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            // Nền bảng tab sáng nên icon/đồng hồ status bar phải tối để đọc được.
-            WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
-            window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-                (statusFade.layoutParams as FrameLayout.LayoutParams).height =
-                    insets.systemWindowInsetTop + dp(16)
-                statusFade.requestLayout()
-                root.setPadding(dp(12), insets.systemWindowInsetTop + dp(8), dp(12), insets.systemWindowInsetBottom + dp(8))
-                view.onApplyWindowInsets(insets)
-            }
-            window.decorView.requestApplyInsets()
+        hostRoot.addView(container, FrameLayout.LayoutParams(-1, -1))
+        val statusController = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        previousLightStatusBars = statusController.isAppearanceLightStatusBars
+        statusController.isAppearanceLightStatusBars = true
+        ViewCompat.setOnApplyWindowInsetsListener(container) { _, insets ->
+            val topInset = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.statusBars() or
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+            ).top
+            val bottomInset = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.navigationBars()
+            ).bottom
+            (statusFade.layoutParams as FrameLayout.LayoutParams).height = topInset + dp(16)
+            statusFade.requestLayout()
+            root.setPadding(dp(12), topInset + dp(8), dp(12), bottomInset + dp(8))
+            insets
         }
-        popup.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        ViewCompat.requestApplyInsets(container)
+        refreshBlur()
+
         if (animate) {
             var morphStarted = false
             fun startMorph() {
