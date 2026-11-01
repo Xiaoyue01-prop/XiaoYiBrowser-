@@ -4,10 +4,6 @@ import android.graphics.Outline
 import android.graphics.RectF
 import android.view.View
 import android.view.ViewOutlineProvider
-import androidx.dynamicanimation.animation.DynamicAnimation
-import androidx.dynamicanimation.animation.FloatValueHolder
-import androidx.dynamicanimation.animation.SpringAnimation
-import androidx.dynamicanimation.animation.SpringForce
 import java.lang.ref.WeakReference
 import java.util.WeakHashMap
 
@@ -47,7 +43,7 @@ object OriginTransitionController {
         var startRadius = 0f
         var progress = 0f
         var sourceHidden = false
-        var anim: SpringAnimation? = null
+        var anim: AnimationSystem.FloatSpringHandle? = null
         var outline: MorphOutline? = null
     }
 
@@ -171,30 +167,31 @@ object OriginTransitionController {
     private fun animateTo(m: Morph, to: Float, spec: AnimationSystem.SpringSpec, onEnd: () -> Unit) {
         m.anim?.cancel()
         val closing = to == 0f
-        val anim = SpringAnimation(FloatValueHolder(m.progress))
-        anim.spring = SpringForce(to).apply {
-            stiffness = spec.stiffness
-            dampingRatio = spec.dampingRatio
-        }
-        // Mặc định là 1 đơn vị (pixel) nên với p chạy 0..1 spring sẽ kết thúc ngay lập tức.
-        anim.setMinimumVisibleChange(DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE)
-        anim.addUpdateListener { _, value, _ ->
-            m.progress = value
-            render(m)
-            if (closing && m.sourceHidden && value < 0.35f) showSource(m)
-        }
-        anim.addEndListener { _, canceled, _, _ ->
-            if (m.anim === anim) m.anim = null
-            if (canceled) return@addEndListener
-            m.progress = to
-            if (!closing) {
-                m.opening = false
-                settle(m)
+        lateinit var handle: AnimationSystem.FloatSpringHandle
+        handle = AnimationSystem.springFloat(
+            from = m.progress,
+            to = to,
+            spec = spec,
+            // Progress is normalized (0..1), so use the scale threshold rather than pixel threshold.
+            minimumVisibleChange = AnimationSystem.NORMALIZED_VALUE_MIN_CHANGE,
+            onUpdate = { value ->
+                m.progress = value
+                render(m)
+                if (closing && m.sourceHidden && value < 0.35f) showSource(m)
+            },
+            onEnd = { canceled, _, _ ->
+                if (m.anim === handle) m.anim = null
+                if (!canceled) {
+                    m.progress = to
+                    if (!closing) {
+                        m.opening = false
+                        settle(m)
+                    }
+                    onEnd()
+                }
             }
-            onEnd()
-        }
-        m.anim = anim
-        anim.start()
+        )
+        m.anim = handle
     }
 
     /** Mở xong: trả transform về đúng 1:1 nhưng giữ lại trạng thái để lúc đóng biết quay về đâu. */

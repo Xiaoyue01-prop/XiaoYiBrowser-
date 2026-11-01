@@ -22,10 +22,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.view.WindowCompat
-import androidx.dynamicanimation.animation.DynamicAnimation
-import androidx.dynamicanimation.animation.FloatValueHolder
-import androidx.dynamicanimation.animation.SpringAnimation
-import androidx.dynamicanimation.animation.SpringForce
 import androidx.core.view.WindowInsetsCompat
 import eightbitlab.com.blurview.BlurTarget
 
@@ -865,7 +861,7 @@ class MenuCardLayout(context: Context) : FrameLayout(context) {
     var maxHeightPx: Int = Int.MAX_VALUE
 
     // --- Đổi kích thước bằng spring khi chuyển trang ---
-    private var sizeSpring: SpringAnimation? = null
+    private var sizeSpring: AnimationSystem.FloatSpringHandle? = null
     private var sizeProgress = 1f
     private var fromW = 0
     private var fromH = 0
@@ -877,25 +873,25 @@ class MenuCardLayout(context: Context) : FrameLayout(context) {
         fromW = w
         fromH = h
         sizeProgress = 0f
-        val anim = SpringAnimation(FloatValueHolder(0f))
-        anim.spring = SpringForce(1f).apply {
-            stiffness = AnimationSystem.SETTLE.stiffness
-            dampingRatio = AnimationSystem.SETTLE.dampingRatio
-        }
-        anim.setMinimumVisibleChange(DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE)
-        anim.addUpdateListener { _, value, _ ->
-            sizeProgress = value
-            requestLayout()
-        }
-        anim.addEndListener { _, canceled, _, _ ->
-            if (sizeSpring === anim) sizeSpring = null
-            if (!canceled) {
-                sizeProgress = 1f
+        lateinit var handle: AnimationSystem.FloatSpringHandle
+        handle = AnimationSystem.springFloat(
+            from = 0f,
+            to = 1f,
+            spec = AnimationSystem.SETTLE,
+            minimumVisibleChange = AnimationSystem.NORMALIZED_VALUE_MIN_CHANGE,
+            onUpdate = { value ->
+                sizeProgress = value
                 requestLayout()
+            },
+            onEnd = { canceled, _, _ ->
+                if (sizeSpring === handle) sizeSpring = null
+                if (!canceled) {
+                    sizeProgress = 1f
+                    requestLayout()
+                }
             }
-        }
-        sizeSpring = anim
-        anim.start()
+        )
+        sizeSpring = handle
     }
 
     /** Đánh dấu các trang đang mờ đi: không đo, không nhận chạm, chỉ còn vẽ cho tới khi biến mất. */

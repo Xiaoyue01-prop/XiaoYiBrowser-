@@ -51,7 +51,7 @@ class DownloadPromptController(
         activeView = null
         finishing = false
         if (view != null) {
-            view.animate().cancel()
+            AnimationSystem.cancel(view)
             root.removeView(view)
         }
     }

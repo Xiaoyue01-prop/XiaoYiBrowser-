@@ -5,6 +5,7 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import androidx.dynamicanimation.animation.DynamicAnimation
+import androidx.dynamicanimation.animation.FloatValueHolder
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
 import java.util.WeakHashMap
@@ -46,8 +47,56 @@ object AnimationSystem {
     /** Nút kính phồng lên khi nhấn (như Liquid Glass của iOS 26). */
     const val GLASS_PRESS_SCALE = 1.12f
 
+    /** Ngưỡng kết thúc phù hợp cho tiến độ chuẩn hoá (0..1), như morph và resize. */
+    val NORMALIZED_VALUE_MIN_CHANGE = DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE
+
     private val running =
         WeakHashMap<View, HashMap<DynamicAnimation.ViewProperty, SpringAnimation>>()
+
+    /**
+     * Handle cho spring của một giá trị không gắn trực tiếp với View (ví dụ tiến độ morph hoặc kích thước thẻ).
+     * Controller chỉ giữ handle để huỷ/kiểm tra; việc tạo, cấu hình và chạy spring luôn thuộc AnimationSystem.
+     */
+    class FloatSpringHandle internal constructor(private val animation: SpringAnimation) {
+        val isRunning: Boolean
+            get() = animation.isRunning
+
+        fun cancel() {
+            animation.cancel()
+        }
+    }
+
+    /** Cấu hình vật lý duy nhất cho mọi spring, bất kể đang animate View hay một giá trị thuần. */
+    private fun springForce(target: Float, spec: SpringSpec): SpringForce =
+        SpringForce(target).apply {
+            stiffness = spec.stiffness
+            dampingRatio = spec.dampingRatio
+        }
+
+    /**
+     * Chạy spring cho một giá trị thuần. Dùng chung preset và cấu hình vật lý với spring trên View.
+     * Nhờ vậy Origin Morph, đổi kích thước menu và các hiệu ứng View không tự tạo engine riêng.
+     */
+    fun springFloat(
+        from: Float,
+        to: Float,
+        spec: SpringSpec = SMOOTH,
+        minimumVisibleChange: Float = DynamicAnimation.MIN_VISIBLE_CHANGE_PIXELS,
+        onUpdate: (Float) -> Unit,
+        onEnd: ((canceled: Boolean, value: Float, velocity: Float) -> Unit)? = null
+    ): FloatSpringHandle {
+        val animation = SpringAnimation(FloatValueHolder(from)).apply {
+            spring = springForce(to, spec)
+            setMinimumVisibleChange(minimumVisibleChange)
+            addUpdateListener { _, value, _ -> onUpdate(value) }
+            addEndListener { _, canceled, value, velocity ->
+                onEnd?.invoke(canceled, value, velocity)
+            }
+        }
+        val handle = FloatSpringHandle(animation)
+        animation.start()
+        return handle
+    }
 
     /** Chạy một spring cho một thuộc tính của view; spring cũ cùng thuộc tính bị huỷ. */
     fun spring(
@@ -61,10 +110,7 @@ object AnimationSystem {
         val map = running.getOrPut(view) { HashMap() }
         map.remove(prop)?.cancel()
         val anim = SpringAnimation(view, prop)
-        anim.spring = SpringForce(target).apply {
-            stiffness = spec.stiffness
-            dampingRatio = spec.dampingRatio
-        }
+        anim.spring = springForce(target, spec)
         anim.setStartVelocity(velocity)
         if (prop === DynamicAnimation.ALPHA) {
             anim.setMinValue(0f)
