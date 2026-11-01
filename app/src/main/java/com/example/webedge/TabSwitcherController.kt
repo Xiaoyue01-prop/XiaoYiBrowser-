@@ -40,8 +40,6 @@ class TabSwitcherController(
     private val blurTarget: BlurTarget,
     private val hostRoot: FrameLayout,
     private val isNight: Boolean,
-    private val foregroundColor: Int,
-    private val secondaryColor: Int,
     private val accentColor: Int,
     private val dp: (Int) -> Int,
     private val captureActiveTab: () -> Unit,

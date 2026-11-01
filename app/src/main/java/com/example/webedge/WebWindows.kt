@@ -6,6 +6,7 @@ import android.app.PictureInPictureParams
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.Message
+import android.util.Log
 import android.util.Rational
 import android.view.Gravity
 import android.view.View
@@ -21,26 +22,46 @@ import android.widget.TextView
 
 // Chế độ cửa sổ của trang web: Picture-in-Picture cho video toàn màn hình và cửa sổ popup.
 
-/** Handles Android Picture-in-Picture only while a WebView video is in fullscreen mode. */
+/**
+ * Picture-in-Picture cho video toàn màn hình của trang (minSdk 36: Android tự vào PiP khi người dùng rời app,
+ * không cần gọi thủ công). Nút điều khiển trong cửa sổ PiP do MediaSession (WebMediaService) cung cấp.
+ */
 class PictureInPictureController(
     private val activity: Activity
 ) {
     private var videoActive = false
     private var videoView: View? = null
+    private var aspect = DEFAULT_ASPECT
+    private var title = ""
+    private var subtitle = ""
 
     fun setVideoActive(active: Boolean, view: View? = null) {
         videoActive = active
         videoView = if (active) view else null
         updateParams()
+        // View vừa được thêm vào chưa có kích thước; đặt lại sau khi layout để sourceRectHint đúng vị trí video.
+        if (active) view?.post { if (videoActive) updateParams() }
     }
 
-    // minSdk = 36: Android tự vào PiP khi người dùng rời app (auto-enter), không cần gọi thủ công.
+    /** Tỉ lệ khung hình và tiêu đề thật của video (do trang báo lên qua MediaSession). */
+    fun setVideoInfo(width: Int, height: Int, title: String, subtitle: String) {
+        val ratio = if (width > 0 && height > 0) width.toFloat() / height else DEFAULT_ASPECT
+        val newAspect = ratio.coerceIn(MIN_ASPECT, MAX_ASPECT)
+        if (newAspect == aspect && title == this.title && subtitle == this.subtitle) return
+        aspect = newAspect
+        this.title = title
+        this.subtitle = subtitle
+        if (videoActive) updateParams()
+    }
+
     private fun updateParams() {
         val builder = PictureInPictureParams.Builder()
-            // Most browser videos are landscape. Android will letterbox when necessary.
-            .setAspectRatio(Rational(16, 9))
+            .setAspectRatio(Rational((aspect * RATIO_BASE).toInt(), RATIO_BASE))
             .setAutoEnterEnabled(videoActive)
-            .setSeamlessResizeEnabled(true)
+            // Video thì phải tắt: chế độ đổi cỡ liền mạch chỉ dành cho nội dung không phải video.
+            .setSeamlessResizeEnabled(false)
+        if (title.isNotBlank()) builder.setTitle(title)
+        if (subtitle.isNotBlank()) builder.setSubtitle(subtitle)
 
         videoView?.takeIf { it.isAttachedToWindow && it.width > 0 && it.height > 0 }?.let { view ->
             val location = IntArray(2)
@@ -56,7 +77,20 @@ class PictureInPictureController(
             if (!rect.isEmpty) builder.setSourceRectHint(rect)
         }
 
-        runCatching { activity.setPictureInPictureParams(builder.build()) }
+        try {
+            activity.setPictureInPictureParams(builder.build())
+        } catch (e: Exception) {
+            // Không nuốt lỗi âm thầm nữa: có thể xem bằng logcat (tag SummitPiP).
+            Log.w("SummitPiP", "setPictureInPictureParams thất bại", e)
+        }
+    }
+
+    private companion object {
+        const val DEFAULT_ASPECT = 16f / 9f
+        // Android chỉ nhận tỉ lệ trong khoảng 1:2.39 đến 2.39:1.
+        const val MIN_ASPECT = 0.43f
+        const val MAX_ASPECT = 2.38f
+        const val RATIO_BASE = 1000
     }
 }
 

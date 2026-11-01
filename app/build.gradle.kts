@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.webedge"
         minSdk = 36
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.1"
     }
 
     buildTypes {
@@ -46,4 +46,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // lifecycleScope: tự hủy tác vụ khi đóng app
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    // Media3 (bản ổn định mới nhất): MediaSessionService + MediaSession cho media của trang web
+    implementation("androidx.media3:media3-session:1.11.1")
 }

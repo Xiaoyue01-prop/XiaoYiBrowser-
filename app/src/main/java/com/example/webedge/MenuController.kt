@@ -60,7 +60,6 @@ class MenuController(
     private val d: Float,
     private val isNight: Boolean,
     private val fg: Int,
-    private val sub: Int,
     private val accent: Int
 ) {
     private class Panel(

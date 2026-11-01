@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         maven { url = uri("https://jitpack.io") }
     }
 }
-rootProject.name = "WebEdge"
+rootProject.name = "Summit"
 include(":app")

@@ -64,6 +64,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var store: Store
     private lateinit var pipController: PictureInPictureController
+    private val webMedia = WebMediaController(this)
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
     private lateinit var fullscreenContainer: FrameLayout
@@ -154,6 +155,30 @@ class MainActivity : ComponentActivity() {
         }
 
         @JavascriptInterface
+        fun mediaState(
+            active: Int, playing: Boolean, title: String?, artist: String?, artwork: String?,
+            posMs: Double, durMs: Double, rate: Double, videoWidth: Int, videoHeight: Int
+        ) {
+            val activity = activityWeak.get() ?: return
+            val owner = ownerWeak.get() ?: return
+            val info = WebMediaInfo(
+                active = active == 1,
+                playing = playing,
+                title = title.orEmpty().take(200),
+                artist = artist.orEmpty().take(200),
+                artworkUrl = artwork.orEmpty().take(2000),
+                positionMs = posMs.toLong().coerceAtLeast(0L),
+                durationMs = if (durMs.isFinite()) durMs.toLong().coerceAtLeast(0L) else 0L,
+                rate = rate.toFloat().takeIf { it > 0f && it.isFinite() } ?: 1f,
+                videoWidth = videoWidth.coerceAtLeast(0),
+                videoHeight = videoHeight.coerceAtLeast(0)
+            )
+            activity.runOnUiThread {
+                if (owner === activity.web && !activity.isActivityDestroyed) activity.onWebMediaState(info)
+            }
+        }
+
+        @JavascriptInterface
         fun clearTopColor() {
             val activity = activityWeak.get() ?: return
             val owner = ownerWeak.get() ?: return
@@ -163,6 +188,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
+    // Trạng thái media của tab đang xem: đẩy sang MediaSession và cập nhật cửa sổ PiP.
+    private fun onWebMediaState(info: WebMediaInfo) {
+        webMedia.onPageState(info)
+        if (info.active) pipController.setVideoInfo(info.videoWidth, info.videoHeight, info.title, info.artist)
+    }
+
+    // Báo trang gửi lại trạng thái media (sau khi đổi tab hoặc trang vừa nạp xong).
+    private fun requestMediaState(view: WebView) {
+        view.evaluateJavascript(MEDIA_JS, null)
+        view.evaluateJavascript("window.__summitMedia&&window.__summitMedia.report()", null)
+    }
 
     private fun handleSpecialUrl(url: String, fallbackView: WebView = web): Boolean =
         openExternalUrl(url, fallbackView, ::toast)
@@ -234,6 +271,7 @@ class MainActivity : ComponentActivity() {
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             tabManager.updateForWebView(view, url, view.title ?: url)
             if (view !== web) return
+            webMedia.reset()
             currentUrl = url
             view.alpha = 0.6f
             if (!urlBar.hasFocus()) showDomain()
@@ -251,6 +289,7 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageCommitVisible(view: WebView, url: String) {
             if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
+            view.evaluateJavascript(MEDIA_JS, null)
             if (view !== web) return
             injectInsets()
             AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
@@ -270,6 +309,7 @@ class MainActivity : ComponentActivity() {
             tabManager.updateForWebView(view, url, view.title ?: url)
             store.addHistory(view.title ?: "", url)
             if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
+            view.evaluateJavascript(MEDIA_JS, null)
             if (view !== web) return
             injectInsets()
             AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
@@ -454,6 +494,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         pipController = PictureInPictureController(this)
+        WebMediaHub.jsRunner = { js -> runOnUiThread { if (::web.isInitialized) web.evaluateJavascript(js, null) } }
 
         store = Store(this)
         webPermissions = WebPermissionController(
@@ -825,7 +866,6 @@ class MainActivity : ComponentActivity() {
             d = d,
             isNight = isNight,
             fg = fg,
-            sub = sub,
             accent = accent
         )
         glassDialog = GlassDialogController(
@@ -844,8 +884,6 @@ class MainActivity : ComponentActivity() {
             blurTarget = blurTarget,
             hostRoot = root,
             isNight = isNight,
-            foregroundColor = fg,
-            secondaryColor = sub,
             accentColor = accent,
             dp = ::dp,
             captureActiveTab = ::captureActiveTab,
@@ -1293,6 +1331,9 @@ class MainActivity : ComponentActivity() {
             web = target
             blurTarget.addView(target, FrameLayout.LayoutParams(-1, -1))
             runCatching { target.onResume() }
+            // Media của tab cũ không còn điều khiển được; tab mới tự báo lại trạng thái của nó.
+            webMedia.reset()
+            requestMediaState(target)
         }
         tabManager.switchTo(tab.id)
         currentUrl = target.url ?: tab.url
@@ -1448,6 +1489,7 @@ class MainActivity : ComponentActivity() {
         webPermissions.cancelAll()
         popup.close()
         if (customVideoView != null) exitFullscreenView()
+        webMedia.release()
         // === CLEANUP DE TRANH MEMORY LEAK ===
         // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)
         web.removeJavascriptInterface("EdgeBridge")
