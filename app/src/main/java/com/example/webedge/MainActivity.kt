@@ -44,6 +44,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -68,6 +69,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var pipController: PictureInPictureController
     private val webMedia = WebMediaController(this)
     private var pullRefresh: PullToRefreshController? = null
+    private lateinit var pageTransition: PageTransitionController
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
     private lateinit var fullscreenContainer: FrameLayout
@@ -296,9 +298,12 @@ class MainActivity : ComponentActivity() {
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             tabManager.updateForWebView(view, url, view.title ?: url)
             if (view !== web) return
+            // Chụp trang cũ trước khi mờ đi và trước khi nội dung đổi, để lần sau vuốt quay lại có ảnh xem trước.
+            if (view.url != url) pageTransition.remember(view)
             webMedia.reset()
             currentUrl = url
-            view.alpha = 0.6f
+            // Mờ đi bằng spring (trước đây đặt thẳng 0.6 nên bị giật); đang chuyển trang thì lớp phủ đã che, không mờ.
+            if (!pageTransition.isRunning) AnimationSystem.fade(view, 0.6f, AnimationSystem.QUICK)
             if (!urlBar.hasFocus()) showDomain()
             setBarHidden(false)
             updateNav()
@@ -307,6 +312,7 @@ class MainActivity : ComponentActivity() {
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
             tabManager.updateForWebView(view, url, view.title ?: url)
             if (view !== web) return
+            pageTransition.onHistoryChanged()
             currentUrl = url
             if (!urlBar.hasFocus()) showDomain()
             updateNav()
@@ -318,6 +324,7 @@ class MainActivity : ComponentActivity() {
             if (view !== web) return
             injectInsets()
             AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
+            pageTransition.onPageReady()
         }
 
         override fun shouldInterceptRequest(
@@ -339,6 +346,7 @@ class MainActivity : ComponentActivity() {
             pullRefresh?.finish()
             injectInsets()
             AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
+            pageTransition.onPageReady()
             currentUrl = url
             updateTabBadge()
         }
@@ -578,7 +586,7 @@ class MainActivity : ComponentActivity() {
             GlassSystem.Preset.TOOLBAR_BUTTON, Icons.ARROW_BACK, 11, "Quay lại"
         )
         backBtn.alpha = 0.3f
-        backBtn.setOnClickListener { if (web.canGoBack()) web.goBack() }
+        backBtn.setOnClickListener { goBackAnimated() }
         press(backBtn, Constants.PRESS_SCALE_BTN)
 
         // Nút ba chấm dùng cùng bộ render kính blur thật với OrbMenu.
@@ -816,6 +824,8 @@ class MainActivity : ComponentActivity() {
         blurTarget = BlurTarget(this)
         blurTarget.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
+        // Lớp chuyển trang nằm trong blurTarget, ngay trên/dưới WebView, để kính mờ lấy đúng nền khi trang đang trượt.
+        pageTransition = PageTransitionController(blurTarget) { pageBg }
 
         // Chỉ báo kéo-để-tải-lại bằng kính mờ; thêm ngay trên trang, dưới mọi lớp giao diện khác.
         pullRefresh = PullToRefreshController(
@@ -957,6 +967,22 @@ class MainActivity : ComponentActivity() {
         }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            // Cử chỉ Back của hệ thống (vuốt từ cạnh trái/phải): trang trượt theo ngón tay như Safari.
+            override fun handleOnBackStarted(backEvent: BackEventCompat) {
+                if (pageSwipeAvailable()) {
+                    val sign = if (backEvent.swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
+                    pageTransition.beginSwipe(web, sign)
+                }
+            }
+
+            override fun handleOnBackProgressed(backEvent: BackEventCompat) {
+                pageTransition.updateSwipe(backEvent.progress)
+            }
+
+            override fun handleOnBackCancelled() {
+                pageTransition.cancelSwipe()
+            }
+
             override fun handleOnBackPressed() {
                 if (glassDialog.isShowing) glassDialog.cancelCurrent()
                 else if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
@@ -965,10 +991,25 @@ class MainActivity : ComponentActivity() {
                 else if (menu.isOpen) menu.handleBack()
                 else if (findBarShown) closeFind()
                 else if (urlBar.hasFocus()) leaveEdit()
-                else if (web.canGoBack()) web.goBack()
+                else if (web.canGoBack()) goBackAnimated()
                 else finish()
             }
         })
+    }
+
+    /** Vuốt cạnh được phép chuyển trang: không có lớp nào khác (hộp thoại, menu, toàn màn hình...) đang giành nút Back. */
+    private fun pageSwipeAvailable(): Boolean =
+        ::pageTransition.isInitialized && web.canGoBack() && customVideoView == null && !isInPictureInPictureMode &&
+            !(::glassDialog.isInitialized && glassDialog.isShowing) && !popup.isShowing &&
+            !(::menu.isInitialized && menu.isOpen) && !findBarShown && !urlBar.hasFocus() &&
+            !(::tabSwitcherController.isInitialized && tabSwitcherController.isShowing)
+
+    private fun goBackAnimated() {
+        if (web.canGoBack() && !pageTransition.back(web)) web.goBack()
+    }
+
+    private fun goForwardAnimated() {
+        if (web.canGoForward() && !pageTransition.forward(web)) web.goForward()
     }
 
     /** Nạp trang đầu: link từ app khác, tab đã lưu hoặc trạng thái WebView được khôi phục. */
@@ -1364,6 +1405,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun activateTab(tab: TabManager.Tab) {
+        if (::pageTransition.isInitialized) pageTransition.cancelNow()
         val target = tab.webView ?: WebView(this).also { created ->
             configureTabWebView(created)
             tab.webView = created
@@ -1433,6 +1475,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun destroyTabWebView(view: WebView) {
+        if (::pageTransition.isInitialized) pageTransition.forget(view)
         runCatching { view.stopLoading() }
         runCatching { view.removeJavascriptInterface("EdgeBridge") }
         runCatching { view.webViewClient = WebViewClient() }
@@ -1467,6 +1510,7 @@ class MainActivity : ComponentActivity() {
         // Hệ thống thiếu RAM: chỉ giữ tab đang xem và một tab gần nhất.
         if (::tabManager.isInitialized && ::web.isInitialized) {
             trimBackgroundTabs(Constants.LOW_MEMORY_LIVE_WEBVIEWS)
+            if (::pageTransition.isInitialized) pageTransition.clear()
         }
     }
 
@@ -1533,8 +1577,8 @@ class MainActivity : ComponentActivity() {
             d = d,
             isNight = isNight,
             BOTTOM_BAR_HEIGHT_DP = BOTTOM_BAR_HEIGHT_DP,
-            onBack = { if (web.canGoBack()) web.goBack() },
-            onForward = { if (web.canGoForward()) web.goForward() },
+            onBack = { goBackAnimated() },
+            onForward = { goForwardAnimated() },
             onHome = { load(store.homeUrl) }
         )
         orbController?.alignWith(backBtn)
@@ -1545,6 +1589,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         isActivityDestroyed = true
+        if (::pageTransition.isInitialized) pageTransition.cancelNow()
         pullRefresh?.destroy()
         pullRefresh = null
         downloadPromptController?.dismissAll()
