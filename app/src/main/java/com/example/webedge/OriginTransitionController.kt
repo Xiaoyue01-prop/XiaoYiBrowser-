@@ -35,8 +35,10 @@ object OriginTransitionController {
         var anchor: RectF,
         val endRadius: Float,
         val originalOutline: ViewOutlineProvider?,
-        val originalClip: Boolean
+        val originalClip: Boolean,
+        val fadeIn: Boolean
     ) {
+        var opening = true
         var sx = 1f
         var sy = 1f
         var tx = 0f
@@ -68,7 +70,8 @@ object OriginTransitionController {
         origin: View?,
         endCornerRadiusPx: Float = 0f,
         fallbackScale: Float = 0.88f,
-        onEnd: (() -> Unit)? = null
+        onEnd: (() -> Unit)? = null,
+        fadeIn: Boolean = true
     ): Boolean {
         val target = boundsOnScreen(view) ?: return false
         val old = morphs[view]
@@ -83,7 +86,8 @@ object OriginTransitionController {
             anchor = anchor,
             endRadius = endCornerRadiusPx.coerceAtLeast(0f),
             originalOutline = old?.originalOutline ?: view.outlineProvider,
-            originalClip = old?.originalClip ?: view.clipToOutline
+            originalClip = old?.originalClip ?: view.clipToOutline,
+            fadeIn = fadeIn
         )
         morphs[view] = m
         place(m, target)
@@ -107,6 +111,8 @@ object OriginTransitionController {
         }
         m.anim?.cancel()
         AnimationSystem.cancel(view)
+        // Khi đóng, bật lại fade theo tiến độ kể cả surface đã mở bằng chế độ không fade-in.
+        m.opening = false
         // Nút có thể đã dời chỗ (xoay màn hình, thanh công cụ thu gọn): lấy lại vị trí hiện tại.
         m.source?.get()?.let { src -> boundsOnScreen(src)?.let { m.anchor = it } }
         place(m, target)
@@ -149,8 +155,9 @@ object OriginTransitionController {
         v.scaleY = lerp(m.sy, 1f, p).coerceAtLeast(0.02f)
         v.translationX = lerp(m.tx, 0f, p)
         v.translationY = lerp(m.ty, 0f, p)
-        // Thẻ hiện ra rất nhanh để nối tiếp với nút đang mờ đi (nút "biến hình" thành thẻ).
-        v.alpha = (p / 0.3f).coerceIn(0f, 1f)
+        // Mặc định thẻ hiện nhanh để nối tiếp nút nguồn. Một số bề mặt kính toàn màn hình
+        // cần giữ alpha = 1 khi bung để nền web sắc nét không xuyên qua lớp blur ở đầu morph.
+        v.alpha = if (m.opening && !m.fadeIn) 1f else (p / 0.3f).coerceIn(0f, 1f)
         m.outline?.let {
             it.radius = lerp(m.startRadius, m.endRadius, p.coerceIn(0f, 1f))
             v.invalidateOutline()
@@ -176,7 +183,10 @@ object OriginTransitionController {
             if (m.anim === anim) m.anim = null
             if (canceled) return@addEndListener
             m.progress = to
-            if (!closing) settle(m)
+            if (!closing) {
+                m.opening = false
+                settle(m)
+            }
             onEnd()
         }
         m.anim = anim

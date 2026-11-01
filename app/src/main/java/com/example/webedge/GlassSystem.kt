@@ -300,9 +300,9 @@ half4 main(float2 coord) {
     }
 
     /**
-     * Ép kính mờ chụp lại nền MỖI khung hình trong lúc một bề mặt kính đang chuyển động.
-     * Dùng mốc thời gian kết thúc (gọi chồng nhau thì lấy mốc muộn nhất) và đúng một callback,
-     * nên các lần gọi liên tiếp (mở menu rồi đổi trang ngay) không cắt cụt nhau.
+     * Ép target và bề mặt BlurView tương ứng cập nhật MỖI khung hình trong lúc kính đang chuyển động.
+     * [also] nên là chính BlurView cần đồng bộ (không phải container bao ngoài), để buộc lớp kính
+     * lấy lại snapshot ở cùng nhịp với target. Dùng mốc kết thúc lớn nhất nên các lần hold nối tiếp không cắt nhau.
      */
     class BlurSync(private val target: View, private val also: View? = null) {
         private var until = 0L
@@ -314,7 +314,7 @@ half4 main(float2 coord) {
                     return
                 }
                 target.invalidate()
-                // Bề mặt nằm trong cửa sổ khác (Dialog) phải được vẽ lại cùng nhịp với nền được chụp.
+                // Ép chính lớp BlurView được vẽ lại cùng nhịp với target.
                 also?.invalidate()
                 Choreographer.getInstance().postFrameCallback(this)
             }

@@ -842,6 +842,7 @@ class MainActivity : ComponentActivity() {
             tabManager = tabManager,
             store = store,
             blurTarget = blurTarget,
+            hostRoot = root,
             isNight = isNight,
             foregroundColor = fg,
             secondaryColor = sub,
@@ -851,7 +852,9 @@ class MainActivity : ComponentActivity() {
             onActivateTab = ::activateTab,
             onCloseTab = ::closeBrowserTab,
             onCreateTab = ::createBrowserTab,
-            shortUrl = UrlUtils::shortUrl
+            shortUrl = UrlUtils::shortUrl,
+            onOverlayOpened = { orbController?.setTemporarilyHidden(true) },
+            onOverlayClosed = { syncOrbMenuVisibility() }
         )
         menu.originView = menuBtn
         setupOrbMenu()
@@ -875,6 +878,7 @@ class MainActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (glassDialog.isShowing) glassDialog.cancelCurrent()
+                else if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
                 else if (customVideoView != null) exitFullscreenView()
                 else if (popup.isShowing) popup.close()
                 else if (menu.isOpen) menu.handleBack()
