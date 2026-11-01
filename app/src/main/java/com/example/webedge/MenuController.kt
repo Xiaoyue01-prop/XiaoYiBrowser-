@@ -162,13 +162,18 @@ class MenuController(
             if (menuCard !== card || menuAnimationStarted) return
             menuAnimationStarted = true
             val radiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * d
-            val morphing = OriginTransitionController.open(card, originView, endCornerRadiusPx = radiusPx)
+            val morphing = OriginTransitionController.open(
+                card,
+                originView,
+                endCornerRadiusPx = radiusPx,
+                springSpec = AnimationSystem.MENU_MORPH
+            )
             if (!morphing) {
                 card.pivotX = card.width.toFloat()
                 card.pivotY = card.height.toFloat()
-                AnimationSystem.popIn(card, 0.6f)
+                AnimationSystem.popIn(card, 0.6f, AnimationSystem.MENU_MORPH)
             }
-            syncBlurFor(700)
+            syncBlurFor(850)
         }
 
         // Wait for the attached BlurView to reach its first pre-draw before revealing the card.
@@ -200,8 +205,10 @@ class MenuController(
             return
         }
         // Thu hồi: co ngược về đúng nút ba chấm đã bung ra.
-        syncBlurFor(450)
-        OriginTransitionController.close(card) { root.removeView(layer) }
+        syncBlurFor(600)
+        OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
+            root.removeView(layer)
+        }
     }
 
     // Đặt vị trí khung menu ngay phía trên nút ba chấm

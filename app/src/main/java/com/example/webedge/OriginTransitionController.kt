@@ -69,7 +69,8 @@ object OriginTransitionController {
         fallbackScale: Float = 0.88f,
         onEnd: (() -> Unit)? = null,
         fadeIn: Boolean = true,
-        counterTransformView: View? = null
+        counterTransformView: View? = null,
+        springSpec: AnimationSystem.SpringSpec? = null
     ): Boolean {
         val target = boundsOnScreen(view) ?: return false
         val old = morphs[view]
@@ -91,15 +92,20 @@ object OriginTransitionController {
         morphs[view] = m
         place(m, target)
         hideSource(m)
-        animateTo(m, 1f, if (originBounds != null) AnimationSystem.MORPH else AnimationSystem.SETTLE) { onEnd?.invoke() }
+        animateTo(m, 1f, springSpec ?: if (originBounds != null) AnimationSystem.MORPH else AnimationSystem.SETTLE) { onEnd?.invoke() }
         return true
     }
 
     /** Thu [view] ngược về nút đã bung ra. Không có trạng thái morph thì đóng bằng popOut thường. */
-    fun close(view: View, onEnd: (() -> Unit)? = null) {
+    fun close(
+        view: View,
+        springSpec: AnimationSystem.SpringSpec? = null,
+        onEnd: (() -> Unit)? = null
+    ) {
         val m = morphs[view]
         if (m == null) {
-            AnimationSystem.popOut(view, 0.88f, onEnd)
+            // Giữ nguyên preset dismiss cũ nếu view không có trạng thái morph.
+            AnimationSystem.popOut(view, 0.88f, springSpec ?: AnimationSystem.DISMISS, onEnd)
             return
         }
         val target = boundsOnScreen(view)
@@ -115,7 +121,7 @@ object OriginTransitionController {
         // Nút có thể đã dời chỗ (xoay màn hình, thanh công cụ thu gọn): lấy lại vị trí hiện tại.
         m.source?.get()?.let { src -> boundsOnScreen(src)?.let { m.anchor = it } }
         place(m, target)
-        animateTo(m, 0f, AnimationSystem.MORPH_CLOSE) {
+        animateTo(m, 0f, springSpec ?: AnimationSystem.MORPH_CLOSE) {
             finish(m)
             onEnd?.invoke()
         }

@@ -34,10 +34,14 @@ object AnimationSystem {
     val PRESS_RELEASE = SpringSpec(0.40f, 0.30f)
     /** Bề mặt mở ra (menu, dialog, thẻ, nút Orb): vượt đích chừng 4-5% rồi đứng yên, kiểu iOS 26. */
     val SETTLE = SpringSpec(0.42f, 0.70f)
-    /** Bung từ nút bấm ra bề mặt lớn: cùng độ vượt đích với SETTLE nhưng chậm hơn một chút. */
+    /** Bung từ nút bấm ra bề mặt lớn; preset chung cho các bề mặt morph như MenuTabs. */
     val MORPH = SpringSpec(0.46f, 0.72f)
-    /** Thu ngược về nút: gần như không nảy để không chạy lố qua nút. */
+    /** Thu ngược về nút; preset chung, gần như không nảy để không chạy lố qua nút. */
     val MORPH_CLOSE = SpringSpec(0.34f, 0.90f)
+    /** Menu ba chấm: chậm hơn MORPH khoảng 22%, giữ nguyên độ nảy và quỹ đạo. */
+    val MENU_MORPH = SpringSpec(0.56f, 0.72f)
+    /** Menu ba chấm khi đóng: chậm hơn MORPH_CLOSE khoảng 24%, vẫn thu gọn gọn gàng. */
+    val MENU_MORPH_CLOSE = SpringSpec(0.42f, 0.90f)
     /** Thu gọn thanh công cụ, toast, đổi trạng thái: vượt nhẹ hơn SETTLE một chút. */
     val SMOOTH = SpringSpec(0.50f, 0.62f)
     /** Đóng lại (scale/alpha được chặn ở 0 nên không bị lật): chỉ nảy rất nhẹ. */
@@ -233,9 +237,14 @@ object AnimationSystem {
     }
 
     /** Menu/dialog đóng lại; onEnd chạy khi fade xong. */
-    fun popOut(view: View, toScale: Float = 0.85f, onEnd: (() -> Unit)? = null) {
-        scaleTo(view, toScale, toScale, DISMISS)
-        fade(view, 0f, DISMISS, onEnd)
+    fun popOut(
+        view: View,
+        toScale: Float = 0.85f,
+        springSpec: SpringSpec = DISMISS,
+        onEnd: (() -> Unit)? = null
+    ) {
+        scaleTo(view, toScale, toScale, springSpec)
+        fade(view, 0f, springSpec, onEnd)
     }
 
     /** Trượt vào từ translationY hiện tại (toast). */
