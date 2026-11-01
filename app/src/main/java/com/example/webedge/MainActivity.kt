@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var store: Store
     private lateinit var pipController: PictureInPictureController
     private val webMedia = WebMediaController(this)
+    private var pullRefresh: PullToRefreshController? = null
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
     private lateinit var fullscreenContainer: FrameLayout
@@ -335,6 +336,7 @@ class MainActivity : ComponentActivity() {
             if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
             view.evaluateJavascript(MEDIA_JS, null)
             if (view !== web) return
+            pullRefresh?.finish()
             injectInsets()
             AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
             currentUrl = url
@@ -814,6 +816,23 @@ class MainActivity : ComponentActivity() {
         blurTarget = BlurTarget(this)
         blurTarget.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
+
+        // Chỉ báo kéo-để-tải-lại bằng kính mờ; thêm ngay trên trang, dưới mọi lớp giao diện khác.
+        pullRefresh = PullToRefreshController(
+            context = this,
+            host = root,
+            blurTarget = blurTarget,
+            density = d,
+            isNight = isNight,
+            iconColor = fg,
+            webProvider = { if (::web.isInitialized) web else null },
+            canStart = {
+                customVideoView == null && !isInPictureInPictureMode && !urlBar.hasFocus() &&
+                    !(::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) &&
+                    !(::menu.isInitialized && menu.isOpen)
+            },
+            onRefresh = { web.reload() }
+        )
 
         // Nền kính của hai nút tròn lấy blur từ cùng BlurTarget như thanh địa chỉ/Orb.
         addGlassLayer(menuBtn, GlassSystem.Preset.ORB_BUTTON)
@@ -1459,14 +1478,30 @@ class MainActivity : ComponentActivity() {
         handler.postDelayed(saveTabsRunnable, Constants.SAVE_TABS_DEBOUNCE_MS)
     }
 
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        pullRefresh?.onTouch(ev)
+        return super.dispatchTouchEvent(ev)
+    }
+
     override fun onPictureInPictureModeChanged(
         isInPictureInPictureMode: Boolean,
         newConfig: android.content.res.Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        // Giữ nguyên fullscreen video; khi người dùng quay lại Summit có thể thoát fullscreen bình thường.
         if (!isInPictureInPictureMode && customVideoView == null) {
             pipController.setVideoActive(false)
+        }
+        if (!isInPictureInPictureMode && customVideoView != null) {
+            // Bấm vào cửa sổ PiP để mở lại app: activity tiếp tục (STARTED trở lên), giữ nguyên toàn màn hình.
+            // Đóng cửa sổ PiP bằng nút X: activity bị dừng, nên tạm dừng video và thoát toàn màn hình.
+            handler.post {
+                if (!isInPictureInPictureMode && customVideoView != null &&
+                    !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+                ) {
+                    WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.pause()")
+                    exitFullscreenView()
+                }
+            }
         }
     }
 
@@ -1510,6 +1545,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         isActivityDestroyed = true
+        pullRefresh?.destroy()
+        pullRefresh = null
         downloadPromptController?.dismissAll()
         downloadPromptController = null
         // Trả lời mọi hộp thoại còn treo (JsResult, quyền) trước khi hủy WebView.
