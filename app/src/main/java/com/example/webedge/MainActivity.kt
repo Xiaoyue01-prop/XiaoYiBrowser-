@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
     private val webMedia = WebMediaController(this)
     private var pullRefresh: PullToRefreshController? = null
     private lateinit var pageTransition: PageTransitionController
+    private lateinit var tabSwipe: TabSwipeController
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
     private lateinit var fullscreenContainer: FrameLayout
@@ -325,6 +326,7 @@ class MainActivity : ComponentActivity() {
             injectInsets()
             AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
             pageTransition.onPageReady()
+            tabSwipe.onPageReady()
         }
 
         override fun shouldInterceptRequest(
@@ -347,6 +349,7 @@ class MainActivity : ComponentActivity() {
             injectInsets()
             AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
             pageTransition.onPageReady()
+            tabSwipe.onPageReady()
             currentUrl = url
             updateTabBadge()
         }
@@ -826,6 +829,21 @@ class MainActivity : ComponentActivity() {
         root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
         // Lớp chuyển trang nằm trong blurTarget, ngay trên/dưới WebView, để kính mờ lấy đúng nền khi trang đang trượt.
         pageTransition = PageTransitionController(blurTarget) { pageBg }
+        // Vuốt ngang viên thuốc để đổi tab (tab cuối vuốt tiếp thì mở tab mới), như Safari.
+        tabSwipe = TabSwipeController(
+            host = blurTarget,
+            pill = urlPillFrame,
+            pillContent = urlBar,
+            density = d,
+            tabManager = tabManager,
+            webProvider = { if (::web.isInitialized) web else null },
+            pageBg = { pageBg },
+            canStart = { tabSwipeAvailable() },
+            onSwitch = { tab ->
+                captureActiveTab()
+                if (tab == null) createBrowserTab() else activateTab(tab)
+            }
+        )
 
         // Chỉ báo kéo-để-tải-lại bằng kính mờ; thêm ngay trên trang, dưới mọi lớp giao diện khác.
         pullRefresh = PullToRefreshController(
@@ -999,7 +1017,15 @@ class MainActivity : ComponentActivity() {
 
     /** Vuốt cạnh được phép chuyển trang: không có lớp nào khác (hộp thoại, menu, toàn màn hình...) đang giành nút Back. */
     private fun pageSwipeAvailable(): Boolean =
-        ::pageTransition.isInitialized && web.canGoBack() && customVideoView == null && !isInPictureInPictureMode &&
+        ::pageTransition.isInitialized && ::tabSwipe.isInitialized && web.canGoBack() && !tabSwipe.isRunning &&
+            overlaysIdle()
+
+    /** Vuốt viên thuốc để đổi tab: thanh đang hiện, không gõ địa chỉ và không có chuyển trang nào đang chạy. */
+    private fun tabSwipeAvailable(): Boolean =
+        ::pageTransition.isInitialized && !pageTransition.isRunning && !barHidden && overlaysIdle()
+
+    private fun overlaysIdle(): Boolean =
+        customVideoView == null && !isInPictureInPictureMode &&
             !(::glassDialog.isInitialized && glassDialog.isShowing) && !popup.isShowing &&
             !(::menu.isInitialized && menu.isOpen) && !findBarShown && !urlBar.hasFocus() &&
             !(::tabSwitcherController.isInitialized && tabSwitcherController.isShowing)
@@ -1524,6 +1550,20 @@ class MainActivity : ComponentActivity() {
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         pullRefresh?.onTouch(ev)
+        if (::tabSwipe.isInitialized) {
+            when (tabSwipe.onTouch(ev)) {
+                TabSwipeController.Touch.BEGAN -> {
+                    // Cử chỉ vuốt viên thuốc bắt đầu: huỷ chạm đang gửi cho các view con (EditText, nút) rồi giữ sự kiện lại.
+                    val cancel = android.view.MotionEvent.obtain(ev)
+                    cancel.action = android.view.MotionEvent.ACTION_CANCEL
+                    super.dispatchTouchEvent(cancel)
+                    cancel.recycle()
+                    return true
+                }
+                TabSwipeController.Touch.CONSUMED -> return true
+                TabSwipeController.Touch.IGNORED -> Unit
+            }
+        }
         return super.dispatchTouchEvent(ev)
     }
 
@@ -1590,6 +1630,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         isActivityDestroyed = true
         if (::pageTransition.isInitialized) pageTransition.cancelNow()
+        if (::tabSwipe.isInitialized) tabSwipe.cancelNow()
         pullRefresh?.destroy()
         pullRefresh = null
         downloadPromptController?.dismissAll()
