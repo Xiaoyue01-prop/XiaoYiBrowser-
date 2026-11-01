@@ -223,7 +223,7 @@ class MainActivity : ComponentActivity() {
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             if (request.isForMainFrame && !isActivityDestroyed && view === web) {
                 toast("Không tải được trang (${error.errorCode})")
-                AnimationSystem.fade(view, 1f)
+                AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
             }
         }
         override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
@@ -272,7 +272,7 @@ class MainActivity : ComponentActivity() {
             if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
             if (view !== web) return
             injectInsets()
-            AnimationSystem.fade(view, 1f)
+            AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
             currentUrl = url
             updateTabBadge()
         }
@@ -853,6 +853,7 @@ class MainActivity : ComponentActivity() {
             onCreateTab = ::createBrowserTab,
             shortUrl = UrlUtils::shortUrl
         )
+        menu.originView = menuBtn
         setupOrbMenu()
     }
 
@@ -877,7 +878,7 @@ class MainActivity : ComponentActivity() {
                 else if (customVideoView != null) exitFullscreenView()
                 else if (popup.isShowing) popup.close()
                 else if (menu.isOpen) menu.handleBack()
-                else if (findBarContainer.visibility == View.VISIBLE) closeFind()
+                else if (findBarShown) closeFind()
                 else if (urlBar.hasFocus()) leaveEdit()
                 else if (web.canGoBack()) web.goBack()
                 else finish()
@@ -1012,7 +1013,7 @@ class MainActivity : ComponentActivity() {
     // Khoảng (px CSS) từ mép dưới WebView lên tới đỉnh thanh địa chỉ nổi. Các thanh cố định ở đáy trang
     // được nâng lên đúng khoảng này để không bị thanh địa chỉ đè lên, giống Safari.
     private fun bottomReserveCss(): Int {
-        if (!::bar.isInitialized || bar.visibility != View.VISIBLE || customVideoView != null) return 0
+        if (!::bar.isInitialized || !barPresent || customVideoView != null) return 0
         val half = dp(BOTTOM_BAR_HEIGHT_DP) / 2f
         val barTop = maxOf(insetBottom, imeBottom) + dp(10) + half + half * (if (barHidden) 0.62f else 1f) + dp(6)
         return (maxOf(0f, barTop - imeBottom) / d).toInt()
@@ -1052,9 +1053,9 @@ class MainActivity : ComponentActivity() {
     // nút quay lại có thể mờ vì không còn lịch sử nhưng OrbMenu vẫn cần dùng được.
     private fun syncOrbMenuVisibility() {
         if (!::findBarContainer.isInitialized || !::bar.isInitialized || !::urlBar.isInitialized) return
-        val findOn = findBarContainer.visibility == View.VISIBLE
+        val findOn = findBarShown
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
-        val toolbarAvailable = bar.visibility == View.VISIBLE && !barHidden
+        val toolbarAvailable = barPresent && !barHidden
         val inFullscreen = customVideoView != null
         orbController?.setToolbarAvailable(toolbarAvailable && !inFullscreen)
         orbController?.setTemporarilyHidden(findOn || pageTyping || inFullscreen)
@@ -1062,13 +1063,30 @@ class MainActivity : ComponentActivity() {
 
     // Ẩn thanh địa chỉ khi đang gõ trong ô nhập của trang (tránh che nội dung), hoặc khi đang tìm trong trang.
     private fun updateBarVisibility() {
-        val findOn = findBarContainer.visibility == View.VISIBLE
+        val findOn = findBarShown
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
-        bar.visibility = if (findOn || pageTyping) View.GONE else View.VISIBLE
-        bottomFade.visibility = if (pageTyping) View.GONE else View.VISIBLE
+        val showBar = !(findOn || pageTyping)
+        val showFade = !pageTyping
+        // Chỉ chạy animation khi trạng thái thật sự đổi (hàm này được gọi lại mỗi lần insets thay đổi).
+        if (showBar != barPresent) {
+            barPresent = showBar
+            if (showBar) AnimationSystem.appear(bar, dp(16).toFloat())
+            else AnimationSystem.disappear(bar, dp(16).toFloat())
+        }
+        if (showFade != bottomFadePresent) {
+            bottomFadePresent = showFade
+            if (showFade) AnimationSystem.appear(bottomFade, fromScale = 1f, toAlpha = if (barHidden) 0.35f else 1f)
+            else AnimationSystem.disappear(bottomFade, toScale = 1f)
+        }
         syncOrbMenuVisibility()
         pushBottomReserve()
     }
+
+    /** Trạng thái đích của thanh dưới/vệt mờ: khác visibility vì lúc đang ẩn dần view vẫn VISIBLE. */
+    private var barPresent = true
+    private var bottomFadePresent = true
+    private var findBarShown = false
+    private var suggestShown = false
 
     private fun backAlpha(): Float = if (web.canGoBack()) 1f else 0.3f
 
@@ -1116,18 +1134,26 @@ class MainActivity : ComponentActivity() {
 
     private fun hideSuggestions() {
         suggestJob?.cancel()
-        suggestBox.visibility = View.GONE
-        suggestBlurView.visibility = View.GONE
-        suggestBox.removeAllViews()
+        hideSuggestionsUi()
+    }
+
+    private fun hideSuggestionsUi() {
+        if (!suggestShown) return
+        suggestShown = false
+        val offset = dp(12).toFloat()
+        AnimationSystem.disappear(suggestBlurView, offset)
+        // Giữ nguyên các hàng cho tới khi hộp ẩn xong để nó không co lại trong lúc mờ đi.
+        AnimationSystem.disappear(suggestBox, offset) {
+            if (!suggestShown) suggestBox.removeAllViews()
+        }
     }
 
     private fun showSuggestions(items: List<String>) {
-        suggestBox.removeAllViews()
         if (items.isEmpty()) {
-            suggestBox.visibility = View.GONE
-            suggestBlurView.visibility = View.GONE
+            hideSuggestionsUi()
             return
         }
+        suggestBox.removeAllViews()
         val rp = selectableItemBackgroundRes()
         for (text in items) {
             val row = LinearLayout(this)
@@ -1154,8 +1180,12 @@ class MainActivity : ComponentActivity() {
             press(row, Constants.PRESS_SCALE_ROW)
             suggestBox.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         }
-        suggestBlurView.visibility = View.VISIBLE
-        suggestBox.visibility = View.VISIBLE
+        if (!suggestShown) {
+            suggestShown = true
+            val offset = dp(12).toFloat()
+            AnimationSystem.appear(suggestBlurView, offset)
+            AnimationSystem.appear(suggestBox, offset)
+        }
     }
 
 
@@ -1164,7 +1194,8 @@ class MainActivity : ComponentActivity() {
     private fun openFind() {
         // Hide OrbMenu before requesting the keyboard so neither its ring nor its sub-buttons
         // can remain visible/touchable over FindBar during the IME animation.
-        findBarContainer.visibility = View.VISIBLE
+        findBarShown = true
+        AnimationSystem.appear(findBarContainer, dp(16).toFloat())
         orbController?.setTemporarilyHidden(true)
         updateBarVisibility()
         findInput.requestFocus()
@@ -1174,7 +1205,8 @@ class MainActivity : ComponentActivity() {
     private fun closeFind() {
         web.clearMatches()
         findInput.setText("")
-        findBarContainer.visibility = View.GONE
+        findBarShown = false
+        AnimationSystem.disappear(findBarContainer, dp(16).toFloat())
         updateBarVisibility()
         root.requestFocus()
         WindowCompat.getInsetsController(window, findInput).hide(WindowInsetsCompat.Type.ime())
@@ -1475,6 +1507,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var tabSwitcherController: TabSwitcherController
 
     private fun openTabSwitcher(animate: Boolean = true) {
-        tabSwitcherController.show(animate)
+        tabSwitcherController.show(animate, origin = tabBtn)
     }
 }

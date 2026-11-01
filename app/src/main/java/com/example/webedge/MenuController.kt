@@ -80,6 +80,9 @@ class MenuController(
     private var menuBackAction: (() -> Unit)? = null
     private var menuAnimationStarted = false
 
+    /** Nút đã bấm để mở menu (nút ba chấm): menu bung ra từ đây và thu ngược về đây. */
+    var originView: View? = null
+
     val isOpen: Boolean get() = menuLayer != null
 
     /** Nút Back của hệ thống: lùi một trang trong menu, hoặc đóng nếu đang ở trang chính. */
@@ -162,9 +165,13 @@ class MenuController(
         fun startMenuAnimation() {
             if (menuCard !== card || menuAnimationStarted) return
             menuAnimationStarted = true
-            card.pivotX = card.width.toFloat()
-            card.pivotY = card.height.toFloat()
-            AnimationSystem.popIn(card, 0.6f, AnimationSystem.MORPH_BOUNCY)
+            val radiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * d
+            val morphing = OriginTransitionController.open(card, originView, endCornerRadiusPx = radiusPx)
+            if (!morphing) {
+                card.pivotX = card.width.toFloat()
+                card.pivotY = card.height.toFloat()
+                AnimationSystem.popIn(card, 0.6f)
+            }
             syncBlurFor(700)
         }
 
@@ -196,11 +203,9 @@ class MenuController(
             root.removeView(layer)
             return
         }
-        // Thu hồi: co lại về góc dưới bên phải, phía nút ba chấm.
-        card.pivotX = card.width.toFloat()
-        card.pivotY = card.height.toFloat()
+        // Thu hồi: co ngược về đúng nút ba chấm đã bung ra.
         syncBlurFor(450)
-        AnimationSystem.popOut(card, 0.3f) { root.removeView(layer) }
+        OriginTransitionController.close(card) { root.removeView(layer) }
     }
 
     // Đặt vị trí khung menu ngay phía trên nút ba chấm

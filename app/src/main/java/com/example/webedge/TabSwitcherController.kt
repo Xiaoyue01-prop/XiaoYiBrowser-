@@ -155,7 +155,8 @@ class TabSwitcherController(
         return frame
     }
 
-    fun show(animate: Boolean = true) {
+    /** [origin] là nút Tab: bảng tab bung ra từ nút này và thu ngược về đúng nút khi đóng. */
+    fun show(animate: Boolean = true, origin: View? = null) {
         // Chụp lại tab hiện tại ngay lúc mở lưới, không để thumbnail của lần trước bị cũ.
         captureActiveTab()
         // Back / vuốt back cũng phải đóng có hiệu ứng, nên chặn onBackPressed của Dialog.
@@ -186,9 +187,11 @@ class TabSwitcherController(
         fun dismissAnimated() {
             if (closing) return
             closing = true
-            AnimationSystem.popOut(container, 0.9f) { popup.dismiss() }
+            OriginTransitionController.close(container) { popup.dismiss() }
         }
         requestClose = { dismissAnimated() }
+        // Đóng bằng cách khác (activity bị huỷ...) vẫn phải trả nút Tab về trạng thái bình thường.
+        popup.setOnDismissListener { OriginTransitionController.cancel(container) }
 
         val dialogBlur = GlassSystem.createBlurView(
             activity, blurTarget, GlassSystem.Preset.TABS_DIALOG,
@@ -443,7 +446,7 @@ class TabSwitcherController(
                 if (!tab.isActive) onActivateTab(tab)
                 dismissAnimated()
             }
-            AnimationSystem.attachPress(card, card, 0.96f)
+            AnimationSystem.attachPress(card, card, Constants.PRESS_SCALE_CARD)
             card.alpha = 0f
             card.scaleX = 0.92f
             card.scaleY = 0.92f
@@ -545,7 +548,9 @@ class TabSwitcherController(
         popup.setContentView(container)
         if (animate) container.alpha = 0f
         popup.show()
-        if (animate) container.post { AnimationSystem.popIn(container, 0.88f, AnimationSystem.MORPH_BOUNCY) }
+        if (animate) container.post {
+            if (!OriginTransitionController.open(container, origin)) AnimationSystem.popIn(container, 0.88f)
+        }
         popup.window?.let { window ->
             window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             // Nền bảng tab sáng nên icon/đồng hồ status bar phải tối để đọc được.

@@ -171,15 +171,15 @@ class OrbMenuController(
      * from remaining above the FindBar or receiving touches.
      */
     fun setTemporarilyHidden(hidden: Boolean) {
+        val was = temporarilyHidden
         temporarilyHidden = hidden
         if (hidden) {
+            // Đã ẩn hẳn và gỡ khỏi root từ lần gọi trước: không làm lại.
+            if (was && mainBtn.parent == null) return
             collapseImmediately()
-            AnimationSystem.cancel(mainBtn)
-            mainBtn.alpha = 0f
             mainBtn.isClickable = false
             mainBtn.isEnabled = false
             mainBtn.isFocusable = false
-            mainBtn.visibility = View.GONE
             subBtns.forEach { btn ->
                 AnimationSystem.cancel(btn)
                 btn.alpha = 0f
@@ -190,13 +190,27 @@ class OrbMenuController(
                 btn.visibility = View.GONE
             }
             // Detaching guarantees the menu cannot overlay FindBar or intercept touches.
-            (mainBtn.parent as? ViewGroup)?.removeView(mainBtn)
-            subBtns.forEach { btn -> (btn.parent as? ViewGroup)?.removeView(btn) }
+            // Nút chính mờ đi trước rồi mới gỡ; nếu trong lúc đó được hiện lại thì việc gỡ bị bỏ qua.
+            val detach = {
+                if (temporarilyHidden) {
+                    mainBtn.alpha = 0f
+                    mainBtn.visibility = View.GONE
+                    (mainBtn.parent as? ViewGroup)?.removeView(mainBtn)
+                    subBtns.forEach { btn -> (btn.parent as? ViewGroup)?.removeView(btn) }
+                }
+            }
+            if (mainBtn.parent != null && mainBtn.visibility == View.VISIBLE && mainBtn.alpha > 0f) {
+                AnimationSystem.fade(mainBtn, 0f, AnimationSystem.DISMISS) { detach() }
+            } else {
+                detach()
+            }
         } else {
-            if (mainBtn.parent == null) {
+            val wasDetached = mainBtn.parent == null
+            if (wasDetached) {
                 rootLayout.addView(mainBtn, mainBtn.layoutParams ?: FrameLayout.LayoutParams(
                     dp(BOTTOM_BAR_HEIGHT_DP), dp(BOTTOM_BAR_HEIGHT_DP)
                 ).apply { gravity = Gravity.TOP or Gravity.START; leftMargin = dp(16); topMargin = dp(16) })
+                mainBtn.alpha = 0f
             }
             subBtns.forEachIndexed { index, btn ->
                 if (btn.parent == null) {
@@ -208,9 +222,13 @@ class OrbMenuController(
                     rootLayout.addView(btn, params)
                 }
             }
-            mainBtn.alpha = 1f
             applyAvailability()
             updatePosition()
+            if (mainBtn.visibility == View.VISIBLE) {
+                AnimationSystem.fade(mainBtn, 1f, AnimationSystem.SMOOTH)
+            } else {
+                mainBtn.alpha = 1f
+            }
         }
     }
 

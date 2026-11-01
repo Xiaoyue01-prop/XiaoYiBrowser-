@@ -36,8 +36,12 @@ object AnimationSystem {
     val SNAPPY = SpringSpec(0.45f, 0.42f)
     /** Orb, thẻ tab xuất hiện: nảy mạnh nhất. */
     val BOUNCY = SpringSpec(0.50f, 0.35f)
-    /** Menu lớn bung quá đích rồi đàn hồi nhẹ về đúng kích thước; giữ response như SNAPPY. */
-    val MORPH_BOUNCY = SpringSpec(0.45f, 0.30f)
+    /** Bề mặt mở ra (menu, dialog, thẻ): vượt đích chừng 4-5% rồi đứng yên, kiểu iOS 26. */
+    val SETTLE = SpringSpec(0.42f, 0.70f)
+    /** Bung từ nút bấm ra bề mặt lớn: cùng độ vượt đích với SETTLE nhưng chậm hơn một chút. */
+    val MORPH = SpringSpec(0.46f, 0.72f)
+    /** Thu ngược về nút: gần như không nảy để không chạy lố qua nút. */
+    val MORPH_CLOSE = SpringSpec(0.34f, 0.90f)
     /** Thu gọn thanh công cụ, toast, đổi trạng thái: nảy vừa. */
     val SMOOTH = SpringSpec(0.50f, 0.55f)
     /** Đóng lại: vẫn nảy nhẹ (scale/alpha được chặn ở 0 nên không bị lật). */
@@ -111,8 +115,17 @@ object AnimationSystem {
         view.animate().cancel()
     }
 
-    fun fade(view: View, to: Float, spec: SpringSpec = QUICK, onEnd: (() -> Unit)? = null) =
+    /** Có đang chạy spring cho thuộc tính này về đúng đích đó không (để khỏi khởi động lại giữa chừng). */
+    private fun isSpringingTo(view: View, prop: DynamicAnimation.ViewProperty, target: Float): Boolean {
+        val anim = running[view]?.get(prop) ?: return false
+        return anim.isRunning && anim.spring.finalPosition == target
+    }
+
+    fun fade(view: View, to: Float, spec: SpringSpec = QUICK, onEnd: (() -> Unit)? = null) {
+        // Hai sự kiện liên tiếp cùng yêu cầu fade về một giá trị (vd. tải trang xong) không được làm đổi tốc độ giữa chừng.
+        if (onEnd == null && isSpringingTo(view, DynamicAnimation.ALPHA, to)) return
         spring(view, DynamicAnimation.ALPHA, to, spec, onEnd = onEnd)
+    }
 
     fun scaleTo(view: View, sx: Float, sy: Float = sx, spec: SpringSpec = SMOOTH) {
         spring(view, DynamicAnimation.SCALE_X, sx, spec)
@@ -132,52 +145,49 @@ object AnimationSystem {
 
     /** Nhả tay: bật về kích thước gốc, nảy mạnh. */
     fun pressUp(view: View) = scaleTo(view, 1f, 1f, PRESS_RELEASE)
-@SuppressLint("ClickableViewAccessibility")
-fun attachPress(touch: View, target: View = touch, scale: Float) {
-    touch.setOnTouchListener { v, ev ->
-        when (ev.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                // Chỉ áp dụng Spatial Awareness (bung từ điểm chạm) cho hiệu ứng co lại (scale < 1).
-                // Các nút kính phồng lên (scale > 1) giữ pivot ở tâm để phồng đều, tránh cảm giác "bay".
-                if (scale < 1f) {
-                    target.pivotX = ev.x.coerceIn(0f, target.width.toFloat())
-                    target.pivotY = ev.y.coerceIn(0f, target.height.toFloat())
+
+    @SuppressLint("ClickableViewAccessibility")
+    fun attachPress(touch: View, target: View = touch, scale: Float) {
+        touch.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    // Chỉ áp dụng Spatial Awareness (bung từ điểm chạm) cho hiệu ứng co lại (scale < 1).
+                    // Các nút kính phồng lên (scale > 1) giữ pivot ở tâm để phồng đều, tránh cảm giác "bay".
+                    if (scale < 1f) {
+                        target.pivotX = ev.x.coerceIn(0f, target.width.toFloat())
+                        target.pivotY = ev.y.coerceIn(0f, target.height.toFloat())
+                    }
+                    unclipParents(target)
+                    pressDown(target, scale)
                 }
-                unclipParents(target)
-                pressDown(target, scale)
-            }
-            MotionEvent.ACTION_UP -> {
-                // Chạm nhanh thì spring nhấn chưa kịp tới đích: đẩy tới ~70% để lần nhả luôn nảy rõ.
-                val mid = 1f + (scale - 1f) * 0.7f
-                if (Math.abs(target.scaleX - 1f) < Math.abs(mid - 1f)) {
-                    target.scaleX = mid
-                    target.scaleY = mid
-                }
-                pressUp(target)
-                // Trả pivot về giữa chỉ khi đã thay đổi pivot (scale < 1)
-                if (scale < 1f) {
-                    target.post {
-                        target.pivotX = target.width / 2f
-                        target.pivotY = target.height / 2f
+                MotionEvent.ACTION_UP -> {
+                    // Chạm nhanh thì spring nhấn chưa kịp tới đích: đẩy tới ~70% để lần nhả luôn nảy rõ.
+                    val mid = 1f + (scale - 1f) * 0.7f
+                    if (Math.abs(target.scaleX - 1f) < Math.abs(mid - 1f)) {
+                        target.scaleX = mid
+                        target.scaleY = mid
+                    }
+                    pressUp(target)
+                    if (scale < 1f) resetPivotLater(target)
+                    if (ev.x >= 0f && ev.x <= v.width && ev.y >= 0f && ev.y <= v.height) {
+                        v.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                     }
                 }
-                if (ev.x >= 0f && ev.x <= v.width && ev.y >= 0f && ev.y <= v.height) {
-                    v.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                MotionEvent.ACTION_CANCEL -> {
+                    pressUp(target)
+                    if (scale < 1f) resetPivotLater(target)
                 }
             }
-            MotionEvent.ACTION_CANCEL -> {
-                pressUp(target)
-                if (scale < 1f) {
-                    target.post {
-                        target.pivotX = target.width / 2f
-                        target.pivotY = target.height / 2f
-                    }
-                }
-            }
+            false
         }
-        false
     }
-}
+
+    private fun resetPivotLater(target: View) {
+        target.post {
+            target.pivotX = target.width / 2f
+            target.pivotY = target.height / 2f
+        }
+    }
 
     /** View cha mặc định cắt phần con vẽ tràn ra ngoài, làm nút phồng lên bị mất bounce. */
     private fun unclipParents(view: View) {
@@ -192,13 +202,11 @@ fun attachPress(touch: View, target: View = touch, scale: Float) {
     fun attachGlassPress(touch: View, target: View = touch) =
         attachPress(touch, target, GLASS_PRESS_SCALE)
 
-    /** Menu/dialog mở ra: scale + fade từ góc neo (đặt pivot trước khi gọi).
-     * springSpec cho phép bề mặt menu lớn có thêm độ vượt đích mà không đổi fade/morph gốc.
-     */
+    /** Menu/dialog mở ra: scale + fade từ góc neo (đặt pivot trước khi gọi). */
     fun popIn(
         view: View,
         fromScale: Float = 0.8f,
-        springSpec: SpringSpec = SNAPPY
+        springSpec: SpringSpec = SETTLE
     ) {
         view.alpha = 0f
         view.scaleX = fromScale
@@ -223,5 +231,50 @@ fun attachPress(touch: View, target: View = touch, scale: Float) {
     fun slideOut(view: View, toY: Float, onEnd: (() -> Unit)? = null) {
         spring(view, DynamicAnimation.TRANSLATION_Y, toY, DISMISS)
         fade(view, 0f, DISMISS, onEnd)
+    }
+
+    /**
+     * Hiện một thanh/bề mặt đang ẩn: fade + trượt từ [offsetY] + phồng nhẹ, rồi đứng yên ([toAlpha] là độ mờ lúc nghỉ).
+     * Đang hiện thì không làm gì; đang ẩn dở thì đảo chiều từ đúng vị trí hiện tại, không nhảy về đầu.
+     */
+    fun appear(view: View, offsetY: Float = 0f, fromScale: Float = 0.94f, toAlpha: Float = 1f) {
+        if (view.visibility == View.VISIBLE) {
+            if (isSpringingTo(view, DynamicAnimation.ALPHA, 0f)) {
+                fade(view, toAlpha, QUICK)
+                spring(view, DynamicAnimation.TRANSLATION_Y, 0f, SETTLE)
+                scaleTo(view, 1f, 1f, SETTLE)
+            }
+            return
+        }
+        cancel(view)
+        view.visibility = View.VISIBLE
+        view.alpha = 0f
+        view.translationY = offsetY
+        view.scaleX = fromScale
+        view.scaleY = fromScale
+        fade(view, toAlpha, QUICK)
+        spring(view, DynamicAnimation.TRANSLATION_Y, 0f, SETTLE)
+        scaleTo(view, 1f, 1f, SETTLE)
+    }
+
+    /**
+     * Ẩn bề mặt: fade + trượt ra [offsetY] rồi mới đặt [View.GONE] và trả thuộc tính về gốc.
+     * Nếu trong lúc đó [appear] được gọi lại thì việc ẩn bị huỷ và không đụng vào view.
+     */
+    fun disappear(view: View, offsetY: Float = 0f, toScale: Float = 0.94f, onEnd: (() -> Unit)? = null) {
+        if (view.visibility != View.VISIBLE) {
+            onEnd?.invoke()
+            return
+        }
+        spring(view, DynamicAnimation.TRANSLATION_Y, offsetY, DISMISS)
+        scaleTo(view, toScale, toScale, DISMISS)
+        fade(view, 0f, DISMISS) {
+            view.visibility = View.GONE
+            view.alpha = 1f
+            view.translationY = 0f
+            view.scaleX = 1f
+            view.scaleY = 1f
+            onEnd?.invoke()
+        }
     }
 }

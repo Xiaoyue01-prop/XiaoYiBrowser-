@@ -25,6 +25,7 @@ object Constants {
     // === Hiệu ứng nhấn: scale càng nhỏ càng "sâu".
     //     Từ PRESS_SCALE_PILL trở xuống là nút kính (phồng lên khi nhấn), trên đó là hàng/thẻ (co lại). ===
     const val PRESS_SCALE_ROW = 0.98f
+    const val PRESS_SCALE_CARD = 0.96f
     const val PRESS_SCALE_CELL = 0.92f
     const val PRESS_SCALE_PILL = 0.9f
     const val PRESS_SCALE_BTN = 0.85f
