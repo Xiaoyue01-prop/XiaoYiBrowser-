@@ -304,7 +304,7 @@ half4 main(float2 coord) {
      * Dùng mốc thời gian kết thúc (gọi chồng nhau thì lấy mốc muộn nhất) và đúng một callback,
      * nên các lần gọi liên tiếp (mở menu rồi đổi trang ngay) không cắt cụt nhau.
      */
-    class BlurSync(private val target: View) {
+    class BlurSync(private val target: View, private val also: View? = null) {
         private var until = 0L
         private var running = false
         private val frame = object : Choreographer.FrameCallback {
@@ -314,6 +314,8 @@ half4 main(float2 coord) {
                     return
                 }
                 target.invalidate()
+                // Bề mặt nằm trong cửa sổ khác (Dialog) phải được vẽ lại cùng nhịp với nền được chụp.
+                also?.invalidate()
                 Choreographer.getInstance().postFrameCallback(this)
             }
         }

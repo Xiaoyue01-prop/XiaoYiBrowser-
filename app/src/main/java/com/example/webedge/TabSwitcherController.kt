@@ -16,6 +16,7 @@ import android.transition.TransitionManager
 import android.transition.TransitionSet
 import android.view.Gravity
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.ViewGroup
 import android.view.Window
 import android.widget.FrameLayout
@@ -180,13 +181,18 @@ class TabSwitcherController(
             clipChildren = false
             clipToPadding = false
             // Nền đặc dự phòng: nếu lớp blur chưa/không vẽ được (vừa quay lại app) thì bảng tab
-            // vẫn là nền đặc thay vì trong suốt lộ trang web phía sau.
-            setBackgroundColor(Color.rgb(140, 136, 148))
+            // vẫn là nền đặc thay vì trong suốt lộ trang web phía sau. Chọn màu sáng gần với kết quả
+            // sau khi blur để chỗ nào lớp mờ chưa phủ tới cũng không lộ mảng tối.
+            setBackgroundColor(Color.rgb(226, 225, 232))
         }
+        // Lớp mờ phải chụp lại nền mỗi khung hình trong lúc bảng bung/thu, không thì nó đứng yên ở khung đầu
+        // trong khi nền đặc đã phóng to (kính trong chạy trước, kính mờ chạy sau).
+        val blurSync = GlassSystem.BlurSync(blurTarget, container)
         var closing = false
         fun dismissAnimated() {
             if (closing) return
             closing = true
+            blurSync.hold(700)
             OriginTransitionController.close(container) { popup.dismiss() }
         }
         requestClose = { dismissAnimated() }
@@ -548,8 +554,27 @@ class TabSwitcherController(
         popup.setContentView(container)
         if (animate) container.alpha = 0f
         popup.show()
-        if (animate) container.post {
-            if (!OriginTransitionController.open(container, origin)) AnimationSystem.popIn(container, 0.88f)
+        if (animate) {
+            // Chờ lớp mờ vẽ xong khung đầu tiên rồi mới bung (cùng cách MenuController đang làm).
+            var started = false
+            fun startOpen() {
+                if (started) return
+                started = true
+                blurSync.hold(900)
+                if (!OriginTransitionController.open(container, origin)) AnimationSystem.popIn(container, 0.88f)
+            }
+            val observer = dialogBlur.viewTreeObserver
+            if (observer.isAlive) {
+                observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+                    override fun onPreDraw(): Boolean {
+                        if (dialogBlur.viewTreeObserver.isAlive) dialogBlur.viewTreeObserver.removeOnPreDrawListener(this)
+                        container.post { startOpen() }
+                        return true
+                    }
+                })
+            }
+            // Dự phòng nếu máy bỏ qua callback pre-draw đầu tiên.
+            container.postDelayed({ startOpen() }, 120L)
         }
         popup.window?.let { window ->
             window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
