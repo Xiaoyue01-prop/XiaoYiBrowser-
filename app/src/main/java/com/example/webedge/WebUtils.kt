@@ -19,6 +19,12 @@ fun WebSettings.applyBrowserDefaults() {
     setSupportMultipleWindows(true)
     javaScriptCanOpenWindowsAutomatically = true
     mediaPlaybackRequiresUserGesture = false
+    // Tôn trọng viewport meta của website để bố cục responsive hoạt động đúng trên mobile.
+    useWideViewPort = true
+    loadWithOverviewMode = false
+    loadsImagesAutomatically = true
+    // Giữ lớp bảo vệ Safe Browsing của Chromium được bật rõ ràng.
+    safeBrowsingEnabled = true
     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 }
 
@@ -37,12 +43,19 @@ fun cleanMobileUserAgent(raw: String): String =
 
 /** UA desktop suy ra từ UA mobile thật của máy, nên tự cập nhật theo phiên bản Chromium. */
 fun desktopUserAgent(mobileUa: String): String {
-    if (mobileUa.isBlank()) return FALLBACK_DESKTOP_UA
-    return mobileUa
-        .replace(ANDROID_TOKEN, "")
-        .replace(VERSION_ANY, "")
-        .replace(WV_MARKER, "")
-        .replace("Mobile ", "")
+    // Không "xóa chữ Android" khỏi UA mobile: cách đó vẫn để lộ nền tảng Linux/Android
+    // và dễ khiến website tiếp tục phục vụ giao diện mobile/tablet.
+    // Dùng UA Windows Desktop chuẩn, nhưng giữ đúng phiên bản Chromium của WebView.
+    val chromeVersion = Regex("Chrome/([0-9.]+)")
+        .find(mobileUa)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.takeIf { it.isNotBlank() }
+        ?: Regex("Chrome/([0-9.]+)").find(FALLBACK_DESKTOP_UA)?.groupValues?.get(1)
+        ?: "142.0.0.0"
+
+    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$chromeVersion Safari/537.36"
 }
 
 // Các scheme do WebView tự xử lý, không chuyển sang app khác. Tạo một lần thay vì mỗi lần mở link.
