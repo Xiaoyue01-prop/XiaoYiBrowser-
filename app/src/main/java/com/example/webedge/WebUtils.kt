@@ -19,11 +19,16 @@ fun WebSettings.applyBrowserDefaults() {
     setSupportMultipleWindows(true)
     javaScriptCanOpenWindowsAutomatically = true
     mediaPlaybackRequiresUserGesture = false
-    // Tôn trọng viewport meta của website để bố cục responsive hoạt động đúng trên mobile.
+    // Luôn dùng viewport meta của trang; đây là cấu hình quan trọng cho responsive layout.
     useWideViewPort = true
     loadWithOverviewMode = false
     loadsImagesAutomatically = true
-    // Giữ lớp bảo vệ Safe Browsing của Chromium được bật rõ ràng.
+    blockNetworkImage = false
+    // Cho phép pinch-to-zoom nhưng không hiện nút zoom nổi kiểu Android cũ.
+    setSupportZoom(true)
+    builtInZoomControls = true
+    displayZoomControls = false
+    // Giữ bảo vệ Chromium bật rõ ràng cho mọi tab, kể cả popup đăng nhập.
     safeBrowsingEnabled = true
     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 }
@@ -34,25 +39,27 @@ private const val FALLBACK_DESKTOP_UA =
 
 private val WV_MARKER = Regex(""";\s*wv""", RegexOption.IGNORE_CASE)
 private val VERSION_4_0 = Regex("""\s*Version/4\.0""", RegexOption.IGNORE_CASE)
-private val ANDROID_TOKEN = Regex(""";\s*Android[^;)]*""", RegexOption.IGNORE_CASE)
-private val VERSION_ANY = Regex("""\s*Version/[\d.]+""", RegexOption.IGNORE_CASE)
 
 /** UA mobile "giống Chrome": bỏ dấu hiệu WebView (wv, Version/4.0) để trang không phục vụ bản hạn chế. */
 fun cleanMobileUserAgent(raw: String): String =
     raw.replace(WV_MARKER, "").replace(VERSION_4_0, "")
 
-/** UA desktop suy ra từ UA mobile thật của máy, nên tự cập nhật theo phiên bản Chromium. */
+/**
+ * Tạo UA desktop từ phiên bản Chromium thực tế của WebView.
+ * Không dùng cách xóa Android khỏi UA mobile vì dấu hiệu nền tảng còn sót có thể
+ * khiến website vẫn trả về giao diện mobile.
+ */
 fun desktopUserAgent(mobileUa: String): String {
-    // Không "xóa chữ Android" khỏi UA mobile: cách đó vẫn để lộ nền tảng Linux/Android
-    // và dễ khiến website tiếp tục phục vụ giao diện mobile/tablet.
-    // Dùng UA Windows Desktop chuẩn, nhưng giữ đúng phiên bản Chromium của WebView.
-    val chromeVersion = Regex("Chrome/([0-9.]+)")
+    val chromeVersion = Regex("""(?:Chrome|CriOS)/([0-9.]+)""", RegexOption.IGNORE_CASE)
         .find(mobileUa)
         ?.groupValues
         ?.getOrNull(1)
         ?.takeIf { it.isNotBlank() }
-        ?: Regex("Chrome/([0-9.]+)").find(FALLBACK_DESKTOP_UA)?.groupValues?.get(1)
-        ?: "142.0.0.0"
+        ?: Regex("""Chrome/([0-9.]+)""", RegexOption.IGNORE_CASE)
+            .find(FALLBACK_DESKTOP_UA)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?: "142.0.0.0"
 
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$chromeVersion Safari/537.36"

@@ -31,9 +31,9 @@ object AdBlocker {
             s.textContent = `
                 [class~="ad-banner"], [class~="ad-container"], [class~="ad-wrapper"],
                 [class*="adsbygoogle"], [id*="google_ads"], [id~="ad-banner"], [id~="ad-container"],
-                .google-ad, .ad-slot, .sponsored-content,
+                .google-ad, .ad-slot,
                 iframe[src*="doubleclick"], iframe[src*="googlesyndication"],
-                div[data-ad], div[data-ad-slot], ins.adsbygoogle
+                div[data-ad-slot], ins.adsbygoogle
                 { display: none !important; }
             `;
             (document.head || document.documentElement).appendChild(s);
@@ -62,7 +62,8 @@ object AdBlocker {
 
     private fun isAdHost(rawHost: String?): Boolean {
         if (rawHost.isNullOrEmpty()) return false
-        val host = rawHost.lowercase()
+        // Host có thể được biểu diễn với dấu chấm cuối theo chuẩn DNS; chuẩn hóa trước khi so khớp.
+        val host = rawHost.lowercase().trimEnd('.')
         hostCache[host]?.let { return it }
         val result = matchesBlockedDomain(host)
         if (hostCache.size >= HOST_CACHE_MAX) hostCache.clear()

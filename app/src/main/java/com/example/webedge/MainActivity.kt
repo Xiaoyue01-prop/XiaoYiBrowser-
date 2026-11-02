@@ -1382,7 +1382,9 @@ class MainActivity : ComponentActivity() {
             settings.loadWithOverviewMode = true
         } else {
             settings.userAgentString = mobileUa
-            settings.useWideViewPort = false
+            // Không tắt wide viewport ở mobile: website có meta viewport cần
+            // layout theo chiều rộng thiết bị thay vì viewport mặc định ~980px.
+            settings.useWideViewPort = true
             settings.loadWithOverviewMode = false
         }
     }

@@ -49,23 +49,11 @@ sovrn.com
 yieldmo.com
 indexexchange.com
 
-# Tracking & Analytics
+# Tracking hosts with low risk of breaking site functionality
 scorecardresearch.com
 quantserve.com
 chartbeat.com
 hotjar.com
-mixpanel.com
-segment.io
-amplitude.com
-newrelic.com
-sentry.io
-bugsnag.com
-fullstory.com
-mouseflow.com
-clicktale.com
-optimizely.com
-crazyegg.com
-kissmetrics.com
 
 # Vietnamese
 admicro.vn
