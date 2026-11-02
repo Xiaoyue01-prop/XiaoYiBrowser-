@@ -34,6 +34,7 @@ class ContextMenuController(
     private var card: FrameLayout? = null
     private var touchX = 0f
     private var touchY = 0f
+    private var closeTranslationY = 0f
     val isShowing: Boolean get() = layer != null
 
     private fun dp(value: Int) = (value * density).toInt()
@@ -174,9 +175,18 @@ class ContextMenuController(
             } else yBelow.coerceAtLeast(dp(12))
             panel.x = x.toFloat()
             panel.y = y.toFloat()
+            // Keep the finger as the transform origin: the card expands from the
+            // pressed element instead of appearing as a uniformly scaled popup.
             panel.pivotX = (touchX - x).coerceIn(0f, width.toFloat())
             panel.pivotY = (touchY - y).coerceIn(0f, height.toFloat())
-            AnimationSystem.popIn(panel, 0.82f, AnimationSystem.MENU_MORPH)
+            closeTranslationY = if (y >= touchY) -dp(6).toFloat() else dp(6).toFloat()
+            AnimationSystem.spatialPopIn(
+                panel,
+                fromScaleX = 0.88f,
+                fromScaleY = 0.94f,
+                fromTranslationY = closeTranslationY,
+                springSpec = AnimationSystem.MORPH
+            )
         }
         layer = layerView
         card = panel
@@ -192,7 +202,13 @@ class ContextMenuController(
         card = null
         layer = null
         if (animate) {
-            AnimationSystem.popOut(old, 0.86f, AnimationSystem.MENU_MORPH_CLOSE) {
+            AnimationSystem.spatialPopOut(
+                old,
+                toScaleX = 0.90f,
+                toScaleY = 0.94f,
+                toTranslationY = closeTranslationY,
+                springSpec = AnimationSystem.MORPH_CLOSE
+            ) {
                 oldLayer?.let(root::removeView)
             }
         } else {

@@ -247,6 +247,40 @@ object AnimationSystem {
         fade(view, 0f, springSpec, onEnd)
     }
 
+    /**
+     * Bề mặt bung từ điểm neo với scale X/Y độc lập và một độ lệch không gian nhỏ.
+     * Dùng cùng spring engine/preset với toàn bộ animation của Summit.
+     */
+    fun spatialPopIn(
+        view: View,
+        fromScaleX: Float = 0.88f,
+        fromScaleY: Float = 0.94f,
+        fromTranslationY: Float = 0f,
+        springSpec: SpringSpec = MORPH
+    ) {
+        view.alpha = 0f
+        view.scaleX = fromScaleX
+        view.scaleY = fromScaleY
+        view.translationY = fromTranslationY
+        fade(view, 1f, QUICK)
+        scaleTo(view, 1f, 1f, springSpec)
+        spring(view, DynamicAnimation.TRANSLATION_Y, 0f, springSpec)
+    }
+
+    /** Thu bề mặt ngược về đúng điểm neo; callback chạy sau khi fade kết thúc. */
+    fun spatialPopOut(
+        view: View,
+        toScaleX: Float = 0.90f,
+        toScaleY: Float = 0.94f,
+        toTranslationY: Float = 0f,
+        springSpec: SpringSpec = MORPH_CLOSE,
+        onEnd: (() -> Unit)? = null
+    ) {
+        scaleTo(view, toScaleX, toScaleY, springSpec)
+        spring(view, DynamicAnimation.TRANSLATION_Y, toTranslationY, springSpec)
+        fade(view, 0f, springSpec, onEnd)
+    }
+
     /** Trượt vào từ translationY hiện tại (toast). */
     fun slideIn(view: View) {
         fade(view, 1f, QUICK)
