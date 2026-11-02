@@ -329,7 +329,8 @@ class PopupWindowController(
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             sheetLp.topMargin = bars.top + dp(10)
             sheetView.layoutParams = sheetLp
-            sheetView.setPadding(0, 0, 0, maxOf(bars.bottom, ime.bottom))
+            // Edge-to-edge: trang tràn xuống sát đáy, chỉ nhường chỗ khi bàn phím hiện (ime.bottom đã gồm cả thanh điều hướng).
+            sheetView.setPadding(0, 0, 0, ime.bottom)
             insets
         }
         val dlg = object : Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar) {
@@ -345,6 +346,9 @@ class PopupWindowController(
             setWindowAnimations(0)
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             WindowCompat.setDecorFitsSystemWindows(this, false)
+            // Thanh điều hướng trong suốt hẳn, vạch cử chỉ đổi màu theo nền sheet để không chìm vào trang.
+            isNavigationBarContrastEnforced = false
+            WindowCompat.getInsetsController(this, root).isAppearanceLightNavigationBars = !night
         }
         dlg.setOnDismissListener {
             if (webView === popup) {
