@@ -320,10 +320,16 @@ function wideBottomNavOf(el, H, W){
 function registerCompactBar(el){
   if (compactBarRec(el)) return;
   try {
+    var originalBorderRadius = saveInline(el, 'border-radius');
+    var computedRadius = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
+    // Giữ nguyên hình chữ nhật của website, chỉ bo nhẹ bốn góc; không morph thành pill.
+    var roundedRadius = Math.max(16, computedRadius);
+    el.style.setProperty('border-radius', roundedRadius + 'px', 'important');
     compactBars.push({ el: el, hidden: false, cycleStarted: false, animationFrame: null,
       savedOpacity: null, savedVisibility: null, savedPointerEvents: null,
       savedTransform: null, savedTransformOrigin: null, savedWillChange: null,
-      baseTransform: 'none', baseOpacity: 1, baseVisualWidth: 0, baseVisualHeight: 0,
+      savedBorderRadius: null, originalBorderRadius: originalBorderRadius, savedOverflow: null,
+      baseTransform: 'none', baseOpacity: 1, baseVisualWidth: 0, baseVisualHeight: 0, baseRadius: roundedRadius,
       visualState: null, velocity: null, targetState: null });
   } catch (e) {}
 }
@@ -337,14 +343,17 @@ function captureCompactBase(rec){
   rec.savedTransform = saveInline(el, 'transform');
   rec.savedTransformOrigin = saveInline(el, 'transform-origin');
   rec.savedWillChange = saveInline(el, 'will-change');
+  rec.savedBorderRadius = saveInline(el, 'border-radius');
+  rec.savedOverflow = saveInline(el, 'overflow');
+  rec.baseRadius = parseFloat(cs.borderTopLeftRadius) || 0;
   rec.baseTransform = cs.transform || 'none';
   var baseRect = el.getBoundingClientRect();
   rec.baseVisualWidth = baseRect.width || el.offsetWidth || 1;
   rec.baseVisualHeight = baseRect.height || el.offsetHeight || 1;
   rec.baseOpacity = parseFloat(cs.opacity);
   if (!isFinite(rec.baseOpacity)) rec.baseOpacity = 1;
-  rec.visualState = { x: 0, y: 0, sx: 1, sy: 1, opacity: rec.baseOpacity };
-  rec.velocity = { x: 0, y: 0, sx: 0, sy: 0, opacity: 0 };
+  rec.visualState = { x: 0, y: 0, sx: 1, sy: 1, opacity: rec.baseOpacity, radius: rec.baseRadius };
+  rec.velocity = { x: 0, y: 0, sx: 0, sy: 0, opacity: 0, radius: 0 };
   rec.cycleStarted = true;
 }
 
@@ -362,11 +371,14 @@ function restoreCompactBase(rec, keepHidden){
       restoreInline(el, 'transform-origin', rec.savedTransformOrigin);
       restoreInline(el, 'opacity', rec.savedOpacity);
       restoreInline(el, 'will-change', rec.savedWillChange);
+      restoreInline(el, 'border-radius', rec.savedBorderRadius);
+      el.style.setProperty('border-radius', rec.baseRadius + 'px', 'important');
+      restoreInline(el, 'overflow', rec.savedOverflow);
       restoreInline(el, 'visibility', rec.savedVisibility);
       restoreInline(el, 'pointer-events', rec.savedPointerEvents);
       rec.cycleStarted = false;
-      rec.visualState = { x: 0, y: 0, sx: 1, sy: 1, opacity: rec.baseOpacity };
-      rec.velocity = { x: 0, y: 0, sx: 0, sy: 0, opacity: 0 };
+      rec.visualState = { x: 0, y: 0, sx: 1, sy: 1, opacity: rec.baseOpacity, radius: rec.baseRadius };
+      rec.velocity = { x: 0, y: 0, sx: 0, sy: 0, opacity: 0, radius: 0 };
       rec.targetState = null;
     }
   } catch (e) {}
@@ -379,6 +391,8 @@ function applyCompactState(rec){
   el.style.setProperty('will-change', 'transform, opacity', 'important');
   el.style.setProperty('transform', 'translate3d(' + s.x + 'px,' + s.y + 'px,0) scale(' + s.sx + ',' + s.sy + ')' + base, 'important');
   el.style.setProperty('opacity', String(Math.max(0, Math.min(1, s.opacity))), 'important');
+  el.style.setProperty('border-radius', Math.max(0, s.radius) + 'px', 'important');
+  el.style.setProperty('overflow', 'hidden', 'important');
 }
 
 function compactTarget(rec){
@@ -398,7 +412,7 @@ function compactTarget(rec){
   var sx = Math.max(0.06, Math.min(0.96, pw / Math.max(1, baseW)));
   var sy = Math.max(0.12, Math.min(0.96, ph / Math.max(1, baseH)));
   var current = rec.visualState || { x: 0, y: 0 };
-  return { x: current.x + dx, y: current.y + dy, sx: sx, sy: sy, opacity: 0.02 };
+  return { x: current.x + dx, y: current.y + dy, sx: sx, sy: sy, opacity: 0.02, radius: rec.baseRadius };
 }
 
 function finishCompactAnimation(rec, hide){
@@ -421,7 +435,7 @@ function springCompactTo(rec, target, hide){
   var omega = 2 * Math.PI / response;
   var omega2 = omega * omega;
   var twiceDampingOmega = 2 * damping * omega;
-  var keys = ['x', 'y', 'sx', 'sy', 'opacity'];
+  var keys = ['x', 'y', 'sx', 'sy', 'opacity', 'radius'];
   rec.targetState = target;
   var lastTime = 0;
 
@@ -448,8 +462,8 @@ function springCompactTo(rec, target, hide){
     }
     applyCompactState(rec);
     if (settled) {
-      rec.visualState = { x: target.x, y: target.y, sx: target.sx, sy: target.sy, opacity: target.opacity };
-      rec.velocity = { x: 0, y: 0, sx: 0, sy: 0, opacity: 0 };
+      rec.visualState = { x: target.x, y: target.y, sx: target.sx, sy: target.sy, opacity: target.opacity, radius: target.radius };
+      rec.velocity = { x: 0, y: 0, sx: 0, sy: 0, opacity: 0, radius: 0 };
       applyCompactState(rec);
       rec.animationFrame = null;
       finishCompactAnimation(rec, hide);
@@ -478,7 +492,7 @@ function setCompactBar(rec, hide){
     // Bật visibility khi thanh đang ở đúng vị trí pill; spring bung ra về kích thước ban đầu.
     el.style.setProperty('visibility', 'visible', 'important');
     springCompactTo(rec, {
-      x: 0, y: 0, sx: 1, sy: 1, opacity: rec.baseOpacity
+      x: 0, y: 0, sx: 1, sy: 1, opacity: rec.baseOpacity, radius: rec.baseRadius
     }, false);
   }
 }
@@ -489,6 +503,7 @@ function releaseCompactBar(rec){
     if (rec.animationFrame) { cancelAnimationFrame(rec.animationFrame); rec.animationFrame = null; }
     rec.hidden = false;
     if (rec.cycleStarted) restoreCompactBase(rec, false);
+    if (rec.originalBorderRadius) restoreInline(rec.el, 'border-radius', rec.originalBorderRadius);
   } catch (e) {}
 }
 
