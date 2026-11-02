@@ -16,11 +16,33 @@ var last = '';
 var styleCache = new WeakMap();
 var rafId = null;
 
+var cvCtx = null;
+// Màu hiện đại (color(srgb ...), oklab, hsl...) không khớp rgb() -> nhờ canvas đổi sang RGB
+function viaCanvas(c){
+  try {
+    if (!cvCtx) {
+      var cv = document.createElement('canvas');
+      cv.width = 1; cv.height = 1;
+      cvCtx = cv.getContext('2d', { willReadFrequently: true });
+    }
+    cvCtx.clearRect(0, 0, 1, 1);
+    cvCtx.fillStyle = '#010203';
+    cvCtx.fillStyle = c;
+    if (cvCtx.fillStyle === '#010203') return null;
+    cvCtx.fillRect(0, 0, 1, 1);
+    var d = cvCtx.getImageData(0, 0, 1, 1).data;
+    if (d[3] / 255 < 0.85) return null;
+    return [d[0], d[1], d[2], d[3] / 255];
+  } catch (e) { return null; }
+}
+
 function rgbOf(c){
   try {
-    var m = c && c.match(/rgba?\(([^)]+)\)/);
-    if (!m) return null;
+    if (!c || c === 'transparent') return null;
+    var m = c.match(/^rgba?\(([^)]+)\)/);
+    if (!m) return viaCanvas(c);
     var p = m[1].split(',').map(function(x){ return parseFloat(x); });
+    if (p.length < 3 || isNaN(p[0])) return viaCanvas(c);
     var a = p.length > 3 ? p[3] : 1;
     if (a < 0.85) return null;
     return p;
@@ -105,10 +127,69 @@ function runTop(){
   } catch (e) {}
 }
 
+// Màu nền thật của header (nền có thể nằm ở phần tử con): lấy mẫu chỗ thấy được rồi mới leo lên cha
+function headerColor(hdEl, I){
+  try {
+    var w = window.innerWidth, y = I + 4, xs = [0.03, 0.97, 0.5];
+    for (var i = 0; i < xs.length; i++) {
+      var st = document.elementsFromPoint(w * xs[i], y);
+      for (var j = 0; j < st.length; j++) {
+        if (!hdEl.contains(st[j])) continue;
+        var c = climb(st[j]);
+        if (c) return c;
+      }
+    }
+    var kids = hdEl.querySelectorAll('*');
+    for (var k = 0; k < kids.length && k < 60; k++) {
+      var b = bgOf(kids[k]);
+      if (b && kids[k].getBoundingClientRect().width > w * 0.6) return b;
+    }
+  } catch (e) {}
+  var cl = climb(hdEl);
+  if (cl) return cl;
+  var dark = false;
+  try { dark = window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) {}
+  return dark ? [24, 25, 26, 1] : [255, 255, 255, 1];
+}
+
+// Tìm khối header cố định (fixed/sticky) đang chồng lên dải thanh trạng thái, kể cả khi có lớp phủ rỗng
+// (banner cookie...) nằm trên nó. Chọn khối ngoài cùng thấp hơn 30% màn hình và có chữ.
+function findHeader(I){
+  var w = window.innerWidth, h = window.innerHeight;
+  var ys = [Math.max(2, I * 0.4), I + 4];
+  var xs = [0.5, 0.15, 0.85], best = null;
+  for (var q = 0; q < xs.length * ys.length; q++) {
+    var st = document.elementsFromPoint(w * xs[q % xs.length], ys[Math.floor(q / xs.length)]);
+    for (var j = 0; j < st.length; j++) {
+      var el = st[j];
+      while (el && el !== document.documentElement && el !== document.body) {
+        var cs = getComputedStyle(el);
+        if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none' && parseFloat(cs.opacity) >= 0.1) {
+          var r = el.getBoundingClientRect();
+          var txt = (el.textContent || '').trim().length;
+          if (r.top <= I + 1 && r.width > w * 0.6 && r.height > 8 && r.height < h * 0.3 && txt > 0) {
+            if (!best || el.contains(best.el)) best = { el: el, cs: cs };
+          }
+        }
+        el = el.parentElement;
+      }
+    }
+  }
+  return best;
+}
+
 function runEdge(){
   var I = window.__edgeInset || 0;
   if (!I || !document.elementsFromPoint) return;
   try {
+    var hd = findHeader(I);
+    if (hd) {
+      var topNow = parseFloat(hd.cs.top);
+      if (isNaN(topNow) || topNow < I - 0.5) hd.el.style.setProperty('top', I + 'px', 'important');
+      var hc = headerColor(hd.el, I);
+      report(hc ? (hc[0] + ',' + hc[1] + ',' + hc[2]) : 'none');
+      return;
+    }
     var y = I + 2, w = window.innerWidth, hit = null, big = false, color = null;
     var xs = [0.5, 0.15, 0.85];
     for (var i = 0; i < xs.length && !hit; i++) {
