@@ -1152,15 +1152,16 @@ class MainActivity : ComponentActivity() {
         target.evaluateJavascript(
             "(function(){if(!window.__edgeStarted)return 0;window.__edgeInset=" + insetCss +
                 ";window.__edgeMode=" + mode + ";window.__edgeBottom=" + bottom +
-                ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() +
-                ";if(window.__edgeRun)window.__edgeRun();return 1})()"
+                ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() + ";" + compactPillMetricsJs() +
+                "if(window.__edgeRun)window.__edgeRun();return 1})()"
         ) { result ->
             if (result != "1" && !isActivityDestroyed) {
                 target.evaluateJavascript(
                     EDGE_JS.replace("%INSET%", insetCss.toString())
                         .replace("%MODE%", mode)
                         .replace("%BOTTOM%", bottom.toString())
-                        .replace("%COMPACT%", shouldHideWebsiteBottomNav().toString()),
+                        .replace("%COMPACT%", shouldHideWebsiteBottomNav().toString())
+                        .replace("%PILL_METRICS%", compactPillMetricsJs()),
                     null
                 )
             }
@@ -1180,11 +1181,33 @@ class MainActivity : ComponentActivity() {
         return (maxOf(0f, barTop - imeBottom) / d).toInt()
     }
 
+    // Tọa độ và kích thước đích của viên thuốc ở trạng thái thu gọn, tính trong hệ tọa độ CSS của WebView.
+    // Dùng cùng một đích cho cả hai chiều để thanh website co đúng vào pill rồi bung ra từ chính vị trí đó.
+    private fun compactPillMetricsJs(): String {
+        if (!::web.isInitialized || !::urlPillFrame.isInitialized ||
+            web.width <= 0 || web.height <= 0 || urlPillFrame.width <= 0 || urlPillFrame.height <= 0 || d <= 0f
+        ) {
+            return "window.__edgePillX=(window.innerWidth||0)/2;window.__edgePillY=(window.innerHeight||0)-34;" +
+                "window.__edgePillW=(window.innerWidth||0)*0.40;window.__edgePillH=25;"
+        }
+        val webPos = IntArray(2)
+        val pillPos = IntArray(2)
+        web.getLocationOnScreen(webPos)
+        urlPillFrame.getLocationOnScreen(pillPos)
+        val x = (pillPos[0] + urlPillFrame.width / 2f - webPos[0]) / d
+        val y = (pillPos[1] + urlPillFrame.height / 2f - webPos[1]) / d
+        val width = urlPillFrame.width * 0.58f / d
+        val height = urlPillFrame.height * 0.62f / d
+        return "window.__edgePillX=$x;window.__edgePillY=$y;" +
+            "window.__edgePillW=$width;window.__edgePillH=$height;"
+    }
+
     private fun pushBottomReserve() {
         if (!::web.isInitialized) return
         web.evaluateJavascript(
             "window.__edgeBottom=" + bottomReserveCss() +
-                ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() + ";window.__edgeLift&&window.__edgeLift();",
+                ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() + ";" + compactPillMetricsJs() +
+                "window.__edgeLift&&window.__edgeLift();",
             null
         )
     }
