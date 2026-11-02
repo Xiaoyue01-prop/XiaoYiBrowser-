@@ -9,6 +9,7 @@ internal const val EDGE_JS = """
 window.__edgeInset = %INSET%;
 window.__edgeMode = %MODE%;
 window.__edgeBottom = %BOTTOM%;
+window.__edgeCompact = %COMPACT%;
 if (window.__edgeStarted) { if (window.__edgeRun) window.__edgeRun(); return; }
 window.__edgeStarted = true;
 
@@ -242,6 +243,7 @@ function sched(){
 
 // ---- Nâng các thanh cố định ở đáy trang lên trên thanh địa chỉ nổi (giống Safari) ----
 var lifted = [];
+var compactBars = [];
 var liftTimer = null, liftLast = 0;
 
 function fixedOf(el){
@@ -258,6 +260,114 @@ function fixedOf(el){
 function findRec(el){
   for (var i = 0; i < lifted.length; i++) { if (lifted[i].el === el) return lifted[i]; }
   return null;
+}
+
+// Chỉ nhận diện thanh điều hướng cố định dạng dải ngang ở đáy trang.
+// Không coi các nút nổi độc lập (gọi điện, chat, Zalo...) là toolbar.
+function compactBarRec(el){
+  for (var i = 0; i < compactBars.length; i++) { if (compactBars[i].el === el) return compactBars[i]; }
+  return null;
+}
+
+function saveInline(el, name){
+  return { value: el.style.getPropertyValue(name), priority: el.style.getPropertyPriority(name) };
+}
+
+function restoreInline(el, name, saved){
+  if (saved.value) el.style.setProperty(name, saved.value, saved.priority);
+  else el.style.removeProperty(name);
+}
+
+function isBottomNav(el, H, W, offset, known){
+  try {
+    if (!el || !el.isConnected || el === document.body || el === document.documentElement) return false;
+    var cs = getComputedStyle(el);
+    if (cs.position !== 'fixed' || cs.display === 'none') return false;
+    if (!known && (cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.1)) return false;
+    var r = el.getBoundingClientRect();
+    var top = r.top + (offset || 0), bottom = r.bottom + (offset || 0);
+    if (r.width < W * 0.78 || r.height < 28 || r.height > H * 0.18) return false;
+    if (top < H * 0.55 || bottom < H - 240) return false;
+    var nodes = el.querySelectorAll('a,button,[role="button"],[onclick]');
+    var controls = 0;
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i], ns = getComputedStyle(n), nr = n.getBoundingClientRect();
+      if (ns.display !== 'none' && nr.width > 2 && nr.height > 2) controls++;
+      if (controls >= 3) return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+// Tìm cả ancestor fixed rộng, phòng trường hợp từng nút con tự có position:fixed.
+function wideBottomNavOf(el, H, W){
+  for (; el && el !== document.documentElement && el !== document.body; el = el.parentElement) {
+    var rec = compactBarRec(el);
+    var liftedRec = findRec(el);
+    var offset = liftedRec ? liftedRec.cur : 0;
+    if (isBottomNav(el, H, W, offset, !!rec)) return el;
+  }
+  return null;
+}
+
+function registerCompactBar(el){
+  if (compactBarRec(el)) return;
+  try {
+    compactBars.push({
+      el: el,
+      hidden: false,
+      savedOpacity: saveInline(el, 'opacity'),
+      savedVisibility: saveInline(el, 'visibility'),
+      savedPointerEvents: saveInline(el, 'pointer-events')
+    });
+  } catch (e) {}
+}
+
+function setCompactBar(rec, hide){
+  if (!rec || !rec.el || !rec.el.isConnected) return;
+  if (hide) {
+    if (!rec.hidden) {
+      // Chụp lại style ngay trước mỗi lần ẩn để không làm mất cập nhật của website.
+      rec.savedOpacity = saveInline(rec.el, 'opacity');
+      rec.savedVisibility = saveInline(rec.el, 'visibility');
+      rec.savedPointerEvents = saveInline(rec.el, 'pointer-events');
+      rec.hidden = true;
+    }
+    // Re-apply khi website tự sửa style trong lúc Summit đang thu gọn.
+    rec.el.style.setProperty('pointer-events', 'none', 'important');
+    rec.el.style.setProperty('opacity', '0', 'important');
+    rec.el.style.setProperty('visibility', 'hidden', 'important');
+  } else if (rec.hidden) {
+    rec.hidden = false;
+    // Trả đúng inline style ban đầu, không ghi đè CSS/animation riêng của website.
+    restoreInline(rec.el, 'opacity', rec.savedOpacity);
+    restoreInline(rec.el, 'visibility', rec.savedVisibility);
+    restoreInline(rec.el, 'pointer-events', rec.savedPointerEvents);
+  }
+}
+
+function releaseCompactBar(rec){
+  if (!rec || !rec.el || !rec.hidden) return;
+  rec.hidden = false;
+  try {
+    restoreInline(rec.el, 'opacity', rec.savedOpacity);
+    restoreInline(rec.el, 'visibility', rec.savedVisibility);
+    restoreInline(rec.el, 'pointer-events', rec.savedPointerEvents);
+  } catch (e) {}
+}
+
+function syncCompactBars(){
+  var keep = [], H = window.innerHeight, W = window.innerWidth;
+  for (var i = 0; i < compactBars.length; i++) {
+    var rec = compactBars[i], offsetRec = findRec(rec.el), offset = offsetRec ? offsetRec.cur : 0;
+    if (isBottomNav(rec.el, H, W, offset, true)) {
+      setCompactBar(rec, !!window.__edgeCompact);
+      keep.push(rec);
+    } else {
+      releaseCompactBar(rec);
+    }
+  }
+  compactBars = keep;
 }
 
 function liftEl(el){
@@ -319,6 +429,7 @@ function runLift(){
     if (ok) keep.push(rec); else release(rec);
   }
   lifted = keep;
+  syncCompactBars();
   if (R > 0 && document.elementsFromPoint) {
     var ys = [H - 4, H - 30, H - 70, H - 120, H - 170];
     var xs = [0.08, 0.3, 0.5, 0.7, 0.92];
@@ -326,6 +437,8 @@ function runLift(){
       for (var b = 0; b < xs.length; b++) {
         var stack = document.elementsFromPoint(W * xs[b], ys[a]);
         for (var c = 0; c < stack.length; c++) {
+          var nav = wideBottomNavOf(stack[c], H, W);
+          if (nav) registerCompactBar(nav);
           var f = fixedOf(stack[c]);
           if (!f) continue;
           if (findRec(f)) break;
@@ -340,6 +453,7 @@ function runLift(){
       }
     }
   }
+  syncCompactBars();
   applyLift();
 }
 

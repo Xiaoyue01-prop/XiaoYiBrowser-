@@ -249,6 +249,7 @@ class MainActivity : ComponentActivity() {
         fullscreenContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
         fullscreenContainer.visibility = View.VISIBLE
         fullscreenContainer.bringToFront()
+        pushBottomReserve()
         pipController.setVideoActive(true, view)
         if (pendingPip) {
             pendingPip = false
@@ -266,6 +267,7 @@ class MainActivity : ComponentActivity() {
             fullscreenContainer.visibility = View.GONE
         }
         customVideoView = null
+        pushBottomReserve()
         val callback = customVideoCallback
         customVideoCallback = null
         previousRequestedOrientation?.let { requestedOrientation = it }
@@ -1150,18 +1152,24 @@ class MainActivity : ComponentActivity() {
         target.evaluateJavascript(
             "(function(){if(!window.__edgeStarted)return 0;window.__edgeInset=" + insetCss +
                 ";window.__edgeMode=" + mode + ";window.__edgeBottom=" + bottom +
+                ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() +
                 ";if(window.__edgeRun)window.__edgeRun();return 1})()"
         ) { result ->
             if (result != "1" && !isActivityDestroyed) {
                 target.evaluateJavascript(
                     EDGE_JS.replace("%INSET%", insetCss.toString())
                         .replace("%MODE%", mode)
-                        .replace("%BOTTOM%", bottom.toString()),
+                        .replace("%BOTTOM%", bottom.toString())
+                        .replace("%COMPACT%", shouldHideWebsiteBottomNav().toString()),
                     null
                 )
             }
         }
     }
+
+    // Chỉ ẩn thanh điều hướng của website khi viên thuốc thực sự ở trạng thái thu gọn.
+    // Khi bàn phím, FindBar hoặc video toàn màn hình chiếm UI thì không giữ trạng thái compact cũ.
+    private fun shouldHideWebsiteBottomNav(): Boolean = barHidden && barPresent && customVideoView == null
 
     // Khoảng (px CSS) từ mép dưới WebView lên tới đỉnh thanh địa chỉ nổi. Các thanh cố định ở đáy trang
     // được nâng lên đúng khoảng này để không bị thanh địa chỉ đè lên, giống Safari.
@@ -1175,7 +1183,8 @@ class MainActivity : ComponentActivity() {
     private fun pushBottomReserve() {
         if (!::web.isInitialized) return
         web.evaluateJavascript(
-            "window.__edgeBottom=" + bottomReserveCss() + ";window.__edgeLift&&window.__edgeLift();",
+            "window.__edgeBottom=" + bottomReserveCss() +
+                ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() + ";window.__edgeLift&&window.__edgeLift();",
             null
         )
     }
