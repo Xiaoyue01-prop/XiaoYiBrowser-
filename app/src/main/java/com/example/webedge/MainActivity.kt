@@ -979,6 +979,7 @@ class MainActivity : ComponentActivity() {
             },
             onFind = ::openFind
         )
+        if (::web.isInitialized) contextMenuController?.attach(web)
         glassDialog = GlassDialogController(
             activity = this,
             root = root,
