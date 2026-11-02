@@ -230,7 +230,12 @@ object OriginTransitionController {
         syncCounterTransform(m)
         // Mặc định thẻ hiện nhanh để nối tiếp nút nguồn. Một số bề mặt kính toàn màn hình
         // cần giữ alpha = 1 khi bung để nền web sắc nét không xuyên qua lớp blur ở đầu morph.
-        v.alpha = if (m.opening && !m.fadeIn) 1f else (p / 0.3f).coerceIn(0f, 1f)
+        v.alpha = if (m.opening && !m.fadeIn) 1f else {
+            // Hiện dần theo nửa đầu của quá trình bung (smoothstep) để bề mặt "tan ra" từ nút,
+            // không bật rõ nét ngay khi mới bung 30%.
+            val t = (p / 0.55f).coerceIn(0f, 1f)
+            t * t * (3f - 2f * t)
+        }
         m.outline?.let {
             it.radius = lerp(m.startRadius, m.endRadius, p.coerceIn(0f, 1f))
             v.invalidateOutline()
@@ -333,7 +338,7 @@ object OriginTransitionController {
         val count = hideCount[src] ?: 0
         if (count == 0) savedSourceAlpha[src] = src.alpha
         hideCount[src] = count + 1
-        AnimationSystem.fade(src, 0f, AnimationSystem.QUICK)
+        AnimationSystem.fade(src, 0f, AnimationSystem.SOURCE_FADE)
     }
 
     private fun showSource(m: Morph) {
@@ -347,7 +352,7 @@ object OriginTransitionController {
         }
         hideCount.remove(src)
         val alpha = savedSourceAlpha.remove(src) ?: return
-        AnimationSystem.fade(src, alpha, AnimationSystem.QUICK)
+        AnimationSystem.fade(src, alpha, AnimationSystem.SOURCE_FADE)
     }
 
     private fun scaledBounds(bounds: RectF, scaleX: Float, scaleY: Float): RectF {

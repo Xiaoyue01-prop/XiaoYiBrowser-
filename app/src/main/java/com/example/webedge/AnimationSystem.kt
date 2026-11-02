@@ -41,7 +41,9 @@ object AnimationSystem {
     /** Menu ba chấm: chậm hơn MORPH khoảng 22%, giữ nguyên độ nảy và quỹ đạo. */
     val MENU_MORPH = SpringSpec(0.56f, 0.72f)
     /** Menu ba chấm khi đóng: chậm hơn MORPH_CLOSE khoảng 24%, vẫn thu gọn gọn gàng. */
-    val MENU_MORPH_CLOSE = SpringSpec(0.42f, 0.90f)
+    val MENU_MORPH_CLOSE = SpringSpec(0.34f, 0.95f)
+    /** Nút gốc mờ đi/hiện lại khi bề mặt morph: chậm hơn QUICK để nút tan vào menu thay vì biến mất đột ngột. */
+    val SOURCE_FADE = SpringSpec(0.28f, 1.0f)
     /** Thu gọn thanh công cụ, toast, đổi trạng thái: vượt nhẹ hơn SETTLE một chút. */
     val SMOOTH = SpringSpec(0.50f, 0.62f)
     /** Đóng lại (scale/alpha được chặn ở 0 nên không bị lật): chỉ nảy rất nhẹ. */
