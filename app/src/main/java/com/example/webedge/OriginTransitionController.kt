@@ -43,6 +43,8 @@ object OriginTransitionController {
         var startRadius = 0f
         var progress = 0f
         var sourceHidden = false
+        var sourceScaleX = 1f
+        var sourceScaleY = 1f
         var anim: AnimationSystem.FloatSpringHandle? = null
         var outline: MorphOutline? = null
     }
@@ -118,13 +120,78 @@ object OriginTransitionController {
         AnimationSystem.cancel(view)
         // Khi đóng, bật lại fade theo tiến độ kể cả surface đã mở bằng chế độ không fade-in.
         m.opening = false
-        // Nút có thể đã dời chỗ (xoay màn hình, thanh công cụ thu gọn): lấy lại vị trí hiện tại.
-        m.source?.get()?.let { src -> boundsOnScreen(src)?.let { m.anchor = it } }
+        // Nút có thể đã dời chỗ (xoay màn hình, thanh công cụ thu gọn): lấy lại vị trí hiện tại,
+        // đồng thời giữ tỉ lệ kích thước compact nếu điểm neo là URL Pill.
+        m.source?.get()?.let { src ->
+            boundsOnScreen(src)?.let { m.anchor = scaledBounds(it, m.sourceScaleX, m.sourceScaleY) }
+        }
         place(m, target)
         animateTo(m, 0f, springSpec ?: AnimationSystem.MORPH_CLOSE) {
             finish(m)
             onEnd?.invoke()
         }
+    }
+
+    /**
+     * Đổi điểm neo của một morph đang mở mà không tạo animation engine mới.
+     * Dùng khi thanh công cụ thu gọn: menu đang mở đổi điểm thu về từ nút ba chấm sang URL Pill.
+     * [hideNewSource] chỉ bật khi điểm neo mới cần được ẩn trong lúc bề mặt bung ra.
+     */
+    fun retargetSource(
+        view: View,
+        newSource: View,
+        hideNewSource: Boolean = false,
+        sourceScaleX: Float = 1f,
+        sourceScaleY: Float = 1f
+    ): Boolean {
+        val m = morphs[view] ?: return false
+        val anchor = boundsOnScreen(newSource) ?: return false
+        val sx = sourceScaleX.coerceAtLeast(0.02f)
+        val sy = sourceScaleY.coerceAtLeast(0.02f)
+        val scaledAnchor = scaledBounds(anchor, sx, sy)
+        if (m.sourceHidden) showSource(m)
+        m.source = WeakReference(newSource)
+        m.sourceScaleX = sx
+        m.sourceScaleY = sy
+        m.anchor = scaledAnchor
+        m.sourceHidden = false
+        if (hideNewSource) hideSource(m)
+        return true
+    }
+
+    /** Thu một bề mặt về điểm neo nhưng giữ morph để có thể spring bung ngược ra sau đó. */
+    fun collapseToSource(
+        view: View,
+        springSpec: AnimationSystem.SpringSpec = AnimationSystem.MORPH_CLOSE,
+        onEnd: (() -> Unit)? = null
+    ): Boolean {
+        val m = morphs[view] ?: return false
+        val target = boundsOnScreen(view) ?: return false
+        m.source?.get()?.let { src ->
+            boundsOnScreen(src)?.let { m.anchor = scaledBounds(it, m.sourceScaleX, m.sourceScaleY) }
+        }
+        m.anim?.cancel()
+        AnimationSystem.cancel(view)
+        m.opening = false
+        place(m, target)
+        animateTo(m, 0f, springSpec) { onEnd?.invoke() }
+        return true
+    }
+
+    /** Spring bung lại từ điểm neo hiện tại, tiếp tục đúng progress đang dở nếu bị đảo chiều giữa chừng. */
+    fun expandFromSource(
+        view: View,
+        springSpec: AnimationSystem.SpringSpec = AnimationSystem.MORPH,
+        onEnd: (() -> Unit)? = null
+    ): Boolean {
+        val m = morphs[view] ?: return false
+        val target = boundsOnScreen(view) ?: return false
+        m.anim?.cancel()
+        AnimationSystem.cancel(view)
+        place(m, target)
+        m.opening = true
+        animateTo(m, 1f, springSpec) { onEnd?.invoke() }
+        return true
     }
 
     /** Dừng hẳn và trả view/nút gốc về trạng thái bình thường (khi gỡ view mà không animation). */
@@ -281,6 +348,17 @@ object OriginTransitionController {
         hideCount.remove(src)
         val alpha = savedSourceAlpha.remove(src) ?: return
         AnimationSystem.fade(src, alpha, AnimationSystem.QUICK)
+    }
+
+    private fun scaledBounds(bounds: RectF, scaleX: Float, scaleY: Float): RectF {
+        val sx = scaleX.coerceAtLeast(0.02f)
+        val sy = scaleY.coerceAtLeast(0.02f)
+        return RectF(
+            bounds.centerX() - bounds.width() * sx / 2f,
+            bounds.centerY() - bounds.height() * sy / 2f,
+            bounds.centerX() + bounds.width() * sx / 2f,
+            bounds.centerY() + bounds.height() * sy / 2f
+        )
     }
 
     private fun centered(target: RectF, scale: Float): RectF {

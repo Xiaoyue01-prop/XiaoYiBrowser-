@@ -44,6 +44,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
@@ -1226,11 +1227,11 @@ class MainActivity : ComponentActivity() {
         reloadBtn.isClickable = !hide
         AnimationSystem.fade(backBtn, if (hide) 0f else backAlpha(), AnimationSystem.SMOOTH)
         AnimationSystem.scaleTo(backBtn, if (hide) 0.5f else 1f)
-        AnimationSystem.fade(menuBtn, if (hide) 0f else 1f, AnimationSystem.SMOOTH)
-        AnimationSystem.scaleTo(menuBtn, if (hide) 0.5f else 1f)
+        syncOrbMenuVisibility()
+        // Menu trigger cũng co về Pill; nếu bảng menu đang mở thì chính MenuController morph cả thẻ.
+        if (!::menu.isInitialized || !menu.isOpen) animateMenuButtonCompact(hide)
         AnimationSystem.fade(reloadBtn, if (hide) 0f else 1f, AnimationSystem.SMOOTH)
         AnimationSystem.fade(bottomFade, if (hide) 0.35f else 1f, AnimationSystem.SMOOTH)
-        syncOrbMenuVisibility()
         pushBottomReserve()
     }
 
@@ -1240,10 +1241,64 @@ class MainActivity : ComponentActivity() {
         if (!::findBarContainer.isInitialized || !::bar.isInitialized || !::urlBar.isInitialized) return
         val findOn = findBarShown
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
-        val toolbarAvailable = barPresent && !barHidden
         val inFullscreen = customVideoView != null
-        orbController?.setToolbarAvailable(toolbarAvailable && !inFullscreen)
-        orbController?.setTemporarilyHidden(findOn || pageTyping || inFullscreen)
+        // Auto-hide là trạng thái compact, không phải toolbar bị gỡ khỏi giao diện.
+        val toolbarAvailable = barPresent && !inFullscreen
+        val temporarilyHidden = findOn || pageTyping || inFullscreen
+        val compact = barHidden && toolbarAvailable && !temporarilyHidden
+
+        orbController?.setToolbarAvailable(toolbarAvailable)
+        orbController?.setTemporarilyHidden(temporarilyHidden)
+        if (::urlPillFrame.isInitialized) {
+            orbController?.setToolbarCompact(compact, urlPillFrame)
+            if (::menu.isInitialized) menu.setToolbarCompact(compact, urlPillFrame)
+        }
+    }
+
+    /** Co nút ba chấm vào tâm Pill bằng đúng spring preset dùng cho morph của menu. */
+    private fun animateMenuButtonCompact(compact: Boolean) {
+        if (!::menuBtn.isInitialized || !::urlPillFrame.isInitialized) return
+        if (compact) {
+            val buttonLoc = IntArray(2)
+            val pillLoc = IntArray(2)
+            val buttonTx = menuBtn.translationX
+            val buttonTy = menuBtn.translationY
+            val buttonSx = menuBtn.scaleX
+            val buttonSy = menuBtn.scaleY
+            val pillTx = urlPillFrame.translationX
+            val pillTy = urlPillFrame.translationY
+            val pillSx = urlPillFrame.scaleX
+            val pillSy = urlPillFrame.scaleY
+            menuBtn.translationX = 0f
+            menuBtn.translationY = 0f
+            menuBtn.scaleX = 1f
+            menuBtn.scaleY = 1f
+            urlPillFrame.translationX = 0f
+            urlPillFrame.translationY = 0f
+            urlPillFrame.scaleX = 1f
+            urlPillFrame.scaleY = 1f
+            menuBtn.getLocationInWindow(buttonLoc)
+            urlPillFrame.getLocationInWindow(pillLoc)
+            menuBtn.translationX = buttonTx
+            menuBtn.translationY = buttonTy
+            menuBtn.scaleX = buttonSx
+            menuBtn.scaleY = buttonSy
+            urlPillFrame.translationX = pillTx
+            urlPillFrame.translationY = pillTy
+            urlPillFrame.scaleX = pillSx
+            urlPillFrame.scaleY = pillSy
+            val targetX = pillLoc[0] + urlPillFrame.width / 2f - buttonLoc[0] - menuBtn.width / 2f
+            val targetY = pillLoc[1] + urlPillFrame.height / 2f - buttonLoc[1] - menuBtn.height / 2f
+            AnimationSystem.spring(menuBtn, DynamicAnimation.TRANSLATION_X, targetX, AnimationSystem.MENU_MORPH_CLOSE)
+            AnimationSystem.spring(menuBtn, DynamicAnimation.TRANSLATION_Y, targetY, AnimationSystem.MENU_MORPH_CLOSE)
+            AnimationSystem.scaleTo(menuBtn, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
+            AnimationSystem.fade(menuBtn, 0f, AnimationSystem.MENU_MORPH_CLOSE)
+        } else {
+            AnimationSystem.spring(menuBtn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
+            AnimationSystem.spring(menuBtn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+            AnimationSystem.scaleTo(menuBtn, 1f, 1f, AnimationSystem.MENU_MORPH)
+            AnimationSystem.fade(menuBtn, 1f, AnimationSystem.QUICK)
+        }
     }
 
     // Ẩn thanh địa chỉ khi đang gõ trong ô nhập của trang (tránh che nội dung), hoặc khi đang tìm trong trang.

@@ -11,6 +11,7 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import androidx.dynamicanimation.animation.DynamicAnimation
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.WebStorage
@@ -74,6 +75,16 @@ class MenuController(
     private var menuCard: FrameLayout? = null
     private var menuBackAction: (() -> Unit)? = null
     private var menuAnimationStarted = false
+    private var toolbarCompact = false
+    private var menuWasOpenBeforeCompact = false
+    private var compactFallback: CompactFallback? = null
+
+    private data class CompactFallback(
+        val translationX: Float,
+        val translationY: Float,
+        val scaleX: Float,
+        val scaleY: Float
+    )
 
     /** Nút đã bấm để mở menu (nút ba chấm): menu bung ra từ đây và thu ngược về đây. */
     var originView: View? = null
@@ -192,6 +203,92 @@ class MenuController(
         card.postDelayed({ startMenuAnimation() }, 120L)
     }
 
+    /**
+     * Đồng bộ menu ba chấm với trạng thái URL Pill. Nếu menu đang mở lúc Pill thu nhỏ,
+     * cả thẻ menu morph về Pill; khi Pill mở rộng, thẻ spring bung trở lại đúng trang đang xem.
+     */
+    fun setToolbarCompact(compact: Boolean, pillAnchor: View) {
+        if (toolbarCompact == compact) return
+        toolbarCompact = compact
+        val layer = menuLayer ?: return
+        val card = menuCard ?: return
+
+        if (compact) {
+            menuWasOpenBeforeCompact = true
+            syncBlurFor(700)
+            val retargeted = OriginTransitionController.retargetSource(
+                card, pillAnchor, hideNewSource = false, sourceScaleX = 0.58f, sourceScaleY = 0.62f
+            )
+            if (retargeted) {
+                // retargetSource khôi phục nút menu gốc trước khi chuyển điểm neo; thẻ đang mở
+                // nên nút nguồn phải tiếp tục được giấu trong lúc thẻ thu vào Pill.
+                originView?.let { source ->
+                    AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
+                    AnimationSystem.scaleTo(source, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
+                }
+            }
+            val morphed = retargeted && OriginTransitionController.collapseToSource(
+                card, AnimationSystem.MENU_MORPH_CLOSE
+            ) {
+                if (menuLayer === layer && toolbarCompact) layer.visibility = View.GONE
+            }
+            if (!morphed) {
+                OriginTransitionController.cancel(card)
+                originView?.let { source ->
+                    AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
+                    AnimationSystem.scaleTo(source, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
+                }
+                fallbackCollapseToPill(layer, card, pillAnchor)
+            }
+        } else {
+            if (!menuWasOpenBeforeCompact) return
+            menuWasOpenBeforeCompact = false
+            layer.visibility = View.VISIBLE
+            relayout()
+            syncBlurFor(900)
+            val morphed = OriginTransitionController.expandFromSource(
+                card, AnimationSystem.MENU_MORPH
+            ) {
+                if (menuLayer === layer && !toolbarCompact) {
+                    originView?.let { source ->
+                        // Nút nguồn có thể đã được scale nhỏ khi toolbar compact; chuẩn hoá hình học
+                        // trong lúc còn alpha 0 để lần đóng menu sau này không trả về nút bị teo.
+                        AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
+                        AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+                        AnimationSystem.scaleTo(source, 1f, 1f, AnimationSystem.MENU_MORPH)
+                        OriginTransitionController.retargetSource(card, source, hideNewSource = true)
+                    }
+                }
+            }
+            if (!morphed) fallbackExpandFromPill(card)
+        }
+    }
+
+    private fun fallbackCollapseToPill(layer: FrameLayout, card: View, pillAnchor: View) {
+        val cardLoc = IntArray(2)
+        val pillLoc = IntArray(2)
+        card.getLocationOnScreen(cardLoc)
+        pillAnchor.getLocationOnScreen(pillLoc)
+        val targetX = card.translationX + pillLoc[0] + pillAnchor.width / 2f - cardLoc[0] - card.width / 2f
+        val targetY = card.translationY + pillLoc[1] + pillAnchor.height / 2f - cardLoc[1] - card.height / 2f
+        compactFallback = CompactFallback(card.translationX, card.translationY, card.scaleX, card.scaleY)
+        AnimationSystem.spring(card, DynamicAnimation.TRANSLATION_X, targetX, AnimationSystem.MENU_MORPH_CLOSE)
+        AnimationSystem.spring(card, DynamicAnimation.TRANSLATION_Y, targetY, AnimationSystem.MENU_MORPH_CLOSE)
+        AnimationSystem.scaleTo(card, 0.04f, 0.04f, AnimationSystem.MENU_MORPH_CLOSE)
+        AnimationSystem.fade(card, 0f, AnimationSystem.MENU_MORPH_CLOSE) {
+            if (menuLayer === layer && toolbarCompact) layer.visibility = View.GONE
+        }
+    }
+
+    private fun fallbackExpandFromPill(card: View) {
+        val base = compactFallback ?: CompactFallback(0f, 0f, 1f, 1f)
+        AnimationSystem.spring(card, DynamicAnimation.TRANSLATION_X, base.translationX, AnimationSystem.MENU_MORPH)
+        AnimationSystem.spring(card, DynamicAnimation.TRANSLATION_Y, base.translationY, AnimationSystem.MENU_MORPH)
+        AnimationSystem.scaleTo(card, base.scaleX, base.scaleY, AnimationSystem.MENU_MORPH)
+        AnimationSystem.fade(card, 1f, AnimationSystem.QUICK)
+        compactFallback = null
+    }
+
     fun close() {
         val layer = menuLayer ?: return
         val card = menuCard
@@ -199,14 +296,38 @@ class MenuController(
         menuCard = null
         menuBackAction = null
         menuAnimationStarted = false
+        menuWasOpenBeforeCompact = false
+        compactFallback = null
         if (card == null) {
             root.removeView(layer)
             return
         }
-        // Thu hồi: co ngược về đúng nút ba chấm đã bung ra.
+        // Menu đã nằm gọn trong Pill thì đóng thẳng lớp đang GONE, tránh fallback popOut
+        // làm thẻ nhỏ bật ngược ra ngoài khi người dùng nhấn Back trong lúc toolbar compact.
+        if (toolbarCompact && layer.visibility != View.VISIBLE) {
+            OriginTransitionController.cancel(card)
+            root.removeView(layer)
+            originView?.let { source ->
+                AnimationSystem.scaleTo(source, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
+            }
+            return
+        }
+        // Thu hồi: co ngược về nút ba chấm đã bung ra.
         syncBlurFor(600)
         OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
             root.removeView(layer)
+            originView?.let { source ->
+                if (toolbarCompact) {
+                    AnimationSystem.scaleTo(source, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
+                    AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
+                } else {
+                    AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
+                    AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+                    AnimationSystem.scaleTo(source, 1f, 1f, AnimationSystem.MENU_MORPH)
+                    AnimationSystem.fade(source, 1f, AnimationSystem.QUICK)
+                }
+            }
         }
     }
 

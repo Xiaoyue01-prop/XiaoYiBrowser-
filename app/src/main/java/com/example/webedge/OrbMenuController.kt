@@ -58,6 +58,10 @@ class OrbMenuController(
     private var toolbarAvailable = true
     private var temporarilyHidden = false
     private var isExpanded = false
+    private var isCompacted = false
+    private var restoringFromCompact = false
+    /** Translation đích gốc, giữ lại để đảo chiều morph giữa chừng không bị lệch khỏi anchor. */
+    private val compactBase = mutableMapOf<View, Pair<Float, Float>>()
     private var anchorView: View? = null
     private var preDrawListener: ViewTreeObserver.OnPreDrawListener? = null
 
@@ -232,15 +236,17 @@ class OrbMenuController(
         }
     }
 
-    private fun isAvailable(): Boolean = toolbarAvailable && !temporarilyHidden
+    private fun isAvailable(): Boolean = toolbarAvailable && !temporarilyHidden && !isCompacted && !restoringFromCompact
 
     private fun applyAvailability() {
-        val available = isAvailable()
-        mainBtn.visibility = if (available) View.VISIBLE else View.GONE
-        mainBtn.isClickable = available
-        mainBtn.isEnabled = available
-        mainBtn.isFocusable = available
-        if (!available) {
+        // Compact chỉ làm các nút thu về Pill; chúng vẫn ở trong root để có thể spring bung ngược ra.
+        val visible = toolbarAvailable && !temporarilyHidden
+        val interactive = visible && !isCompacted && !restoringFromCompact
+        mainBtn.visibility = if (visible) View.VISIBLE else View.GONE
+        mainBtn.isClickable = interactive
+        mainBtn.isEnabled = interactive
+        mainBtn.isFocusable = interactive
+        if (!visible) {
             subBtns.forEach {
                 AnimationSystem.cancel(it)
                 it.visibility = View.GONE
@@ -253,8 +259,120 @@ class OrbMenuController(
                 it.translationY = 0f
             }
         } else {
-            subBtns.forEach { it.isClickable = isExpanded; it.isEnabled = isExpanded }
+            subBtns.forEach {
+                it.isClickable = interactive && isExpanded
+                it.isEnabled = interactive && isExpanded
+            }
         }
+    }
+
+    /**
+     * Thu toàn bộ Orb (kể cả các nút con đang mở) vào tâm URL Pill khi toolbar compact.
+     * Chiều ngược lại dùng cùng spring preset của app để bung về đúng vị trí cũ.
+     */
+    fun setToolbarCompact(compact: Boolean, pillAnchor: View) {
+        if (compact == isCompacted) return
+        if (temporarilyHidden || !toolbarAvailable) return
+        if (compact) {
+            isCompacted = true
+            restoringFromCompact = false
+            // Nếu Orb vừa được thu gọn bởi thao tác người dùng, không giữ các nút con
+            // còn đang fade-out dở rồi vô tình bung chúng trở lại ở lần mở Pill sau.
+            if (!isExpanded) {
+                subBtns.forEach { btn ->
+                    AnimationSystem.cancel(btn)
+                    btn.visibility = View.GONE
+                    btn.alpha = 0f
+                    btn.scaleX = 0f
+                    btn.scaleY = 0f
+                    btn.translationX = 0f
+                    btn.translationY = 0f
+                }
+            }
+            val active = buildList {
+                if (mainBtn.visibility == View.VISIBLE) add(mainBtn)
+                subBtns.filterTo(this) { it.visibility == View.VISIBLE }
+            }
+            if (compactBase.isEmpty()) {
+                active.forEach { compactBase[it] = it.translationX to it.translationY }
+            }
+            active.forEach { btn ->
+                btn.isClickable = false
+                btn.isEnabled = false
+                val base = compactBase[btn] ?: (btn.translationX to btn.translationY)
+                val target = translationAtPill(btn, pillAnchor, base.first, base.second)
+                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, target.first, AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, target.second, AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.scaleTo(btn, 0.06f, 0.06f, AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.fade(btn, 0f, AnimationSystem.MENU_MORPH_CLOSE)
+            }
+        } else {
+            isCompacted = false
+            restoringFromCompact = true
+            if (compactBase.isEmpty()) {
+                restoringFromCompact = false
+                applyAvailability()
+                return
+            }
+            val active = compactBase.keys.toList()
+            active.forEach { btn ->
+                if (btn.parent == null) return@forEach
+                btn.visibility = View.VISIBLE
+                btn.isClickable = btn === mainBtn || isExpanded
+                btn.isEnabled = btn.isClickable
+                val base = compactBase[btn] ?: (0f to 0f)
+                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, base.first, AnimationSystem.MENU_MORPH)
+                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, base.second, AnimationSystem.MENU_MORPH)
+                AnimationSystem.scaleTo(btn, 1f, 1f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.fade(btn, 1f, AnimationSystem.QUICK)
+            }
+            // Chỉ xoá vị trí gốc sau khi spring của nút chính đã thực sự về đích.
+            AnimationSystem.spring(mainBtn, DynamicAnimation.SCALE_Y, 1f, AnimationSystem.MENU_MORPH) {
+                if (!isCompacted) {
+                    restoringFromCompact = false
+                    compactBase.clear()
+                    applyAvailability()
+                }
+            }
+        }
+        applyAvailability()
+    }
+
+    /** Tính translation cần thiết để tâm một Orb view trùng tâm Pill, không phụ thuộc vị trí Orb đang spring. */
+    private fun translationAtPill(view: View, pillAnchor: View, baseX: Float, baseY: Float): Pair<Float, Float> {
+        val oldX = view.translationX
+        val oldY = view.translationY
+        val oldSx = view.scaleX
+        val oldSy = view.scaleY
+        val pillX = pillAnchor.translationX
+        val pillY = pillAnchor.translationY
+        val pillSx = pillAnchor.scaleX
+        val pillSy = pillAnchor.scaleY
+        view.translationX = 0f
+        view.translationY = 0f
+        view.scaleX = 1f
+        view.scaleY = 1f
+        pillAnchor.translationX = 0f
+        pillAnchor.translationY = 0f
+        pillAnchor.scaleX = 1f
+        pillAnchor.scaleY = 1f
+        val viewLoc = IntArray(2)
+        val pillLoc = IntArray(2)
+        view.getLocationInWindow(viewLoc)
+        pillAnchor.getLocationInWindow(pillLoc)
+        view.translationX = oldX
+        view.translationY = oldY
+        view.scaleX = oldSx
+        view.scaleY = oldSy
+        pillAnchor.translationX = pillX
+        pillAnchor.translationY = pillY
+        pillAnchor.scaleX = pillSx
+        pillAnchor.scaleY = pillSy
+        val targetX = pillLoc[0] + pillAnchor.width / 2f
+        val targetY = pillLoc[1] + pillAnchor.height / 2f
+        val layoutX = viewLoc[0] + view.width / 2f
+        val layoutY = viewLoc[1] + view.height / 2f
+        return (baseX + targetX - layoutX) to (baseY + targetY - layoutY)
     }
 
     private fun updatePosition() {
@@ -349,8 +467,16 @@ class OrbMenuController(
 
     private fun collapseImmediately() {
         isExpanded = false
+        isCompacted = false
+        restoringFromCompact = false
+        compactBase.clear()
         AnimationSystem.cancel(mainBtn)
         mainBtn.rotation = 0f
+        mainBtn.alpha = 1f
+        mainBtn.scaleX = 1f
+        mainBtn.scaleY = 1f
+        mainBtn.translationX = 0f
+        mainBtn.translationY = 0f
         subBtns.forEach { btn ->
             AnimationSystem.cancel(btn)
             btn.visibility = View.GONE
