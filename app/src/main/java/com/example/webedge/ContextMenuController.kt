@@ -162,29 +162,35 @@ class ContextMenuController(
         val width = minOf(dp(320), activity.resources.displayMetrics.widthPixels - dp(36))
         val panelLp = FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT)
         panelLp.gravity = Gravity.TOP or Gravity.START
+        // Ẩn cho tới khi đã đặt đúng vị trí, tránh nháy ở góc trên trái.
+        panel.alpha = 0f
         layerView.addView(panel, panelLp)
         root.addView(layerView, FrameLayout.LayoutParams(-1, -1))
         panel.post {
             if (card !== panel) return@post
             val height = minOf(panel.height, maxHeight)
-            panel.layoutParams = panel.layoutParams.apply { this.height = height }
-            val x = (touchX - dp(12)).toInt().coerceIn(dp(12), (root.width - width - dp(12)).coerceAtLeast(dp(12)))
-            val yBelow = (touchY - dp(12)).toInt()
-            val y = if (yBelow + height > root.height - dp(12)) {
-                (yBelow - height - dp(28)).coerceAtLeast(dp(12))
-            } else yBelow.coerceAtLeast(dp(12))
-            panel.x = x.toFloat()
-            panel.y = y.toFloat()
-            // Keep the finger as the transform origin: the card expands from the
-            // pressed element instead of appearing as a uniformly scaled popup.
-            panel.pivotX = (touchX - x).coerceIn(0f, width.toFloat())
-            panel.pivotY = (touchY - y).coerceIn(0f, height.toFloat())
-            closeTranslationY = if (y >= touchY) -dp(6).toFloat() else dp(6).toFloat()
+            val x = (touchX - dp(24)).toInt().coerceIn(dp(12), (root.width - width - dp(12)).coerceAtLeast(dp(12)))
+            val gap = dp(10)
+            val below = touchY.toInt() + gap
+            val y = if (below + height > root.height - dp(12)) {
+                (touchY.toInt() - height - gap).coerceAtLeast(dp(12))
+            } else below
+            // Đặt vị trí bằng margin (layout), KHÔNG dùng panel.x/panel.y:
+            // spring translationY của animation sẽ ghi đè và kéo menu về mép trên màn hình.
+            panel.layoutParams = FrameLayout.LayoutParams(width, height).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = x
+                topMargin = y
+            }
+            // Gốc biến đổi chính là ngón tay: menu bung ra từ điểm giữ rồi vượt đích nhẹ.
+            panel.pivotX = touchX - x
+            panel.pivotY = touchY - y
+            closeTranslationY = 0f
             AnimationSystem.spatialPopIn(
                 panel,
-                fromScaleX = 0.88f,
-                fromScaleY = 0.94f,
-                fromTranslationY = closeTranslationY,
+                fromScaleX = 0.30f,
+                fromScaleY = 0.30f,
+                fromTranslationY = 0f,
                 springSpec = AnimationSystem.MORPH
             )
         }
@@ -204,9 +210,9 @@ class ContextMenuController(
         if (animate) {
             AnimationSystem.spatialPopOut(
                 old,
-                toScaleX = 0.90f,
-                toScaleY = 0.94f,
-                toTranslationY = closeTranslationY,
+                toScaleX = 0.30f,
+                toScaleY = 0.30f,
+                toTranslationY = 0f,
                 springSpec = AnimationSystem.MORPH_CLOSE
             ) {
                 oldLayer?.let(root::removeView)
