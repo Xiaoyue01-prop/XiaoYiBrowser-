@@ -52,7 +52,8 @@ class ContextMenuController(
             false
         }
         webView.setOnLongClickListener { view ->
-            val hit = view.hitTestResult ?: return@setOnLongClickListener false
+            val targetWebView = view as? WebView ?: return@setOnLongClickListener false
+            val hit = targetWebView.hitTestResult ?: return@setOnLongClickListener false
             val extra = hit.extra.orEmpty().takeIf { it.startsWith("http://") || it.startsWith("https://") }
             val actions = when (hit.type) {
                 WebView.HitTestResult.SRC_ANCHOR_TYPE,
@@ -129,14 +130,14 @@ class ContextMenuController(
                 }
             }
             val icon = ImageView(activity).apply {
-                setImageDrawable(PathIcon(action.icon, foreground))
-                imageTintList = android.content.res.ColorStateList.valueOf(foreground)
+                setImageDrawable(PathIcon(action.icon, this@ContextMenuController.foreground))
+                imageTintList = android.content.res.ColorStateList.valueOf(this@ContextMenuController.foreground)
             }
             row.addView(icon, LinearLayout.LayoutParams(dp(22), dp(22)))
             val label = TextView(activity).apply {
                 text = action.title
                 textSize = 16f
-                setTextColor(foreground)
+                setTextColor(this@ContextMenuController.foreground)
                 typeface = Typeface.create("sans-serif", Typeface.NORMAL)
                 setPadding(dp(18), dp(8), 0, dp(8))
             }
@@ -153,7 +154,7 @@ class ContextMenuController(
         val scroll = ScrollView(activity).apply {
             isFillViewport = true
             clipToPadding = false
-            addView(list, ScrollView.LayoutParams(-1, -2))
+            addView(list, ViewGroup.LayoutParams(-1, -2))
         }
         panel.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         val maxHeight = (activity.resources.displayMetrics.heightPixels * 0.62f).toInt()
