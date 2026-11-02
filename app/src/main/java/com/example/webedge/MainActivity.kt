@@ -134,7 +134,8 @@ class MainActivity : ComponentActivity() {
         mainWebView = { web },
         chromeClient = { chromeClient },
         openExternal = { url, view -> handleSpecialUrl(url, view) },
-        toast = { toast(it) }
+        toast = { toast(it) },
+        isNight = { isNight }
     )
 
     private val fileLauncher = registerForActivityResult(
@@ -1638,7 +1639,7 @@ class MainActivity : ComponentActivity() {
         // Trả lời mọi hộp thoại còn treo (JsResult, quyền) trước khi hủy WebView.
         if (::glassDialog.isInitialized) glassDialog.cancelAll()
         webPermissions.cancelAll()
-        popup.close()
+        popup.close(immediate = true)
         if (customVideoView != null) exitFullscreenView()
         webMedia.release()
         // === CLEANUP DE TRANH MEMORY LEAK ===

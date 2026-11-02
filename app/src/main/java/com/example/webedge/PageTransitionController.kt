@@ -18,8 +18,6 @@ import android.widget.ImageView
  * - Vuốt cạnh màn hình (cử chỉ Back của hệ thống): trang hiện tại trượt theo ngón tay, trang trước trượt song song bên dưới.
  * - Nút quay lại / tiến tới: cùng animation, chạy bằng spring.
  * - Trang mới tải xong thì ảnh chụp mờ dần để lộ trang thật, không còn chớp trắng.
- * - Vuốt ngang viên thuốc (thanh địa chỉ): hai trang nằm cạnh nhau và trượt cùng ngón tay để đổi tab;
- *   ở tab cuối vuốt tiếp là mở tab mới, ở tab đầu vuốt ngược thì bị níu lại (rubber band) như Safari.
  *
  * Trang đang xem là chính WebView (chỉ dịch translationX), nên không phải chụp ảnh trang hiện tại lúc bắt đầu vuốt.
  * Ảnh chụp chỉ dành cho trang liền kề trong lịch sử, được chụp lúc rời trang (xem [remember]) và giữ tối đa [MAX_SNAPSHOTS] ảnh.
@@ -39,30 +37,15 @@ class PageTransitionController(
             size > MAX_SNAPSHOTS
     }
 
-    private class TabSnap(val url: String, val bitmap: Bitmap)
-
-    /** Ảnh toàn màn hình của tab vừa rời bằng cách vuốt viên thuốc, để lần vuốt sau có xem trước nét hơn thumbnail. */
-    private val tabCache = object : LinkedHashMap<Long, TabSnap>(4, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, TabSnap>?): Boolean =
-            size > MAX_TAB_SNAPSHOTS
-    }
-
     private class Run(
         val web: WebView,
         val dir: Int,
         val sign: Float,
         val layer: View,
         val scrim: View,
-        val fromUrl: String?,
-        /** Chỉ dùng khi dir == TAB: +1 sang tab kế (ngón tay đi sang trái), -1 về tab trước. */
-        val delta: Int = 0,
-        val hasNeighbour: Boolean = true,
-        val gap: Float = 0f,
-        val tabId: Long = 0L
+        val fromUrl: String?
     ) {
         var progress = 0f
-        /** Đã gọi hàm đổi tab: cancelNow() không được phá lớp phủ nữa. */
-        var switching = false
         var spring: AnimationSystem.FloatSpringHandle? = null
         var interactive = false
         var committed = false
@@ -113,36 +96,6 @@ class PageTransitionController(
         }
     }
 
-    private fun drawSnapshot(web: WebView): Bitmap? {
-        val w = web.width
-        val h = web.height
-        if (w <= 0 || h <= 0) return null
-        return try {
-            Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565).also {
-                val canvas = Canvas(it)
-                canvas.drawColor(pageBg())
-                web.draw(canvas)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Không chụp được tab để chuyển cảnh", e)
-            null
-        } catch (e: OutOfMemoryError) {
-            cache.clear()
-            tabCache.clear()
-            null
-        }
-    }
-
-    /** Ảnh xem trước của tab [tabId] nếu nó còn đúng trang [url]; ngược lại null (dùng thumbnail thay thế). */
-    fun tabSnapshot(tabId: Long, url: String?): Bitmap? {
-        val snap = tabCache[tabId] ?: return null
-        return if (snap.url == url) snap.bitmap else null
-    }
-
-    fun forgetTab(tabId: Long) {
-        tabCache.remove(tabId)
-    }
-
     private fun neighbour(web: WebView, dir: Int): Bitmap? {
         val list = web.copyBackForwardList()
         val index = list.currentIndex + if (dir == BACK) -1 else 1
@@ -157,27 +110,16 @@ class PageTransitionController(
         cache.keys.removeAll { it.startsWith(prefix) }
     }
 
-    fun clear() {
-        cache.clear()
-        tabCache.clear()
-    }
+    fun clear() = cache.clear()
 
     // ---------------- Dựng và vẽ chuyển cảnh ----------------
 
-    private fun open(
-        web: WebView,
-        dir: Int,
-        sign: Float,
-        preview: Bitmap? = null,
-        delta: Int = 0,
-        hasNeighbour: Boolean = true,
-        tabId: Long = 0L
-    ): Run? {
+    private fun open(web: WebView, dir: Int, sign: Float): Run? {
         if (current != null || web.parent !== host) return null
         val w = web.width
         val h = web.height
         if (w <= 0 || h <= 0) return null
-        val bitmap = if (dir == TAB) preview else neighbour(web, dir)
+        val bitmap = neighbour(web, dir)
         val layer = ImageView(web.context).apply {
             scaleType = ImageView.ScaleType.FIT_XY
             if (bitmap != null) setImageBitmap(bitmap) else setBackgroundColor(pageBg())
@@ -201,11 +143,10 @@ class PageTransitionController(
             host.addView(scrim, frame())
             host.addView(layer, frame())
         }
-        val gap = web.resources.displayMetrics.density * TAB_GAP_DP
-        val r = Run(web, dir, sign, layer, scrim, web.url, delta, hasNeighbour, gap, tabId)
+        val r = Run(web, dir, sign, layer, scrim, web.url)
         current = r
         revealAt = Long.MAX_VALUE
-        if (dir == TAB) applyTab(r, 0f) else render(r, 0f)
+        render(r, 0f)
         return r
     }
 
@@ -311,98 +252,6 @@ class PageTransitionController(
         if (r.dir == BACK) web.goBack() else web.goForward()
     }
 
-    // ---------------- Vuốt viên thuốc để đổi tab ----------------
-
-    /** Tiến độ kéo hiện tại (0..1) của lần vuốt tab; gesture dùng để rung nhẹ khi qua ngưỡng. */
-    val tabProgress: Float get() = current?.takeIf { it.dir == TAB }?.progress ?: 0f
-
-    /** True nếu lần vuốt này có tab/trang đích (false: chỉ níu lại như dây chun). */
-    val tabHasNeighbour: Boolean get() = current?.takeIf { it.dir == TAB }?.hasNeighbour ?: false
-
-    /**
-     * delta = +1: sang tab kế (ngón tay đi sang trái), -1: về tab trước. [preview] là ảnh tab đích
-     * (null nếu chưa có thì dùng nền trơn); [hasNeighbour] = false khi đã ở tab đầu.
-     */
-    fun beginTabSwipe(web: WebView, delta: Int, preview: Bitmap?, hasNeighbour: Boolean, tabId: Long): Boolean {
-        val r = open(web, TAB, 1f, preview, delta, hasNeighbour, tabId) ?: return false
-        r.interactive = true
-        if (!hasNeighbour) r.layer.visibility = View.INVISIBLE
-        return true
-    }
-
-    /** dx: quãng ngón tay đã đi theo trục X kể từ lúc bắt đầu vuốt (có dấu). */
-    fun updateTabSwipe(dx: Float) {
-        val r = current ?: return
-        if (r.dir != TAB || r.committed) return
-        r.spring?.cancel()
-        r.spring = null
-        val travel = r.web.width + r.gap
-        val toward = (if (r.delta > 0) -dx else dx).coerceAtLeast(0f)
-        val eff = if (r.hasNeighbour) toward.coerceAtMost(travel)
-        else (toward * RUBBER).coerceAtMost(travel * RUBBER_MAX)
-        applyTab(r, eff / travel)
-    }
-
-    /**
-     * Thả tay. commit = true: hai trang trượt hết quãng rồi gọi [onSwitch] (đổi tab thật, trả về true nếu tab đích
-     * còn phải tải trang); false: bật về chỗ cũ.
-     */
-    fun finishTabSwipe(commit: Boolean, onSwitch: () -> Boolean) {
-        val r = current ?: return
-        if (r.dir != TAB || r.committed) return
-        r.spring?.cancel()
-        if (!commit || !r.hasNeighbour) {
-            r.spring = AnimationSystem.springFloat(
-                from = r.progress,
-                to = 0f,
-                spec = AnimationSystem.DISMISS,
-                minimumVisibleChange = AnimationSystem.NORMALIZED_VALUE_MIN_CHANGE,
-                onUpdate = { applyTab(r, it) },
-                onEnd = { canceled, _, _ -> if (!canceled && current === r) teardown(r) }
-            )
-            return
-        }
-        r.committed = true
-        r.spring = AnimationSystem.springFloat(
-            from = r.progress,
-            to = 1f,
-            spec = AnimationSystem.MORPH_CLOSE,
-            minimumVisibleChange = AnimationSystem.NORMALIZED_VALUE_MIN_CHANGE,
-            onUpdate = { applyTab(r, it) },
-            onEnd = { canceled, _, _ -> if (!canceled && current === r) holdTab(r, onSwitch) }
-        )
-    }
-
-    /** Hai trang nằm cạnh nhau cách [Run.gap]; p = 0: tab hiện tại nằm yên, p = 1: tab đích vào đúng chỗ. */
-    private fun applyTab(r: Run, raw: Float) {
-        val p = raw.coerceIn(0f, 1f)
-        val travel = r.web.width + r.gap
-        val s = if (r.delta > 0) -1f else 1f
-        r.web.translationX = s * p * travel
-        r.layer.translationX = s * (p - 1f) * travel
-        r.progress = p
-    }
-
-    private fun holdTab(r: Run, onSwitch: () -> Boolean) {
-        val web = r.web
-        r.spring = null
-        // Tab cũ đã trượt khuất và ảnh tab đích phủ kín: chụp tab sắp rời (khung hình đang đứng yên) cho lần vuốt sau.
-        val url = web.url
-        if (!url.isNullOrBlank()) {
-            drawSnapshot(web)?.let { tabCache[r.tabId] = TabSnap(url, it) }
-        }
-        web.translationX = 0f
-        r.layer.translationX = 0f
-        r.scrim.visibility = View.GONE
-        r.layer.isClickable = true
-        r.switching = true
-        val needsLoad = onSwitch()
-        // WebView của tab đích vừa được gắn vào host (nằm trên cùng): đẩy lớp phủ lên lại cho tới khi nó vẽ xong.
-        r.layer.bringToFront()
-        r.holding = true
-        scheduleReveal(if (needsLoad) HOLD_TIMEOUT_MS else TAB_REVEAL_MS)
-    }
-
     // ---------------- Hoà ảnh chụp vào trang thật ----------------
 
     /** WebView báo trang mới đã vẽ khung đầu tiên (onPageCommitVisible / onPageFinished). */
@@ -410,7 +259,7 @@ class PageTransitionController(
         val r = current ?: return
         if (!r.holding) return
         // Sự kiện muộn của trang cũ: URL chưa đổi thì chưa phải trang đích.
-        if (r.dir != TAB && r.fromUrl != null && r.web.url == r.fromUrl) return
+        if (r.fromUrl != null && r.web.url == r.fromUrl) return
         scheduleReveal(PAINT_REVEAL_MS)
     }
 
@@ -449,21 +298,14 @@ class PageTransitionController(
 
     /** Đổi tab hoặc đóng Activity: dọn ngay, không animation. */
     fun cancelNow() {
-        current?.takeUnless { it.switching }?.let(::teardown)
+        current?.let(::teardown)
     }
 
     private companion object {
         const val TAG = "PageTransition"
         const val BACK = 0
         const val FORWARD = 1
-        const val TAB = 2
         const val MAX_SNAPSHOTS = 4
-        const val MAX_TAB_SNAPSHOTS = 3
-        const val TAB_GAP_DP = 12f
-        /** Không có tab đích: kéo được tối đa 15% bề rộng, hệ số 0.3 theo ngón tay. */
-        const val RUBBER = 0.3f
-        const val RUBBER_MAX = 0.15f
-        const val TAB_REVEAL_MS = 120L
         /** Trang liền kề trượt song song với tốc độ bằng 30% trang chính, như iOS. */
         const val PARALLAX = 0.3f
         const val SCRIM = 0.18f
