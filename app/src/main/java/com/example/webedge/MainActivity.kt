@@ -3,6 +3,8 @@ package com.example.webedge
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -461,6 +463,7 @@ class MainActivity : ComponentActivity() {
     private fun press(v: View, scale: Float) = AnimationSystem.press(v, scale)
 
     private lateinit var menu: MenuController
+    private var contextMenuController: ContextMenuController? = null
     private lateinit var glassDialog: GlassDialogController
 
     // Tiêu đề hộp thoại của trang: "tenmien.com cho biết".
@@ -943,6 +946,39 @@ class MainActivity : ComponentActivity() {
             fg = fg,
             accent = accent
         )
+        contextMenuController = ContextMenuController(
+            activity = this,
+            root = root,
+            blurTarget = blurTarget,
+            density = d,
+            isNight = isNight,
+            foreground = fg,
+            onOpenLink = ::openLinkInNewTab,
+            onCopy = { value ->
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Summit", value))
+                toast("Đã sao chép")
+            },
+            onShare = { value ->
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, value)
+                }
+                startActivity(Intent.createChooser(intent, "Chia sẻ bằng"))
+            },
+            onDownloadImage = { imageUrl ->
+                runCatching {
+                    val request = downloads.buildRequest(imageUrl, web.settings.userAgentString, "image", "image/*")
+                    downloads.enqueue(request)
+                    toast("Đang tải hình ảnh")
+                }.onFailure { toast("Không thể tải hình ảnh này") }
+            },
+            onBookmark = {
+                val added = store.toggleBookmark(web.title ?: currentUrl, currentUrl)
+                toast(if (added) "Đã thêm dấu trang" else "Đã xóa dấu trang")
+            },
+            onFind = ::openFind
+        )
         glassDialog = GlassDialogController(
             activity = this,
             root = root,
@@ -1010,6 +1046,7 @@ class MainActivity : ComponentActivity() {
                 else if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
                 else if (customVideoView != null) exitFullscreenView()
                 else if (popup.isShowing) popup.close()
+                else if (contextMenuController?.isShowing == true) contextMenuController?.dismiss()
                 else if (menu.isOpen) menu.handleBack()
                 else if (findBarShown) closeFind()
                 else if (urlBar.hasFocus()) leaveEdit()
@@ -1022,6 +1059,7 @@ class MainActivity : ComponentActivity() {
     /** Vuốt cạnh được phép chuyển trang: không có lớp nào khác (hộp thoại, menu, toàn màn hình...) đang giành nút Back. */
     private fun pageSwipeAvailable(): Boolean =
         ::pageTransition.isInitialized && ::tabSwipe.isInitialized && web.canGoBack() && !tabSwipe.isRunning &&
+        contextMenuController?.isShowing != true &&
             overlaysIdle()
 
     /** Vuốt viên thuốc để đổi tab: thanh đang hiện, không gõ địa chỉ và không có chuyển trang nào đang chạy. */
@@ -1508,6 +1546,7 @@ class MainActivity : ComponentActivity() {
                 toast("Không tải được file này")
             }
         }
+        contextMenuController?.attach(view)
         view.setOnScrollChangeListener { _, _, y, _, oldY ->
             if (view !== web || urlBar.hasFocus()) return@setOnScrollChangeListener
             val dy = y - oldY
@@ -1521,6 +1560,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun activateTab(tab: TabManager.Tab) {
+        contextMenuController?.dismiss(false)
         if (::pageTransition.isInitialized) pageTransition.cancelNow()
         val target = tab.webView ?: WebView(this).also { created ->
             configureTabWebView(created)
