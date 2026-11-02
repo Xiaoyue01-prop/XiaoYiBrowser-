@@ -14,6 +14,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import eightbitlab.com.blurview.BlurTarget
+import org.json.JSONObject
+import org.json.JSONTokener
 
 /** Safari-like long-press menu for links, images and page actions. */
 class ContextMenuController(
@@ -34,6 +36,9 @@ class ContextMenuController(
     private var card: FrameLayout? = null
     private var touchX = 0f
     private var touchY = 0f
+    private var touchWebX = 0f
+    private var touchWebY = 0f
+    private var hitResolutionToken = 0
     private var closeTranslationY = 0f
     val isShowing: Boolean get() = layer != null
 
@@ -43,6 +48,8 @@ class ContextMenuController(
     fun attach(webView: WebView) {
         webView.setOnTouchListener { _, event ->
             if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                touchWebX = event.x
+                touchWebY = event.y
                 val rootLocation = IntArray(2)
                 val webLocation = IntArray(2)
                 root.getLocationOnScreen(rootLocation)
@@ -55,27 +62,26 @@ class ContextMenuController(
         webView.setOnLongClickListener { view ->
             val targetWebView = view as? WebView ?: return@setOnLongClickListener false
             val hit = targetWebView.hitTestResult ?: return@setOnLongClickListener false
-            val extra = hit.extra.orEmpty().takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            val extra = hit.extra.orEmpty().takeIf { isWebUrl(it) }
+
+            // SRC_IMAGE_ANCHOR_TYPE là liên kết có chứa ảnh, không đồng nghĩa
+            // với việc ngón tay đang chạm trực tiếp vào ảnh. Hỏi DOM đúng tọa độ
+            // để phân biệt chữ trong thẻ liên kết với chính thẻ <img>.
+            if (hit.type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
+                val linkUrl = extra ?: return@setOnLongClickListener false
+                resolveLinkedImageHit(targetWebView, linkUrl)
+                return@setOnLongClickListener true
+            }
+
             val actions = when (hit.type) {
                 WebView.HitTestResult.SRC_ANCHOR_TYPE,
                 WebView.HitTestResult.ANCHOR_TYPE -> {
-                    if (extra == null) return@setOnLongClickListener false
-                    listOf(
-                        Action("Mở trong tab mới", Icons.TABS) { onOpenLink(extra) },
-                        Action("Sao chép liên kết", Icons.BOOKMARK_OUTLINE) { onCopy(extra) },
-                        Action("Chia sẻ liên kết", Icons.SHARE) { onShare(extra) },
-                        Action("Thêm trang hiện tại vào dấu trang", Icons.BOOKMARK) { onBookmark() }
-                    )
+                    val linkUrl = extra ?: return@setOnLongClickListener false
+                    linkActions(linkUrl)
                 }
-                WebView.HitTestResult.IMAGE_TYPE,
-                WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> {
-                    if (extra == null) return@setOnLongClickListener false
-                    listOf(
-                        Action("Mở hình ảnh", Icons.TABS) { onOpenLink(extra) },
-                        Action("Lưu hình ảnh", Icons.DOWNLOAD) { onDownloadImage(extra) },
-                        Action("Sao chép địa chỉ hình ảnh", Icons.BOOKMARK_OUTLINE) { onCopy(extra) },
-                        Action("Chia sẻ hình ảnh", Icons.SHARE) { onShare(extra) }
-                    )
+                WebView.HitTestResult.IMAGE_TYPE -> {
+                    val imageUrl = extra ?: return@setOnLongClickListener false
+                    imageActions(imageUrl)
                 }
                 WebView.HitTestResult.PHONE_TYPE,
                 WebView.HitTestResult.EMAIL_TYPE,
@@ -93,6 +99,79 @@ class ContextMenuController(
     }
 
     private data class Action(val title: String, val icon: String, val run: () -> Unit)
+
+    private fun isWebUrl(value: String): Boolean =
+        value.startsWith("http://", ignoreCase = true) ||
+            value.startsWith("https://", ignoreCase = true)
+
+    private fun linkActions(url: String) = listOf(
+        Action("Mở trong tab mới", Icons.TABS) { onOpenLink(url) },
+        Action("Sao chép liên kết", Icons.BOOKMARK_OUTLINE) { onCopy(url) },
+        Action("Chia sẻ liên kết", Icons.SHARE) { onShare(url) },
+        Action("Thêm trang hiện tại vào dấu trang", Icons.BOOKMARK) { onBookmark() }
+    )
+
+    private fun imageActions(url: String) = listOf(
+        Action("Mở hình ảnh", Icons.TABS) { onOpenLink(url) },
+        Action("Lưu hình ảnh", Icons.DOWNLOAD) { onDownloadImage(url) },
+        Action("Sao chép địa chỉ hình ảnh", Icons.BOOKMARK_OUTLINE) { onCopy(url) },
+        Action("Chia sẻ hình ảnh", Icons.SHARE) { onShare(url) }
+    )
+
+    /**
+     * SRC_IMAGE_ANCHOR_TYPE chỉ cho biết anchor có ảnh con. Nó không cho biết
+     * ngón tay đang ở trên ảnh hay trên tiêu đề bên cạnh. Dùng elementFromPoint
+     * để phân loại đúng phần tử tại tọa độ long-press.
+     */
+    private fun resolveLinkedImageHit(webView: WebView, fallbackLinkUrl: String) {
+        val scale = webView.scale.takeIf { it > 0f } ?: 1f
+        val cssX = touchWebX / scale
+        val cssY = touchWebY / scale
+        val script = """
+            (function() {
+                var el = document.elementFromPoint($cssX, $cssY);
+                if (!el) return {isImage:false, imageUrl:"", linkUrl:""};
+                var img = el.closest ? el.closest("img") : null;
+                var anchor = el.closest ? el.closest("a[href]") : null;
+                return {
+                    isImage: !!img,
+                    imageUrl: img ? (img.currentSrc || img.src || "") : "",
+                    linkUrl: anchor ? (anchor.href || "") : ""
+                };
+            })();
+        """.trimIndent()
+
+        val requestToken = ++hitResolutionToken
+        val showFallback = { show(linkActions(fallbackLinkUrl)) }
+        runCatching {
+            webView.evaluateJavascript(script) { result ->
+                if (requestToken != hitResolutionToken) return@evaluateJavascript
+
+                val raw = result.orEmpty()
+                val info = runCatching { JSONObject(raw) }.getOrNull()
+                    ?: runCatching {
+                        val decoded = JSONTokener(raw).nextValue() as? String
+                        decoded?.let { JSONObject(it) }
+                    }.getOrNull()
+
+                val imageUrl = info?.optString("imageUrl").orEmpty()
+                val isImage = info?.optBoolean("isImage", false) == true &&
+                    imageUrl.isNotBlank() && isWebUrl(imageUrl)
+
+                if (isImage) {
+                    show(imageActions(imageUrl))
+                } else {
+                    val linkUrl = info?.optString("linkUrl")
+                        ?.takeIf { isWebUrl(it) } ?: fallbackLinkUrl
+                    show(linkActions(linkUrl))
+                }
+            }
+        }.onFailure {
+            // Không xác định được DOM thì ưu tiên menu liên kết, tuyệt đối không
+            // gắn nhầm thao tác tải ảnh cho phần chữ của một anchor.
+            if (requestToken == hitResolutionToken) showFallback()
+        }
+    }
 
     private fun show(actions: List<Action>) {
         dismiss(false)
@@ -203,6 +282,7 @@ class ContextMenuController(
     }
 
     fun dismiss(animate: Boolean = true) {
+        hitResolutionToken++
         val old = card ?: run { layer?.let(root::removeView); layer = null; return }
         val oldLayer = layer
         card = null
