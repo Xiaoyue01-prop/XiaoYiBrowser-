@@ -80,7 +80,7 @@ class ContextMenuController(
                 WebView.HitTestResult.EMAIL_TYPE,
                 WebView.HitTestResult.GEO_TYPE -> {
                     if (hit.extra.isNullOrBlank()) return@setOnLongClickListener false
-                    listOf(Action("Sao chép", Icons.BOOKMARK_OUTLINE) { onCopy(hit.extra) })
+                    listOf(Action("Sao chép", Icons.BOOKMARK_OUTLINE) { onCopy(hit.extra.orEmpty()) })
                 }
                 // Let WebView perform native text selection for ordinary text/blank areas.
                 // The custom glass menu is reserved for elements with a reliable hit-test target.
