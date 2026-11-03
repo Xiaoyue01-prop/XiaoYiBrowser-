@@ -165,6 +165,10 @@ class TabSwipeController(
         // Quá tab cuối (vuốt sang trái): tab mới. Quá tab đầu: không có gì, chỉ co giãn.
         val hasTarget = target != null || neighbour == tabs.size
 
+        // Chụp thumbnail của trang hiện tại NGAY BÂY GIỜ: trang đang nằm yên và hiện đủ nên Chromium đã
+        // vẽ trọn viewport. Để đến lúc đổi tab thì WebView đã trượt ra ngoài, tile chỉ còn vẽ một phần.
+        if (hasTarget) tabManager.refreshThumbnail(web)
+
         var layer: View? = null
         var rimWeb: View? = null
         var rimLayer: View? = null

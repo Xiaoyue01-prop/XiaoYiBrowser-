@@ -867,7 +867,9 @@ class MainActivity : ComponentActivity() {
             pageBg = { pageBg },
             canStart = { tabSwipeAvailable() },
             onSwitch = { tab ->
-                captureActiveTab()
+                // Thumbnail đã chụp lúc bắt đầu vuốt (trang nằm yên, đang hiện đủ). Lúc này WebView vừa bị
+                // trượt ra ngoài màn hình nên Chromium chỉ còn vẽ sẵn một phần: chụp bây giờ sẽ ra ảnh trắng nửa màn.
+                captureActiveTab(withThumbnail = false)
                 if (tab == null) createBrowserTab() else activateTab(tab)
             }
         )
@@ -1573,8 +1575,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun captureActiveTab() {
-        if (::web.isInitialized) tabManager.saveState(web)
+    private fun captureActiveTab(withThumbnail: Boolean = true) {
+        if (::web.isInitialized) tabManager.saveState(web, withThumbnail)
     }
 
     private fun activateTab(tab: TabManager.Tab) {

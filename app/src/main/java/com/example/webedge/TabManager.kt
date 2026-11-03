@@ -121,12 +121,18 @@ class TabManager {
         return removed
     }
     /** Lưu metadata và thumbnail của WebView hiện tại trước khi rời tab. */
-    fun saveState(web: WebView) {
+    fun saveState(web: WebView, withThumbnail: Boolean = true) {
         val tab = getForWebView(web) ?: getActive() ?: return
         tab.url = web.url ?: tab.url
         tab.title = web.title ?: tab.title
-        captureThumbnail(tab, web)
+        if (withThumbnail) captureThumbnail(tab, web)
         listener?.invoke()
+    }
+
+    /** Chụp lại thumbnail ngay lúc trang đang nằm yên trên màn hình (không đụng url/title). */
+    fun refreshThumbnail(web: WebView) {
+        val tab = getForWebView(web) ?: getActive() ?: return
+        captureThumbnail(tab, web)
     }
     private fun captureThumbnail(tab: Tab, web: WebView) {
         try {
