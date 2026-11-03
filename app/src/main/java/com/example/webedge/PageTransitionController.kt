@@ -32,7 +32,10 @@ class PageTransitionController(
     private class Snap(val url: String, val bitmap: Bitmap, val time: Long)
 
     /** LRU theo thứ tự truy cập; khoá = "<id WebView>:<vị trí trong lịch sử>". */
-    private val cache = LinkedHashMap<String, Snap>(8, 0.75f, true)
+    private val cache = object : LinkedHashMap<String, Snap>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Snap>?): Boolean =
+            size > MAX_SNAPSHOTS
+    }
 
     private class Run(
         val web: WebView,
@@ -40,8 +43,7 @@ class PageTransitionController(
         val sign: Float,
         val layer: View,
         val scrim: View,
-        val fromUrl: String?,
-        val snapshot: Bitmap?
+        val fromUrl: String?
     ) {
         var progress = 0f
         var spring: AnimationSystem.FloatSpringHandle? = null
@@ -53,25 +55,6 @@ class PageTransitionController(
     private var current: Run? = null
     private var revealAt = Long.MAX_VALUE
     private val revealRunnable = Runnable { current?.let(::reveal) }
-
-    /** Chỉ recycle khi bitmap không còn nằm trong cache và cũng không được animation hiện tại dùng. */
-    private fun recycleIfUnused(bitmap: Bitmap) {
-        if (bitmap.isRecycled) return
-        if (current?.snapshot === bitmap) return
-        if (cache.values.any { it.bitmap === bitmap }) return
-        bitmap.recycle()
-    }
-
-    private fun trimCache() {
-        while (cache.size > MAX_SNAPSHOTS) {
-            val eldest = cache.entries.iterator()
-            if (!eldest.hasNext()) return
-            val entry = eldest.next()
-            val bitmap = entry.value.bitmap
-            eldest.remove()
-            recycleIfUnused(bitmap)
-        }
-    }
 
     /** Đang có chuyển trang: MainActivity dùng để không làm mờ WebView trong lúc này. */
     val isRunning: Boolean get() = current != null
@@ -90,7 +73,6 @@ class PageTransitionController(
         val h = web.height
         val shownUrl = web.url
         if (w <= 0 || h <= 0 || shownUrl.isNullOrBlank()) return
-        var captured: Bitmap? = null
         try {
             val list = web.copyBackForwardList()
             val index = list.currentIndex
@@ -103,23 +85,14 @@ class PageTransitionController(
             if (old != null && old.url == itemUrl && now - old.time < REMEMBER_COOLDOWN_MS) return
             // RGB_565 như thumbnail tab: một ảnh toàn màn hình chỉ ~5MB.
             val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
-            captured = bitmap
             val canvas = Canvas(bitmap)
             canvas.drawColor(pageBg())
             web.draw(canvas)
-            val replaced = cache.put(k, Snap(itemUrl, bitmap, now))
-            captured = null // quyền sở hữu bitmap đã chuyển sang cache
-            replaced?.let { recycleIfUnused(it.bitmap) }
-            trimCache()
+            cache[k] = Snap(itemUrl, bitmap, now)
         } catch (e: Exception) {
-            captured?.takeUnless { it.isRecycled }?.recycle()
             Log.w(TAG, "Không chụp được trang để chuyển cảnh", e)
         } catch (e: OutOfMemoryError) {
-            captured?.takeUnless { it.isRecycled }?.recycle()
-            // Dọn cache qua cùng một đường quản lý vòng đời bitmap; ảnh đang được animation
-            // dùng sẽ được giữ lại cho tới teardown().
-            clear()
-            Log.w(TAG, "Hết bộ nhớ khi chụp trang chuyển cảnh; đã dọn snapshot cache", e)
+            cache.clear()
         }
     }
 
@@ -134,22 +107,10 @@ class PageTransitionController(
     /** Tab bị đóng/huỷ WebView: bỏ ảnh của nó. */
     fun forget(web: WebView) {
         val prefix = "${System.identityHashCode(web)}:"
-        val iterator = cache.entries.iterator()
-        while (iterator.hasNext()) {
-            val entry = iterator.next()
-            if (entry.key.startsWith(prefix)) {
-                val bitmap = entry.value.bitmap
-                iterator.remove()
-                recycleIfUnused(bitmap)
-            }
-        }
+        cache.keys.removeAll { it.startsWith(prefix) }
     }
 
-    fun clear() {
-        val bitmaps = cache.values.map { it.bitmap }.distinct()
-        cache.clear()
-        bitmaps.forEach(::recycleIfUnused)
-    }
+    fun clear() = cache.clear()
 
     // ---------------- Dựng và vẽ chuyển cảnh ----------------
 
@@ -182,7 +143,7 @@ class PageTransitionController(
             host.addView(scrim, frame())
             host.addView(layer, frame())
         }
-        val r = Run(web, dir, sign, layer, scrim, web.url, bitmap)
+        val r = Run(web, dir, sign, layer, scrim, web.url)
         current = r
         revealAt = Long.MAX_VALUE
         render(r, 0f)
@@ -330,12 +291,9 @@ class PageTransitionController(
         r.spring = null
         AnimationSystem.cancel(r.layer)
         r.web.translationX = 0f
-        // Bỏ tham chiếu drawable trước khi recycle ảnh; nếu cache vẫn giữ ảnh thì tiếp tục dùng được.
-        (r.layer as? ImageView)?.setImageDrawable(null)
         host.removeView(r.layer)
         host.removeView(r.scrim)
         if (current === r) current = null
-        r.snapshot?.let(::recycleIfUnused)
     }
 
     /** Đổi tab hoặc đóng Activity: dọn ngay, không animation. */

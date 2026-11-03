@@ -101,12 +101,12 @@ class MenuController(
 
     private fun stylePrimary(view: TextView, color: Int = Color.BLACK) {
         view.setTextColor(color)
-        view.typeface = AppTypography.medium
+        view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     }
 
     private fun styleSecondary(view: TextView) {
         view.setTextColor(Color.rgb(82, 82, 88))
-        view.typeface = AppTypography.medium
+        view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     }
 
     private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(isNight)
@@ -347,15 +347,28 @@ class MenuController(
         }
     }
 
-    // Đặt vị trí khung menu ngay phía trên nút ba chấm
+    // Đặt vị trí khung menu: góc dưới-phải trùng góc dưới-phải của nút ba chấm
     /** Đặt lại vị trí khung menu khi vùng đệm hệ thống (thanh trạng thái, bàn phím) thay đổi. */
     fun relayout() {
         val layer = menuLayer ?: return
         val card = menuCard ?: return
         layer.setPadding(0, host.insetTop + dp(12), 0, 0)
         val lp = card.layoutParams as FrameLayout.LayoutParams
-        lp.rightMargin = host.insetRight + dp(14)
-        lp.bottomMargin = maxOf(host.insetBottom, host.imeBottom) + dp(10) + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
+        val originBounds = originView?.takeIf { !toolbarCompact }?.let { OriginTransitionController.boundsOnScreen(it) }
+        if (originBounds != null && root.width > 0 && root.height > 0) {
+            // Neo góc dưới-phải của thẻ vào đúng góc dưới-phải của nút ba chấm: thẻ mọc lên trên và sang
+            // trái, phủ luôn thanh dưới. Khung nút nằm gọn trong khung thẻ nên morph là nút lớn dần thành
+            // menu (như iOS 26), không còn cảnh thẻ bay từ nút lên một chỗ khác.
+            val rootLoc = IntArray(2)
+            root.getLocationOnScreen(rootLoc)
+            val right = rootLoc[0] + root.width - originBounds.right
+            val bottom = rootLoc[1] + root.height - originBounds.bottom
+            lp.rightMargin = maxOf(right.toInt(), host.insetRight + dp(8))
+            lp.bottomMargin = maxOf(bottom.toInt(), maxOf(host.insetBottom, host.imeBottom) + dp(4))
+        } else {
+            lp.rightMargin = host.insetRight + dp(14)
+            lp.bottomMargin = maxOf(host.insetBottom, host.imeBottom) + dp(10) + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
+        }
         card.layoutParams = lp
     }
 
@@ -656,7 +669,7 @@ class MenuController(
                 moreBtn.text = "Xem thêm ${allItems.size - displayedCount} mục..."
                 moreBtn.textSize = 14f
                 moreBtn.setTextColor(accent)
-                moreBtn.setTypeface(AppTypography.medium)
+                moreBtn.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
                 moreBtn.gravity = Gravity.CENTER
                 moreBtn.setPadding(dp(22), dp(12), dp(22), dp(12))
                 moreBtn.setOnClickListener {
@@ -937,7 +950,7 @@ class MenuController(
         input.inputType = InputType.TYPE_TEXT_VARIATION_URI
         input.setText(store.homeUrl)
         input.setTextColor(Color.BLACK)
-        input.setTypeface(AppTypography.medium)
+        input.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
         input.textSize = 15f
         input.setPadding(dp(14), 0, dp(14), 0)
         input.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)

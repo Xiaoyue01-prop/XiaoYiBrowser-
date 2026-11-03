@@ -30,8 +30,6 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.webkit.JsResult
-import android.webkit.JsPromptResult
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -144,10 +142,7 @@ class PopupWindowController(
     private val openExternal: (String, WebView) -> Boolean,
     private val toast: (String) -> Unit,
     /** Theo giao diện của app; null thì theo chế độ tối của hệ thống. */
-    private val isNight: (() -> Boolean)? = null,
-    private val density: () -> Float = { activity.resources.displayMetrics.density },
-    private val foreground: () -> Int = { Color.BLACK },
-    private val accent: () -> Int = { Theme.ACCENT_BLUE }
+    private val isNight: (() -> Boolean)? = null
 ) {
     var webView: WebView? = null
         private set
@@ -155,7 +150,6 @@ class PopupWindowController(
     private var sheet: View? = null
     private var scrim: View? = null
     private var closing = false
-    private var popupGlassDialog: GlassDialogController? = null
 
     val isShowing: Boolean get() = dialog?.isShowing == true
 
@@ -263,11 +257,7 @@ class PopupWindowController(
         )
         dragZone.addView(header, LinearLayout.LayoutParams(-1, dp(56)))
         sheetView.addView(dragZone, LinearLayout.LayoutParams(-1, -2))
-        // WebView nằm trong BlurTarget riêng để hộp thoại JS của popup lấy blur đúng nội dung popup.
-        val popupBlurTarget = eightbitlab.com.blurview.BlurTarget(activity).apply {
-            addView(popup, FrameLayout.LayoutParams(-1, -1))
-        }
-        sheetView.addView(popupBlurTarget, LinearLayout.LayoutParams(-1, 0, 1f))
+        sheetView.addView(popup, LinearLayout.LayoutParams(-1, 0, 1f))
 
         // Tên trang trên thanh tiêu đề: tiêu đề nếu có, không thì tên miền.
         fun updateTitle(view: WebView, url: String?) {
@@ -356,19 +346,11 @@ class PopupWindowController(
             setWindowAnimations(0)
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             WindowCompat.setDecorFitsSystemWindows(this, false)
-            // Cho scrim của Glass Dialog có thể vẽ xuyên qua toàn bộ vùng thanh hệ thống.
-            statusBarColor = Color.TRANSPARENT
-            navigationBarColor = Color.TRANSPARENT
+            // Thanh điều hướng trong suốt hẳn, vạch cử chỉ đổi màu theo nền sheet để không chìm vào trang.
             isNavigationBarContrastEnforced = false
-            if (android.os.Build.VERSION.SDK_INT >= 29) isStatusBarContrastEnforced = false
-            WindowCompat.getInsetsController(this, root).apply {
-                isAppearanceLightStatusBars = !night
-                isAppearanceLightNavigationBars = !night
-            }
+            WindowCompat.getInsetsController(this, root).isAppearanceLightNavigationBars = !night
         }
         dlg.setOnDismissListener {
-            popupGlassDialog?.cancelAll()
-            popupGlassDialog = null
             if (webView === popup) {
                 popup.stopLoading()
                 (popup.parent as? ViewGroup)?.removeView(popup)
@@ -388,20 +370,6 @@ class PopupWindowController(
         scrim = scrimView
         closing = false
         dlg.show()
-        // Dialog popup có cửa sổ riêng: đặt GlassDialogController lên decor root của chính cửa sổ này.
-        val popupDialogRoot = dlg.window?.decorView as? FrameLayout
-        if (popupDialogRoot != null) {
-            popupGlassDialog = GlassDialogController(
-                activity = activity,
-                root = popupDialogRoot,
-                blurTarget = popupBlurTarget,
-                d = density(),
-                isNight = night,
-                fg = foreground(),
-                accent = accent(),
-                window = dlg.window ?: activity.window
-            )
-        }
         dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         root.post {
             if (closing) return@post
@@ -411,43 +379,6 @@ class PopupWindowController(
         transport.webView = popup
         resultMsg?.sendToTarget()
         return true
-    }
-
-    fun showJsAlert(url: String?, message: String?, result: JsResult) {
-        val controller = popupGlassDialog
-        if (controller == null) { result.cancel(); return }
-        controller.show(jsDialogTitle(url), message.orEmpty(), "OK") { _, _ -> result.confirm() }
-    }
-
-    fun showJsConfirm(url: String?, message: String?, result: JsResult) {
-        val controller = popupGlassDialog
-        if (controller == null) { result.cancel(); return }
-        controller.show(jsDialogTitle(url), message.orEmpty(), "OK", "Hủy") { ok, _ ->
-            if (ok) result.confirm() else result.cancel()
-        }
-    }
-
-    fun showJsPrompt(url: String?, message: String?, defaultValue: String?, result: JsPromptResult) {
-        val controller = popupGlassDialog
-        if (controller == null) { result.cancel(); return }
-        controller.show(jsDialogTitle(url), message.orEmpty(), "OK", "Hủy", defaultValue.orEmpty()) { ok, text ->
-            if (ok) result.confirm(text.orEmpty()) else result.cancel()
-        }
-    }
-
-    fun showJsBeforeUnload(url: String?, message: String?, result: JsResult) {
-        val controller = popupGlassDialog
-        if (controller == null) { result.cancel(); return }
-        val text = message?.takeIf { it.isNotBlank() }
-            ?: "Các thay đổi bạn đã thực hiện có thể chưa được lưu."
-        controller.show("Rời khỏi trang này?", text, "Rời khỏi", "Ở lại") { ok, _ ->
-            if (ok) result.confirm() else result.cancel()
-        }
-    }
-
-    private fun jsDialogTitle(url: String?): String {
-        val host = runCatching { Uri.parse(url).host }.getOrNull()?.removePrefix("www.")
-        return host?.takeIf { it.isNotBlank() } ?: "Trang web"
     }
 
     /** Sheet trượt xuống và lớp tối mờ đi rồi mới đóng hộp thoại. [velocity]: vận tốc kéo xuống (px/giây) để nối mạch với tay. */

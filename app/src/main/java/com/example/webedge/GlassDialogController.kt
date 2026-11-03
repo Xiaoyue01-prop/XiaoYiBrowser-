@@ -2,9 +2,9 @@ package com.example.webedge
 
 import android.app.Activity
 import android.graphics.Color
+import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
-import android.view.Window
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -29,8 +29,7 @@ class GlassDialogController(
     private val d: Float,
     private val isNight: Boolean,
     private val fg: Int,
-    private val accent: Int,
-    private val window: Window = activity.window
+    private val accent: Int
 ) {
     private class Request(
         val title: String?,
@@ -91,27 +90,20 @@ class GlassDialogController(
         active = req
         finishing = false
 
-        // Lớp phủ phải phủ toàn bộ cửa sổ, kể cả status/navigation bar.
-        // Không đặt padding lên layer: FrameLayout sẽ co cả scrim vào trong padding,
-        // tạo ra hai dải sáng ở mép trên và dưới như lỗi trong screenshot.
         val layer = FrameLayout(activity).apply {
             isClickable = true
             isFocusable = true
-            clipChildren = false
-            clipToPadding = false
+            setPadding(0, dp(48), 0, dp(48))
         }
-        var cardForIme: View? = null
-        // Khi prompt mở bàn phím, chỉ dịch thẻ lên; tuyệt đối không co lớp scrim.
-        ViewCompat.setOnApplyWindowInsetsListener(layer) { _, insets ->
+        // Khi bàn phím hiện (prompt), đẩy hộp thoại lên để không bị che.
+        ViewCompat.setOnApplyWindowInsetsListener(layer) { v, insets ->
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
-            val keyboardOnly = (ime - nav).coerceAtLeast(0)
-            cardForIme?.translationY = -keyboardOnly / 2f
+            v.setPadding(0, dp(48), 0, dp(48) + ime)
             insets
         }
 
         val scrim = View(activity).apply {
-            setBackgroundColor(Color.argb(if (isNight) 148 else 108, 0, 0, 0))
+            setBackgroundColor(Color.argb(if (isNight) 120 else 80, 0, 0, 0))
             alpha = 0f
             setOnClickListener { cancelCurrent() }
         }
@@ -141,8 +133,8 @@ class GlassDialogController(
         if (req.title != null) {
             content.addView(TextView(activity).apply {
                 text = req.title
-                textSize = 16f
-                typeface = AppTypography.medium
+                textSize = 17f
+                setTypeface(null, Typeface.BOLD)
                 setTextColor(fg)
                 gravity = Gravity.CENTER
                 setPadding(dp(22), dp(20), dp(22), 0)
@@ -152,10 +144,9 @@ class GlassDialogController(
         // Nội dung dài (alert của trang) cuộn được thay vì tràn khỏi màn hình.
         val messageView = TextView(activity).apply {
             text = req.message
-            textSize = 16f
-            setTextColor(fg)
-            typeface = AppTypography.medium
-            setLineSpacing(dp(2).toFloat(), 1f)
+            textSize = 14f
+            setTextColor(Color.BLACK)
+            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
             gravity = Gravity.CENTER
             val top = if (req.title != null) dp(8) else dp(22)
             val bottom = if (req.defaultInput != null) dp(12) else dp(20)
@@ -170,10 +161,9 @@ class GlassDialogController(
                 setSingleLine()
                 setText(req.defaultInput)
                 setSelectAllOnFocus(true)
-                setTextColor(fg)
-                typeface = AppTypography.medium
-                textSize = 16f
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                setTextColor(Color.BLACK)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                textSize = 15f
                 setPadding(dp(14), 0, dp(14), 0)
                 background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
             }
@@ -195,11 +185,11 @@ class GlassDialogController(
         val gap = Theme.gapColor(isNight)
         content.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(-1, 1))
 
-        fun button(label: String, onClick: () -> Unit): TextView {
+        fun button(label: String, bold: Boolean, onClick: () -> Unit): TextView {
             val b = TextView(activity)
             b.text = label
             b.textSize = 16f
-            b.typeface = AppTypography.medium
+            if (bold) b.setTypeface(null, Typeface.BOLD)
             b.setTextColor(accent)
             b.gravity = Gravity.CENTER
             b.background = ripple()
@@ -210,17 +200,16 @@ class GlassDialogController(
 
         val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         if (req.negative != null) {
-            row.addView(button(req.negative) { finish(false) }, LinearLayout.LayoutParams(0, dp(50), 1f))
+            row.addView(button(req.negative, false) { finish(false) }, LinearLayout.LayoutParams(0, dp(50), 1f))
             row.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(1, dp(50)))
         }
-        row.addView(button(req.positive) { finish(true) }, LinearLayout.LayoutParams(0, dp(50), 1f))
+        row.addView(button(req.positive, true) { finish(true) }, LinearLayout.LayoutParams(0, dp(50), 1f))
         content.addView(row, LinearLayout.LayoutParams(-1, dp(50)))
 
         card.addView(content, FrameLayout.LayoutParams(-1, -2))
 
-        val width = minOf(dp(320), activity.resources.displayMetrics.widthPixels - dp(40))
+        val width = minOf(dp(300), activity.resources.displayMetrics.widthPixels - dp(48))
         layer.addView(card, FrameLayout.LayoutParams(width, -2, Gravity.CENTER))
-        cardForIme = card
         root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         activeLayer = layer
         ViewCompat.requestApplyInsets(layer)
@@ -232,7 +221,7 @@ class GlassDialogController(
         activeInput?.let { input ->
             input.post {
                 input.requestFocus()
-                WindowCompat.getInsetsController(window, input).show(WindowInsetsCompat.Type.ime())
+                WindowCompat.getInsetsController(activity.window, input).show(WindowInsetsCompat.Type.ime())
             }
         }
     }
@@ -245,7 +234,7 @@ class GlassDialogController(
         val input = activeInput
         val text = if (confirmed) input?.text?.toString() else null
         if (input != null && layer != null) {
-            WindowCompat.getInsetsController(window, layer).hide(WindowInsetsCompat.Type.ime())
+            WindowCompat.getInsetsController(activity.window, layer).hide(WindowInsetsCompat.Type.ime())
         }
 
         // Trả kết quả ngay để trang không phải chờ hiệu ứng đóng.

@@ -397,7 +397,7 @@ object OriginTransitionController {
     }
 
     /** Khung của view trên màn hình, bỏ qua scale/translation tạm thời của chính nó (nhấn nút, đang morph). */
-    private fun boundsOnScreen(view: View): RectF? {
+    fun boundsOnScreen(view: View): RectF? {
         if (!view.isAttachedToWindow || view.width <= 0 || view.height <= 0) return null
         val sx = view.scaleX
         val sy = view.scaleY

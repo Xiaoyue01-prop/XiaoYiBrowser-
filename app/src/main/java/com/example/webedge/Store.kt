@@ -29,37 +29,6 @@ class Store(context: Context) {
 
     private fun thumbnailFile(tabId: Long) = File(thumbnailDir, "tab_$tabId.jpg")
 
-    /** Đọc thumbnail cũ theo kích thước giới hạn; tránh giải mã ảnh gốc lớn vào RAM. */
-    private fun loadThumbnail(tabId: Long): Bitmap? {
-        if (tabId <= 0L) return null
-        val path = thumbnailFile(tabId).absolutePath
-        return try {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(path, bounds)
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-            var sampleSize = 1
-            while (
-                bounds.outWidth / sampleSize > Constants.THUMBNAIL_MAX_WIDTH_PX ||
-                bounds.outHeight / sampleSize > Constants.THUMBNAIL_MAX_HEIGHT_PX
-            ) {
-                sampleSize *= 2
-            }
-            val options = BitmapFactory.Options().apply {
-                inPreferredConfig = Bitmap.Config.RGB_565
-                inScaled = false
-                inSampleSize = sampleSize
-            }
-            BitmapFactory.decodeFile(path, options)
-        } catch (error: Exception) {
-            Log.w(TAG, "Không đọc được thumbnail cho tab $tabId", error)
-            null
-        } catch (error: OutOfMemoryError) {
-            Log.w(TAG, "Không đủ RAM để đọc thumbnail cho tab $tabId", error)
-            null
-        }
-    }
-
     /** Ghi thumbnail ra file riêng, dùng AtomicFile để tránh ảnh hỏng nếu app bị kill giữa lúc lưu. */
     private fun saveThumbnail(tab: PersistedTab): Boolean {
         val bitmap = tab.thumbnail?.takeUnless { it.isRecycled } ?: return false
@@ -78,15 +47,9 @@ class Store(context: Context) {
             } catch (error: Exception) {
                 output?.let { atomicFile.failWrite(it) }
                 throw error
-            } catch (error: OutOfMemoryError) {
-                output?.let { atomicFile.failWrite(it) }
-                throw error
             }
         } catch (error: Exception) {
             Log.w(TAG, "Không lưu được thumbnail cho tab ${tab.id}", error)
-            false
-        } catch (error: OutOfMemoryError) {
-            Log.w(TAG, "Không đủ RAM để lưu thumbnail cho tab ${tab.id}", error)
             false
         }
     }
@@ -188,7 +151,16 @@ class Store(context: Context) {
                     url = obj.optString("url", ""),
                     title = obj.optString("title", ""),
                     isActive = obj.optBoolean("active", false),
-                    thumbnail = loadThumbnail(obj.optLong("id", 0L)),
+                    thumbnail = runCatching {
+                        val id = obj.optLong("id", 0L)
+                        if (id > 0L) {
+                            val options = BitmapFactory.Options().apply {
+                                inPreferredConfig = Bitmap.Config.RGB_565
+                                inScaled = false
+                            }
+                            BitmapFactory.decodeFile(thumbnailFile(id).absolutePath, options)
+                        } else null
+                    }.getOrNull(),
                     thumbnailUrl = obj.optString("thumbnailUrl", ""),
                     thumbnailVersion = obj.optLong("thumbnailVersion", 0L)
                 )
