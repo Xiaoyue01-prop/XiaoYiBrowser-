@@ -3,6 +3,8 @@ package com.example.webedge
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -40,22 +42,77 @@ class ContextMenuController(
     private var touchWebY = 0f
     private var hitResolutionToken = 0
     private var closeTranslationY = 0f
+    private var touchSequence = 0
+    private var domTargetSequence = -1
+    private var domTarget: DomTarget? = null
     val isShowing: Boolean get() = layer != null
+
+    private data class DomTarget(
+        val linkUrl: String,
+        val imageUrl: String,
+        val isDirectImage: Boolean,
+        val isAnchor: Boolean
+    )
 
     private fun dp(value: Int) = (value * density).toInt()
 
     /** Attach to each WebView. Returning false from touch preserves native scrolling/selection. */
     fun attach(webView: WebView) {
         webView.setOnTouchListener { _, event ->
-            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-                touchWebX = event.x
-                touchWebY = event.y
-                val rootLocation = IntArray(2)
-                val webLocation = IntArray(2)
-                root.getLocationOnScreen(rootLocation)
-                webView.getLocationOnScreen(webLocation)
-                touchX = webLocation[0] - rootLocation[0] + event.x
-                touchY = webLocation[1] - rootLocation[1] + event.y
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    val sequence = ++touchSequence
+                    domTargetSequence = sequence
+                    domTarget = null
+                    touchWebX = event.x
+                    touchWebY = event.y
+                    val rootLocation = IntArray(2)
+                    val webLocation = IntArray(2)
+                    root.getLocationOnScreen(rootLocation)
+                    webView.getLocationOnScreen(webLocation)
+                    touchX = webLocation[0] - rootLocation[0] + event.x
+                    touchY = webLocation[1] - rootLocation[1] + event.y
+
+                    // Chuẩn bị hit-test DOM từ đầu cử chỉ. Khi WebView báo UNKNOWN_TYPE
+                    // ở thời điểm long-press, dữ liệu này thường đã sẵn sàng mà không
+                    // cần chặn thao tác chọn chữ mặc định.
+                    val scale = webView.scale.takeIf { it > 0f } ?: 1f
+                    val cssX = touchWebX / scale
+                    val cssY = touchWebY / scale
+                    val script = """
+                        (function() {
+                            var el = document.elementFromPoint($cssX, $cssY);
+                            if (!el) return {linkUrl:"", imageUrl:"", isDirectImage:false};
+                            var tag = (el.tagName || "").toLowerCase();
+                            var img = tag === "img" ? el : null;
+                            var anchor = el.closest ? el.closest("a") : null;
+                            return {
+                                linkUrl: anchor ? (anchor.href || anchor.getAttribute("href") || "") : "",
+                                imageUrl: img ? (img.currentSrc || img.src || "") : "",
+                                isDirectImage: !!img,
+                                isAnchor: !!anchor
+                            };
+                        })();
+                    """.trimIndent()
+                    runCatching {
+                        webView.evaluateJavascript(script) { result ->
+                            if (sequence != touchSequence || domTargetSequence != sequence) return@evaluateJavascript
+                            val info = runCatching { JSONObject(result.orEmpty()) }.getOrNull()
+                                ?: runCatching {
+                                    val decoded = JSONTokener(result.orEmpty()).nextValue() as? String
+                                    decoded?.let { JSONObject(it) }
+                                }.getOrNull()
+                            domTarget = info?.let {
+                                DomTarget(
+                                    linkUrl = it.optString("linkUrl").orEmpty(),
+                                    imageUrl = it.optString("imageUrl").orEmpty(),
+                                    isDirectImage = it.optBoolean("isDirectImage", false),
+                                    isAnchor = it.optBoolean("isAnchor", false)
+                                )
+                            }
+                        }
+                    }
+                }
             }
             false
         }
@@ -89,8 +146,27 @@ class ContextMenuController(
                     if (hit.extra.isNullOrBlank()) return@setOnLongClickListener false
                     listOf(Action("Sao chép", Icons.BOOKMARK_OUTLINE) { onCopy(hit.extra.orEmpty()) })
                 }
+                WebView.HitTestResult.UNKNOWN_TYPE -> {
+                    // Một số trang dùng anchor JavaScript/không có href chuẩn khiến WebView
+                    // trả UNKNOWN_TYPE. Dùng kết quả DOM đã lấy từ ACTION_DOWN để vẫn bắt
+                    // được liên kết mà không chiếm long-press trên văn bản thông thường.
+                    val target = domTarget.takeIf { domTargetSequence == touchSequence }
+                        ?: return@setOnLongClickListener false
+                    val imageUrl = target.imageUrl.takeIf { target.isDirectImage && isWebUrl(it) }
+                    val linkUrl = target.linkUrl.takeIf { isWebUrl(it) }
+                    when {
+                        imageUrl != null -> imageActions(imageUrl)
+                        linkUrl != null -> linkActions(linkUrl)
+                        target.isAnchor -> {
+                            // Với anchor dùng javascript: hoặc không có href chuẩn,
+                            // WebView cung cấp URL thực qua requestFocusNodeHref().
+                            resolveUnknownAnchorHit(targetWebView, target.linkUrl)
+                            return@setOnLongClickListener true
+                        }
+                        else -> return@setOnLongClickListener false
+                    }
+                }
                 // Let WebView perform native text selection for ordinary text/blank areas.
-                // The custom glass menu is reserved for elements with a reliable hit-test target.
                 else -> return@setOnLongClickListener false
             }
             show(actions)
@@ -103,6 +179,20 @@ class ContextMenuController(
     private fun isWebUrl(value: String): Boolean =
         value.startsWith("http://", ignoreCase = true) ||
             value.startsWith("https://", ignoreCase = true)
+
+    private fun resolveUnknownAnchorHit(webView: WebView, fallbackUrl: String) {
+        val sequence = touchSequence
+        val handler = Handler(Looper.getMainLooper(), Handler.Callback { message ->
+            if (sequence == touchSequence) {
+                val returnedUrl = message.data?.getString("url").orEmpty()
+                val url = returnedUrl.takeIf { isWebUrl(it) }
+                    ?: fallbackUrl.takeIf { isWebUrl(it) }
+                if (url != null) show(linkActions(url))
+            }
+            true
+        })
+        runCatching { webView.requestFocusNodeHref(handler.obtainMessage()) }
+    }
 
     private fun linkActions(url: String) = listOf(
         Action("Mở trong tab mới", Icons.TABS) { onOpenLink(url) },
