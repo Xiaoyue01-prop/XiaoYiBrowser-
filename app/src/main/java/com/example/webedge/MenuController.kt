@@ -176,7 +176,12 @@ class MenuController(
                 card,
                 originView,
                 endCornerRadiusPx = radiusPx,
-                springSpec = AnimationSystem.MENU_MORPH
+                springSpec = AnimationSystem.MENU_MORPH,
+                // Vỏ kính mờ đặc ngay từ nút (không fade qua kính trong suốt); chỉ nội dung hiện muộn.
+                fadeIn = false,
+                contentViews = {
+                    (0 until card.childCount).map { card.getChildAt(it) }.filter { it !== glass }
+                }
             )
             if (!morphing) {
                 card.pivotX = card.width.toFloat()

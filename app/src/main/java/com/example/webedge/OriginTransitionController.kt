@@ -33,7 +33,8 @@ object OriginTransitionController {
         val originalOutline: ViewOutlineProvider?,
         val originalClip: Boolean,
         val fadeIn: Boolean,
-        val counterTransformView: View?
+        val counterTransformView: View?,
+        val contentViews: (() -> List<View>)?
     ) {
         var opening = true
         var sx = 1f
@@ -72,7 +73,10 @@ object OriginTransitionController {
         onEnd: (() -> Unit)? = null,
         fadeIn: Boolean = true,
         counterTransformView: View? = null,
-        springSpec: AnimationSystem.SpringSpec? = null
+        springSpec: AnimationSystem.SpringSpec? = null,
+        // Nội dung bên trong vỏ (không gồm lớp kính) hiện muộn hơn vỏ: vỏ kính đặc ngay từ nút,
+        // chữ/icon mới hiện dần khi vỏ đã bung được một đoạn, như iOS.
+        contentViews: (() -> List<View>)? = null
     ): Boolean {
         val target = boundsOnScreen(view) ?: return false
         val old = morphs[view]
@@ -89,7 +93,8 @@ object OriginTransitionController {
             originalOutline = old?.originalOutline ?: view.outlineProvider,
             originalClip = old?.originalClip ?: view.clipToOutline,
             fadeIn = fadeIn,
-            counterTransformView = counterTransformView
+            counterTransformView = counterTransformView,
+            contentViews = contentViews
         )
         morphs[view] = m
         place(m, target)
@@ -236,6 +241,11 @@ object OriginTransitionController {
             val t = (p / 0.55f).coerceIn(0f, 1f)
             t * t * (3f - 2f * t)
         }
+        m.contentViews?.let { provider ->
+            val t = ((p - 0.22f) / 0.45f).coerceIn(0f, 1f)
+            val a = t * t * (3f - 2f * t)
+            provider().forEach { it.alpha = a }
+        }
         m.outline?.let {
             it.radius = lerp(m.startRadius, m.endRadius, p.coerceIn(0f, 1f))
             v.invalidateOutline()
@@ -312,6 +322,7 @@ object OriginTransitionController {
         v.translationX = 0f
         v.translationY = 0f
         v.alpha = 1f
+        m.contentViews?.invoke()?.forEach { it.alpha = 1f }
         resetCounterTransform(m)
         restoreOutline(m)
     }
