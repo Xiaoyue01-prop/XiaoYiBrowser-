@@ -34,7 +34,7 @@ class TabSwipeController(
     private val host: FrameLayout,
     private val pill: View,
     private val pillContent: View,
-    density: Float,
+    private val density: Float,
     private val tabManager: TabManager,
     private val webProvider: () -> WebView?,
     private val pageBg: () -> Int,
@@ -72,6 +72,7 @@ class TabSwipeController(
         var committed = false
         var holding = false
         var reachedThreshold = false
+        var rimAlpha = -1
     }
 
     private var current: Run? = null
@@ -178,6 +179,9 @@ class TabSwipeController(
             host.addView(layer, lp)
             web.outlineProvider = rounded
             web.clipToOutline = true
+            // Viền kính cho cả hai trang: trên nền trắng của khe hở, mép trang vẫn rõ như kính.
+            layer.foreground = GlassSystem.createBorder(CORNER_DP.toInt(), density, false)
+            web.foreground = GlassSystem.createBorder(CORNER_DP.toInt(), density, false)
         }
         val r = Run(web, sgn, layer, target, hasTarget)
         current = r
@@ -198,6 +202,17 @@ class TabSwipeController(
         } else {
             // Không có tab bên cạnh: kéo nặng tay rồi bật lại.
             r.web.translationX = r.sgn * raw.coerceAtLeast(0f) * r.web.width * RUBBER
+        }
+        // Viền hiện dần trong ~12% đầu để không bật lên đột ngột ở mép màn hình lúc mới chạm.
+        if (layer != null) {
+            val a = (255 * (u * 8f).coerceIn(0f, 1f)).toInt()
+            if (a != r.rimAlpha) {
+                r.rimAlpha = a
+                r.web.foreground?.alpha = a
+                layer.foreground?.alpha = a
+                r.web.invalidate()
+                layer.invalidate()
+            }
         }
         // Chữ trên viên thuốc trượt ra cùng hướng trang và mờ đi.
         pillContent.translationX = r.sgn * u * pill.width * PILL_SHIFT
@@ -333,6 +348,7 @@ class TabSwipeController(
             web.translationX = 0f
             web.clipToOutline = false
             web.outlineProvider = ViewOutlineProvider.BACKGROUND
+            web.foreground = null
         }
         if (!r.holding) {
             // Huỷ giữa chừng: chữ trên viên thuốc về chỗ cũ ngay.
