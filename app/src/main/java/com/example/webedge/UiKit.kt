@@ -11,7 +11,11 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
+import android.graphics.drawable.StateListDrawable
 import android.util.TypedValue
 import androidx.core.graphics.PathParser
 
@@ -85,6 +89,31 @@ fun Context.selectableItemBackgroundRes(): Int {
     val tv = TypedValue()
     theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
     return tv.resourceId
+}
+
+/**
+ * Nền hàng bấm kiểu iOS: khi nhấn hiện ô tô sáng bo góc (không ripple chữ nhật), nhả ra mờ dần.
+ * Mỗi view cần một Drawable riêng nên gọi hàm này cho từng hàng.
+ */
+fun Context.roundedPressBackground(
+    isNight: Boolean,
+    radiusDp: Float = 14f,
+    insetHDp: Float = 6f,
+    insetVDp: Float = 2f
+): Drawable {
+    val d = resources.displayMetrics.density
+    val pressed = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = radiusDp * d
+        setColor(if (isNight) 0x33FFFFFF else 0x22000000)
+    }
+    val states = StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_pressed), pressed)
+        addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
+        setEnterFadeDuration(0)
+        setExitFadeDuration(160)
+    }
+    return InsetDrawable(states, (insetHDp * d).toInt(), (insetVDp * d).toInt(), (insetHDp * d).toInt(), (insetVDp * d).toInt())
 }
 
 object Icons {

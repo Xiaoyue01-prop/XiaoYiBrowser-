@@ -358,7 +358,7 @@ class ContextMenuController(
                 setPadding(dp(14), 0, dp(14), 0)
                 minimumHeight = dp(44)
                 isClickable = true
-                setBackgroundResource(activity.selectableItemBackgroundRes())
+                background = activity.roundedPressBackground(isNight, insetHDp = 0f, insetVDp = 0f)
                 setOnClickListener {
                     dismiss()
                     postAction(action.run)

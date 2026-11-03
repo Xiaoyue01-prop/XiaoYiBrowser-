@@ -109,7 +109,7 @@ class MenuController(
         view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     }
 
-    private fun ripple(): Int = activity.selectableItemBackgroundRes()
+    private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(isNight)
 
     private fun onOff(b: Boolean): String = if (b) "Bật" else "Tắt"
 
@@ -378,7 +378,6 @@ class MenuController(
 
     private fun showMainPage(animate: Boolean = true) {
         val gapColor = Theme.gapColor(isNight)
-        val rp = ripple()
 
         val box = LinearLayout(activity)
         box.orientation = LinearLayout.VERTICAL
@@ -388,7 +387,7 @@ class MenuController(
             val c = LinearLayout(activity)
             c.orientation = LinearLayout.VERTICAL
             c.gravity = Gravity.CENTER
-            c.setBackgroundResource(rp)
+            c.background = ripple()
             val iv = ImageView(activity)
             iv.setImageDrawable(PathIcon(path, fg))
             c.addView(iv, LinearLayout.LayoutParams(dp(20), dp(20)))
@@ -413,7 +412,7 @@ class MenuController(
             r.orientation = LinearLayout.HORIZONTAL
             r.gravity = Gravity.CENTER_VERTICAL
             r.setPadding(dp(22), 0, dp(22), 0)
-            r.setBackgroundResource(rp)
+            r.background = ripple()
             val t = TextView(activity)
             t.text = label
             t.textSize = 15f
@@ -577,7 +576,6 @@ class MenuController(
 
     private fun showList(title: String, key: String) {
         val p = makePanel(title, "Chạm để mở, giữ lâu để xóa", 340) { showMainPage() }
-        val rp = ripple()
         var allItems = store.list(key)
         var displayedCount = 0
         val chunkSize = 30 // ✅ BƯỚC 9: Chỉ tải 30 mục mỗi lần
@@ -586,7 +584,7 @@ class MenuController(
             val row = LinearLayout(activity)
             row.orientation = LinearLayout.VERTICAL
             row.setPadding(dp(22), dp(10), dp(22), dp(10))
-            row.setBackgroundResource(rp)
+            row.background = ripple()
             val t = TextView(activity)
             t.text = if (entry.title.isBlank() || entry.title == entry.url) UrlUtils.shortUrl(entry.url) else entry.title
             t.textSize = 15f
@@ -675,7 +673,6 @@ class MenuController(
         val maxWidth = dp(400)
         val dynamicWidth = minOf((screenWidth * 0.8f).toInt(), maxWidth)
         val p = makePanel("Cài đặt", null, (dynamicWidth / d).toInt().coerceAtLeast(240)) { showMainPage() }
-        val rp = ripple()
         val engines = arrayOf("Google", "Bing", "DuckDuckGo")
 
         fun addRow(label: String, value: String, labelColor: Int, onClick: () -> Unit) {
@@ -683,7 +680,7 @@ class MenuController(
             r.orientation = LinearLayout.HORIZONTAL
             r.gravity = Gravity.CENTER_VERTICAL
             r.setPadding(dp(22), 0, dp(22), 0)
-            r.setBackgroundResource(rp)
+            r.background = ripple()
             val l = TextView(activity)
             l.text = label
             l.textSize = 16f
@@ -757,7 +754,7 @@ class MenuController(
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(20), dp(10), dp(20), dp(10))
-                setBackgroundResource(ripple())
+                background = ripple()
                 isClickable = true
                 isFocusable = true
             }
@@ -809,7 +806,7 @@ class MenuController(
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             setPadding(dp(12), dp(12), dp(12), dp(12))
-            setBackgroundResource(ripple())
+            background = ripple()
             setOnClickListener {
                 if (origin == null) {
                     host.toast("Không xác định được website hiện tại")
@@ -835,7 +832,6 @@ class MenuController(
 
     private fun showPermissionChoice(label: String, kind: String, origin: String?, current: PermissionState) {
         val p = makePanel(label, null, 320) { showSitePermissions() }
-        val rp = ripple()
         val options = listOf(
             Triple("Không được phép", PermissionState.DENY, "Chặn hoàn toàn quyền này"),
             Triple("Hỏi lại mỗi lần dùng", PermissionState.ASK, "Hỏi mỗi khi trang web yêu cầu"),
@@ -846,7 +842,7 @@ class MenuController(
             r.orientation = LinearLayout.VERTICAL
             r.gravity = Gravity.CENTER_VERTICAL
             r.setPadding(dp(22), dp(8), dp(22), dp(8))
-            r.setBackgroundResource(rp)
+            r.background = ripple()
             val titleRow = LinearLayout(activity)
             titleRow.orientation = LinearLayout.HORIZONTAL
             titleRow.gravity = Gravity.CENTER_VERTICAL
@@ -890,14 +886,13 @@ class MenuController(
 
     private fun chooseEngine() {
         val p = makePanel("Công cụ tìm kiếm", null, 320) { showSettings() }
-        val rp = ripple()
         val names = arrayOf("Google", "Bing", "DuckDuckGo")
         for (i in names.indices) {
             val r = LinearLayout(activity)
             r.orientation = LinearLayout.HORIZONTAL
             r.gravity = Gravity.CENTER_VERTICAL
             r.setPadding(dp(22), 0, dp(22), 0)
-            r.setBackgroundResource(rp)
+            r.background = ripple()
             val l = TextView(activity)
             l.text = names[i]
             l.textSize = 16f

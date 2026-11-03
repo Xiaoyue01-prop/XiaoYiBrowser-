@@ -83,13 +83,12 @@ class GlassDialogController(
 
     private fun dp(v: Int): Int = (v * d).toInt()
 
-    private fun ripple(): Int = activity.selectableItemBackgroundRes()
+    private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(isNight)
 
     private fun showNext() {
         val req = queue.removeFirstOrNull() ?: return
         active = req
         finishing = false
-        val rp = ripple()
 
         val layer = FrameLayout(activity).apply {
             isClickable = true
@@ -193,7 +192,7 @@ class GlassDialogController(
             if (bold) b.setTypeface(null, Typeface.BOLD)
             b.setTextColor(accent)
             b.gravity = Gravity.CENTER
-            b.setBackgroundResource(rp)
+            b.background = ripple()
             b.setOnClickListener { onClick() }
             AnimationSystem.press(b, Constants.PRESS_SCALE_ROW)
             return b

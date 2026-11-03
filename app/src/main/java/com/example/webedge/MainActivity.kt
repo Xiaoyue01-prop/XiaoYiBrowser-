@@ -1442,13 +1442,12 @@ class MainActivity : ComponentActivity() {
             return
         }
         suggestBox.removeAllViews()
-        val rp = selectableItemBackgroundRes()
         for (text in items) {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
             row.gravity = Gravity.CENTER_VERTICAL
             row.setPadding(dp(18), 0, dp(18), 0)
-            row.setBackgroundResource(rp)
+            row.background = roundedPressBackground(false)
             val ic = ImageView(this)
             ic.setImageDrawable(PathIcon(Icons.SEARCH, sub))
             row.addView(ic, LinearLayout.LayoutParams(dp(18), dp(18)))
