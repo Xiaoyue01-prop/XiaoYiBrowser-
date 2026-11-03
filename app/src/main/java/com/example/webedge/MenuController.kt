@@ -191,6 +191,8 @@ class MenuController(
             syncBlurFor(850)
         }
 
+        // Ép target/BlurView vẽ lại mỗi frame ngay từ lúc thêm thẻ để blur có ảnh thật sớm nhất.
+        syncBlurFor(1000)
         // Wait for the attached BlurView to reach its first pre-draw before revealing the card.
         val glassObserver = glass.viewTreeObserver
         if (glassObserver.isAlive) {
@@ -199,13 +201,18 @@ class MenuController(
                     if (glass.viewTreeObserver.isAlive) {
                         glass.viewTreeObserver.removeOnPreDrawListener(this)
                     }
-                    glass.post { startMenuAnimation() }
+                    // BlurView chỉ có ảnh mờ thật sau khi vẽ xong frame đầu. Chờ thêm 2 nhịp vsync
+                    // (thẻ vẫn ẩn ở alpha 0.01) để frame đầu của animation không lộ lớp kính trong.
+                    val choreographer = android.view.Choreographer.getInstance()
+                    choreographer.postFrameCallback {
+                        choreographer.postFrameCallback { startMenuAnimation() }
+                    }
                     return true
                 }
             })
         }
         // Safety fallback in case a device skips the first pre-draw callback.
-        card.postDelayed({ startMenuAnimation() }, 120L)
+        card.postDelayed({ startMenuAnimation() }, 200L)
     }
 
     /**
