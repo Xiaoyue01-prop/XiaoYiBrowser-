@@ -39,7 +39,7 @@ import eightbitlab.com.blurview.BlurView
 object GlassSystem {
     // One light-mode material system: consistent frost, edge and corner language.
     private const val BLUR_OVERLAY_ALPHA = 68
-    private const val FALLBACK_FILL_ALPHA = 126
+    internal const val FALLBACK_FILL_ALPHA = 126
 
     // Viền kính kiểu liquid glass: một vòng ngoài xám lạnh (giữ nét trên nền trắng) và một vành sáng mảnh
     // bên trong, sáng nhất ở góc trên-trái và dưới-phải. Chỉnh độ đậm viền toàn app ở hai hằng số này.
