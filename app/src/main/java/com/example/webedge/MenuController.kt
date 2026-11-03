@@ -61,7 +61,8 @@ class MenuController(
     private val d: Float,
     private val isNight: Boolean,
     private val fg: Int,
-    private val accent: Int
+    private val accent: Int,
+    private val onVisibilityChanged: () -> Unit = {}
 ) {
     private class Panel(
         val page: LinearLayout,
@@ -175,6 +176,7 @@ class MenuController(
         menuLayer = layer
         menuCard = card
         menuAnimationStarted = false
+        onVisibilityChanged()
         relayout()
         showMainPage(false)
 
@@ -326,6 +328,7 @@ class MenuController(
         compactFallback = null
         if (card == null) {
             root.removeView(layer)
+            onVisibilityChanged()
             return
         }
         // Menu đã nằm gọn trong Pill thì đóng thẳng lớp đang GONE, tránh fallback popOut
@@ -333,6 +336,7 @@ class MenuController(
         if (toolbarCompact && layer.visibility != View.VISIBLE) {
             OriginTransitionController.cancel(card)
             root.removeView(layer)
+            onVisibilityChanged()
             originView?.let { source ->
                 AnimationSystem.scaleTo(source, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
                 AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
@@ -343,6 +347,7 @@ class MenuController(
         syncBlurFor(600)
         OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
             root.removeView(layer)
+            onVisibilityChanged()
             originView?.let { source ->
                 if (toolbarCompact) {
                     AnimationSystem.scaleTo(source, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
@@ -786,7 +791,7 @@ class MenuController(
             if (uri.scheme == null || uri.host == null) null
             else "${uri.scheme}://${uri.host}${if (uri.port != -1) ":${uri.port}" else ""}"
         }.getOrNull()
-        val p = makePanel("Quyền trang web", null, 320) { showSettings() }
+        val p = makePanel("Quyền trang web", null, 340) { showSettings() }
         val site = currentSiteLabel()
 
         fun addPermissionRow(label: String, state: PermissionState, onClick: () -> Unit) {
@@ -871,7 +876,7 @@ class MenuController(
     }
 
     private fun showPermissionChoice(label: String, kind: String, origin: String?, current: PermissionState) {
-        val p = makePanel(label, null, 320) { showSitePermissions() }
+        val p = makePanel(label, null, 340) { showSitePermissions() }
         val options = listOf(
             Triple("Không được phép", PermissionState.DENY, "Chặn hoàn toàn quyền này"),
             Triple("Hỏi lại mỗi lần dùng", PermissionState.ASK, "Hỏi mỗi khi trang web yêu cầu"),
@@ -925,7 +930,7 @@ class MenuController(
     }
 
     private fun chooseEngine() {
-        val p = makePanel("Công cụ tìm kiếm", null, 320) { showSettings() }
+        val p = makePanel("Công cụ tìm kiếm", null, 340) { showSettings() }
         val names = arrayOf("Google", "Bing", "DuckDuckGo")
         for (i in names.indices) {
             val r = LinearLayout(activity)
@@ -955,7 +960,7 @@ class MenuController(
     }
 
     private fun editHome() {
-        val p = makePanel("Trang chủ", null, 320) { showSettings() }
+        val p = makePanel("Trang chủ", null, 340) { showSettings() }
         val input = EditText(activity)
         input.setSingleLine()
         input.inputType = InputType.TYPE_TEXT_VARIATION_URI
@@ -987,7 +992,7 @@ class MenuController(
     }
 
     private fun confirmClear() {
-        val p = makePanel("Xóa dữ liệu app?", null, 320) { showSettings() }
+        val p = makePanel("Xóa dữ liệu app?", null, 340) { showSettings() }
         val msg = TextView(activity)
         msg.text = "Xóa toàn bộ lịch sử, cookie, bộ nhớ đệm, quyền trang web đã nhớ và mọi dữ liệu khác của Summit. Hành động này không thể hoàn tác."
         msg.textSize = 14f

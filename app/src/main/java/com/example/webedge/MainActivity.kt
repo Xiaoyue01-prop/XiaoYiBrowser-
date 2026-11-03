@@ -1018,7 +1018,8 @@ class MainActivity : ComponentActivity() {
             d = d,
             isNight = isNight,
             fg = fg,
-            accent = accent
+            accent = accent,
+            onVisibilityChanged = { syncOrbMenuVisibility() }
         )
         contextMenuController = ContextMenuController(
             activity = this,
@@ -1355,7 +1356,8 @@ class MainActivity : ComponentActivity() {
         val inFullscreen = customVideoView != null
         // Auto-hide là trạng thái compact, không phải toolbar bị gỡ khỏi giao diện.
         val toolbarAvailable = barPresent && !inFullscreen
-        val temporarilyHidden = findOn || pageTyping || inFullscreen
+        val menuOpen = ::menu.isInitialized && menu.isOpen
+        val temporarilyHidden = findOn || pageTyping || inFullscreen || menuOpen
         val compact = barHidden && toolbarAvailable && !temporarilyHidden
 
         orbController?.setToolbarAvailable(toolbarAvailable)
