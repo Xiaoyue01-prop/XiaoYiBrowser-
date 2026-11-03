@@ -44,9 +44,6 @@ interface MenuHost {
     fun setBarHidden(hide: Boolean)
 }
 
-// Độ đặc của nền dự phòng ở đầu morph menu (0..255); nhạt dần về FALLBACK_FILL_ALPHA khi thẻ đã bung.
-private const val EARLY_FILL_ALPHA = 238
-
 /**
  * Menu ba chấm: khung kính nổi phía trên nút, gồm trang chính, danh sách (dấu trang/lịch sử),
  * cài đặt và các hộp xác nhận. Mọi trang đổi ngay trong cùng một khung.
@@ -138,7 +135,6 @@ class MenuController(
             foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, d, isNight)
         }
 
-        val fallbackFill = card.background as? android.graphics.drawable.GradientDrawable
         val glass = GlassSystem.createBlurView(
             activity,
             blurTarget,
@@ -183,14 +179,10 @@ class MenuController(
                 springSpec = AnimationSystem.MENU_MORPH,
                 // Vỏ kính mờ đặc ngay từ nút (không fade qua kính trong suốt); chỉ nội dung hiện muộn.
                 fadeIn = false,
-                // BlurView có thể trễ 1 frame so với thẻ đang co/dịch nên lộ nền trang web xuyên qua.
-                // Đầu morph tô nền dự phòng gần đặc rồi nhạt dần về độ trong thật khi thẻ đã bung.
-                onProgress = { p ->
-                    val t = ((p - 0.2f) / 0.5f).coerceIn(0f, 1f)
-                    val k = t * t * (3f - 2f * t)
-                    val a = (EARLY_FILL_ALPHA + (GlassSystem.FALLBACK_FILL_ALPHA - EARLY_FILL_ALPHA) * k).toInt()
-                    fallbackFill?.setColor(Color.argb(a, 255, 255, 255))
-                },
+                // Giống MenuTabs: BlurView nằm trong thẻ nên bị scale/dịch cùng thẻ, vùng blur lệch
+                // và trễ so với vỏ. Bù ngược transform để lớp blur luôn đứng yên theo toạ độ cửa sổ
+                // (khớp WebView phía sau), còn thẻ chỉ đóng vai cửa sổ cắt bo góc đang bung ra.
+                counterTransformView = glass,
                 contentViews = {
                     (0 until card.childCount).map { card.getChildAt(it) }.filter { it !== glass }
                 }
