@@ -142,7 +142,10 @@ class MainActivity : ComponentActivity() {
         chromeClient = { chromeClient },
         openExternal = { url, view -> handleSpecialUrl(url, view) },
         toast = { toast(it) },
-        isNight = { isNight }
+        isNight = { isNight },
+        density = { d },
+        foreground = { fg },
+        accent = { accent }
     )
 
     private val fileLauncher = registerForActivityResult(
@@ -417,13 +420,13 @@ class MainActivity : ComponentActivity() {
         // Hộp thoại JavaScript của trang: dùng chung hộp kính mờ. Trả lời JsResult là bắt buộc, nếu không trang sẽ đơ.
         // Trang trong cửa sổ popup trả false để hệ thống tự hiện (hộp kính nằm sau cửa sổ popup nên sẽ bị che).
         override fun onJsAlert(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-            if (view === popup.webView) return false
+            if (view === popup.webView) { popup.showJsAlert(url, message, result); return true }
             if (isActivityDestroyed) { result.cancel(); return true }
             glassDialog.show(jsTitle(url), message.orEmpty(), "OK") { _, _ -> result.confirm() }
             return true
         }
         override fun onJsConfirm(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-            if (view === popup.webView) return false
+            if (view === popup.webView) { popup.showJsConfirm(url, message, result); return true }
             if (isActivityDestroyed) { result.cancel(); return true }
             glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy") { ok, _ ->
                 if (ok) result.confirm() else result.cancel()
@@ -431,7 +434,7 @@ class MainActivity : ComponentActivity() {
             return true
         }
         override fun onJsPrompt(view: WebView, url: String?, message: String?, defaultValue: String?, result: JsPromptResult): Boolean {
-            if (view === popup.webView) return false
+            if (view === popup.webView) { popup.showJsPrompt(url, message, defaultValue, result); return true }
             if (isActivityDestroyed) { result.cancel(); return true }
             glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy", defaultValue.orEmpty()) { ok, text ->
                 if (ok) result.confirm(text.orEmpty()) else result.cancel()
@@ -439,7 +442,7 @@ class MainActivity : ComponentActivity() {
             return true
         }
         override fun onJsBeforeUnload(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-            if (view === popup.webView) return false
+            if (view === popup.webView) { popup.showJsBeforeUnload(url, message, result); return true }
             if (isActivityDestroyed) { result.cancel(); return true }
             val text = message?.takeIf { it.isNotBlank() } ?: "Các thay đổi bạn đã thực hiện có thể chưa được lưu."
             glassDialog.show("Rời khỏi trang này?", text, "Rời khỏi", "Ở lại") { ok, _ ->
