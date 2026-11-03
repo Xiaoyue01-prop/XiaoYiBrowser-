@@ -567,6 +567,9 @@ class TabSwitcherController(
             }, 120L)
         }
 
+        // Ẩn bảng cho tới khi morph đã đặt xong trạng thái đầu (thu nhỏ tại nút Tab).
+        // Nếu không, khung hình đầu tiên vẽ bảng ở kích thước đầy đủ rồi mới bung -> nháy.
+        if (animate) container.alpha = 0f
         container.addView(root, FrameLayout.LayoutParams(-1, -1))
         root.clipChildren = false
         root.clipToPadding = false
@@ -604,9 +607,17 @@ class TabSwitcherController(
                         // để luôn khớp hệ toạ độ WebView thay vì bị phóng to cùng lớp vỏ.
                         counterTransformView = dialogBlur
                     )) {
+                    // popIn tự đặt alpha = 0 rồi fade lên, không cần hiện thủ công.
                     AnimationSystem.popIn(container, 0.88f)
+                } else {
+                    // Trạng thái đầu của morph đã áp đồng bộ trong open(): lúc này mới hiện.
+                    container.alpha = 1f
                 }
             }
+            // Phòng hờ: nếu vì lý do nào đó morph không chạy thì không để bảng ẩn mãi.
+            container.postDelayed({
+                if (!morphStarted && !closing && container.isAttachedToWindow) container.alpha = 1f
+            }, 300L)
             container.post {
                 startMorph()
                 if (!morphStarted) {
