@@ -101,12 +101,12 @@ class MenuController(
 
     private fun stylePrimary(view: TextView, color: Int = Color.BLACK) {
         view.setTextColor(color)
-        view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        view.typeface = AppTypography.medium
     }
 
     private fun styleSecondary(view: TextView) {
         view.setTextColor(Color.rgb(82, 82, 88))
-        view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        view.typeface = AppTypography.medium
     }
 
     private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(isNight)
@@ -656,7 +656,7 @@ class MenuController(
                 moreBtn.text = "Xem thêm ${allItems.size - displayedCount} mục..."
                 moreBtn.textSize = 14f
                 moreBtn.setTextColor(accent)
-                moreBtn.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+                moreBtn.setTypeface(AppTypography.medium)
                 moreBtn.gravity = Gravity.CENTER
                 moreBtn.setPadding(dp(22), dp(12), dp(22), dp(12))
                 moreBtn.setOnClickListener {
@@ -937,7 +937,7 @@ class MenuController(
         input.inputType = InputType.TYPE_TEXT_VARIATION_URI
         input.setText(store.homeUrl)
         input.setTextColor(Color.BLACK)
-        input.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+        input.setTypeface(AppTypography.medium)
         input.textSize = 15f
         input.setPadding(dp(14), 0, dp(14), 0)
         input.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)

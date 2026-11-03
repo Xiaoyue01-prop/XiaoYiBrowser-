@@ -2,7 +2,6 @@ package com.example.webedge
 
 import android.app.Activity
 import android.graphics.Color
-import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
 import android.view.Window
@@ -143,9 +142,8 @@ class GlassDialogController(
             content.addView(TextView(activity).apply {
                 text = req.title
                 textSize = 16f
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                typeface = AppTypography.medium
                 setTextColor(fg)
-                includeFontPadding = false
                 gravity = Gravity.CENTER
                 setPadding(dp(22), dp(20), dp(22), 0)
             })
@@ -156,8 +154,7 @@ class GlassDialogController(
             text = req.message
             textSize = 16f
             setTextColor(fg)
-            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-            includeFontPadding = false
+            typeface = AppTypography.medium
             setLineSpacing(dp(2).toFloat(), 1f)
             gravity = Gravity.CENTER
             val top = if (req.title != null) dp(8) else dp(22)
@@ -174,9 +171,9 @@ class GlassDialogController(
                 setText(req.defaultInput)
                 setSelectAllOnFocus(true)
                 setTextColor(fg)
-                typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-                includeFontPadding = false
+                typeface = AppTypography.medium
                 textSize = 16f
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
                 setPadding(dp(14), 0, dp(14), 0)
                 background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
             }
@@ -198,15 +195,11 @@ class GlassDialogController(
         val gap = Theme.gapColor(isNight)
         content.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(-1, 1))
 
-        fun button(label: String, bold: Boolean, onClick: () -> Unit): TextView {
+        fun button(label: String, onClick: () -> Unit): TextView {
             val b = TextView(activity)
             b.text = label
             b.textSize = 16f
-            b.typeface = Typeface.create(
-                if (bold) "sans-serif-medium" else "sans-serif",
-                Typeface.NORMAL
-            )
-            b.includeFontPadding = false
+            b.typeface = AppTypography.medium
             b.setTextColor(accent)
             b.gravity = Gravity.CENTER
             b.background = ripple()
@@ -217,10 +210,10 @@ class GlassDialogController(
 
         val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         if (req.negative != null) {
-            row.addView(button(req.negative, false) { finish(false) }, LinearLayout.LayoutParams(0, dp(50), 1f))
+            row.addView(button(req.negative) { finish(false) }, LinearLayout.LayoutParams(0, dp(50), 1f))
             row.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(1, dp(50)))
         }
-        row.addView(button(req.positive, true) { finish(true) }, LinearLayout.LayoutParams(0, dp(50), 1f))
+        row.addView(button(req.positive) { finish(true) }, LinearLayout.LayoutParams(0, dp(50), 1f))
         content.addView(row, LinearLayout.LayoutParams(-1, dp(50)))
 
         card.addView(content, FrameLayout.LayoutParams(-1, -2))

@@ -58,6 +58,13 @@ object Constants {
 }
 
 /** Màu dùng chung của Summit (giao diện sáng; tham số isNight giữ lại để sau này thêm giao diện tối). */
+/** Typeface dùng chung cho chữ giao diện native của Summit (MenuController, dialog, thanh công cụ). */
+object AppTypography {
+    // MenuController đã dùng sans-serif-medium cho stylePrimary/styleSecondary.
+    // Dùng một instance chung để các thành phần không tự lệch weight/metrics.
+    val medium: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+}
+
 object Theme {
     // Màu accent chính (xanh dương iOS)
     val ACCENT_BLUE = Color.rgb(10, 132, 255)
