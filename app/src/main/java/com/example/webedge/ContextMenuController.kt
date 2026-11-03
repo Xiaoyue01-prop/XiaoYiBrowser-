@@ -63,7 +63,7 @@ class ContextMenuController(
     private val onCopy: (String) -> Unit,
     private val onShare: (String) -> Unit,
     private val onDownloadImage: (String) -> Unit,
-    private val onBookmark: () -> Unit,
+    private val onOpenLinkInBackground: (String) -> Unit,
     private val onFind: () -> Unit
 ) {
     private var layer: FrameLayout? = null
@@ -180,7 +180,7 @@ class ContextMenuController(
                 WebView.HitTestResult.EMAIL_TYPE,
                 WebView.HitTestResult.GEO_TYPE -> {
                     if (hit.extra.isNullOrBlank()) return@setOnLongClickListener false
-                    listOf(Action("Sao chép", Icons.BOOKMARK_OUTLINE) { onCopy(hit.extra.orEmpty()) })
+                    listOf(Action("Sao chép", Icons.COPY) { onCopy(hit.extra.orEmpty()) })
                 }
                 WebView.HitTestResult.UNKNOWN_TYPE -> {
                     // Một số trang dùng anchor JavaScript/không có href chuẩn khiến WebView
@@ -249,17 +249,28 @@ class ContextMenuController(
 
     private fun linkActions(url: String) = listOf(
         Action("Mở trong tab mới", Icons.TABS) { onOpenLink(url) },
-        Action("Sao chép liên kết", Icons.BOOKMARK_OUTLINE) { onCopy(url) },
-        Action("Chia sẻ liên kết", Icons.SHARE) { onShare(url) },
-        Action("Thêm trang hiện tại vào dấu trang", Icons.BOOKMARK) { onBookmark() }
+        Action("Mở ở tab nền", Icons.TABS) { onOpenLinkInBackground(url) },
+        Action("Sao chép liên kết", Icons.COPY) { onCopy(url) },
+        Action("Chia sẻ", Icons.SHARE) { onShare(url) },
+        Action("Mở bằng ứng dụng khác", Icons.OPEN_IN_NEW) { openExternally(url) }
     )
 
     private fun imageActions(url: String) = listOf(
         Action("Mở hình ảnh", Icons.TABS) { onOpenLink(url) },
         Action("Lưu hình ảnh", Icons.DOWNLOAD) { onDownloadImage(url) },
-        Action("Sao chép địa chỉ hình ảnh", Icons.BOOKMARK_OUTLINE) { onCopy(url) },
-        Action("Chia sẻ hình ảnh", Icons.SHARE) { onShare(url) }
+        Action("Sao chép địa chỉ hình ảnh", Icons.COPY) { onCopy(url) },
+        Action("Chia sẻ", Icons.SHARE) { onShare(url) },
+        Action("Tìm hình ảnh bằng Google Lens", Icons.SEARCH) {
+            onOpenLink("https://lens.google.com/uploadbyurl?url=" + java.net.URLEncoder.encode(url, "UTF-8"))
+        }
     )
+
+    private fun openExternally(url: String) {
+        runCatching {
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+            activity.startActivity(android.content.Intent.createChooser(intent, null))
+        }
+    }
 
     /**
      * SRC_IMAGE_ANCHOR_TYPE chỉ cho biết anchor có ảnh con. Nó không cho biết
@@ -338,14 +349,14 @@ class ContextMenuController(
 
         val list = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setPadding(dp(6), dp(6), dp(6), dp(6))
         }
         actions.forEachIndexed { index, action ->
             val row = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(16), 0, dp(16), 0)
-                minimumHeight = dp(54)
+                setPadding(dp(14), 0, dp(14), 0)
+                minimumHeight = dp(44)
                 isClickable = true
                 setBackgroundResource(activity.selectableItemBackgroundRes())
                 setOnClickListener {
@@ -357,13 +368,13 @@ class ContextMenuController(
                 setImageDrawable(PathIcon(action.icon, this@ContextMenuController.foreground))
                 imageTintList = android.content.res.ColorStateList.valueOf(this@ContextMenuController.foreground)
             }
-            row.addView(icon, LinearLayout.LayoutParams(dp(22), dp(22)))
+            row.addView(icon, LinearLayout.LayoutParams(dp(20), dp(20)))
             val label = TextView(activity).apply {
                 text = action.title
-                textSize = 16f
+                textSize = 15f
                 setTextColor(this@ContextMenuController.foreground)
                 typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-                setPadding(dp(18), dp(8), 0, dp(8))
+                setPadding(dp(14), dp(6), 0, dp(6))
             }
             row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
@@ -371,7 +382,7 @@ class ContextMenuController(
             if (index != actions.lastIndex) {
                 val divider = View(activity).apply { setBackgroundColor(if (isNight) 0x35FFFFFF else 0x26000000) }
                 val lp = LinearLayout.LayoutParams(-1, dp(1))
-                lp.setMargins(dp(12), dp(2), dp(12), dp(2))
+                lp.setMargins(dp(12), dp(1), dp(12), dp(1))
                 list.addView(divider, lp)
             }
         }
@@ -382,7 +393,7 @@ class ContextMenuController(
         }
         panel.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         val maxHeight = (activity.resources.displayMetrics.heightPixels * 0.62f).toInt()
-        val width = minOf(dp(320), activity.resources.displayMetrics.widthPixels - dp(36))
+        val width = minOf(dp(250), activity.resources.displayMetrics.widthPixels - dp(36))
         val panelLp = FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT)
         panelLp.gravity = Gravity.TOP or Gravity.START
         // Ẩn cho tới khi đã đặt đúng vị trí, tránh nháy ở góc trên trái.

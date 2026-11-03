@@ -985,10 +985,7 @@ class MainActivity : ComponentActivity() {
                     toast("Đang tải hình ảnh")
                 }.onFailure { toast("Không thể tải hình ảnh này") }
             },
-            onBookmark = {
-                val added = store.toggleBookmark(web.title ?: currentUrl, currentUrl)
-                toast(if (added) "Đã thêm dấu trang" else "Đã xóa dấu trang")
-            },
+            onOpenLinkInBackground = ::openLinkInBackgroundTab,
             onFind = ::openFind
         )
         if (::web.isInitialized) contextMenuController?.attach(web)
@@ -1627,6 +1624,14 @@ class MainActivity : ComponentActivity() {
         captureActiveTab()
         val tab = tabManager.addNew(url = url, title = url)
         activateTab(tab)
+    }
+
+    // Mở liên kết ở tab nền: tab mới được thêm nhưng tab đang xem giữ nguyên.
+    private fun openLinkInBackgroundTab(url: String) {
+        val previous = tabManager.getActive()
+        tabManager.addNew(url = url, title = url)
+        previous?.let { tabManager.switchTo(it.id) }
+        toast("Đã mở ở tab nền")
     }
 
     // launchMode=singleTask: link mới tới khi app đang chạy sẽ vào đây thay vì mở thêm một cửa sổ.
