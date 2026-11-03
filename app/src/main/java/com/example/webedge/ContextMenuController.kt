@@ -76,9 +76,11 @@ class ContextMenuController(
                     // Chuẩn bị hit-test DOM từ đầu cử chỉ. Khi WebView báo UNKNOWN_TYPE
                     // ở thời điểm long-press, dữ liệu này thường đã sẵn sàng mà không
                     // cần chặn thao tác chọn chữ mặc định.
-                    val scale = webView.scale.takeIf { it > 0f } ?: 1f
-                    val cssX = touchWebX / scale
-                    val cssY = touchWebY / scale
+                    // MotionEvent coordinates are physical pixels; elementFromPoint expects
+                    // CSS pixels. Convert through both display density and the current page zoom.
+                    val cssScale = cssCoordinateScale(webView)
+                    val cssX = touchWebX / cssScale
+                    val cssY = touchWebY / cssScale
                     val script = """
                         (function() {
                             var el = document.elementFromPoint($cssX, $cssY);
@@ -180,6 +182,12 @@ class ContextMenuController(
         value.startsWith("http://", ignoreCase = true) ||
             value.startsWith("https://", ignoreCase = true)
 
+    /** Physical WebView pixels -> CSS pixels (display density × page zoom). */
+    private fun cssCoordinateScale(webView: WebView): Float {
+        val pageScale = webView.scale.takeIf { it > 0f } ?: 1f
+        return (density * pageScale).coerceAtLeast(1f)
+    }
+
     private fun resolveUnknownAnchorHit(webView: WebView, fallbackUrl: String) {
         val sequence = touchSequence
         val handler = Handler(Looper.getMainLooper(), Handler.Callback { message ->
@@ -214,9 +222,9 @@ class ContextMenuController(
      * để phân loại đúng phần tử tại tọa độ long-press.
      */
     private fun resolveLinkedImageHit(webView: WebView, fallbackLinkUrl: String) {
-        val scale = webView.scale.takeIf { it > 0f } ?: 1f
-        val cssX = touchWebX / scale
-        val cssY = touchWebY / scale
+        val cssScale = cssCoordinateScale(webView)
+        val cssX = touchWebX / cssScale
+        val cssY = touchWebY / cssScale
         val script = """
             (function() {
                 var el = document.elementFromPoint($cssX, $cssY);

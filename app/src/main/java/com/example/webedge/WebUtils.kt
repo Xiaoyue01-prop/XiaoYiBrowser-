@@ -6,6 +6,8 @@ import android.content.Intent
 import android.net.Uri
 import android.webkit.WebSettings
 import android.webkit.WebView
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import java.util.Locale
 
 // Tiện ích dùng chung cho WebView: cấu hình mặc định, user agent và mở link ngoài app.
@@ -31,6 +33,17 @@ fun WebSettings.applyBrowserDefaults() {
     // Giữ bảo vệ Chromium bật rõ ràng cho mọi tab, kể cả popup đăng nhập.
     safeBrowsingEnabled = true
     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+
+    // Summit renders its own glass context menu. Explicitly disable the WebView
+    // provider's built-in hyperlink menu so it cannot appear underneath/replace it.
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.HYPERLINK_CONTEXT_MENU_ITEMS)) {
+        runCatching {
+            WebSettingsCompat.setHyperlinkContextMenuItems(
+                this,
+                WebSettingsCompat.HyperlinkContextMenuItems.DISABLED
+            )
+        }
+    }
 }
 
 private const val FALLBACK_DESKTOP_UA =
