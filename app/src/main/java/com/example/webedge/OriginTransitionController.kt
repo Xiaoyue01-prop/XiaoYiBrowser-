@@ -246,6 +246,7 @@ object OriginTransitionController {
         m.anim?.cancel()
         val closing = to == 0f
         lateinit var handle: AnimationSystem.FloatSpringHandle
+        AnimationSystem.boostFrameRate(m.view)
         handle = AnimationSystem.springFloat(
             from = m.progress,
             to = to,
@@ -258,7 +259,10 @@ object OriginTransitionController {
                 if (closing && m.sourceHidden && value < 0.35f) showSource(m)
             },
             onEnd = { canceled, _, _ ->
-                if (m.anim === handle) m.anim = null
+                if (m.anim === handle) {
+                    m.anim = null
+                    AnimationSystem.releaseFrameRate(m.view)
+                }
                 if (!canceled) {
                     m.progress = to
                     if (!closing) {

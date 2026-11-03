@@ -33,21 +33,21 @@ object AnimationSystem {
     /** Nhả tay sau khi nhấn: nảy rõ, đúng cảm giác nút kính của iOS. */
     val PRESS_RELEASE = SpringSpec(0.40f, 0.30f)
     /** Bề mặt mở ra (menu, dialog, thẻ, nút Orb): vượt đích chừng 4-5% rồi đứng yên, kiểu iOS 26. */
-    val SETTLE = SpringSpec(0.42f, 0.70f)
+    val SETTLE = SpringSpec(0.50f, 0.76f)
     /** Bung từ nút bấm ra bề mặt lớn; preset chung cho các bề mặt morph như MenuTabs. */
-    val MORPH = SpringSpec(0.46f, 0.72f)
+    val MORPH = SpringSpec(0.54f, 0.78f)
     /** Thu ngược về nút; preset chung, gần như không nảy để không chạy lố qua nút. */
-    val MORPH_CLOSE = SpringSpec(0.34f, 0.90f)
+    val MORPH_CLOSE = SpringSpec(0.40f, 0.90f)
     /** Menu ba chấm: chậm hơn MORPH khoảng 22%, giữ nguyên độ nảy và quỹ đạo. */
-    val MENU_MORPH = SpringSpec(0.56f, 0.72f)
+    val MENU_MORPH = SpringSpec(0.64f, 0.78f)
     /** Menu ba chấm khi đóng: chậm hơn MORPH_CLOSE khoảng 24%, vẫn thu gọn gọn gàng. */
-    val MENU_MORPH_CLOSE = SpringSpec(0.34f, 0.95f)
+    val MENU_MORPH_CLOSE = SpringSpec(0.42f, 0.95f)
     /** Nút gốc mờ đi/hiện lại khi bề mặt morph: chậm hơn QUICK để nút tan vào menu thay vì biến mất đột ngột. */
-    val SOURCE_FADE = SpringSpec(0.28f, 1.0f)
+    val SOURCE_FADE = SpringSpec(0.32f, 1.0f)
     /** Thu gọn thanh công cụ, toast, đổi trạng thái: vượt nhẹ hơn SETTLE một chút. */
-    val SMOOTH = SpringSpec(0.50f, 0.62f)
+    val SMOOTH = SpringSpec(0.54f, 0.66f)
     /** Đóng lại (scale/alpha được chặn ở 0 nên không bị lật): chỉ nảy rất nhẹ. */
-    val DISMISS = SpringSpec(0.30f, 0.78f)
+    val DISMISS = SpringSpec(0.36f, 0.80f)
 
     // === Hằng số ===
     /** Nút kính phồng lên khi nhấn (như Liquid Glass của iOS 26). */
@@ -55,6 +55,18 @@ object AnimationSystem {
 
     /** Ngưỡng kết thúc phù hợp cho tiến độ chuẩn hoá (0..1), như morph và resize. */
     val NORMALIZED_VALUE_MIN_CHANGE = DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE
+
+    /**
+     * Android 15+ có thể hạ tần số quét khi không có thao tác chạm, làm animation tự chạy
+     * (bung menu, morph) chỉ ~60Hz trên màn 120Hz nên kém mượt hơn iOS. Xin tần số cao trong lúc chạy.
+     */
+    fun boostFrameRate(view: View) {
+        view.setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_HIGH)
+    }
+
+    fun releaseFrameRate(view: View) {
+        view.setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT)
+    }
 
     private val running =
         WeakHashMap<View, HashMap<DynamicAnimation.ViewProperty, SpringAnimation>>()
@@ -126,9 +138,11 @@ object AnimationSystem {
         }
         anim.addEndListener { _, canceled, _, _ ->
             if (map[prop] === anim) map.remove(prop)
+            if (map.isEmpty()) releaseFrameRate(view)
             if (!canceled) onEnd?.invoke()
         }
         map[prop] = anim
+        boostFrameRate(view)
         anim.start()
     }
 
