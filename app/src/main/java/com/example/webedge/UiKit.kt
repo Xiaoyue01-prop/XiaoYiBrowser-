@@ -51,6 +51,10 @@ object Constants {
     // === Bộ nhớ: số WebView tab nền được giữ sống (tab vượt mức bị giải phóng, mở lại sẽ tải lại từ URL) ===
     const val MAX_LIVE_WEBVIEWS = 6
     const val LOW_MEMORY_LIVE_WEBVIEWS = 2
+
+    // Giới hạn kích thước ảnh tab theo pixel thực để tránh 100 thumbnail ngốn hàng trăm MB RAM.
+    const val THUMBNAIL_MAX_WIDTH_PX = 360
+    const val THUMBNAIL_MAX_HEIGHT_PX = 800
 }
 
 /** Màu dùng chung của Summit (giao diện sáng; tham số isNight giữ lại để sau này thêm giao diện tối). */

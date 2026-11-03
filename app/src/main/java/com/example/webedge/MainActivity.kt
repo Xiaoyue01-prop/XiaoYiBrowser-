@@ -406,6 +406,8 @@ class MainActivity : ComponentActivity() {
             exitFullscreenView()
         }
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
+            // Không mở cửa sổ do quảng cáo/script tự bật; OAuth và đăng nhập bấm nút vẫn hoạt động.
+            if (!isUserGesture) return false
             return popup.create(resultMsg)
         }
         override fun onCloseWindow(window: WebView) {

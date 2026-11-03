@@ -234,7 +234,32 @@ class WebMediaController(private val activity: ComponentActivity) {
 internal const val MEDIA_JS = """
 (function(){
 if (window.__summitMedia) return;
-var cur = null, lastSent = 0;
+var cur = null, lastSent = 0, detachedObserver = null;
+
+function stopDetachedWatch(){
+  if (detachedObserver) {
+    detachedObserver.disconnect();
+    detachedObserver = null;
+  }
+}
+function watchDetachedMedia(){
+  // Chỉ theo dõi DOM khi thật sự có media được chọn; MutationObserver tự dừng
+  // polling 3 giây/lần và không tạo timer nền khi người dùng đã pause video.
+  if (!cur || detachedObserver || !window.MutationObserver) return;
+  var root = document.documentElement;
+  if (!root) return;
+  detachedObserver = new MutationObserver(function(){
+    // isConnected cũng bắt được media nằm trong Shadow DOM khi host bị tháo khỏi tài liệu.
+    if (cur && !cur.isConnected) {
+      cur = null;
+      stopDetachedWatch();
+      send(true);
+    } else if (!cur) {
+      stopDetachedWatch();
+    }
+  });
+  detachedObserver.observe(root, { childList: true, subtree: true });
+}
 
 // WebView không hỗ trợ Picture-in-Picture của web (nút PiP trong trình phát bấm không có tác dụng).
 // Giả lập: chuyển video sang toàn màn hình rồi nhờ app vào PiP của Android.
@@ -245,6 +270,7 @@ try {
   HTMLVideoElement.prototype.requestPictureInPicture = function(){
     var v = this;
     cur = v;
+    watchDetachedMedia();
     try { EdgeBridge.requestPip(); } catch (e) {}
     var p;
     try { p = v.requestFullscreen ? v.requestFullscreen() : (v.webkitRequestFullscreen && v.webkitRequestFullscreen()); } catch (e) {}
@@ -274,7 +300,12 @@ function send(force){
   if (!force && now - lastSent < 1000) return;
   lastSent = now;
   var m = cur;
-  if (!m || !m.isConnected) { EdgeBridge.mediaState(0, false, '', '', '', 0, 0, 1, 0, 0); return; }
+  if (!m || !m.isConnected) {
+    cur = null;
+    stopDetachedWatch();
+    EdgeBridge.mediaState(0, false, '', '', '', 0, 0, 1, 0, 0);
+    return;
+  }
   var i = info();
   var dur = isFinite(m.duration) ? m.duration * 1000 : 0;
   EdgeBridge.mediaState(1, !m.paused && !m.ended, i.title, i.artist, i.art,
@@ -285,7 +316,10 @@ function send(force){
 function onEvent(e){
   var t = e.target;
   if (!(t instanceof HTMLMediaElement)) return;
-  if (e.type === 'play' || e.type === 'playing') cur = t;
+  if (e.type === 'play' || e.type === 'playing') {
+    cur = t;
+    watchDetachedMedia();
+  }
   if (t !== cur) return;
   send(e.type !== 'timeupdate');
 }
@@ -293,8 +327,7 @@ function onEvent(e){
 ['play', 'playing', 'pause', 'ended', 'seeked', 'ratechange', 'durationchange', 'loadedmetadata', 'emptied']
   .forEach(function(n){ document.addEventListener(n, onEvent, true); });
 document.addEventListener('timeupdate', function(e){ if (e.target === cur) send(false); }, true);
-window.addEventListener('pagehide', function(){ cur = null; send(true); });
-setInterval(function(){ if (cur && !cur.isConnected) { cur = null; send(true); } }, 3000);
+window.addEventListener('pagehide', function(){ cur = null; stopDetachedWatch(); send(true); });
 
 window.__summitMedia = {
   play: function(){ if (cur) { var p = cur.play(); if (p && p.catch) p.catch(function(){}); } },
@@ -303,7 +336,9 @@ window.__summitMedia = {
   report: function(){
     if (!cur) {
       var list = document.querySelectorAll('video,audio');
-      for (var k = 0; k < list.length; k++) { if (!list[k].paused) { cur = list[k]; break; } }
+      for (var k = 0; k < list.length; k++) {
+        if (!list[k].paused) { cur = list[k]; watchDetachedMedia(); break; }
+      }
     }
     send(true);
   }

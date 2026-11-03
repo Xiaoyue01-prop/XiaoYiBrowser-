@@ -19,7 +19,8 @@ fun WebSettings.applyBrowserDefaults() {
     domStorageEnabled = true
     databaseEnabled = true
     setSupportMultipleWindows(true)
-    javaScriptCanOpenWindowsAutomatically = true
+    // Chỉ cho phép popup khi có thao tác người dùng; giảm popup quảng cáo tự bật.
+    javaScriptCanOpenWindowsAutomatically = false
     mediaPlaybackRequiresUserGesture = false
     // Luôn dùng viewport meta của trang; đây là cấu hình quan trọng cho responsive layout.
     useWideViewPort = true

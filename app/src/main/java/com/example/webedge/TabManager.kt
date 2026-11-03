@@ -135,15 +135,25 @@ class TabManager {
         captureThumbnail(tab, web)
     }
     private fun captureThumbnail(tab: Tab, web: WebView) {
+        var captured: Bitmap? = null
         try {
             val w = web.width
             val h = web.height
             if (w <= 0 || h <= 0) return
             // Vẽ trực tiếp vào bitmap nhỏ, tránh tạo bitmap toàn màn hình rồi scale (tốn RAM).
-            val targetWidth = (180f * web.resources.displayMetrics.density).toInt().coerceAtLeast(1)
-            val targetHeight = (targetWidth.toFloat() * h / w).toInt().coerceAtLeast(1)
-            // ✅ BƯỚC 3: RGB_565 thay ARGB_8888 → giảm 50% RAM
+            // 180dp giữ độ nét trên màn hình nhỏ; giới hạn pixel tuyệt đối để 100 tab không
+            // giữ 100 bitmap 500-600px rộng trên máy mật độ điểm ảnh cao.
+            val desiredWidth = (180f * web.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+            val scale = minOf(
+                desiredWidth.toFloat() / w,
+                Constants.THUMBNAIL_MAX_WIDTH_PX.toFloat() / w,
+                Constants.THUMBNAIL_MAX_HEIGHT_PX.toFloat() / h
+            )
+            val targetWidth = (w * scale).toInt().coerceAtLeast(1)
+            val targetHeight = (h * scale).toInt().coerceAtLeast(1)
+            // RGB_565 giảm gần 50% bộ nhớ so với ARGB_8888; giữ đúng tỉ lệ ảnh.
             val scaled = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.RGB_565)
+            captured = scaled
             val canvas = Canvas(scaled)
             canvas.drawColor(Color.WHITE)
             canvas.scale(targetWidth.toFloat() / w, targetHeight.toFloat() / h)
@@ -152,13 +162,18 @@ class TabManager {
             // đã cuộn xuống bị đẩy lệch xuống đúng bằng quãng đã cuộn (trắng phía trên, tiêu đề cố định nằm giữa ảnh).
             canvas.translate(-web.scrollX.toFloat(), -web.scrollY.toFloat())
             web.draw(canvas)
-            tab.thumbnail?.takeIf { it !== scaled }?.recycle()
+            val oldThumbnail = tab.thumbnail
             tab.thumbnail = scaled
             tab.thumbnailUrl = tab.url
             tab.thumbnailVersion = maxOf(System.currentTimeMillis(), tab.thumbnailVersion + 1L)
+            captured = null // bitmap hiện thuộc tab; chỉ recycle ảnh cũ sau khi thay thế thành công
+            oldThumbnail?.takeUnless { it.isRecycled || it === tab.thumbnail }?.recycle()
         } catch (e: Exception) {
-            // ✅ BƯỚC 3: Log thay vì nuốt lỗi im lặng
+            captured?.takeUnless { it.isRecycled }?.recycle()
             Log.w(TAG, "Không chụp được thumbnail", e)
+        } catch (e: OutOfMemoryError) {
+            captured?.takeUnless { it.isRecycled }?.recycle()
+            Log.w(TAG, "Hết bộ nhớ khi chụp thumbnail", e)
         }
     }
     fun updateForWebView(web: WebView, url: String, title: String) {
