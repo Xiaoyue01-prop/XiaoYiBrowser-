@@ -121,6 +121,10 @@ class MainActivity : ComponentActivity() {
     private var currentUrl = ""
     private var mobileUa = ""
     private var solidTop: Int? = null
+
+    // Màu dải thanh trạng thái mà trang của từng tab đã báo (không có mục = chưa biết).
+    private class TopState(val color: Int?)
+    private val topColors = java.util.WeakHashMap<WebView, TopState>()
     private var orbController: OrbMenuController? = null
     private var programmatic = false
     private var suggestJob: Job? = null
@@ -158,9 +162,11 @@ class MainActivity : ComponentActivity() {
             val activity = activityWeak.get() ?: return
             val owner = ownerWeak.get() ?: return
             activity.runOnUiThread {
-                if (owner === activity.web && !activity.isActivityDestroyed) {
-                    activity.applyTopColor(Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255)))
-                }
+                if (activity.isActivityDestroyed) return@runOnUiThread
+                val color = Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))
+                // Nhớ màu theo từng tab kể cả lúc chạy nền, để đổi tab là có màu đúng ngay.
+                activity.topColors[owner] = TopState(color)
+                if (owner === activity.web) activity.applyTopColor(color)
             }
         }
 
@@ -215,7 +221,9 @@ class MainActivity : ComponentActivity() {
             val activity = activityWeak.get() ?: return
             val owner = ownerWeak.get() ?: return
             activity.runOnUiThread {
-                if (owner === activity.web && !activity.isActivityDestroyed) activity.applyTopColor(null)
+                if (activity.isActivityDestroyed) return@runOnUiThread
+                activity.topColors[owner] = TopState(null)
+                if (owner === activity.web) activity.applyTopColor(null)
             }
         }
     }
@@ -1591,6 +1599,12 @@ class MainActivity : ComponentActivity() {
             requestMediaState(target)
         }
         tabManager.switchTo(tab.id)
+        // Dải thanh trạng thái theo tab mới ngay lúc đổi, rồi nhờ script báo lại để chắc chắn (script
+        // chỉ báo khi giá trị đổi, còn báo cáo lúc tab chạy nền đã bị bỏ qua).
+        solidTop = topColors[target]?.color
+        target.post {
+            if (web === target) target.evaluateJavascript("window.__edgeForceTop&&window.__edgeForceTop()", null)
+        }
         currentUrl = target.url ?: tab.url
         target.alpha = 1f
         pillProgress.progress = 0f

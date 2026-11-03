@@ -617,6 +617,8 @@ function schedLift(){
 function schedAll(){ sched(); schedLift(); }
 
 window.__edgeRun = function(){ run(); runLift(); };
+// Đổi tab: native đã bỏ qua báo cáo màu lúc trang này chạy nền, nên xoá bộ nhớ 'last' để báo lại.
+window.__edgeForceTop = function(){ last = ''; run(); };
 window.__edgeLift = function(){ runLift(); };
 window.addEventListener('scroll', sched, {passive: true});
 window.addEventListener('resize', schedAll);

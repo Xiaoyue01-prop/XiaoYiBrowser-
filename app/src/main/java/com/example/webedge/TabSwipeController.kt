@@ -72,7 +72,9 @@ class TabSwipeController(
         var committed = false
         var holding = false
         var reachedThreshold = false
-        var rimAlpha = -1
+        /** Viền kính là View riêng phủ lên trang (foreground của WebView vẽ không ổn định). */
+        var rimWeb: View? = null
+        var rimLayer: View? = null
     }
 
     private var current: Run? = null
@@ -164,6 +166,8 @@ class TabSwipeController(
         val hasTarget = target != null || neighbour == tabs.size
 
         var layer: View? = null
+        var rimWeb: View? = null
+        var rimLayer: View? = null
         if (hasTarget) {
             val thumb: Bitmap? = target?.thumbnail?.takeUnless { it.isRecycled }
             layer = ImageView(context).apply {
@@ -180,14 +184,31 @@ class TabSwipeController(
             web.outlineProvider = rounded
             web.clipToOutline = true
             // Viền kính cho cả hai trang: trên nền trắng của khe hở, mép trang vẫn rõ như kính.
-            layer.foreground = GlassSystem.createBorder(CORNER_DP.toInt(), density, false)
-            web.foreground = GlassSystem.createBorder(CORNER_DP.toInt(), density, false)
+            // Dùng View riêng thay vì foreground: WebView của Chromium có lúc bỏ qua foreground.
+            rimLayer = newRim(lp).also { host.addView(it, host.childCount, rimLp(web)) }
+            rimWeb = newRim(lp).also { host.addView(it, host.indexOfChild(web) + 1, rimLp(web)) }
         }
         val r = Run(web, sgn, layer, target, hasTarget)
+        r.rimWeb = rimWeb
+        r.rimLayer = rimLayer
         current = r
         revealAt = Long.MAX_VALUE
         render(r, 0f)
         return true
+    }
+
+    private fun rimLp(web: WebView): FrameLayout.LayoutParams {
+        val margins = web.layoutParams as? ViewGroup.MarginLayoutParams
+        val lp = FrameLayout.LayoutParams(web.width, web.height)
+        if (margins != null) lp.setMargins(margins.leftMargin, margins.topMargin, margins.rightMargin, margins.bottomMargin)
+        return lp
+    }
+
+    private fun newRim(@Suppress("UNUSED_PARAMETER") lp: ViewGroup.LayoutParams): View = View(context).apply {
+        background = GlassSystem.createBorder(CORNER_DP.toInt(), density, false)
+        isClickable = false
+        isFocusable = false
+        alpha = 0f
     }
 
     private fun span(r: Run): Float = r.web.width + gap
@@ -203,16 +224,12 @@ class TabSwipeController(
             // Không có tab bên cạnh: kéo nặng tay rồi bật lại.
             r.web.translationX = r.sgn * raw.coerceAtLeast(0f) * r.web.width * RUBBER
         }
-        // Viền hiện dần trong ~12% đầu để không bật lên đột ngột ở mép màn hình lúc mới chạm.
+        // Viền hiện dần ở ~12% đầu (không bật lên ở mép màn hình lúc mới chạm) và tắt dần ở ~12% cuối
+        // (lúc đó trang đã phủ kín màn hình, viền sẽ thành một khung quanh màn hình).
         if (layer != null) {
-            val a = (255 * (u * 8f).coerceIn(0f, 1f)).toInt()
-            if (a != r.rimAlpha) {
-                r.rimAlpha = a
-                r.web.foreground?.alpha = a
-                layer.foreground?.alpha = a
-                r.web.invalidate()
-                layer.invalidate()
-            }
+            val rim = minOf((u * 8f).coerceIn(0f, 1f), ((1f - u) * 8f).coerceIn(0f, 1f))
+            r.rimWeb?.let { it.translationX = r.web.translationX; it.alpha = rim }
+            r.rimLayer?.let { it.translationX = layer.translationX; it.alpha = rim }
         }
         // Chữ trên viên thuốc trượt ra cùng hướng trang và mờ đi.
         pillContent.translationX = r.sgn * u * pill.width * PILL_SHIFT
@@ -292,6 +309,8 @@ class TabSwipeController(
         onSwitch(r.target)
         // WebView mới được thêm sau lớp phủ nên đang nằm trên nó: đưa lớp phủ lên trên cùng.
         r.layer?.bringToFront()
+        r.rimLayer?.bringToFront()
+        r.rimWeb?.alpha = 0f
         enterPillContent(r)
         val now = webProvider()
         val ready = now != null && !now.url.isNullOrBlank() && now.progress >= 100
@@ -344,11 +363,12 @@ class TabSwipeController(
             AnimationSystem.cancel(it)
             host.removeView(it)
         }
+        r.rimLayer?.let { host.removeView(it) }
+        r.rimWeb?.let { host.removeView(it) }
         for (web in listOfNotNull(r.web, webProvider())) {
             web.translationX = 0f
             web.clipToOutline = false
             web.outlineProvider = ViewOutlineProvider.BACKGROUND
-            web.foreground = null
         }
         if (!r.holding) {
             // Huỷ giữa chừng: chữ trên viên thuốc về chỗ cũ ngay.
