@@ -147,6 +147,10 @@ class TabManager {
             val canvas = Canvas(scaled)
             canvas.drawColor(Color.WHITE)
             canvas.scale(targetWidth.toFloat() / w, targetHeight.toFloat() / h)
+            // WebView vẽ phần đang hiện tại toạ độ (scrollX, scrollY) của canvas, vì khi vẽ lên màn hình
+            // framework đã tịnh tiến canvas -scroll trước đó. Gọi draw() trực tiếp thì mất bước này, nên trang
+            // đã cuộn xuống bị đẩy lệch xuống đúng bằng quãng đã cuộn (trắng phía trên, tiêu đề cố định nằm giữa ảnh).
+            canvas.translate(-web.scrollX.toFloat(), -web.scrollY.toFloat())
             web.draw(canvas)
             tab.thumbnail?.takeIf { it !== scaled }?.recycle()
             tab.thumbnail = scaled
