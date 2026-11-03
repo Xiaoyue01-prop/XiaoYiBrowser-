@@ -554,6 +554,27 @@ class MainActivity : ComponentActivity() {
     // ---------------- onCreate ----------------
 
     @SuppressLint("SetJavaScriptEnabled")
+    override fun onResume() {
+        super.onResume()
+        requestHighRefreshRate()
+    }
+
+    /** Xin chế độ màn hình có tần số quét cao nhất (cùng độ phân giải) để animation chạy 120Hz thay vì 60Hz. */
+    private fun requestHighRefreshRate() {
+        runCatching {
+            val disp = display ?: return
+            val cur = disp.mode
+            val best = disp.supportedModes
+                .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
+                .maxByOrNull { it.refreshRate } ?: return
+            val attrs = window.attributes
+            attrs.preferredDisplayModeId = best.modeId
+            attrs.preferredRefreshRate = best.refreshRate
+            window.attributes = attrs
+            window.decorView.requestedFrameRate = View.REQUESTED_FRAME_RATE_CATEGORY_HIGH
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -1057,6 +1078,7 @@ class MainActivity : ComponentActivity() {
             onOverlayClosed = { syncOrbMenuVisibility() }
         )
         menu.originView = menuBtn
+        menu.coverView = urlPillFrame
         setupOrbMenu()
     }
 

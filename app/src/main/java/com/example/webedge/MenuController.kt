@@ -89,6 +89,16 @@ class MenuController(
     /** Nút đã bấm để mở menu (nút ba chấm): menu bung ra từ đây và thu ngược về đây. */
     var originView: View? = null
 
+    /** Viên thuốc địa chỉ: menu phải rộng đủ để phủ kín nó (không để lộ mép viên thuốc bên trái thẻ). */
+    var coverView: View? = null
+
+    private fun coverMinWidthPx(): Int {
+        if (toolbarCompact) return 0
+        val o = originView?.let { OriginTransitionController.boundsOnScreen(it) } ?: return 0
+        val c = coverView?.let { OriginTransitionController.boundsOnScreen(it) } ?: return 0
+        return (o.right - c.left).toInt() + dp(6)
+    }
+
     val isOpen: Boolean get() = menuLayer != null
 
     /** Nút Back của hệ thống: lùi một trang trong menu, hoặc đóng nếu đang ở trang chính. */
@@ -364,7 +374,7 @@ class MenuController(
             val right = rootLoc[0] + root.width - originBounds.right
             val bottom = rootLoc[1] + root.height - originBounds.bottom
             lp.rightMargin = maxOf(right.toInt(), host.insetRight + dp(8))
-            lp.bottomMargin = maxOf(bottom.toInt(), maxOf(host.insetBottom, host.imeBottom) + dp(4))
+            lp.bottomMargin = maxOf(bottom.toInt() - dp(2), maxOf(host.insetBottom, host.imeBottom) + dp(4))
         } else {
             lp.rightMargin = host.insetRight + dp(14)
             lp.bottomMargin = maxOf(host.insetBottom, host.imeBottom) + dp(10) + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
@@ -376,7 +386,8 @@ class MenuController(
     private fun setMenuPage(page: View, widthDp: Int, animate: Boolean) {
         val layer = menuLayer ?: return
         val card = menuCard as? MenuCardLayout ?: return
-        val w = minOf(dp(widthDp), activity.resources.displayMetrics.widthPixels - dp(28) - host.insetLeft - host.insetRight)
+        val maxW = activity.resources.displayMetrics.widthPixels - dp(28) - host.insetLeft - host.insetRight
+        val w = maxOf(minOf(dp(widthDp), maxW), minOf(coverMinWidthPx(), maxW))
         card.dropLeavingPages()
         val oldW = card.width
         val oldH = card.height
