@@ -356,9 +356,15 @@ class PopupWindowController(
             setWindowAnimations(0)
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             WindowCompat.setDecorFitsSystemWindows(this, false)
-            // Thanh điều hướng trong suốt hẳn, vạch cử chỉ đổi màu theo nền sheet để không chìm vào trang.
+            // Cho scrim của Glass Dialog có thể vẽ xuyên qua toàn bộ vùng thanh hệ thống.
+            statusBarColor = Color.TRANSPARENT
+            navigationBarColor = Color.TRANSPARENT
             isNavigationBarContrastEnforced = false
-            WindowCompat.getInsetsController(this, root).isAppearanceLightNavigationBars = !night
+            if (android.os.Build.VERSION.SDK_INT >= 29) isStatusBarContrastEnforced = false
+            WindowCompat.getInsetsController(this, root).apply {
+                isAppearanceLightStatusBars = !night
+                isAppearanceLightNavigationBars = !night
+            }
         }
         dlg.setOnDismissListener {
             popupGlassDialog?.cancelAll()
@@ -392,7 +398,8 @@ class PopupWindowController(
                 d = density(),
                 isNight = night,
                 fg = foreground(),
-                accent = accent()
+                accent = accent(),
+                window = dlg.window ?: activity.window
             )
         }
         dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
