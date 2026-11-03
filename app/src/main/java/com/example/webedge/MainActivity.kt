@@ -198,6 +198,18 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Long press lên liên kết/ảnh (từ LONG_PRESS_JS).
+        @JavascriptInterface
+        fun longPress(linkUrl: String?, imageUrl: String?) {
+            val activity = activityWeak.get() ?: return
+            val owner = ownerWeak.get() ?: return
+            activity.runOnUiThread {
+                if (owner === activity.web && !activity.isActivityDestroyed) {
+                    activity.contextMenuController?.showFromDom(linkUrl.orEmpty(), imageUrl.orEmpty())
+                }
+            }
+        }
+
         @JavascriptInterface
         fun clearTopColor() {
             val activity = activityWeak.get() ?: return
@@ -1532,6 +1544,7 @@ class MainActivity : ComponentActivity() {
         // Chạy script media ở mọi khung (kể cả iframe chứa trình phát) ngay từ đầu tài liệu.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(view, MEDIA_JS, setOf("*"))
+            WebViewCompat.addDocumentStartJavaScript(view, LONG_PRESS_JS, setOf("*"))
         }
         view.addJavascriptInterface(Bridge(WeakReference(view), WeakReference(this)), "EdgeBridge")
         view.setFindListener { active, total, _ ->

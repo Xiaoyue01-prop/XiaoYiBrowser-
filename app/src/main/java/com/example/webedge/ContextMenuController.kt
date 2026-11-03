@@ -19,6 +19,38 @@ import eightbitlab.com.blurview.BlurTarget
 import org.json.JSONObject
 import org.json.JSONTokener
 
+
+/**
+ * Chạy từ đầu tài liệu. Long press lên liên kết/ảnh làm WebView bắt đầu kéo-thả
+ * (hiện "bóng" chứa chữ + URL) nên onLongClick không bao giờ được gọi, nhất là với
+ * kết quả Google (thẻ <a> bọc cả khối). Tắt kéo-thả cho a/img và bắt sự kiện
+ * contextmenu để lấy đúng liên kết/ảnh tại điểm chạm.
+ */
+internal const val LONG_PRESS_JS = """
+(function(){
+if (window.__summitLongPress) return;
+window.__summitLongPress = true;
+try {
+  var st = document.createElement('style');
+  st.textContent = 'a,img{-webkit-user-drag:none !important;-webkit-touch-callout:none !important;}';
+  (document.head || document.documentElement).appendChild(st);
+} catch (e) {}
+document.addEventListener('contextmenu', function(e){
+  try {
+    var t = e.target;
+    if (!t || !t.closest || !window.EdgeBridge || !EdgeBridge.longPress) return;
+    var img = t.closest('img');
+    var a = t.closest('a[href]');
+    var imgUrl = img ? (img.currentSrc || img.src || '') : '';
+    var linkUrl = a ? (a.href || '') : '';
+    if (!imgUrl && !linkUrl) return;
+    e.preventDefault();
+    EdgeBridge.longPress(linkUrl, imgUrl);
+  } catch (err) {}
+}, true);
+})();
+"""
+
 /** Safari-like long-press menu for links, images and page actions. */
 class ContextMenuController(
     private val activity: Activity,
@@ -45,6 +77,7 @@ class ContextMenuController(
     private var touchSequence = 0
     private var domTargetSequence = -1
     private var domTarget: DomTarget? = null
+    private var lastShownAt = 0L
     val isShowing: Boolean get() = layer != null
 
     private data class DomTarget(
@@ -119,6 +152,7 @@ class ContextMenuController(
             false
         }
         webView.setOnLongClickListener { view ->
+            if (android.os.SystemClock.uptimeMillis() - lastShownAt < 600L) return@setOnLongClickListener true
             val targetWebView = view as? WebView ?: return@setOnLongClickListener false
             val hit = targetWebView.hitTestResult ?: return@setOnLongClickListener false
             val extra = hit.extra.orEmpty().takeIf { isWebUrl(it) }
@@ -173,6 +207,17 @@ class ContextMenuController(
             }
             show(actions)
             true
+        }
+    }
+
+    /** Long press do script trong trang báo về (link/ảnh dưới ngón tay). Gọi trên luồng UI. */
+    fun showFromDom(linkUrl: String, imageUrl: String) {
+        if (android.os.SystemClock.uptimeMillis() - lastShownAt < 600L) return
+        val image = imageUrl.takeIf { isWebUrl(it) }
+        val link = linkUrl.takeIf { isWebUrl(it) }
+        when {
+            image != null -> show(imageActions(image))
+            link != null -> show(linkActions(link))
         }
     }
 
@@ -272,6 +317,7 @@ class ContextMenuController(
     }
 
     private fun show(actions: List<Action>) {
+        lastShownAt = android.os.SystemClock.uptimeMillis()
         dismiss(false)
         val layerView = FrameLayout(activity).apply {
             setBackgroundColor(Color.TRANSPARENT)
