@@ -3,6 +3,8 @@ package com.example.webedge
 import android.graphics.Bitmap
 import android.graphics.Outline
 import android.graphics.Rect
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -18,6 +20,25 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.dynamicanimation.animation.DynamicAnimation
 import kotlin.math.abs
+
+/**
+ * Dải thanh trạng thái ở chế độ tràn viền. Dải cố định của app đứng yên đè lên trang nên lúc trượt thẻ trông như
+ * bắt đầu dưới status bar; để tràn viền thật, mỗi thẻ mang theo "nắp" dải của riêng nó (đúng màu tab đó).
+ */
+interface TabSwipeStatusStrip {
+    /** Chỉ bật ở chế độ tràn viền (WebView bắt đầu từ mép trên màn hình). */
+    val enabled: Boolean
+    /** Chiều cao dải đặc (px), và dải mờ dần khi trang không có màu đặc. */
+    val solidPx: Int
+    val fadePx: Int
+    /** Màu dải của tab; null = lớp mờ dần. [current]: tab đang xem (true) hay tab bên cạnh (false). */
+    fun colorFor(tab: TabManager.Tab?, current: Boolean): Int?
+    fun newFade(): Drawable
+    fun isLightBar(color: Int?): Boolean
+    fun setLightBar(light: Boolean)
+    /** Ẩn dải cố định của app trong lúc vuốt; hiện lại (và đồng bộ màu/biểu tượng) khi xong. */
+    fun setHidden(hidden: Boolean)
+}
 
 /**
  * Vuốt ngang viên thuốc (thanh địa chỉ) để đổi tab, như Safari trên iOS:
@@ -39,6 +60,7 @@ class TabSwipeController(
     private val webProvider: () -> WebView?,
     private val pageBg: () -> Int,
     private val canStart: () -> Boolean,
+    private val strip: TabSwipeStatusStrip,
     /** Chuyển sang [tab]; null nghĩa là mở tab mới. Gọi lúc lớp phủ đã che kín màn hình. */
     private val onSwitch: (TabManager.Tab?) -> Unit
 ) {
@@ -75,6 +97,13 @@ class TabSwipeController(
         /** Viền kính là View riêng phủ lên trang (foreground của WebView vẽ không ổn định). */
         var rimWeb: View? = null
         var rimLayer: View? = null
+        /** Nắp dải thanh trạng thái của từng thẻ (chỉ ở chế độ tràn viền). */
+        var capWeb: View? = null
+        var capLayer: View? = null
+        var capped = false
+        var curLight = true
+        var tgtLight = true
+        var barLight = true
     }
 
     private var current: Run? = null
@@ -172,6 +201,11 @@ class TabSwipeController(
         var layer: View? = null
         var rimWeb: View? = null
         var rimLayer: View? = null
+        var capWeb: View? = null
+        var capLayer: View? = null
+        var capped = false
+        var curColor: Int? = null
+        var tgtColor: Int? = null
         if (hasTarget) {
             val thumb: Bitmap? = target?.thumbnail?.takeUnless { it.isRecycled }
             layer = ImageView(context).apply {
@@ -189,12 +223,32 @@ class TabSwipeController(
             web.clipToOutline = true
             // Viền kính cho cả hai trang: trên nền trắng của khe hở, mép trang vẫn rõ như kính.
             // Dùng View riêng thay vì foreground: WebView của Chromium có lúc bỏ qua foreground.
+            if (strip.enabled) {
+                capped = true
+                curColor = strip.colorFor(tabs[activeIndex], true)
+                tgtColor = strip.colorFor(target, false)
+                capLayer = newCap(tgtColor).also { host.addView(it, host.childCount, capLp(web, tgtColor)) }
+                capWeb = newCap(curColor).also { host.addView(it, host.indexOfChild(web) + 1, capLp(web, curColor)) }
+                strip.setHidden(true)
+            }
+            // Viền nằm trên nắp để chạy liền quanh cả thẻ.
             rimLayer = newRim(lp).also { host.addView(it, host.childCount, rimLp(web)) }
-            rimWeb = newRim(lp).also { host.addView(it, host.indexOfChild(web) + 1, rimLp(web)) }
+            rimWeb = newRim(lp).also {
+                val capIndex = capWeb?.let { cap -> host.indexOfChild(cap) } ?: host.indexOfChild(web)
+                host.addView(it, capIndex + 1, rimLp(web))
+            }
         }
         val r = Run(web, sgn, layer, target, hasTarget)
         r.rimWeb = rimWeb
         r.rimLayer = rimLayer
+        r.capWeb = capWeb
+        r.capLayer = capLayer
+        r.capped = capped
+        if (capped) {
+            r.curLight = strip.isLightBar(curColor)
+            r.tgtLight = strip.isLightBar(tgtColor)
+            r.barLight = r.curLight
+        }
         current = r
         revealAt = Long.MAX_VALUE
         render(r, 0f)
@@ -213,6 +267,28 @@ class TabSwipeController(
         isClickable = false
         isFocusable = false
         alpha = 0f
+    }
+
+    private val capOutline = object : ViewOutlineProvider() {
+        override fun getOutline(view: View, outline: Outline) {
+            // Kéo dài hình chữ nhật bo góc xuống dưới view: chỉ hai góc trên được bo, đáy vuông liền với trang.
+            outline.setRoundRect(0, 0, view.width, view.height + corner.toInt(), corner)
+        }
+    }
+
+    private fun newCap(color: Int?): View = View(context).apply {
+        background = if (color != null) ColorDrawable(color) else strip.newFade()
+        outlineProvider = capOutline
+        clipToOutline = true
+        isClickable = false
+        isFocusable = false
+    }
+
+    private fun capLp(web: WebView, color: Int?): FrameLayout.LayoutParams {
+        val margins = web.layoutParams as? ViewGroup.MarginLayoutParams
+        val lp = FrameLayout.LayoutParams(web.width, if (color != null) strip.solidPx else strip.fadePx)
+        if (margins != null) lp.setMargins(margins.leftMargin, margins.topMargin, margins.rightMargin, 0)
+        return lp
     }
 
     private fun span(r: Run): Float = r.web.width + gap
@@ -234,6 +310,16 @@ class TabSwipeController(
             val rim = minOf((u * 8f).coerceIn(0f, 1f), ((1f - u) * 8f).coerceIn(0f, 1f))
             r.rimWeb?.let { it.translationX = r.web.translationX; it.alpha = rim }
             r.rimLayer?.let { it.translationX = layer.translationX; it.alpha = rim }
+            r.capWeb?.translationX = r.web.translationX
+            r.capLayer?.translationX = layer.translationX
+            if (r.capped) {
+                // Biểu tượng status bar đổi sáng/tối theo thẻ đang chiếm quá nửa màn hình.
+                val light = if (u < 0.5f) r.curLight else r.tgtLight
+                if (light != r.barLight) {
+                    r.barLight = light
+                    strip.setLightBar(light)
+                }
+            }
         }
         // Chữ trên viên thuốc trượt ra cùng hướng trang và mờ đi.
         pillContent.translationX = r.sgn * u * pill.width * PILL_SHIFT
@@ -313,7 +399,9 @@ class TabSwipeController(
         onSwitch(r.target)
         // WebView mới được thêm sau lớp phủ nên đang nằm trên nó: đưa lớp phủ lên trên cùng.
         r.layer?.bringToFront()
+        r.capLayer?.bringToFront()
         r.rimLayer?.bringToFront()
+        r.capWeb?.visibility = View.GONE
         r.rimWeb?.alpha = 0f
         enterPillContent(r)
         val now = webProvider()
@@ -369,6 +457,9 @@ class TabSwipeController(
         }
         r.rimLayer?.let { host.removeView(it) }
         r.rimWeb?.let { host.removeView(it) }
+        r.capLayer?.let { host.removeView(it) }
+        r.capWeb?.let { host.removeView(it) }
+        if (r.capped) strip.setHidden(false)
         for (web in listOfNotNull(r.web, webProvider())) {
             web.translationX = 0f
             web.clipToOutline = false

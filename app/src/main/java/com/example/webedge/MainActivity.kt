@@ -866,6 +866,37 @@ class MainActivity : ComponentActivity() {
             webProvider = { if (::web.isInitialized) web else null },
             pageBg = { pageBg },
             canStart = { tabSwipeAvailable() },
+            strip = object : TabSwipeStatusStrip {
+                override val enabled: Boolean get() = store.edgeMode
+                override val solidPx: Int get() = insetTop
+                override val fadePx: Int get() = insetTop + dp(16)
+
+                override fun colorFor(tab: TabManager.Tab?, current: Boolean): Int? {
+                    if (current) return solidTop
+                    if (tab == null) return pageBg
+                    val wv = tab.webView
+                    val reported = if (wv != null) topColors[wv] else null
+                    if (reported != null) return reported.color
+                    // Chưa có báo cáo: lấy màu điểm giữa mép trên của ảnh chụp tab đó.
+                    val bmp = tab.thumbnail?.takeUnless { it.isRecycled } ?: return pageBg
+                    return runCatching { bmp.getPixel(bmp.width / 2, 1) }.getOrDefault(pageBg)
+                }
+
+                override fun newFade(): android.graphics.drawable.Drawable =
+                    fadeDrawable.constantState?.newDrawable()?.mutate() ?: ColorDrawable(Color.TRANSPARENT)
+
+                override fun isLightBar(color: Int?): Boolean =
+                    if (color == null) !isNight else ColorUtils.calculateLuminance(color) > 0.5
+
+                override fun setLightBar(light: Boolean) {
+                    WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = light
+                }
+
+                override fun setHidden(hidden: Boolean) {
+                    topFade.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
+                    if (!hidden) updateTopFade()
+                }
+            },
             onSwitch = { tab ->
                 // Thumbnail đã chụp lúc bắt đầu vuốt (trang nằm yên, đang hiện đủ). Lúc này WebView vừa bị
                 // trượt ra ngoài màn hình nên Chromium chỉ còn vẽ sẵn một phần: chụp bây giờ sẽ ra ảnh trắng nửa màn.
