@@ -1843,6 +1843,8 @@ class MainActivity : ComponentActivity() {
             onHome = { load(store.homeUrl) }
         )
         orbController?.alignWith(backBtn)
+        // Menu ba chấm nở ra sẽ hút orb vào tâm thẻ; orb nảy ra lại khi menu thu về.
+        orbController?.absorbTarget = { if (::menu.isInitialized) menu.cardCenterOnScreen() else null }
         backBtn.visibility = View.INVISIBLE
         backBtn.setOnClickListener(null)
         syncOrbMenuVisibility()

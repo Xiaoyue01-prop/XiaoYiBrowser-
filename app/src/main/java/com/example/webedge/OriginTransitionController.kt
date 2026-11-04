@@ -66,7 +66,7 @@ object OriginTransitionController {
         var afterPop: (() -> Unit)? = null
         // Trạng thái dịch/scale gốc của nút trước khi nảy, và các ViewGroup cha đã tắt clipChildren.
         var srcBase: FloatArray? = null
-        var clipSaved: MutableList<Pair<ViewGroup, Boolean>>? = null
+        var clipSaved: List<ViewGroup>? = null
     }
 
     private val morphs = WeakHashMap<View, Morph>()
@@ -371,14 +371,41 @@ object OriginTransitionController {
     /** Nút nảy ra khỏi thanh dưới nên các view cha không được cắt phần nút nằm ngoài khung của chúng. */
     private fun disableAncestorClipping(m: Morph, src: View) {
         if (m.clipSaved != null) return
-        val saved = mutableListOf<Pair<ViewGroup, Boolean>>()
+        m.clipSaved = holdUnclipped(src)
+    }
+
+    private val clipCount = WeakHashMap<ViewGroup, Int>()
+    private val clipOriginal = WeakHashMap<ViewGroup, Boolean>()
+
+    /**
+     * Tắt clipChildren của mọi view cha của [src] để [src] có thể dịch ra ngoài khung cha mà không bị cắt.
+     * Đếm tham chiếu để nhiều hiệu ứng (nút nảy, viên thuốc bị hút) dùng chung mà không ghi đè trạng thái gốc.
+     * Trả về danh sách để gọi [releaseUnclipped] sau.
+     */
+    fun holdUnclipped(src: View): List<ViewGroup> {
+        val list = mutableListOf<ViewGroup>()
         var parent = src.parent
         while (parent is ViewGroup) {
-            saved.add(parent to parent.clipChildren)
+            val c = clipCount[parent] ?: 0
+            if (c == 0) clipOriginal[parent] = parent.clipChildren
+            clipCount[parent] = c + 1
             parent.clipChildren = false
+            list.add(parent)
             parent = parent.parent
         }
-        m.clipSaved = saved
+        return list
+    }
+
+    fun releaseUnclipped(groups: List<ViewGroup>) {
+        groups.forEach { g ->
+            val c = (clipCount[g] ?: 1) - 1
+            if (c <= 0) {
+                clipCount.remove(g)
+                clipOriginal.remove(g)?.let { g.clipChildren = it }
+            } else {
+                clipCount[g] = c
+            }
+        }
     }
 
     private fun restoreSource(m: Morph) {
@@ -391,7 +418,7 @@ object OriginTransitionController {
             src.scaleY = b[3]
         }
         m.srcBase = null
-        m.clipSaved?.forEach { (group, clip) -> group.clipChildren = clip }
+        m.clipSaved?.let { releaseUnclipped(it) }
         m.clipSaved = null
     }
 

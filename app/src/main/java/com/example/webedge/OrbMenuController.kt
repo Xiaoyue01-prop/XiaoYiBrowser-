@@ -174,12 +174,31 @@ class OrbMenuController(
      * This is stronger than visibility alone and prevents stale/animated views
      * from remaining above the FindBar or receiving touches.
      */
+    /** Trả về tâm (toạ độ màn hình) của bề mặt đang hút orb vào (menu ba chấm); null thì chỉ mờ đi như cũ. */
+    var absorbTarget: (() -> android.graphics.PointF?)? = null
+    private var absorbedState: FloatArray? = null
+
+    private fun absorbInto(target: android.graphics.PointF, onDone: () -> Unit) {
+        val loc = IntArray(2)
+        mainBtn.getLocationOnScreen(loc)
+        val dx = (target.x - (loc[0] + mainBtn.width / 2f)) * Constants.ABSORB_FRACTION
+        val dy = (target.y - (loc[1] + mainBtn.height / 2f)) * Constants.ABSORB_FRACTION
+        absorbedState = floatArrayOf(dx, dy)
+        AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_X, dx, AnimationSystem.MENU_MORPH)
+        AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_Y, dy, AnimationSystem.MENU_MORPH)
+        AnimationSystem.scaleTo(mainBtn, Constants.ABSORB_SCALE, Constants.ABSORB_SCALE, AnimationSystem.MENU_MORPH)
+        AnimationSystem.fade(mainBtn, 0f, AnimationSystem.QUICK) { onDone() }
+    }
+
     fun setTemporarilyHidden(hidden: Boolean) {
         val was = temporarilyHidden
+        val wasCompactBefore = isCompacted
         temporarilyHidden = hidden
         if (hidden) {
             // Đã ẩn hẳn và gỡ khỏi root từ lần gọi trước: không làm lại.
             if (was && mainBtn.parent == null) return
+            // Đang bị hút vào menu: để animation chạy tiếp, đừng reset giữa chừng.
+            if (was && absorbedState != null) return
             collapseImmediately()
             mainBtn.isClickable = false
             mainBtn.isEnabled = false
@@ -204,7 +223,13 @@ class OrbMenuController(
                 }
             }
             if (mainBtn.parent != null && mainBtn.visibility == View.VISIBLE && mainBtn.alpha > 0f) {
-                AnimationSystem.fade(mainBtn, 0f, AnimationSystem.DISMISS) { detach() }
+                val target = if (wasCompactBefore) null else absorbTarget?.invoke()
+                if (target != null) {
+                    // Menu nở ra hút orb vào: co lại, trôi về tâm thẻ và mờ dần.
+                    absorbInto(target) { detach() }
+                } else {
+                    AnimationSystem.fade(mainBtn, 0f, AnimationSystem.DISMISS) { detach() }
+                }
             } else {
                 detach()
             }
@@ -228,7 +253,15 @@ class OrbMenuController(
             }
             applyAvailability()
             updatePosition()
-            if (mainBtn.visibility == View.VISIBLE) {
+            val absorbed = absorbedState
+            absorbedState = null
+            if (absorbed != null && mainBtn.visibility == View.VISIBLE) {
+                // Menu thu về: orb nảy ra từ trạng thái đã bị hút về đúng chỗ cũ.
+                AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_POP_BACK)
+                AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_POP_BACK)
+                AnimationSystem.scaleTo(mainBtn, 1f, 1f, AnimationSystem.MENU_POP_BACK)
+                AnimationSystem.fade(mainBtn, 1f, AnimationSystem.QUICK)
+            } else if (mainBtn.visibility == View.VISIBLE) {
                 AnimationSystem.fade(mainBtn, 1f, AnimationSystem.SMOOTH)
             } else {
                 mainBtn.alpha = 1f

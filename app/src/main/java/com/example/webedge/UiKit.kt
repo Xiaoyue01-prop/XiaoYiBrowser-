@@ -48,6 +48,10 @@ object Constants {
     const val MENU_POP_DELAY_MS = 90L
     /** Quãng nảy tối đa (dp) của nút Tab: tâm bảng tab rất xa nút nên phải chặn lại. */
     const val TAB_POP_MAX_DP = 64
+    /** Viên thuốc và orb bị menu "hút": đi được bao nhiêu phần quãng đường tới tâm thẻ menu. */
+    const val ABSORB_FRACTION = 0.7f
+    /** Kích thước (tỉ lệ) viên thuốc và orb khi đã bị hút vào menu. */
+    const val ABSORB_SCALE = 0.4f
 
     // === Thời gian / giới hạn ===
     const val SUGGEST_DEBOUNCE_MS = 150L

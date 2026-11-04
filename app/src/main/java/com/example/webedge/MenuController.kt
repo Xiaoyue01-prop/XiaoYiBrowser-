@@ -105,6 +105,85 @@ class MenuController(
     /** Viên thuốc địa chỉ: menu phải rộng đủ để phủ kín nó (không để lộ mép viên thuốc bên trái thẻ). */
     var coverView: View? = null
 
+    // Viên thuốc bị menu hút vào khi nở ra và nảy ra lại khi thu về.
+    private var pillBase: FloatArray? = null
+    private var pillVec: FloatArray? = null
+    private var pillFollow = false
+    private var pillClipHold: List<ViewGroup>? = null
+
+    /** Tâm (toạ độ màn hình) của thẻ menu đang mở; orb dùng để biết trôi về đâu. */
+    fun cardCenterOnScreen(): android.graphics.PointF? {
+        val b = menuCard?.let { OriginTransitionController.boundsOnScreen(it) } ?: return null
+        return android.graphics.PointF(b.centerX(), b.centerY())
+    }
+
+    private fun setupPillAbsorb(card: View) {
+        val pill = coverView ?: return
+        if (toolbarCompact || !pill.isShown || pill.alpha < 0.9f) return
+        val cardB = OriginTransitionController.boundsOnScreen(card) ?: return
+        val pillB = OriginTransitionController.boundsOnScreen(pill) ?: return
+        pillBase = floatArrayOf(pill.translationX, pill.translationY, pill.scaleX, pill.scaleY, pill.alpha)
+        pillVec = floatArrayOf(
+            (cardB.centerX() - pillB.centerX()) * Constants.ABSORB_FRACTION,
+            (cardB.centerY() - pillB.centerY()) * Constants.ABSORB_FRACTION
+        )
+        pillFollow = true
+        if (pillClipHold == null) pillClipHold = OriginTransitionController.holdUnclipped(pill)
+    }
+
+    /** Theo tiến độ nở của thẻ: viên thuốc co lại, mờ đi và trôi về tâm thẻ. */
+    private fun applyPillAbsorb(p: Float) {
+        if (!pillFollow) return
+        val pill = coverView ?: return
+        val b = pillBase ?: return
+        val v = pillVec ?: return
+        val x = ((p - 0.05f) / 0.55f).coerceIn(0f, 1f)
+        val t = x * x * (3f - 2f * x)
+        val s = 1f - (1f - Constants.ABSORB_SCALE) * t
+        pill.translationX = b[0] + v[0] * t
+        pill.translationY = b[1] + v[1] * t
+        pill.scaleX = b[2] * s
+        pill.scaleY = b[3] * s
+        pill.alpha = b[4] * (1f - t)
+    }
+
+    /** Thu về: viên thuốc nảy ra khỏi thẻ về đúng chỗ cũ bằng spring có độ nảy. */
+    private fun springPillBack() {
+        val pill = coverView
+        val b = pillBase
+        pillFollow = false
+        pillBase = null
+        pillVec = null
+        if (pill == null || b == null) return
+        AnimationSystem.spring(pill, DynamicAnimation.TRANSLATION_X, b[0], AnimationSystem.MENU_POP_BACK)
+        AnimationSystem.spring(pill, DynamicAnimation.TRANSLATION_Y, b[1], AnimationSystem.MENU_POP_BACK)
+        AnimationSystem.scaleTo(pill, b[2], b[3], AnimationSystem.MENU_POP_BACK)
+        AnimationSystem.fade(pill, b[4], AnimationSystem.QUICK)
+    }
+
+    /** Đóng không có animation: trả viên thuốc về nguyên trạng ngay. */
+    private fun restorePillNow() {
+        val pill = coverView
+        val b = pillBase
+        pillFollow = false
+        pillBase = null
+        pillVec = null
+        if (pill != null && b != null) {
+            AnimationSystem.cancel(pill)
+            pill.translationX = b[0]
+            pill.translationY = b[1]
+            pill.scaleX = b[2]
+            pill.scaleY = b[3]
+            pill.alpha = b[4]
+        }
+        releasePillClip()
+    }
+
+    private fun releasePillClip() {
+        pillClipHold?.let { OriginTransitionController.releaseUnclipped(it) }
+        pillClipHold = null
+    }
+
     private fun coverMinWidthPx(): Int {
         if (toolbarCompact) return 0
         val o = originView?.let { OriginTransitionController.boundsOnScreen(it) } ?: return 0
@@ -188,13 +267,15 @@ class MenuController(
         menuLayer = layer
         menuCard = card
         menuAnimationStarted = false
-        onVisibilityChanged()
         relayout()
         showMainPage(false)
 
         fun startMenuAnimation() {
             if (menuCard !== card || menuAnimationStarted) return
             menuAnimationStarted = true
+            // Thẻ đã đo xong nên biết tâm thẻ: viên thuốc và orb bị hút về đó khi menu nở ra.
+            setupPillAbsorb(card)
+            onVisibilityChanged()
             val radiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * d
             val morphing = OriginTransitionController.open(
                 card,
@@ -216,9 +297,11 @@ class MenuController(
                 // Video: nút nảy lên (phóng ~1.45x, dời ~30% về phía tâm menu) rồi menu mới nở ra từ đó.
                 popScale = if (toolbarCompact) 1f else Constants.MENU_POP_SCALE,
                 popTowardTarget = if (toolbarCompact) 0f else Constants.MENU_POP_TOWARD,
-                popDelayMs = Constants.MENU_POP_DELAY_MS
+                popDelayMs = Constants.MENU_POP_DELAY_MS,
+                onProgress = { p -> applyPillAbsorb(p) }
             )
             if (!morphing) {
+                restorePillNow()
                 card.pivotX = card.width.toFloat()
                 card.pivotY = card.height.toFloat()
                 AnimationSystem.popIn(card, 0.6f, AnimationSystem.MENU_MORPH)
@@ -346,6 +429,7 @@ class MenuController(
         menuWasOpenBeforeCompact = false
         compactFallback = null
         if (card == null) {
+            restorePillNow()
             root.removeView(layer)
             onVisibilityChanged()
             return
@@ -354,6 +438,7 @@ class MenuController(
         // làm thẻ nhỏ bật ngược ra ngoài khi người dùng nhấn Back trong lúc toolbar compact.
         if (toolbarCompact && layer.visibility != View.VISIBLE) {
             OriginTransitionController.cancel(card)
+            restorePillNow()
             root.removeView(layer)
             onVisibilityChanged()
             originView?.let { source ->
@@ -364,7 +449,11 @@ class MenuController(
         }
         // Thu hồi: co ngược về nút ba chấm đã bung ra.
         syncBlurFor(600)
+        // Viên thuốc và orb nảy ra khỏi thẻ ngay lúc thẻ bắt đầu thu (thẻ nằm trên nên chúng trồi ra từ phía dưới).
+        springPillBack()
+        onVisibilityChanged()
         OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
+            releasePillClip()
             root.removeView(layer)
             onVisibilityChanged()
             originView?.let { source ->
