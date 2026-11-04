@@ -478,6 +478,12 @@ half4 main(float2 coord) {
             view.elevation = 2f * density
         }
 
+        /** Cao viên kính lúc nổi = chiều cao thanh x LIFT_OVER_TRACK; phóng đều để góc bo vẫn tròn. */
+        private fun liftScale(): Float {
+            val trackH = (view.parent as? View)?.height ?: 0
+            return if (trackH > 0 && view.height > 0) trackH * LIFT_OVER_TRACK / view.height else FALLBACK_LIFT_SCALE
+        }
+
         private fun lift(on: Boolean) {
             if (lifted == on) return
             lifted = on
@@ -485,7 +491,8 @@ half4 main(float2 coord) {
                 liftStart = SystemClock.uptimeMillis()
                 AnimationSystem.fade(solid, 0f, AnimationSystem.QUICK)
                 AnimationSystem.fade(glass, 1f, AnimationSystem.QUICK)
-                AnimationSystem.scaleTo(view, LIFT_SCALE_X, LIFT_SCALE_Y, AnimationSystem.MENU_POP)
+                val s = liftScale()
+                AnimationSystem.scaleTo(view, s, s, AnimationSystem.MENU_POP)
             } else {
                 AnimationSystem.fade(glass, 0f, AnimationSystem.SMOOTH)
                 AnimationSystem.fade(solid, 1f, AnimationSystem.SMOOTH)
@@ -535,7 +542,7 @@ half4 main(float2 coord) {
                 val cell = available / count
                 fun indexAt(x: Float) = ((x - v.paddingLeft) / cell).toInt().coerceIn(0, count - 1)
                 // Khi viên phình to, giữ phần tràn ra ngoài thanh không quá MAX_OVERFLOW_DP để khỏi bị cắt ở mép màn hình.
-                val overflow = cell * (LIFT_SCALE_X - 1f) / 2f
+                val overflow = cell * (liftScale() - 1f) / 2f
                 val inset = (overflow - MAX_OVERFLOW_DP * density).coerceAtLeast(0f)
                 fun thumbX(x: Float) = (x - v.paddingLeft - cell / 2f).coerceIn(inset, cell * (count - 1) - inset)
                 when (e.actionMasked) {
@@ -580,9 +587,9 @@ half4 main(float2 coord) {
         }
 
         private companion object {
-            // Phình to: +50% so với bản trước (1.14 x 1.3 -> 1.71 x 1.95). Chỉnh độ nở ở hai hằng số này.
-            const val LIFT_SCALE_X = 1.71f
-            const val LIFT_SCALE_Y = 1.95f
+            // Viên kính nổi cao hơn thanh chọn khoảng 10%. Chỉnh độ nở ở hằng số này.
+            const val LIFT_OVER_TRACK = 1.10f
+            const val FALLBACK_LIFT_SCALE = 1.3f
             const val MIN_LIFT_MS = 260L
             const val MAX_OVERFLOW_DP = 14f
             const val FOLLOW_SMOOTH_MS = 140L
