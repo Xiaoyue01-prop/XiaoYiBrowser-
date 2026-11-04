@@ -126,6 +126,17 @@ class BrowserBottomSheet(
         (content.parent as? ViewGroup)?.removeView(content)
         sheet.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
 
+        // Nội dung phải tràn tới sát đáy màn hình (xuyên qua thanh điều hướng) như popup website:
+        // bỏ khoảng đệm đáy của trang, chuyển nó xuống phần tử cuối (thường là ScrollView) để
+        // nội dung cuộn xuyên đáy thay vì bị cắt thành một dải trắng phía trên thanh điều hướng.
+        val lastChild = (content as? ViewGroup)?.let { g -> g.getChildAt(g.childCount - 1) }
+        val pageBottomPad = content.paddingBottom
+        val lastBasePad = lastChild?.paddingBottom ?: 0
+        if (lastChild != null) {
+            content.setPadding(content.paddingLeft, content.paddingTop, content.paddingRight, 0)
+            (lastChild as? ViewGroup)?.clipToPadding = false
+        }
+
         var downY = 0f
         var tracker: VelocityTracker? = null
         dragZone.setOnTouchListener { _, event ->
@@ -183,6 +194,13 @@ class BrowserBottomSheet(
             sheet.layoutParams = sheetLp
             // Chỉ nhường vùng bàn phím; không đẩy nội dung lên khỏi navigation bar.
             sheet.setPadding(0, 0, 0, ime.bottom)
+            // ime.bottom đã gồm thanh điều hướng khi bàn phím mở; khi đóng thì dùng bars.bottom.
+            lastChild?.let {
+                it.setPadding(
+                    it.paddingLeft, it.paddingTop, it.paddingRight,
+                    lastBasePad + pageBottomPad + if (ime.bottom > 0) 0 else bars.bottom
+                )
+            }
             insets
         }
 
