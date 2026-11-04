@@ -548,14 +548,8 @@ class BrowserToolsController(
                 setStroke(dp(1), if (isNight) Color.rgb(65, 65, 69) else Color.rgb(222, 222, 227))
             }
         }
-        val indicator = View(activity).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = dp(20).toFloat()
-                setColor(if (isNight) Color.rgb(76, 76, 81) else Color.WHITE)
-                setStroke(dp(1), if (isNight) Color.rgb(92, 92, 98) else Color.rgb(220, 220, 226))
-            }
-            elevation = dp(2).toFloat()
-        }
+        val thumb = GlassSystem.SegmentedGlassThumb(activity, density, isNight)
+        val indicator = thumb.view
         track.addView(
             indicator,
             FrameLayout.LayoutParams(0, dp(40), Gravity.TOP or Gravity.START)
@@ -605,18 +599,6 @@ class BrowserToolsController(
                 setPadding(dp(3), 0, dp(3), 0)
                 isSingleLine = true
                 includeFontPadding = false
-                setOnClickListener {
-                    if (selectedState != state) {
-                        selectedState = state
-                        onChange(state)
-                        stateText.text = permissionLabel(state)
-                        optionViews.forEach { (view, optionState) ->
-                            view.setTextColor(if (optionState == selectedState) accent else muted)
-                        }
-                        updateIndicator(animate = true)
-                        toast("Đã cập nhật quyền: $label")
-                    }
-                }
             }
             optionViews += option to state
             optionRow.addView(option, LinearLayout.LayoutParams(0, dp(40), 1f))
@@ -628,6 +610,29 @@ class BrowserToolsController(
         track.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             updateIndicator(animate = false)
         }
+        fun refreshOptions(hover: Int = -1) {
+            optionViews.forEachIndexed { index, (view, state) ->
+                val active = if (hover >= 0) index == hover else state == selectedState
+                view.setTextColor(if (active) accent else muted)
+                AnimationSystem.scaleTo(view, if (hover == index) 1.12f else 1f, spec = AnimationSystem.MENU_POP)
+            }
+        }
+        thumb.attach(
+            track, choices.size,
+            currentIndex = { selectedIndex() },
+            onHover = { refreshOptions(it) },
+            onRelease = { index ->
+                val state = choices[index].second
+                if (selectedState != state) {
+                    selectedState = state
+                    onChange(state)
+                    stateText.text = permissionLabel(state)
+                    toast("Đã cập nhật quyền: $label")
+                }
+                refreshOptions()
+                updateIndicator(animate = true)
+            }
+        )
         group.addView(track, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
         group.clipChildren = false
         group.clipToPadding = false

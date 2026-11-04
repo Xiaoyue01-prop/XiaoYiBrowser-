@@ -445,4 +445,117 @@ half4 main(float2 coord) {
                 .setOverlayColor(overlayColor)
         }
     }
+
+    /**
+     * Viên chọn của thanh chọn phân đoạn kiểu iOS 26 (tab bar trong video tham chiếu).
+     * Lúc nghỉ là viên đặc nằm dưới nhãn; khi chạm giữ, viên đặc nhạt đi, hiện lớp kính trong,
+     * phình to hơn thanh một chút và trượt theo ngón tay. Thả tay thì co lại và lăn về ô gần nhất.
+     * Mọi hành vi kính của thanh này nằm ở đây; người gọi chỉ cấp callback.
+     */
+    class SegmentedGlassThumb(context: Context, private val density: Float, isNight: Boolean) {
+        val view = FrameLayout(context)
+        private val solid = View(context)
+        private val glass = View(context)
+        private var lifted = false
+
+        init {
+            val radius = 20f * density
+            solid.background = GradientDrawable().apply {
+                cornerRadius = radius
+                setColor(if (isNight) Color.rgb(76, 76, 81) else Color.WHITE)
+                setStroke(density.toInt().coerceAtLeast(1), if (isNight) Color.rgb(92, 92, 98) else Color.rgb(220, 220, 226))
+            }
+            glass.background = GradientDrawable().apply {
+                cornerRadius = radius
+                setColor(if (isNight) Color.argb(64, 255, 255, 255) else Color.argb(150, 255, 255, 255))
+            }
+            glass.foreground = GlassRimDrawable(radius, density)
+            glass.alpha = 0f
+            view.addView(solid, FrameLayout.LayoutParams(-1, -1))
+            view.addView(glass, FrameLayout.LayoutParams(-1, -1))
+            view.elevation = 2f * density
+        }
+
+        private fun lift(on: Boolean) {
+            if (lifted == on) return
+            lifted = on
+            if (on) {
+                AnimationSystem.fade(solid, 0f, AnimationSystem.QUICK)
+                AnimationSystem.fade(glass, 1f, AnimationSystem.QUICK)
+                AnimationSystem.scaleTo(view, LIFT_SCALE_X, LIFT_SCALE_Y, AnimationSystem.MENU_POP)
+            } else {
+                AnimationSystem.fade(glass, 0f, AnimationSystem.SMOOTH)
+                AnimationSystem.fade(solid, 1f, AnimationSystem.SMOOTH)
+                AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_POP_BACK)
+            }
+        }
+
+        /** Phình ra ngoài thanh nên mọi cha phải thôi cắt con. */
+        private fun unclipParents(from: View) {
+            var p = from.parent
+            while (p is ViewGroup) {
+                p.clipChildren = false
+                p.clipToPadding = false
+                p = p.parent
+            }
+        }
+
+        /**
+         * Gắn cử chỉ cho [track] (có [count] ô bằng nhau, trừ padding của track).
+         * [onHover] báo ô đang nằm dưới ngón tay lúc kéo; [onRelease] báo ô được chọn khi thả
+         * (hoặc ô hiện tại nếu bị huỷ). Người gọi tự đưa viên về đúng ô sau [onRelease].
+         */
+        @android.annotation.SuppressLint("ClickableViewAccessibility")
+        fun attach(
+            track: View,
+            count: Int,
+            currentIndex: () -> Int,
+            onHover: (Int) -> Unit,
+            onRelease: (Int) -> Unit
+        ) {
+            var hover = -1
+            track.setOnTouchListener { v, e ->
+                val available = (v.width - v.paddingLeft - v.paddingRight).toFloat()
+                if (available <= 0f) return@setOnTouchListener false
+                val cell = available / count
+                fun indexAt(x: Float) = ((x - v.paddingLeft) / cell).toInt().coerceIn(0, count - 1)
+                fun thumbX(x: Float) = (x - v.paddingLeft - cell / 2f).coerceIn(0f, cell * (count - 1))
+                when (e.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                        unclipParents(view)
+                        lift(true)
+                        hover = indexAt(e.x)
+                        onHover(hover)
+                        AnimationSystem.spring(view, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, thumbX(e.x), AnimationSystem.MENU_MORPH)
+                        true
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        AnimationSystem.spring(view, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, thumbX(e.x), AnimationSystem.QUICK)
+                        val i = indexAt(e.x)
+                        if (i != hover) { hover = i; onHover(i) }
+                        true
+                    }
+                    android.view.MotionEvent.ACTION_UP -> {
+                        lift(false)
+                        onRelease(if (hover >= 0) hover else currentIndex())
+                        hover = -1
+                        true
+                    }
+                    android.view.MotionEvent.ACTION_CANCEL -> {
+                        lift(false)
+                        onRelease(currentIndex())
+                        hover = -1
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
+
+        private companion object {
+            const val LIFT_SCALE_X = 1.14f
+            const val LIFT_SCALE_Y = 1.3f
+        }
+    }
 }
