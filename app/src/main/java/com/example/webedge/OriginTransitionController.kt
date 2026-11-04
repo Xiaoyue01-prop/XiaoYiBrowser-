@@ -219,7 +219,7 @@ object OriginTransitionController {
         m.hopTarget = target
         m.hopStarted = false
         animateTo(m, 0f, springSpec ?: AnimationSystem.MORPH_CLOSE) {
-            val done = {
+            val done: () -> Unit = {
                 finish(m)
                 onEnd?.invoke()
             }
