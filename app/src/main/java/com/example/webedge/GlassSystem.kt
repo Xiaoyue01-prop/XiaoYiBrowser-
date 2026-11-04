@@ -98,6 +98,47 @@ object GlassSystem {
     fun createBorder(radiusDp: Int, density: Float, isNight: Boolean): Drawable =
         GlassRimDrawable(radiusDp * density, density)
 
+
+    /**
+     * Shared glass banner surface for transient notices and download confirmation.
+     * Keeps the material, blur layer, rounded clipping and rim identical across both UI flows.
+     */
+    fun createBannerCard(
+        context: Context,
+        target: BlurTarget,
+        density: Float,
+        isNight: Boolean
+    ): FrameLayout {
+        val preset = Preset.TOAST
+        return FrameLayout(context).apply {
+            background = create(preset, density, isNight)
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            clipToOutline = true
+            clipChildren = true
+            clipToPadding = true
+            foreground = createBorder(preset.radiusDp, density, isNight)
+            elevation = 18f * density
+
+            addView(
+                createBlurView(
+                    context,
+                    target,
+                    preset,
+                    density,
+                    isNight,
+                    rim = false
+                ).apply {
+                    isClickable = false
+                    isFocusable = false
+                },
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+    }
+
     /**
      * Viền liquid glass: vòng ngoài xám lạnh dạng gradient + vành sáng mảnh bên trong.
      * Vẽ như một Drawable độc lập nên dùng được cho mọi bề mặt kính; phần trong để trống.

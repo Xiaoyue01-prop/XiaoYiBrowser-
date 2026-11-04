@@ -512,32 +512,34 @@ class MainActivity : ComponentActivity() {
 
     private var toastView: View? = null
 
-    // Thông báo nhỏ dạng viên thuốc: trượt lên, tự rút lại
+    // Thông báo trong app dùng chung vỏ banner kính với hộp hỏi xác nhận tải xuống.
     private fun toast(msg: String) {
         toastView?.let { root.removeView(it) }
         val label = TextView(this).apply {
             text = msg
             textSize = 14f
-            setTextColor(Color.BLACK)
+            setTextColor(fg)
             setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-            setPadding(dp(18), dp(10), dp(18), dp(10))
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(12), dp(14), dp(12))
         }
-        // Kính blur thật nằm sau chữ, cùng bộ render với thanh địa chỉ/Orb.
-        val t = FrameLayout(this)
+        val t = GlassSystem.createBannerCard(this, blurTarget, d, isNight)
         t.addView(
-            GlassSystem.createBlurView(this, blurTarget, GlassSystem.Preset.TOAST, d, isNight).apply {
-                isClickable = false
-                isFocusable = false
-            },
-            FrameLayout.LayoutParams(-1, -1)
+            label,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
         )
-        t.addView(label, FrameLayout.LayoutParams(-2, -2))
         val lp = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-        )
-        lp.bottomMargin = maxOf(insetBottom, imeBottom) + dp(10) + dp(BOTTOM_BAR_HEIGHT_DP) + dp(14)
+        ).apply {
+            leftMargin = dp(14)
+            rightMargin = dp(14)
+            bottomMargin = maxOf(insetBottom, imeBottom) + dp(10) + dp(BOTTOM_BAR_HEIGHT_DP) + dp(14)
+        }
         root.addView(t, lp)
         toastView = t
         t.alpha = 0f

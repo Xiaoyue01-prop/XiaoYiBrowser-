@@ -67,32 +67,12 @@ class DownloadPromptController(
         active = prompt
         finishing = false
 
-        val card = FrameLayout(activity).apply {
-            background = GlassSystem.create(GlassSystem.Preset.TOAST, density, isNight)
-            clipToOutline = true
-            clipChildren = true
-            clipToPadding = true
-            foreground = GlassSystem.createBorder(
-                GlassSystem.Preset.TOAST.radiusDp,
-                density,
-                isNight
-            )
-            elevation = dp(18).toFloat()
-        }
-
-        card.addView(
-            GlassSystem.createBlurView(
-                activity,
-                blurTarget,
-                GlassSystem.Preset.TOAST,
-                density,
-                isNight,
-                rim = false
-            ).apply {
-                isClickable = false
-                isFocusable = false
-            },
-            FrameLayout.LayoutParams(-1, -1)
+        // Same shared glass banner shell used by ordinary in-app notifications.
+        val card = GlassSystem.createBannerCard(
+            activity,
+            blurTarget,
+            density,
+            isNight
         )
 
         val content = LinearLayout(activity).apply {
