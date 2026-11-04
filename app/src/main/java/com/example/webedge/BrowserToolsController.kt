@@ -520,26 +520,74 @@ class BrowserToolsController(
         val stateText = text(permissionLabel(initialState), 11f, muted)
         row.addView(stateText)
         group.addView(row)
+        // Segmented selector: keep an inset around the selected pill so its
+        // pressed/selected shape is never clipped by the track's rounded edge.
         val buttons = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.START
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            clipChildren = false
+            clipToPadding = false
+            background = GradientDrawable().apply {
+                cornerRadius = dp(24).toFloat()
+                setColor(if (isNight) Color.rgb(35, 35, 37) else Color.rgb(235, 235, 239))
+                setStroke(dp(1), if (isNight) Color.rgb(65, 65, 69) else Color.rgb(222, 222, 227))
+            }
         }
-        listOf(
+        val choices = listOf(
             "Hỏi lại" to PermissionState.ASK,
             "Cho phép" to PermissionState.ALLOW,
             "Chặn" to PermissionState.DENY
-        ).forEach { (title, state) ->
-            val color = when (state) {
-                PermissionState.ALLOW -> accent
-                PermissionState.DENY -> Theme.DANGER_RED
-                PermissionState.ASK -> muted
+        )
+        val choiceViews = mutableListOf<Pair<TextView, PermissionState>>()
+        fun refreshChoices(selected: PermissionState) {
+            choiceViews.forEach { (view, state) ->
+                val active = state == selected
+                val selectedColor = when (state) {
+                    PermissionState.ALLOW -> accent
+                    PermissionState.DENY -> Theme.DANGER_RED
+                    PermissionState.ASK -> if (isNight) Color.rgb(225, 225, 230) else Color.WHITE
+                }
+                view.background = GradientDrawable().apply {
+                    cornerRadius = dp(20).toFloat()
+                    setColor(if (active) {
+                        if (state == PermissionState.ASK) {
+                            if (isNight) Color.rgb(75, 75, 80) else Color.rgb(255, 255, 255)
+                        } else selectedColor
+                    } else Color.TRANSPARENT)
+                    if (active) setStroke(dp(1), if (state == PermissionState.ASK) {
+                        if (isNight) Color.rgb(95, 95, 100) else Color.rgb(215, 215, 222)
+                    } else selectedColor)
+                }
+                view.setTextColor(if (active && state != PermissionState.ASK) Color.WHITE
+                    else if (active) foreground else muted)
+                view.elevation = if (active) dp(2).toFloat() else 0f
             }
-            buttons.addView(actionButton(title, color) {
-                onChange(state)
-                stateText.text = permissionLabel(state)
-                toast("Đã cập nhật quyền: $label")
-            }, LinearLayout.LayoutParams(-2, dp(34)).apply { marginEnd = dp(6) })
         }
+        choices.forEach { (title, state) ->
+            val choice = TextView(activity).apply {
+                text = title
+                textSize = 12f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                gravity = Gravity.CENTER
+                minHeight = dp(38)
+                setPadding(dp(4), 0, dp(4), 0)
+                isSingleLine = true
+                setOnClickListener {
+                    onChange(state)
+                    stateText.text = permissionLabel(state)
+                    refreshChoices(state)
+                    toast("Đã cập nhật quyền: $label")
+                }
+            }
+            choiceViews += choice to state
+            buttons.addView(choice, LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+                if (state != PermissionState.ASK) marginStart = dp(3)
+            })
+        }
+        refreshChoices(initialState)
+        group.clipChildren = false
+        group.clipToPadding = false
         group.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
         parent.addView(group, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
     }
@@ -588,7 +636,7 @@ class BrowserToolsController(
             text = label
             textSize = 12f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(if (color == muted) this@BrowserToolsController.foreground else color)
+            setTextColor(if (color == muted) foreground else color)
             gravity = Gravity.CENTER
             setPadding(dp(12), 0, dp(12), 0)
             background = GradientDrawable().apply {
