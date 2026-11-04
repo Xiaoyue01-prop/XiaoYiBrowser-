@@ -197,7 +197,10 @@ class MenuController(
                 counterTransformView = glass,
                 contentViews = {
                     (0 until card.childCount).map { card.getChildAt(it) }.filter { it !== glass }
-                }
+                },
+                // Video: chữ đã thấy (nhỏ, co theo thẻ) ngay từ khung thứ 2, nên hiện nội dung sớm.
+                contentStart = 0f,
+                contentSpan = 0.25f
             )
             if (!morphing) {
                 card.pivotX = card.width.toFloat()

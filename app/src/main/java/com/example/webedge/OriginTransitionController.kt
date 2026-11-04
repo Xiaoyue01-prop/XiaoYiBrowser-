@@ -35,7 +35,9 @@ object OriginTransitionController {
         val fadeIn: Boolean,
         val counterTransformView: View?,
         val contentViews: (() -> List<View>)?,
-        val onProgress: ((Float) -> Unit)?
+        val onProgress: ((Float) -> Unit)?,
+        val contentStart: Float,
+        val contentSpan: Float
     ) {
         var opening = true
         var sx = 1f
@@ -79,7 +81,10 @@ object OriginTransitionController {
         // chữ/icon mới hiện dần khi vỏ đã bung được một đoạn, như iOS.
         contentViews: (() -> List<View>)? = null,
         // Gọi mỗi frame với tiến độ morph (0..1, có thể vượt 1 khi spring nảy).
-        onProgress: ((Float) -> Unit)? = null
+        onProgress: ((Float) -> Unit)? = null,
+        // Tiến độ morph (0..1) bắt đầu hiện nội dung và độ dài đoạn hiện dần; nhỏ hơn = chữ hiện sớm hơn.
+        contentStart: Float = 0.22f,
+        contentSpan: Float = 0.45f
     ): Boolean {
         val target = boundsOnScreen(view) ?: return false
         val old = morphs[view]
@@ -98,7 +103,9 @@ object OriginTransitionController {
             fadeIn = fadeIn,
             counterTransformView = counterTransformView,
             contentViews = contentViews,
-            onProgress = onProgress
+            onProgress = onProgress,
+            contentStart = contentStart,
+            contentSpan = contentSpan
         )
         morphs[view] = m
         place(m, target)
@@ -247,7 +254,7 @@ object OriginTransitionController {
         }
         m.onProgress?.invoke(p)
         m.contentViews?.let { provider ->
-            val t = ((p - 0.22f) / 0.45f).coerceIn(0f, 1f)
+            val t = ((p - m.contentStart) / m.contentSpan).coerceIn(0f, 1f)
             val a = t * t * (3f - 2f * t)
             provider().forEach { it.alpha = a }
         }

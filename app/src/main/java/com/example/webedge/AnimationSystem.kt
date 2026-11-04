@@ -38,10 +38,10 @@ object AnimationSystem {
     val MORPH = SpringSpec(0.54f, 0.78f)
     /** Thu ngược về nút; preset chung, gần như không nảy để không chạy lố qua nút. */
     val MORPH_CLOSE = SpringSpec(0.40f, 0.90f)
-    /** Menu ba chấm: chậm hơn MORPH khoảng 22%, giữ nguyên độ nảy và quỹ đạo. */
-    val MENU_MORPH = SpringSpec(0.64f, 0.78f)
-    /** Menu ba chấm khi đóng: chậm hơn MORPH_CLOSE khoảng 24%, vẫn thu gọn gọn gàng. */
-    val MENU_MORPH_CLOSE = SpringSpec(0.42f, 0.95f)
+    /** Menu ba chấm: đo từ video tham chiếu (iOS), đạt 90% sau ~0.19s, gần như không nảy (~0.5%). */
+    val MENU_MORPH = SpringSpec(0.34f, 0.85f)
+    /** Menu ba chấm khi đóng: video đóng xong trong ~0.17s, không nảy. */
+    val MENU_MORPH_CLOSE = SpringSpec(0.27f, 1.0f)
     /** Nút gốc mờ đi/hiện lại khi bề mặt morph: chậm hơn QUICK để nút tan vào menu thay vì biến mất đột ngột. */
     val SOURCE_FADE = SpringSpec(0.32f, 1.0f)
     /** Thu gọn thanh công cụ, toast, đổi trạng thái: vượt nhẹ hơn SETTLE một chút. */
