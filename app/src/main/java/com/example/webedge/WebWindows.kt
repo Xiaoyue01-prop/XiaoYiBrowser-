@@ -259,12 +259,13 @@ class PopupWindowController(
             }
         )
         dragZone.addView(header, LinearLayout.LayoutParams(-1, dp(56)))
-        sheetView.addView(dragZone, LinearLayout.LayoutParams(-1, -2))
-        // Trang phủ kín sheet và nằm DƯỚI tiêu đề trong suốt (tiêu đề nâng lên trên bằng translationZ),
-        // để phần trang sát mép tiêu đề mờ dần như header menu Tab.
+        // Trang phủ kín sheet và nằm DƯỚI tiêu đề trong suốt, để phần trang sát mép tiêu đề mờ dần như header menu Tab.
+        // Dùng FrameLayout chồng lớp (LinearLayout bỏ qua margin âm nên trang bị hụt đúng bằng chiều cao tiêu đề ở đáy).
         val headerPx = dp(POPUP_HEADER_DP)
-        dragZone.translationZ = dp(1).toFloat()
-        sheetView.addView(popup, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = -headerPx })
+        val pageHost = FrameLayout(activity)
+        pageHost.addView(popup, FrameLayout.LayoutParams(-1, -1))
+        pageHost.addView(dragZone, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        sheetView.addView(pageHost, LinearLayout.LayoutParams(-1, -1))
         GlassSystem.installEdgeBlur(popup, headerPx + dp(24), 0, dp(14).toFloat(), if (night) 0f else 0.30f, 0f)
 
         // Đẩy nội dung trang xuống dưới tiêu đề lúc nghỉ (WebView không có padding nội dung):
