@@ -457,6 +457,8 @@ half4 main(float2 coord) {
         private val solid = View(context)
         private val glass = View(context)
         private var lifted = false
+        private var liftStart = 0L
+        private var pendingDrop: Runnable? = null
 
         init {
             val radius = 20f * density
@@ -480,6 +482,7 @@ half4 main(float2 coord) {
             if (lifted == on) return
             lifted = on
             if (on) {
+                liftStart = SystemClock.uptimeMillis()
                 AnimationSystem.fade(solid, 0f, AnimationSystem.QUICK)
                 AnimationSystem.fade(glass, 1f, AnimationSystem.QUICK)
                 AnimationSystem.scaleTo(view, LIFT_SCALE_X, LIFT_SCALE_Y, AnimationSystem.MENU_POP)
@@ -488,6 +491,18 @@ half4 main(float2 coord) {
                 AnimationSystem.fade(solid, 1f, AnimationSystem.SMOOTH)
                 AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_POP_BACK)
             }
+        }
+
+        /**
+         * Hạ viên kính xuống sau khi thả tay, nhưng giữ nó phình ít nhất [MIN_LIFT_MS] để cú chạm nhanh
+         * sang ô bên cạnh vẫn thấy viên kính nở ra rồi mới co lại khi tới nơi.
+         */
+        private fun dropLater() {
+            pendingDrop?.let { view.removeCallbacks(it) }
+            val wait = (MIN_LIFT_MS - (SystemClock.uptimeMillis() - liftStart)).coerceAtLeast(0L)
+            val r = Runnable { pendingDrop = null; lift(false) }
+            pendingDrop = r
+            view.postDelayed(r, wait)
         }
 
         /** Phình ra ngoài thanh nên mọi cha phải thôi cắt con. */
@@ -519,11 +534,16 @@ half4 main(float2 coord) {
                 if (available <= 0f) return@setOnTouchListener false
                 val cell = available / count
                 fun indexAt(x: Float) = ((x - v.paddingLeft) / cell).toInt().coerceIn(0, count - 1)
-                fun thumbX(x: Float) = (x - v.paddingLeft - cell / 2f).coerceIn(0f, cell * (count - 1))
+                // Khi viên phình to, giữ phần tràn ra ngoài thanh không quá MAX_OVERFLOW_DP để khỏi bị cắt ở mép màn hình.
+                val overflow = cell * (LIFT_SCALE_X - 1f) / 2f
+                val inset = (overflow - MAX_OVERFLOW_DP * density).coerceAtLeast(0f)
+                fun thumbX(x: Float) = (x - v.paddingLeft - cell / 2f).coerceIn(inset, cell * (count - 1) - inset)
                 when (e.actionMasked) {
                     android.view.MotionEvent.ACTION_DOWN -> {
                         v.parent?.requestDisallowInterceptTouchEvent(true)
                         unclipParents(view)
+                        pendingDrop?.let { view.removeCallbacks(it) }
+                        pendingDrop = null
                         lift(true)
                         hover = indexAt(e.x)
                         onHover(hover)
@@ -543,13 +563,13 @@ half4 main(float2 coord) {
                         true
                     }
                     android.view.MotionEvent.ACTION_UP -> {
-                        lift(false)
+                        dropLater()
                         onRelease(if (hover >= 0) hover else currentIndex())
                         hover = -1
                         true
                     }
                     android.view.MotionEvent.ACTION_CANCEL -> {
-                        lift(false)
+                        dropLater()
                         onRelease(currentIndex())
                         hover = -1
                         true
@@ -560,8 +580,11 @@ half4 main(float2 coord) {
         }
 
         private companion object {
-            const val LIFT_SCALE_X = 1.14f
-            const val LIFT_SCALE_Y = 1.3f
+            // Phình to: +50% so với bản trước (1.14 x 1.3 -> 1.71 x 1.95). Chỉnh độ nở ở hai hằng số này.
+            const val LIFT_SCALE_X = 1.71f
+            const val LIFT_SCALE_Y = 1.95f
+            const val MIN_LIFT_MS = 260L
+            const val MAX_OVERFLOW_DP = 14f
             const val FOLLOW_SMOOTH_MS = 140L
         }
     }
