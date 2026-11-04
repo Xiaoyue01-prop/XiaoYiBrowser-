@@ -82,11 +82,15 @@ class BrowserToolsController(
         val summaryDetail = text("Các tệp tải bằng Summit sẽ xuất hiện tại đây.", 12f, muted)
         summaryCard.addView(summary)
         summaryCard.addView(summaryDetail, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        page.addView(summaryCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
 
+        // Thẻ tổng quan nằm trong vùng cuộn để cuộn xuống dưới tiêu đề cùng danh sách.
         val scroll = ScrollView(activity).apply { clipToPadding = false }
         val list = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        scroll.addView(list)
+        val scrollBody = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        (summaryCard.parent as? ViewGroup)?.removeView(summaryCard)
+        scrollBody.addView(summaryCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+        scrollBody.addView(list)
+        scroll.addView(scrollBody)
         page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         page.addView(
             text("Android DownloadManager không cung cấp nút tạm dừng/tiếp tục trực tiếp. Summit có thể theo dõi tiến trình, hủy tải, mở hoặc xóa tệp.", 11f, muted)

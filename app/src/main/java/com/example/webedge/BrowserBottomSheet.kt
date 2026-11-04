@@ -78,8 +78,7 @@ class BrowserBottomSheet(
         root.addView(scrim, FrameLayout.LayoutParams(-1, -1))
 
         val corner = dp(36)
-        val sheet = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
+        val sheet = FrameLayout(activity).apply {
             background = ColorDrawable(sheetColor)
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
@@ -143,24 +142,26 @@ class BrowserBottomSheet(
             }
         )
         dragZone.addView(header, LinearLayout.LayoutParams(-1, dp(56)))
-        sheet.addView(dragZone, LinearLayout.LayoutParams(-1, -2))
 
+        // Nội dung phủ kín sheet và cuộn xuống DƯỚI tiêu đề (tiêu đề trong suốt nằm đè lên trên),
+        // để phần nội dung sát mép tiêu đề bị mờ dần như header menu Tab.
         (content.parent as? ViewGroup)?.removeView(content)
-        sheet.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
+        sheet.addView(content, FrameLayout.LayoutParams(-1, -1))
+        sheet.addView(dragZone, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
-        // Tiêu đề kiểu menu Tab: nội dung cuộn mờ dần khi tới sát mép tiêu đề, thay vì bị cắt thẳng hoặc đè lên chữ.
+        // Giống menu Tab: vùng mờ = chiều cao tiêu đề + 24dp; mép dưới (thanh điều hướng) để nguyên nội dung.
+        val headerPx = dp(HEADER_DP)
         findScrollViews(content).forEach { scroll ->
             val first = (content as? ViewGroup)?.getChildAt(0) === scroll
-            scroll.setPadding(scroll.paddingLeft, scroll.paddingTop + dp(EDGE_ZONE_DP), scroll.paddingRight, scroll.paddingBottom)
-            scroll.clipToPadding = false
             if (first) {
+                // Khoảng đệm trên của trang chuyển xuống ScrollView, cộng thêm chiều cao tiêu đề để lúc nghỉ
+                // nội dung nằm ngay dưới tiêu đề, còn khi cuộn thì chui xuống dưới và bị mờ.
+                scroll.setPadding(scroll.paddingLeft, scroll.paddingTop + content.paddingTop + headerPx, scroll.paddingRight, scroll.paddingBottom)
                 content.setPadding(content.paddingLeft, 0, content.paddingRight, content.paddingBottom)
-            } else {
-                (scroll.layoutParams as? ViewGroup.MarginLayoutParams)?.let { it.topMargin -= dp(10) }
             }
-            // Giống menu Tab: mờ thật (không làm nhạt) ở mép trên; mép dưới (thanh điều hướng) để nguyên nội dung.
+            scroll.clipToPadding = false
             GlassSystem.installEdgeBlur(
-                scroll, dp(EDGE_ZONE_DP), 0, dp(EDGE_BLUR_RADIUS_DP).toFloat(), if (isNight) 0f else EDGE_VEIL, 0f
+                scroll, headerPx + dp(EDGE_EXTRA_DP), 0, dp(EDGE_BLUR_RADIUS_DP).toFloat(), if (isNight) 0f else EDGE_VEIL, 0f
             )
         }
 
@@ -338,7 +339,8 @@ class BrowserBottomSheet(
     private companion object {
         const val SCRIM_ALPHA = 0.5f
         const val CLOSE_FALLBACK_MS = 900L
-        const val EDGE_ZONE_DP = 28
+        const val HEADER_DP = 69             // tay nắm (13) + thanh tiêu đề (56)
+        const val EDGE_EXTRA_DP = 24         // vùng mờ kéo dài xuống dưới tiêu đề, như menu Tab
         const val EDGE_BLUR_RADIUS_DP = 14   // độ mờ tối đa ở sát mép tiêu đề, cùng giá trị với menu Tab
         const val EDGE_VEIL = 0.30f          // phủ trắng nhẹ ở sát mép, cùng giá trị với menu Tab
     }
