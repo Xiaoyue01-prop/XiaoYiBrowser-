@@ -1,7 +1,6 @@
 package com.example.webedge
 
 import android.app.Activity
-import android.app.DownloadManager
 import android.graphics.Color
 import android.content.Context
 import android.content.Intent
@@ -79,6 +78,20 @@ class MenuController(
     private var toolbarCompact = false
     private var menuWasOpenBeforeCompact = false
     private var compactFallback: CompactFallback? = null
+
+    private val browserTools by lazy(LazyThreadSafetyMode.NONE) {
+        BrowserToolsController(
+            activity = activity,
+            store = store,
+            webView = { host.web },
+            currentUrl = { host.currentUrl },
+            density = d,
+            isNight = isNight,
+            foreground = fg,
+            accent = accent,
+            toast = host::toast
+        )
+    }
 
     private data class CompactFallback(
         val translationX: Float,
@@ -506,7 +519,8 @@ class MenuController(
         gap()
         item("Dấu trang", Icons.BOOKMARK_OUTLINE, false) { showList("Dấu trang", "bookmarks") }
         item("Lịch sử", Icons.HISTORY, false) { showList("Lịch sử", "history") }
-        item("Tải xuống", Icons.DOWNLOAD, true) { openDownloads() }
+        item("Tải xuống", Icons.DOWNLOAD, true) { browserTools.showDownloads() }
+        item("Privacy Dashboard", Icons.SHIELD, true) { browserTools.showPrivacy() }
 
         gap()
         item("Tìm trong trang", Icons.SEARCH, true) { host.openFind() }
@@ -537,13 +551,6 @@ class MenuController(
         activity.startActivity(Intent.createChooser(i, "Chia sẻ"))
     }
 
-    private fun openDownloads() {
-        try {
-            activity.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
-        } catch (e: Exception) {
-            host.toast("Không mở được danh sách tải xuống")
-        }
-    }
 
     // ---------------- Các trang trong khung menu ----------------
 

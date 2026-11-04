@@ -13,6 +13,7 @@ import java.io.FileOutputStream
 
 enum class PermissionState { ASK, ALLOW, DENY }
 data class Entry(val title: String, val url: String, val time: Long)
+data class SitePermissionEntry(val origin: String, val media: PermissionState, val location: PermissionState)
 data class PersistedTab(
     val id: Long,
     val url: String,
@@ -23,11 +24,37 @@ data class PersistedTab(
     val thumbnailVersion: Long = 0L
 )
 class Store(context: Context) {
-    companion object { private const val TAG = "Store" }
+    companion object {
+        private const val TAG = "Store"
+        // Tab preview chỉ cần đủ nét để hiển thị trong lưới, không cần giữ ảnh gần full-resolution.
+        private const val MAX_PREVIEW_WIDTH_PX = 420
+        private const val MAX_PREVIEW_HEIGHT_PX = 900
+    }
     private val sp = context.getSharedPreferences("edge", Context.MODE_PRIVATE)
     private val thumbnailDir = File(context.filesDir, "tab_thumbnails").apply { mkdirs() }
 
     private fun thumbnailFile(tabId: Long) = File(thumbnailDir, "tab_$tabId.jpg")
+
+    /** Đọc thumbnail ở kích thước vừa đủ cho lưới tab để tránh nạp hàng chục ảnh lớn vào RAM. */
+    private fun loadThumbnail(tabId: Long): Bitmap? = runCatching {
+        val path = thumbnailFile(tabId).absolutePath
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+
+        var sampleSize = 1
+        while (bounds.outWidth / sampleSize > MAX_PREVIEW_WIDTH_PX ||
+            bounds.outHeight / sampleSize > MAX_PREVIEW_HEIGHT_PX
+        ) {
+            sampleSize *= 2
+        }
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
+            inScaled = false
+            inSampleSize = sampleSize
+        }
+        BitmapFactory.decodeFile(path, options)
+    }.getOrNull()
 
     /** Ghi thumbnail ra file riêng, dùng AtomicFile để tránh ảnh hỏng nếu app bị kill giữa lúc lưu. */
     private fun saveThumbnail(tab: PersistedTab): Boolean {
@@ -151,16 +178,7 @@ class Store(context: Context) {
                     url = obj.optString("url", ""),
                     title = obj.optString("title", ""),
                     isActive = obj.optBoolean("active", false),
-                    thumbnail = runCatching {
-                        val id = obj.optLong("id", 0L)
-                        if (id > 0L) {
-                            val options = BitmapFactory.Options().apply {
-                                inPreferredConfig = Bitmap.Config.RGB_565
-                                inScaled = false
-                            }
-                            BitmapFactory.decodeFile(thumbnailFile(id).absolutePath, options)
-                        } else null
-                    }.getOrNull(),
+                    thumbnail = obj.optLong("id", 0L).takeIf { it > 0L }?.let(::loadThumbnail),
                     thumbnailUrl = obj.optString("thumbnailUrl", ""),
                     thumbnailVersion = obj.optLong("thumbnailVersion", 0L)
                 )
@@ -268,6 +286,24 @@ class Store(context: Context) {
         if (state == PermissionState.ASK) editor.remove(permKey("geo", origin))
         else editor.putString(permKey("geo", origin), state.name.lowercase())
         editor.apply()
+    }
+
+    /** Danh sách các origin đã từng được cấp/từ chối quyền trong Summit. */
+    fun sitePermissionEntries(): List<SitePermissionEntry> {
+        val prefixes = listOf("perm_media_", "perm_geo_")
+        val origins = sp.all.keys.asSequence()
+            .flatMap { key -> prefixes.asSequence().mapNotNull { prefix ->
+                if (key.startsWith(prefix)) key.removePrefix(prefix) else null
+            } }
+            .filter { it.isNotBlank() }
+            .toSet()
+        return origins.sorted().map { origin ->
+            SitePermissionEntry(
+                origin = origin,
+                media = getMediaPermission(origin),
+                location = getGeoPermission(origin)
+            )
+        }
     }
 
     fun clearSitePermissions(origin: String?) {

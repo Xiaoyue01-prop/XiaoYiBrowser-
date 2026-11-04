@@ -5,6 +5,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import java.io.ByteArrayInputStream
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * AdBlock engine: chặn request đến domain quảng cáo + ẩn element bằng CSS.
@@ -17,7 +18,19 @@ object AdBlocker {
     // shouldInterceptRequest chạy trên luồng nền và mỗi trang bắn hàng trăm request tới vài chục host quen thuộc,
     // nên nhớ kết quả theo host để khỏi dò lại danh sách mỗi lần.
     private val hostCache = ConcurrentHashMap<String, Boolean>()
+    private val blockedRequestCount = AtomicLong(0L)
+    private val blockedResourceHosts = ConcurrentHashMap.newKeySet<String>()
     private const val HOST_CACHE_MAX = 2000
+
+    data class Stats(val blockedRequests: Long, val uniqueHosts: Int)
+
+    /** Số liệu trong phiên Summit hiện tại; không tự nhận diện tracker riêng biệt. */
+    fun stats(): Stats = Stats(blockedRequestCount.get(), blockedResourceHosts.size)
+
+    fun resetStats() {
+        blockedRequestCount.set(0L)
+        blockedResourceHosts.clear()
+    }
 
     /**
      * CSS ẩn quảng cáo còn sót. Dùng [class~=] (khớp nguyên từ) thay vì [class*=] để không ẩn nhầm
@@ -57,8 +70,14 @@ object AdBlocker {
     }
 
     /** Không chặn khi người dùng chủ động mở trang (vd. vào thẳng sentry.io); chỉ chặn tài nguyên con. */
-    fun shouldBlock(request: WebResourceRequest): Boolean =
-        !request.isForMainFrame && isAdHost(request.url.host)
+    fun shouldBlock(request: WebResourceRequest): Boolean {
+        if (request.isForMainFrame) return false
+        val host = request.url.host ?: return false
+        if (!isAdHost(host)) return false
+        blockedRequestCount.incrementAndGet()
+        blockedResourceHosts.add(host.lowercase().trimEnd('.'))
+        return true
+    }
 
     private fun isAdHost(rawHost: String?): Boolean {
         if (rawHost.isNullOrEmpty()) return false

@@ -144,6 +144,7 @@ object Icons {
     const val ARROW_DOWN = "M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"
     const val CLOSE = "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
     const val TUNE = "M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"
+    const val SHIELD = "M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 19.93c-3.72-1.17-7-5.74-7-9.93V6.3l7-3.11 7 3.11V11c0 4.19-3.28 8.76-7 9.93z"
 }
 
 class PathIcon(pathData: String, color: Int) : Drawable() {
