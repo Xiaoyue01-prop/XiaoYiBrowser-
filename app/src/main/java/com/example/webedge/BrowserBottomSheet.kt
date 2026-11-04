@@ -174,9 +174,18 @@ class BrowserBottomSheet(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            sheetLp.topMargin = bars.top + dp(10)
+
+            // Nền sheet tràn tới cả status/navigation bar; chỉ phần nội dung bên
+            // trong mới chừa vùng an toàn để không đè lên icon hệ thống hoặc home handle.
+            sheetLp.topMargin = 0
+            sheetLp.bottomMargin = 0
             sheet.layoutParams = sheetLp
-            sheet.setPadding(0, 0, 0, ime.bottom)
+            sheet.setPadding(
+                bars.left,
+                bars.top,
+                bars.right,
+                maxOf(bars.bottom, ime.bottom)
+            )
             insets
         }
 

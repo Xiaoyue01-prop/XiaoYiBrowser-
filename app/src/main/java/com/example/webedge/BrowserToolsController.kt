@@ -16,6 +16,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CompoundButton
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -24,6 +25,7 @@ import android.widget.TextView
 import android.webkit.CookieManager
 import android.webkit.WebStorage
 import android.webkit.WebView
+import androidx.dynamicanimation.animation.DynamicAnimation
 import java.text.DecimalFormat
 import java.util.Date
 import java.util.Locale
@@ -511,7 +513,11 @@ class BrowserToolsController(
         initialState: PermissionState,
         onChange: (PermissionState) -> Unit
     ) {
-        val group = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val group = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+        }
         val row = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -520,11 +526,19 @@ class BrowserToolsController(
         val stateText = text(permissionLabel(initialState), 11f, muted)
         row.addView(stateText)
         group.addView(row)
-        // Segmented selector: keep an inset around the selected pill so its
-        // pressed/selected shape is never clipped by the track's rounded edge.
-        val buttons = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+
+        // Track + moving indicator: the selected capsule slides between options
+        // like the segmented control shown in the reference video. The indicator
+        // stays inset from every edge, so its spring motion cannot be clipped.
+        val choices = listOf(
+            "Hỏi lại" to PermissionState.ASK,
+            "Cho phép" to PermissionState.ALLOW,
+            "Chặn" to PermissionState.DENY
+        )
+        var selectedState = initialState
+        var indicatorWidth = 0
+
+        val track = FrameLayout(activity).apply {
             setPadding(dp(4), dp(4), dp(4), dp(4))
             clipChildren = false
             clipToPadding = false
@@ -534,61 +548,91 @@ class BrowserToolsController(
                 setStroke(dp(1), if (isNight) Color.rgb(65, 65, 69) else Color.rgb(222, 222, 227))
             }
         }
-        val choices = listOf(
-            "Hỏi lại" to PermissionState.ASK,
-            "Cho phép" to PermissionState.ALLOW,
-            "Chặn" to PermissionState.DENY
+        val indicator = View(activity).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(20).toFloat()
+                setColor(if (isNight) Color.rgb(76, 76, 81) else Color.WHITE)
+                setStroke(dp(1), if (isNight) Color.rgb(92, 92, 98) else Color.rgb(220, 220, 226))
+            }
+            elevation = dp(2).toFloat()
+        }
+        track.addView(
+            indicator,
+            FrameLayout.LayoutParams(0, dp(40), Gravity.TOP or Gravity.START)
         )
-        val choiceViews = mutableListOf<Pair<TextView, PermissionState>>()
-        fun refreshChoices(selected: PermissionState) {
-            choiceViews.forEach { (view, state) ->
-                val active = state == selected
-                val selectedColor = when (state) {
-                    PermissionState.ALLOW -> accent
-                    PermissionState.DENY -> Theme.DANGER_RED
-                    PermissionState.ASK -> if (isNight) Color.rgb(225, 225, 230) else Color.WHITE
-                }
-                view.background = GradientDrawable().apply {
-                    cornerRadius = dp(20).toFloat()
-                    setColor(if (active) {
-                        if (state == PermissionState.ASK) {
-                            if (isNight) Color.rgb(75, 75, 80) else Color.rgb(255, 255, 255)
-                        } else selectedColor
-                    } else Color.TRANSPARENT)
-                    if (active) setStroke(dp(1), if (state == PermissionState.ASK) {
-                        if (isNight) Color.rgb(95, 95, 100) else Color.rgb(215, 215, 222)
-                    } else selectedColor)
-                }
-                view.setTextColor(if (active && state != PermissionState.ASK) Color.WHITE
-                    else if (active) foreground else muted)
-                view.elevation = if (active) dp(2).toFloat() else 0f
+
+        val optionRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            clipChildren = false
+            clipToPadding = false
+            elevation = dp(3).toFloat()
+        }
+        val optionViews = mutableListOf<Pair<TextView, PermissionState>>()
+
+        fun selectedIndex(): Int = choices.indexOfFirst { it.second == selectedState }.coerceAtLeast(0)
+
+        fun updateIndicator(animate: Boolean) {
+            val available = track.width - track.paddingLeft - track.paddingRight
+            if (available <= 0) return
+            indicatorWidth = available / choices.size
+            val params = indicator.layoutParams as FrameLayout.LayoutParams
+            if (params.width != indicatorWidth || params.height != track.height - track.paddingTop - track.paddingBottom) {
+                params.width = indicatorWidth
+                params.height = track.height - track.paddingTop - track.paddingBottom
+                indicator.layoutParams = params
+            }
+            val target = selectedIndex() * indicatorWidth.toFloat()
+            if (animate) {
+                AnimationSystem.spring(
+                    indicator,
+                    DynamicAnimation.TRANSLATION_X,
+                    target,
+                    AnimationSystem.MENU_MORPH
+                )
+            } else {
+                indicator.translationX = target
             }
         }
+
         choices.forEach { (title, state) ->
-            val choice = TextView(activity).apply {
+            val option = TextView(activity).apply {
                 text = title
                 textSize = 12f
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 gravity = Gravity.CENTER
-                minHeight = dp(38)
-                setPadding(dp(4), 0, dp(4), 0)
+                minHeight = dp(40)
+                setPadding(dp(3), 0, dp(3), 0)
                 isSingleLine = true
+                includeFontPadding = false
                 setOnClickListener {
-                    onChange(state)
-                    stateText.text = permissionLabel(state)
-                    refreshChoices(state)
-                    toast("Đã cập nhật quyền: $label")
+                    if (selectedState != state) {
+                        selectedState = state
+                        onChange(state)
+                        stateText.text = permissionLabel(state)
+                        optionViews.forEach { (view, optionState) ->
+                            view.setTextColor(if (optionState == selectedState) accent else muted)
+                        }
+                        updateIndicator(animate = true)
+                        toast("Đã cập nhật quyền: $label")
+                    }
                 }
             }
-            choiceViews += choice to state
-            buttons.addView(choice, LinearLayout.LayoutParams(0, dp(40), 1f).apply {
-                if (state != PermissionState.ASK) marginStart = dp(3)
-            })
+            optionViews += option to state
+            optionRow.addView(option, LinearLayout.LayoutParams(0, dp(40), 1f))
         }
-        refreshChoices(initialState)
+        track.addView(optionRow, FrameLayout.LayoutParams(-1, -1))
+        optionViews.forEach { (view, state) ->
+            view.setTextColor(if (state == selectedState) accent else muted)
+        }
+        track.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            updateIndicator(animate = false)
+        }
+        group.addView(track, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
         group.clipChildren = false
         group.clipToPadding = false
-        group.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+        parent.clipChildren = false
+        parent.clipToPadding = false
         parent.addView(group, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
     }
 
