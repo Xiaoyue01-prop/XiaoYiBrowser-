@@ -588,7 +588,7 @@ class BrowserToolsController(
             text = label
             textSize = 12f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(if (color == muted) foreground else color)
+            setTextColor(if (color == muted) this@BrowserToolsController.foreground else color)
             gravity = Gravity.CENTER
             setPadding(dp(12), 0, dp(12), 0)
             background = GradientDrawable().apply {
