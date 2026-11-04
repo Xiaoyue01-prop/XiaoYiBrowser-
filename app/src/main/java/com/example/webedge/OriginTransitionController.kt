@@ -51,6 +51,12 @@ object OriginTransitionController {
         var sourceScaleY = 1f
         var anim: AnimationSystem.FloatSpringHandle? = null
         var outline: MorphOutline? = null
+
+        // "Nảy": điểm neo trượt từ khung nút sang một khung to hơn, dời về phía tâm thẻ, rồi thẻ mới bung ra từ đó.
+        var popFrom: RectF? = null
+        var popTo: RectF? = null
+        var popQ = 0f
+        var popAnim: AnimationSystem.FloatSpringHandle? = null
     }
 
     private val morphs = WeakHashMap<View, Morph>()
@@ -84,11 +90,18 @@ object OriginTransitionController {
         onProgress: ((Float) -> Unit)? = null,
         // Tiến độ morph (0..1) bắt đầu hiện nội dung và độ dài đoạn hiện dần; nhỏ hơn = chữ hiện sớm hơn.
         contentStart: Float = 0.22f,
-        contentSpan: Float = 0.45f
+        contentSpan: Float = 0.45f,
+        // Nút nảy ra một khung khác trước khi bung: popScale = độ phóng khung nút, popTowardTarget = phần
+        // trăm quãng đường từ tâm nút tới tâm thẻ mà khung nảy dời đi, popDelayMs = chờ bao lâu rồi mới bung.
+        popScale: Float = 1f,
+        popTowardTarget: Float = 0f,
+        popDelayMs: Long = 0L,
+        popSpring: AnimationSystem.SpringSpec? = null
     ): Boolean {
         val target = boundsOnScreen(view) ?: return false
         val old = morphs[view]
         old?.anim?.cancel()
+        old?.popAnim?.cancel()
         AnimationSystem.cancel(view)
 
         val originBounds = origin?.let { boundsOnScreen(it) }
@@ -110,7 +123,26 @@ object OriginTransitionController {
         morphs[view] = m
         place(m, target)
         hideSource(m)
-        animateTo(m, 1f, springSpec ?: if (originBounds != null) AnimationSystem.MORPH else AnimationSystem.SETTLE) { onEnd?.invoke() }
+        val spec = springSpec ?: if (originBounds != null) AnimationSystem.MORPH else AnimationSystem.SETTLE
+        val pops = originBounds != null && (popScale != 1f || popTowardTarget != 0f)
+        if (pops) {
+            val cx = anchor.centerX() + (target.centerX() - anchor.centerX()) * popTowardTarget
+            val cy = anchor.centerY() + (target.centerY() - anchor.centerY()) * popTowardTarget
+            val hw = anchor.width() * popScale / 2f
+            val hh = anchor.height() * popScale / 2f
+            m.popFrom = RectF(anchor)
+            m.popTo = RectF(cx - hw, cy - hh, cx + hw, cy + hh)
+            m.popQ = 0f
+            startPop(m, target, 1f, popSpring ?: AnimationSystem.MENU_POP)
+        }
+        if (pops && popDelayMs > 0L) {
+            view.postDelayed({
+                // Đóng/mở lại trong lúc đang chờ thì bỏ lần bung này.
+                if (morphs[view] === m && m.opening) animateTo(m, 1f, spec) { onEnd?.invoke() }
+            }, popDelayMs)
+        } else {
+            animateTo(m, 1f, spec) { onEnd?.invoke() }
+        }
         return true
     }
 
@@ -141,7 +173,15 @@ object OriginTransitionController {
         m.source?.get()?.let { src ->
             boundsOnScreen(src)?.let { m.anchor = scaledBounds(it, m.sourceScaleX, m.sourceScaleY) }
         }
+        val popTo = m.popTo
+        if (popTo != null) {
+            // Thu về khung đang nảy trên không rồi hạ xuống nút cùng lúc.
+            val base = RectF(m.anchor)
+            m.popFrom = base
+            m.anchor = lerpRect(base, popTo, m.popQ)
+        }
         place(m, target)
+        if (popTo != null) startPop(m, target, 0f, AnimationSystem.MENU_POP_CLOSE)
         animateTo(m, 0f, springSpec ?: AnimationSystem.MORPH_CLOSE) {
             finish(m)
             onEnd?.invoke()
@@ -165,6 +205,7 @@ object OriginTransitionController {
         val sx = sourceScaleX.coerceAtLeast(0.02f)
         val sy = sourceScaleY.coerceAtLeast(0.02f)
         val scaledAnchor = scaledBounds(anchor, sx, sy)
+        clearPop(m)
         if (m.sourceHidden) showSource(m)
         m.source = WeakReference(newSource)
         m.sourceScaleX = sx
@@ -187,6 +228,7 @@ object OriginTransitionController {
             boundsOnScreen(src)?.let { m.anchor = scaledBounds(it, m.sourceScaleX, m.sourceScaleY) }
         }
         m.anim?.cancel()
+        clearPop(m)
         AnimationSystem.cancel(view)
         m.opening = false
         place(m, target)
@@ -219,15 +261,51 @@ object OriginTransitionController {
 
     // ---------------------------------------------------------------------------------------------
 
+    private fun applyAnchor(m: Morph, target: RectF) {
+        m.sx = (m.anchor.width() / target.width()).coerceIn(0.035f, 1f)
+        m.sy = (m.anchor.height() / target.height()).coerceIn(0.035f, 1f)
+        m.tx = m.anchor.centerX() - target.centerX()
+        m.ty = m.anchor.centerY() - target.centerY()
+    }
+
+    private fun lerpRect(a: RectF, b: RectF, t: Float) = RectF(
+        lerp(a.left, b.left, t), lerp(a.top, b.top, t), lerp(a.right, b.right, t), lerp(a.bottom, b.bottom, t)
+    )
+
+    /** Spring riêng cho đoạn nảy: trượt điểm neo giữa khung nút (q=0) và khung nảy (q=1). */
+    private fun startPop(m: Morph, target: RectF, to: Float, spec: AnimationSystem.SpringSpec) {
+        val from = m.popFrom ?: return
+        val dest = m.popTo ?: return
+        m.popAnim?.cancel()
+        m.popAnim = AnimationSystem.springFloat(
+            from = m.popQ,
+            to = to,
+            spec = spec,
+            minimumVisibleChange = AnimationSystem.NORMALIZED_VALUE_MIN_CHANGE,
+            onUpdate = { q ->
+                m.popQ = q
+                m.anchor = lerpRect(from, dest, q)
+                applyAnchor(m, target)
+                render(m)
+            },
+            onEnd = { canceled, _, _ -> if (!canceled) m.popQ = to }
+        )
+    }
+
+    private fun clearPop(m: Morph) {
+        m.popAnim?.cancel()
+        m.popAnim = null
+        m.popFrom = null
+        m.popTo = null
+        m.popQ = 0f
+    }
+
     /** Tính hình học xuất phát từ vị trí nút và đặt view ở tiến độ hiện tại. */
     private fun place(m: Morph, target: RectF) {
         val v = m.view
         v.pivotX = v.width / 2f
         v.pivotY = v.height / 2f
-        m.sx = (m.anchor.width() / target.width()).coerceIn(0.035f, 1f)
-        m.sy = (m.anchor.height() / target.height()).coerceIn(0.035f, 1f)
-        m.tx = m.anchor.centerX() - target.centerX()
-        m.ty = m.anchor.centerY() - target.centerY()
+        applyAnchor(m, target)
         // Bắt đầu tròn như nút rồi bo dần về góc của thẻ.
         m.startRadius = if (m.source != null) maxOf(m.endRadius, minOf(v.width, v.height) / 2f) else m.endRadius
         val outline = m.outline ?: MorphOutline(m.startRadius).also { m.outline = it }
@@ -341,6 +419,7 @@ object OriginTransitionController {
 
     private fun finish(m: Morph) {
         val v = m.view
+        clearPop(m)
         v.scaleX = 1f
         v.scaleY = 1f
         v.translationX = 0f

@@ -40,6 +40,12 @@ object Constants {
 
     // Chiều cao tối đa của thẻ menu, tính theo tỉ lệ chiều cao màn hình (vượt thì danh sách bên trong cuộn).
     const val MENU_MAX_HEIGHT_FRACTION = 0.70f
+    /** Nút ba chấm nảy ra trước khi menu bung: độ phóng khung nút. */
+    const val MENU_POP_SCALE = 1.45f
+    /** Phần quãng đường từ tâm nút tới tâm menu mà khung nảy dời đi (đo từ video ~0.3). */
+    const val MENU_POP_TOWARD = 0.30f
+    /** Chờ bao lâu (ms) sau khi nút nảy rồi menu mới bung. */
+    const val MENU_POP_DELAY_MS = 60L
 
     // === Thời gian / giới hạn ===
     const val SUGGEST_DEBOUNCE_MS = 150L

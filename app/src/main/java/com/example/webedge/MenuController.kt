@@ -200,7 +200,11 @@ class MenuController(
                 },
                 // Video: chữ đã thấy (nhỏ, co theo thẻ) ngay từ khung thứ 2, nên hiện nội dung sớm.
                 contentStart = 0f,
-                contentSpan = 0.25f
+                contentSpan = 0.25f,
+                // Video: nút nảy lên (phóng ~1.45x, dời ~30% về phía tâm menu) rồi menu mới nở ra từ đó.
+                popScale = Constants.MENU_POP_SCALE,
+                popTowardTarget = Constants.MENU_POP_TOWARD,
+                popDelayMs = Constants.MENU_POP_DELAY_MS
             )
             if (!morphing) {
                 card.pivotX = card.width.toFloat()
