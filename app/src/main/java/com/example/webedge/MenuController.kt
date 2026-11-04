@@ -202,8 +202,8 @@ class MenuController(
                 contentStart = 0f,
                 contentSpan = 0.25f,
                 // Video: nút nảy lên (phóng ~1.45x, dời ~30% về phía tâm menu) rồi menu mới nở ra từ đó.
-                popScale = Constants.MENU_POP_SCALE,
-                popTowardTarget = Constants.MENU_POP_TOWARD,
+                popScale = if (toolbarCompact) 1f else Constants.MENU_POP_SCALE,
+                popTowardTarget = if (toolbarCompact) 0f else Constants.MENU_POP_TOWARD,
                 popDelayMs = Constants.MENU_POP_DELAY_MS
             )
             if (!morphing) {

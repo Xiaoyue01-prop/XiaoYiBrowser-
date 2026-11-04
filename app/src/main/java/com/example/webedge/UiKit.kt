@@ -45,7 +45,7 @@ object Constants {
     /** Phần quãng đường từ tâm nút tới tâm menu mà khung nảy dời đi (đo từ video ~0.3). */
     const val MENU_POP_TOWARD = 0.30f
     /** Chờ bao lâu (ms) sau khi nút nảy rồi menu mới bung. */
-    const val MENU_POP_DELAY_MS = 60L
+    const val MENU_POP_DELAY_MS = 90L
 
     // === Thời gian / giới hạn ===
     const val SUGGEST_DEBOUNCE_MS = 150L

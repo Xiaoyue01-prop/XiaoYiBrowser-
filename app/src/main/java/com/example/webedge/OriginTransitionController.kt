@@ -3,6 +3,7 @@ package com.example.webedge
 import android.graphics.Outline
 import android.graphics.RectF
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import java.lang.ref.WeakReference
 import java.util.WeakHashMap
@@ -57,6 +58,11 @@ object OriginTransitionController {
         var popTo: RectF? = null
         var popQ = 0f
         var popAnim: AnimationSystem.FloatSpringHandle? = null
+        // Đang chờ nút nảy xong: thẻ chưa hiện, nút thật là thứ đang di chuyển/phình to.
+        var popWait = false
+        // Trạng thái dịch/scale gốc của nút trước khi nảy, và các ViewGroup cha đã tắt clipChildren.
+        var srcBase: FloatArray? = null
+        var clipSaved: MutableList<Pair<ViewGroup, Boolean>>? = null
     }
 
     private val morphs = WeakHashMap<View, Morph>()
@@ -122,7 +128,6 @@ object OriginTransitionController {
         )
         morphs[view] = m
         place(m, target)
-        hideSource(m)
         val spec = springSpec ?: if (originBounds != null) AnimationSystem.MORPH else AnimationSystem.SETTLE
         val pops = originBounds != null && (popScale != 1f || popTowardTarget != 0f)
         if (pops) {
@@ -133,14 +138,28 @@ object OriginTransitionController {
             m.popFrom = RectF(anchor)
             m.popTo = RectF(cx - hw, cy - hh, cx + hw, cy + hh)
             m.popQ = 0f
+            m.clipSaved = old?.clipSaved
+            origin?.let { src ->
+                m.srcBase = old?.srcBase ?: floatArrayOf(src.translationX, src.translationY, src.scaleX, src.scaleY)
+                disableAncestorClipping(m, src)
+            }
             startPop(m, target, 1f, popSpring ?: AnimationSystem.MENU_POP)
         }
         if (pops && popDelayMs > 0L) {
+            // Nút thật nảy và phình to trước; thẻ chỉ hiện (và nút mờ đi) khi bắt đầu bung.
+            m.popWait = true
+            render(m)
             view.postDelayed({
                 // Đóng/mở lại trong lúc đang chờ thì bỏ lần bung này.
-                if (morphs[view] === m && m.opening) animateTo(m, 1f, spec) { onEnd?.invoke() }
+                if (morphs[view] === m && m.opening) {
+                    m.popWait = false
+                    hideSource(m)
+                    render(m)
+                    animateTo(m, 1f, spec) { onEnd?.invoke() }
+                }
             }, popDelayMs)
         } else {
+            hideSource(m)
             animateTo(m, 1f, spec) { onEnd?.invoke() }
         }
         return true
@@ -168,6 +187,7 @@ object OriginTransitionController {
         AnimationSystem.cancel(view)
         // Khi đóng, bật lại fade theo tiến độ kể cả surface đã mở bằng chế độ không fade-in.
         m.opening = false
+        m.popWait = false
         // Nút có thể đã dời chỗ (xoay màn hình, thanh công cụ thu gọn): lấy lại vị trí hiện tại,
         // đồng thời giữ tỉ lệ kích thước compact nếu điểm neo là URL Pill.
         m.source?.get()?.let { src ->
@@ -286,13 +306,54 @@ object OriginTransitionController {
                 m.popQ = q
                 m.anchor = lerpRect(from, dest, q)
                 applyAnchor(m, target)
+                driveSource(m, from, dest, q)
                 render(m)
             },
             onEnd = { canceled, _, _ -> if (!canceled) m.popQ = to }
         )
     }
 
+    /** Nút thật đi theo khung nảy: dịch và phình to cùng tiến độ q với điểm neo của thẻ. */
+    private fun driveSource(m: Morph, from: RectF, dest: RectF, q: Float) {
+        val src = m.source?.get() ?: return
+        val b = m.srcBase ?: return
+        val grow = if (from.width() > 0f) dest.width() / from.width() - 1f else 0f
+        src.translationX = b[0] + (dest.centerX() - from.centerX()) * q
+        src.translationY = b[1] + (dest.centerY() - from.centerY()) * q
+        src.scaleX = b[2] * (1f + grow * q)
+        src.scaleY = b[3] * (1f + grow * q)
+    }
+
+    /** Nút nảy ra khỏi thanh dưới nên các view cha không được cắt phần nút nằm ngoài khung của chúng. */
+    private fun disableAncestorClipping(m: Morph, src: View) {
+        if (m.clipSaved != null) return
+        val saved = mutableListOf<Pair<ViewGroup, Boolean>>()
+        var parent = src.parent
+        while (parent is ViewGroup) {
+            saved.add(parent to parent.clipChildren)
+            parent.clipChildren = false
+            parent = parent.parent
+        }
+        m.clipSaved = saved
+    }
+
+    private fun restoreSource(m: Morph) {
+        val src = m.source?.get()
+        val b = m.srcBase
+        if (src != null && b != null) {
+            src.translationX = b[0]
+            src.translationY = b[1]
+            src.scaleX = b[2]
+            src.scaleY = b[3]
+        }
+        m.srcBase = null
+        m.clipSaved?.forEach { (group, clip) -> group.clipChildren = clip }
+        m.clipSaved = null
+    }
+
     private fun clearPop(m: Morph) {
+        m.popWait = false
+        restoreSource(m)
         m.popAnim?.cancel()
         m.popAnim = null
         m.popFrom = null
@@ -324,7 +385,7 @@ object OriginTransitionController {
         syncCounterTransform(m)
         // Mặc định thẻ hiện nhanh để nối tiếp nút nguồn. Một số bề mặt kính toàn màn hình
         // cần giữ alpha = 1 khi bung để nền web sắc nét không xuyên qua lớp blur ở đầu morph.
-        v.alpha = if (m.opening && !m.fadeIn) 1f else {
+        v.alpha = if (m.popWait) 0f else if (m.opening && !m.fadeIn) 1f else {
             // Hiện dần theo nửa đầu của quá trình bung (smoothstep) để bề mặt "tan ra" từ nút,
             // không bật rõ nét ngay khi mới bung 30%.
             val t = (p / 0.55f).coerceIn(0f, 1f)
