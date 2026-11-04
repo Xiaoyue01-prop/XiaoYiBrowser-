@@ -190,9 +190,17 @@ class BrowserBottomSheet(
             clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             setWindowAnimations(0)
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
+            // Dialog phải vẽ xuyên qua cả status bar và navigation bar như WebWindows.
             WindowCompat.setDecorFitsSystemWindows(this, false)
+            statusBarColor = Color.TRANSPARENT
+            navigationBarColor = Color.TRANSPARENT
+            isStatusBarContrastEnforced = false
             isNavigationBarContrastEnforced = false
-            WindowCompat.getInsetsController(this, root).isAppearanceLightNavigationBars = !isNight
+            WindowCompat.getInsetsController(this, root).apply {
+                isAppearanceLightStatusBars = !isNight
+                isAppearanceLightNavigationBars = !isNight
+            }
         }
         dlg.setOnDismissListener {
             if (dialog === dlg) {
@@ -210,8 +218,12 @@ class BrowserBottomSheet(
         closing = false
         dlg.show()
         dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        // Dialog decor đôi khi chỉ phát insets sau show(); yêu cầu dispatch lại để
+        // sheet nhận đúng vùng status/navigation bar và bàn phím trên mọi phiên bản Android.
+        ViewCompat.requestApplyInsets(root)
         root.post {
             if (closing || dialog !== dlg) return@post
+            ViewCompat.requestApplyInsets(root)
             AnimationSystem.spring(sheet, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MORPH_CLOSE)
             AnimationSystem.fade(scrim, SCRIM_ALPHA, AnimationSystem.SMOOTH)
         }
