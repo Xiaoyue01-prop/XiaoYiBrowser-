@@ -134,6 +134,9 @@ class PictureInPictureController(
  * Vẫn là một Dialog riêng (cửa sổ riêng) nên hộp thoại JS của hệ thống và bàn phím hoạt động như trước.
  * Chỉ mở một popup tại một thời điểm.
  */
+/** Tay nắm (13dp) + thanh tiêu đề (56dp). */
+private const val POPUP_HEADER_DP = 69
+
 class PopupWindowController(
     private val activity: Activity,
     private val dp: (Int) -> Int,
@@ -257,9 +260,26 @@ class PopupWindowController(
         )
         dragZone.addView(header, LinearLayout.LayoutParams(-1, dp(56)))
         sheetView.addView(dragZone, LinearLayout.LayoutParams(-1, -2))
-        sheetView.addView(popup, LinearLayout.LayoutParams(-1, 0, 1f))
-        // Tiêu đề kiểu menu Tab: trang mờ dần khi tới sát mép tiêu đề như menu Tab; mép dưới để nguyên.
-        GlassSystem.installEdgeBlur(popup, dp(24), 0, dp(14).toFloat(), if (night) 0f else 0.30f, 0f)
+        // Trang phủ kín sheet và nằm DƯỚI tiêu đề trong suốt (tiêu đề nâng lên trên bằng translationZ),
+        // để phần trang sát mép tiêu đề mờ dần như header menu Tab.
+        val headerPx = dp(POPUP_HEADER_DP)
+        dragZone.translationZ = dp(1).toFloat()
+        sheetView.addView(popup, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = -headerPx })
+        GlassSystem.installEdgeBlur(popup, headerPx + dp(24), 0, dp(14).toFloat(), if (night) 0f else 0.30f, 0f)
+
+        // Đẩy nội dung trang xuống dưới tiêu đề lúc nghỉ (WebView không có padding nội dung):
+        // thêm padding-top cho <html>, quy đổi dp -> px CSS theo tỉ lệ viewport hiện tại.
+        val widthDp = (activity.resources.displayMetrics.widthPixels / activity.resources.displayMetrics.density).toInt()
+        val headerDp = POPUP_HEADER_DP
+        fun injectHeaderSpace(view: WebView) {
+            view.evaluateJavascript(
+                "(function(){var p=Math.round($headerDp*window.innerWidth/$widthDp);" +
+                    "var s=document.getElementById('summit-hdr');" +
+                    "if(!s){s=document.createElement('style');s.id='summit-hdr';(document.head||document.documentElement).appendChild(s);}" +
+                    "s.textContent='html{padding-top:'+p+'px !important;box-sizing:border-box !important;}';})();",
+                null
+            )
+        }
 
         // Tên trang trên thanh tiêu đề: tiêu đề nếu có, không thì tên miền.
         fun updateTitle(view: WebView, url: String?) {
@@ -268,9 +288,17 @@ class PopupWindowController(
             titleView.text = pageTitle ?: host ?: "Cửa sổ mới"
         }
         popup.webViewClient = object : WebViewClient() {
-            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) = updateTitle(view, url)
+            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                updateTitle(view, url)
+                injectHeaderSpace(view)
+            }
 
-            override fun onPageFinished(view: WebView, url: String) = updateTitle(view, url)
+            override fun onPageCommitVisible(view: WebView, url: String) = injectHeaderSpace(view)
+
+            override fun onPageFinished(view: WebView, url: String) {
+                updateTitle(view, url)
+                injectHeaderSpace(view)
+            }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 if (!request.isForMainFrame) return false
