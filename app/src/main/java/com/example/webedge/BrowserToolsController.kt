@@ -1,7 +1,6 @@
 package com.example.webedge
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
@@ -46,7 +45,7 @@ class BrowserToolsController(
     private fun dp(value: Int): Int = (value * density).toInt()
     private val muted: Int get() = if (isNight) Color.rgb(174, 174, 180) else Color.rgb(105, 105, 112)
     private val cardColor: Int get() = if (isNight) Color.rgb(43, 43, 43) else Color.rgb(247, 247, 249)
-    private val sheet = BrowserBottomSheet(activity, density, isNight)
+    private val sheet = BrowserBottomSheet(activity, density, isNight, foreground, accent)
 
     private data class DownloadItem(
         val id: Long,
@@ -304,20 +303,20 @@ class BrowserToolsController(
 
     private fun confirmRemove(item: DownloadItem) {
         val active = isActive(item.status)
-        AlertDialog.Builder(activity)
-            .setTitle(if (active) "Hủy tải xuống?" else "Xóa tệp tải xuống?")
-            .setMessage(if (active) "Summit sẽ hủy tiến trình tải ${item.title}." else "Tệp ${item.title} sẽ bị xóa khỏi danh sách tải xuống và thiết bị.")
-            .setNegativeButton("Giữ lại", null)
-            .setPositiveButton(if (active) "Hủy tải" else "Xóa") { _, _ ->
-                if (active) {
-                    DownloadLiveUpdate.cancel(activity, item.id, item.title)
-                } else {
-                    val manager = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                    manager.remove(item.id)
-                }
-                toast(if (active) "Đã hủy tải xuống" else "Đã xóa tệp tải xuống")
+        sheet.confirm(
+            title = if (active) "Hủy tải xuống?" else "Xóa tệp tải xuống?",
+            message = if (active) "Summit sẽ hủy tiến trình tải ${item.title}." else "Tệp ${item.title} sẽ bị xóa khỏi danh sách tải xuống và thiết bị.",
+            positive = if (active) "Hủy tải" else "Xóa",
+            negative = "Giữ lại"
+        ) {
+            if (active) {
+                DownloadLiveUpdate.cancel(activity, item.id, item.title)
+            } else {
+                val manager = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                manager.remove(item.id)
             }
-            .show()
+            toast(if (active) "Đã hủy tải xuống" else "Đã xóa tệp tải xuống")
+        }
     }
 
     fun showPrivacy() {
@@ -433,15 +432,14 @@ class BrowserToolsController(
                 body.addView(text("Còn ${otherPermissions.size - MAX_PERMISSION_ORIGINS} website khác.", 11f, muted))
             }
             body.addView(actionButton("Đặt lại tất cả quyền đã lưu", Theme.DANGER_RED) {
-                AlertDialog.Builder(activity)
-                    .setTitle("Đặt lại mọi quyền website?")
-                    .setMessage("Tất cả lựa chọn cho phép/từ chối của website sẽ trở về trạng thái hỏi lại.")
-                    .setNegativeButton("Hủy", null)
-                    .setPositiveButton("Đặt lại") { _, _ ->
-                        store.clearSitePermissions(null)
-                        renderPrivacy(body)
-                    }
-                    .show()
+                sheet.confirm(
+                    title = "Đặt lại mọi quyền website?",
+                    message = "Tất cả lựa chọn cho phép/từ chối của website sẽ trở về trạng thái hỏi lại.",
+                    positive = "Đặt lại"
+                ) {
+                    store.clearSitePermissions(null)
+                    renderPrivacy(body)
+                }
             }, LinearLayout.LayoutParams(-2, dp(38)).apply { topMargin = dp(8); bottomMargin = dp(12) })
         }
 
@@ -455,15 +453,14 @@ class BrowserToolsController(
             if (site == null) {
                 toast("Không xác định được website hiện tại")
             } else {
-                AlertDialog.Builder(activity)
-                    .setTitle("Xóa dữ liệu website?")
-                    .setMessage("Dữ liệu Web Storage của ${displayOrigin(site)} sẽ bị xóa. Cookie không bị xóa bởi thao tác này.")
-                    .setNegativeButton("Hủy", null)
-                    .setPositiveButton("Xóa") { _, _ ->
-                        runCatching { WebStorage.getInstance().deleteOrigin(site) }
-                        toast("Đã xóa dữ liệu Web Storage của website")
-                    }
-                    .show()
+                sheet.confirm(
+                    title = "Xóa dữ liệu website?",
+                    message = "Dữ liệu Web Storage của ${displayOrigin(site)} sẽ bị xóa. Cookie không bị xóa bởi thao tác này.",
+                    positive = "Xóa"
+                ) {
+                    runCatching { WebStorage.getInstance().deleteOrigin(site) }
+                    toast("Đã xóa dữ liệu Web Storage của website")
+                }
             }
         }, LinearLayout.LayoutParams(-2, dp(38)))
         val divider = View(activity).apply {
@@ -475,28 +472,26 @@ class BrowserToolsController(
             .apply { setPadding(0, dp(4), 0, dp(8)) })
         val globalActions = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         globalActions.addView(actionButton("Xóa cookie", Theme.DANGER_RED) {
-            AlertDialog.Builder(activity)
-                .setTitle("Xóa tất cả cookie?")
-                .setMessage("Thao tác này đăng xuất các website và áp dụng cho mọi website trong Summit.")
-                .setNegativeButton("Hủy", null)
-                .setPositiveButton("Xóa cookie") { _, _ ->
-                    CookieManager.getInstance().removeAllCookies {
-                        CookieManager.getInstance().flush()
-                        toast("Đã xóa cookie của Summit")
-                    }
+            sheet.confirm(
+                title = "Xóa tất cả cookie?",
+                message = "Thao tác này đăng xuất các website và áp dụng cho mọi website trong Summit.",
+                positive = "Xóa cookie"
+            ) {
+                CookieManager.getInstance().removeAllCookies {
+                    CookieManager.getInstance().flush()
+                    toast("Đã xóa cookie của Summit")
                 }
-                .show()
+            }
         }, LinearLayout.LayoutParams(0, dp(38), 1f).apply { marginEnd = dp(8) })
         globalActions.addView(actionButton("Xóa cache", muted) {
-            AlertDialog.Builder(activity)
-                .setTitle("Xóa cache trình duyệt?")
-                .setMessage("Cache tài nguyên của tất cả website trong Summit sẽ bị xóa. Cookie và dữ liệu đăng nhập không bị ảnh hưởng.")
-                .setNegativeButton("Hủy", null)
-                .setPositiveButton("Xóa cache") { _, _ ->
-                    runCatching { webView().clearCache(true) }
-                    toast("Đã xóa cache trình duyệt")
-                }
-                .show()
+            sheet.confirm(
+                title = "Xóa cache trình duyệt?",
+                message = "Cache tài nguyên của tất cả website trong Summit sẽ bị xóa. Cookie và dữ liệu đăng nhập không bị ảnh hưởng.",
+                positive = "Xóa cache"
+            ) {
+                runCatching { webView().clearCache(true) }
+                toast("Đã xóa cache trình duyệt")
+            }
         }, LinearLayout.LayoutParams(0, dp(38), 1f))
         dataCard.addView(globalActions)
         body.addView(dataCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
@@ -665,6 +660,8 @@ class BrowserToolsController(
 
     private fun card(): LinearLayout = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
+        clipChildren = false
+        clipToPadding = false
         setPadding(dp(14), dp(13), dp(14), dp(13))
         background = GradientDrawable().apply {
             cornerRadius = dp(18).toFloat()

@@ -21,21 +21,39 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.dynamicanimation.animation.DynamicAnimation
+import eightbitlab.com.blurview.BlurTarget
 
 /** Khung sheet lớn dùng chung cho các công cụ trong menu, đồng bộ với sheet popup của website. */
 class BrowserBottomSheet(
     private val activity: Activity,
     private val density: Float,
-    private val isNight: Boolean
+    private val isNight: Boolean,
+    private val foreground: Int,
+    private val accent: Int
 ) {
     private var dialog: Dialog? = null
     private var sheetView: View? = null
     private var scrimView: View? = null
     private var closing = false
+    private var glassDialog: GlassDialogController? = null
 
     val isShowing: Boolean get() = dialog?.isShowing == true
 
     private fun dp(value: Int): Int = (value * density).toInt()
+
+    /**
+     * Hộp thoại xác nhận bằng kính mờ của Summit, nằm ngay trong cửa sổ của sheet
+     * (AlertDialog của hệ thống là cửa sổ riêng, đặt trên sheet trông lệch tông).
+     */
+    fun confirm(
+        title: String,
+        message: String,
+        positive: String,
+        negative: String = "Hủy",
+        onConfirm: () -> Unit
+    ) {
+        glassDialog?.show(title, message, positive, negative) { ok, _ -> if (ok) onConfirm() }
+    }
 
     @Suppress("ClickableViewAccessibility")
     fun show(title: String, content: View, onDismiss: () -> Unit = {}) {
@@ -47,7 +65,11 @@ class BrowserBottomSheet(
         val grabberColor = if (isNight) Color.argb(110, 255, 255, 255) else Color.argb(80, 0, 0, 0)
         val buttonColor = if (isNight) Color.argb(40, 255, 255, 255) else Color.argb(20, 0, 0, 0)
 
-        val root = FrameLayout(activity)
+        // Cửa sổ của sheet: BlurTarget chứa lớp tối + sheet; hộp thoại kính nằm cạnh nó để blur lấy đúng nền.
+        val windowRoot = FrameLayout(activity)
+        val blurTarget = BlurTarget(activity)
+        windowRoot.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
+        val root: FrameLayout = blurTarget
         val scrim = View(activity).apply {
             setBackgroundColor(Color.BLACK)
             alpha = 0f
@@ -126,6 +148,22 @@ class BrowserBottomSheet(
         (content.parent as? ViewGroup)?.removeView(content)
         sheet.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
 
+        // Tiêu đề kiểu menu Tab: nội dung cuộn mờ dần (blur + nhạt) khi tới sát mép tiêu đề và mép đáy,
+        // thay vì bị cắt thẳng hoặc đè lên chữ tiêu đề.
+        findScrollViews(content).forEach { scroll ->
+            val first = (content as? ViewGroup)?.getChildAt(0) === scroll
+            scroll.setPadding(scroll.paddingLeft, scroll.paddingTop + dp(EDGE_ZONE_DP), scroll.paddingRight, scroll.paddingBottom)
+            scroll.clipToPadding = false
+            if (first) {
+                content.setPadding(content.paddingLeft, 0, content.paddingRight, content.paddingBottom)
+            } else {
+                (scroll.layoutParams as? ViewGroup.MarginLayoutParams)?.let { it.topMargin -= dp(10) }
+            }
+            GlassSystem.installEdgeBlur(
+                scroll, dp(EDGE_ZONE_DP), dp(EDGE_BOTTOM_ZONE_DP), dp(EDGE_BLUR_RADIUS_DP).toFloat(), 0f, 0.9f
+            )
+        }
+
         // Nội dung phải tràn tới sát đáy màn hình (xuyên qua thanh điều hướng) như popup website:
         // bỏ khoảng đệm đáy của trang, chuyển nó xuống phần tử cuối (thường là ScrollView) để
         // nội dung cuộn xuyên đáy thay vì bị cắt thành một dải trắng phía trên thanh điều hướng.
@@ -180,7 +218,7 @@ class BrowserBottomSheet(
             }
         }
 
-        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(windowRoot) { _, insets ->
             val bars = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
@@ -206,9 +244,12 @@ class BrowserBottomSheet(
 
         val dlg = object : Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar) {
             @Deprecated("Deprecated in Java")
-            override fun onBackPressed() = animateClose()
+            override fun onBackPressed() {
+                val gd = glassDialog
+                if (gd != null && gd.isShowing) gd.cancelCurrent() else animateClose()
+            }
         }
-        dlg.setContentView(root)
+        dlg.setContentView(windowRoot)
         dlg.window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
@@ -222,10 +263,12 @@ class BrowserBottomSheet(
             navigationBarColor = Color.TRANSPARENT
             isStatusBarContrastEnforced = false
             isNavigationBarContrastEnforced = false
-            WindowCompat.getInsetsController(this, root).isAppearanceLightNavigationBars = !isNight
+            WindowCompat.getInsetsController(this, windowRoot).isAppearanceLightNavigationBars = !isNight
         }
         dlg.setOnDismissListener {
+            glassDialog?.cancelAll()
             if (dialog === dlg) {
+                glassDialog = null
                 dialog = null
                 sheetView = null
                 scrimView = null
@@ -234,6 +277,15 @@ class BrowserBottomSheet(
             onDismiss()
         }
 
+        glassDialog = GlassDialogController(
+            activity = activity,
+            root = windowRoot,
+            blurTarget = blurTarget,
+            d = density,
+            isNight = isNight,
+            fg = foreground,
+            accent = accent
+        )
         dialog = dlg
         sheetView = sheet
         scrimView = scrim
@@ -242,13 +294,19 @@ class BrowserBottomSheet(
         dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         // Dialog decor đôi khi chỉ phát insets sau show(); yêu cầu dispatch lại để
         // sheet nhận đúng vùng status/navigation bar và bàn phím trên mọi phiên bản Android.
-        ViewCompat.requestApplyInsets(root)
+        ViewCompat.requestApplyInsets(windowRoot)
         root.post {
             if (closing || dialog !== dlg) return@post
-            ViewCompat.requestApplyInsets(root)
+            ViewCompat.requestApplyInsets(windowRoot)
             AnimationSystem.spring(sheet, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MORPH_CLOSE)
             AnimationSystem.fade(scrim, SCRIM_ALPHA, AnimationSystem.SMOOTH)
         }
+    }
+
+    private fun findScrollViews(v: View): List<android.widget.ScrollView> {
+        if (v is android.widget.ScrollView) return listOf(v)
+        if (v !is ViewGroup) return emptyList()
+        return (0 until v.childCount).flatMap { findScrollViews(v.getChildAt(it)) }
     }
 
     private fun animateClose(velocity: Float = 0f) {
@@ -280,5 +338,8 @@ class BrowserBottomSheet(
     private companion object {
         const val SCRIM_ALPHA = 0.5f
         const val CLOSE_FALLBACK_MS = 900L
+        const val EDGE_ZONE_DP = 22
+        const val EDGE_BOTTOM_ZONE_DP = 36
+        const val EDGE_BLUR_RADIUS_DP = 10
     }
 }

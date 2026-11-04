@@ -235,11 +235,19 @@ object AnimationSystem {
         }
     }
 
-    /** View cha mặc định cắt phần con vẽ tràn ra ngoài, làm nút phồng lên bị mất bounce. */
-    private fun unclipParents(view: View) {
+    /**
+     * View cha mặc định cắt phần con vẽ tràn ra ngoài (kể cả theo padding), làm nút phồng lên bị lẹm.
+     * Dừng ở khung cuộn: ScrollView phải giữ cắt nội dung trong khung của nó, nếu không phần cuộn
+     * sẽ tràn lên đè tiêu đề.
+     */
+    fun unclipParents(view: View) {
         var p = view.parent
         while (p is android.view.ViewGroup) {
-            if (p.clipChildren) p.clipChildren = false
+            if (p is android.widget.ScrollView || p is android.widget.HorizontalScrollView ||
+                p is android.widget.AbsListView
+            ) break
+            p.clipChildren = false
+            p.clipToPadding = false
             p = p.parent
         }
     }

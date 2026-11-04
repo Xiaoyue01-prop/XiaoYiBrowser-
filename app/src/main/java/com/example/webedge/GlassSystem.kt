@@ -511,16 +511,6 @@ half4 main(float2 coord) {
             view.postDelayed(r, wait)
         }
 
-        /** Phình ra ngoài thanh nên mọi cha phải thôi cắt con. */
-        private fun unclipParents(from: View) {
-            var p = from.parent
-            while (p is ViewGroup) {
-                p.clipChildren = false
-                p.clipToPadding = false
-                p = p.parent
-            }
-        }
-
         /**
          * Gắn cử chỉ cho [track] (có [count] ô bằng nhau, trừ padding của track).
          * [onHover] báo ô đang nằm dưới ngón tay lúc kéo; [onRelease] báo ô được chọn khi thả
@@ -547,7 +537,7 @@ half4 main(float2 coord) {
                 when (e.actionMasked) {
                     android.view.MotionEvent.ACTION_DOWN -> {
                         v.parent?.requestDisallowInterceptTouchEvent(true)
-                        unclipParents(view)
+                        AnimationSystem.unclipParents(view)
                         pendingDrop?.let { view.removeCallbacks(it) }
                         pendingDrop = null
                         lift(true)
