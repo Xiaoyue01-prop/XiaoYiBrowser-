@@ -150,6 +150,11 @@ object AnimationSystem {
         anim.start()
     }
 
+    /** Chỉ huỷ spring của một thuộc tính (vd. để tay kéo trực tiếp mà không dừng các spring khác). */
+    fun cancel(view: View, prop: DynamicAnimation.ViewProperty) {
+        running[view]?.remove(prop)?.cancel()
+    }
+
     /** Huỷ mọi animation (spring và ViewPropertyAnimator) đang chạy trên view. */
     fun cancel(view: View) {
         running.remove(view)?.values?.toList()?.forEach { it.cancel() }

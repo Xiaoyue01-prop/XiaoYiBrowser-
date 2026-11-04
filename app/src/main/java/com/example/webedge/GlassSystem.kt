@@ -531,7 +531,13 @@ half4 main(float2 coord) {
                         true
                     }
                     android.view.MotionEvent.ACTION_MOVE -> {
-                        AnimationSystem.spring(view, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, thumbX(e.x), AnimationSystem.QUICK)
+                        // Ngay sau khi chạm: nối mượt từ vị trí cũ. Sau đó bám trực tiếp ngón tay, không trễ.
+                        if (e.eventTime - e.downTime < FOLLOW_SMOOTH_MS) {
+                            AnimationSystem.spring(view, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, thumbX(e.x), AnimationSystem.QUICK)
+                        } else {
+                            AnimationSystem.cancel(view, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X)
+                            view.translationX = thumbX(e.x)
+                        }
                         val i = indexAt(e.x)
                         if (i != hover) { hover = i; onHover(i) }
                         true
@@ -556,6 +562,7 @@ half4 main(float2 coord) {
         private companion object {
             const val LIFT_SCALE_X = 1.14f
             const val LIFT_SCALE_Y = 1.3f
+            const val FOLLOW_SMOOTH_MS = 140L
         }
     }
 }
