@@ -175,17 +175,14 @@ class BrowserBottomSheet(
             )
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
 
-            // Nền sheet tràn tới cả status/navigation bar; chỉ phần nội dung bên
-            // trong mới chừa vùng an toàn để không đè lên icon hệ thống hoặc home handle.
-            sheetLp.topMargin = 0
+            // Đồng bộ chính xác với PopupWindowController trong WebWindows:
+            // scrim phủ toàn cửa sổ, sheet bắt đầu ngay dưới status bar một khoảng
+            // nhỏ, còn phần đáy kéo xuyên qua navigation bar như popup Summit.
+            sheetLp.topMargin = bars.top + dp(10)
             sheetLp.bottomMargin = 0
             sheet.layoutParams = sheetLp
-            sheet.setPadding(
-                bars.left,
-                bars.top,
-                bars.right,
-                maxOf(bars.bottom, ime.bottom)
-            )
+            // Chỉ nhường vùng bàn phím; không đẩy nội dung lên khỏi navigation bar.
+            sheet.setPadding(0, 0, 0, ime.bottom)
             insets
         }
 
@@ -200,16 +197,14 @@ class BrowserBottomSheet(
             setWindowAnimations(0)
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
-            // Dialog phải vẽ xuyên qua cả status bar và navigation bar như WebWindows.
+            // Cùng cấu hình cửa sổ với PopupWindowController: scrim được vẽ
+            // phía sau status/navigation bar để trang nền vẫn hiện mờ ở phía sau.
             WindowCompat.setDecorFitsSystemWindows(this, false)
             statusBarColor = Color.TRANSPARENT
             navigationBarColor = Color.TRANSPARENT
             isStatusBarContrastEnforced = false
             isNavigationBarContrastEnforced = false
-            WindowCompat.getInsetsController(this, root).apply {
-                isAppearanceLightStatusBars = !isNight
-                isAppearanceLightNavigationBars = !isNight
-            }
+            WindowCompat.getInsetsController(this, root).isAppearanceLightNavigationBars = !isNight
         }
         dlg.setOnDismissListener {
             if (dialog === dlg) {
