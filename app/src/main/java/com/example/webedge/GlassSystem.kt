@@ -20,6 +20,7 @@ import android.os.SystemClock
 import android.view.Choreographer
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
@@ -541,6 +542,7 @@ half4 main(float2 coord) {
                         pendingDrop?.let { view.removeCallbacks(it) }
                         pendingDrop = null
                         lift(true)
+                        v.performHapticFeedback(HapticFeedbackConstants.GESTURE_START)
                         hover = indexAt(e.x)
                         onHover(hover)
                         AnimationSystem.spring(view, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, thumbX(e.x), AnimationSystem.MENU_MORPH)
@@ -555,10 +557,15 @@ half4 main(float2 coord) {
                             view.translationX = thumbX(e.x)
                         }
                         val i = indexAt(e.x)
-                        if (i != hover) { hover = i; onHover(i) }
+                        if (i != hover) {
+                            hover = i
+                            v.performHapticFeedback(HapticFeedbackConstants.SEGMENT_FREQUENT_TICK)
+                            onHover(i)
+                        }
                         true
                     }
                     android.view.MotionEvent.ACTION_UP -> {
+                        v.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                         dropLater()
                         onRelease(if (hover >= 0) hover else currentIndex())
                         hover = -1

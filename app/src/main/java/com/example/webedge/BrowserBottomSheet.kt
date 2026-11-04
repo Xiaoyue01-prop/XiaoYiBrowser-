@@ -148,8 +148,7 @@ class BrowserBottomSheet(
         (content.parent as? ViewGroup)?.removeView(content)
         sheet.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        // Tiêu đề kiểu menu Tab: nội dung cuộn mờ dần (blur + nhạt) khi tới sát mép tiêu đề và mép đáy,
-        // thay vì bị cắt thẳng hoặc đè lên chữ tiêu đề.
+        // Tiêu đề kiểu menu Tab: nội dung cuộn mờ dần khi tới sát mép tiêu đề, thay vì bị cắt thẳng hoặc đè lên chữ.
         findScrollViews(content).forEach { scroll ->
             val first = (content as? ViewGroup)?.getChildAt(0) === scroll
             scroll.setPadding(scroll.paddingLeft, scroll.paddingTop + dp(EDGE_ZONE_DP), scroll.paddingRight, scroll.paddingBottom)
@@ -159,8 +158,9 @@ class BrowserBottomSheet(
             } else {
                 (scroll.layoutParams as? ViewGroup.MarginLayoutParams)?.let { it.topMargin -= dp(10) }
             }
+            // Giống menu Tab: mờ thật (không làm nhạt) ở mép trên; mép dưới (thanh điều hướng) để nguyên nội dung.
             GlassSystem.installEdgeBlur(
-                scroll, dp(EDGE_ZONE_DP), dp(EDGE_BOTTOM_ZONE_DP), dp(EDGE_BLUR_RADIUS_DP).toFloat(), 0f, 0.9f
+                scroll, dp(EDGE_ZONE_DP), 0, dp(EDGE_BLUR_RADIUS_DP).toFloat(), if (isNight) 0f else EDGE_VEIL, 0f
             )
         }
 
@@ -338,8 +338,8 @@ class BrowserBottomSheet(
     private companion object {
         const val SCRIM_ALPHA = 0.5f
         const val CLOSE_FALLBACK_MS = 900L
-        const val EDGE_ZONE_DP = 22
-        const val EDGE_BOTTOM_ZONE_DP = 36
-        const val EDGE_BLUR_RADIUS_DP = 10
+        const val EDGE_ZONE_DP = 28
+        const val EDGE_BLUR_RADIUS_DP = 14   // độ mờ tối đa ở sát mép tiêu đề, cùng giá trị với menu Tab
+        const val EDGE_VEIL = 0.30f          // phủ trắng nhẹ ở sát mép, cùng giá trị với menu Tab
     }
 }

@@ -258,8 +258,8 @@ class PopupWindowController(
         dragZone.addView(header, LinearLayout.LayoutParams(-1, dp(56)))
         sheetView.addView(dragZone, LinearLayout.LayoutParams(-1, -2))
         sheetView.addView(popup, LinearLayout.LayoutParams(-1, 0, 1f))
-        // Tiêu đề kiểu menu Tab: trang mờ dần khi tới sát mép tiêu đề (chỉ blur, không làm nhạt chữ của trang).
-        GlassSystem.installEdgeBlur(popup, dp(18), 0, dp(8).toFloat(), 0f, 0f)
+        // Tiêu đề kiểu menu Tab: trang mờ dần khi tới sát mép tiêu đề như menu Tab; mép dưới để nguyên.
+        GlassSystem.installEdgeBlur(popup, dp(24), 0, dp(14).toFloat(), if (night) 0f else 0.30f, 0f)
 
         // Tên trang trên thanh tiêu đề: tiêu đề nếu có, không thì tên miền.
         fun updateTitle(view: WebView, url: String?) {
