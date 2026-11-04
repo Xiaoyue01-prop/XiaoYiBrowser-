@@ -46,6 +46,8 @@ object Constants {
     const val MENU_POP_TOWARD = 0.30f
     /** Chờ bao lâu (ms) sau khi nút nảy rồi menu mới bung. */
     const val MENU_POP_DELAY_MS = 90L
+    /** Quãng nảy tối đa (dp) của nút Tab: tâm bảng tab rất xa nút nên phải chặn lại. */
+    const val TAB_POP_MAX_DP = 64
 
     // === Thời gian / giới hạn ===
     const val SUGGEST_DEBOUNCE_MS = 150L

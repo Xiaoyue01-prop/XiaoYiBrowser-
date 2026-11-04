@@ -599,20 +599,24 @@ class TabSwitcherController(
                 if (container.width <= 0 || container.height <= 0) return
                 morphStarted = true
                 blurSync.hold(900)
+                // Nút Tab nảy lên trước rồi bảng mới nở ra, giống menu ba chấm. Thanh dưới thu gọn (nút ẩn) thì bỏ qua.
+                val canPop = origin != null && origin.isShown && origin.alpha > 0.9f
                 if (!OriginTransitionController.open(
                         container,
                         origin,
                         fadeIn = false,
                         // Container tiếp tục morph/clip từ nút, nhưng ảnh blur được bù transform
                         // để luôn khớp hệ toạ độ WebView thay vì bị phóng to cùng lớp vỏ.
-                        counterTransformView = dialogBlur
+                        counterTransformView = dialogBlur,
+                        popScale = if (canPop) Constants.MENU_POP_SCALE else 1f,
+                        popTowardTarget = if (canPop) Constants.MENU_POP_TOWARD else 0f,
+                        popDelayMs = if (canPop) Constants.MENU_POP_DELAY_MS else 0L,
+                        popMaxDistancePx = dp(Constants.TAB_POP_MAX_DP).toFloat()
                     )) {
                     // popIn tự đặt alpha = 0 rồi fade lên, không cần hiện thủ công.
                     AnimationSystem.popIn(container, 0.88f)
-                } else {
-                    // Trạng thái đầu của morph đã áp đồng bộ trong open(): lúc này mới hiện.
-                    container.alpha = 1f
                 }
+                // Alpha do morph tự quản (open() đã áp trạng thái đầu); không ép = 1 ở đây vì lúc chờ nút nảy thẻ phải ẩn.
             }
             // Phòng hờ: nếu vì lý do nào đó morph không chạy thì không để bảng ẩn mãi.
             container.postDelayed({

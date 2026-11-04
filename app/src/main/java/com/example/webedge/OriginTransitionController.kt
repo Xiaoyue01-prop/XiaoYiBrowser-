@@ -60,6 +60,10 @@ object OriginTransitionController {
         var popAnim: AnimationSystem.FloatSpringHandle? = null
         // Đang chờ nút nảy xong: thẻ chưa hiện, nút thật là thứ đang di chuyển/phình to.
         var popWait = false
+        var popRunning = false
+        var hopStarted = false
+        var hopTarget: RectF? = null
+        var afterPop: (() -> Unit)? = null
         // Trạng thái dịch/scale gốc của nút trước khi nảy, và các ViewGroup cha đã tắt clipChildren.
         var srcBase: FloatArray? = null
         var clipSaved: MutableList<Pair<ViewGroup, Boolean>>? = null
@@ -102,7 +106,9 @@ object OriginTransitionController {
         popScale: Float = 1f,
         popTowardTarget: Float = 0f,
         popDelayMs: Long = 0L,
-        popSpring: AnimationSystem.SpringSpec? = null
+        popSpring: AnimationSystem.SpringSpec? = null,
+        // Giới hạn quãng nảy (px): bề mặt lớn như bảng tab có tâm rất xa nút nên cần chặn lại.
+        popMaxDistancePx: Float = Float.MAX_VALUE
     ): Boolean {
         val target = boundsOnScreen(view) ?: return false
         val old = morphs[view]
@@ -131,8 +137,15 @@ object OriginTransitionController {
         val spec = springSpec ?: if (originBounds != null) AnimationSystem.MORPH else AnimationSystem.SETTLE
         val pops = originBounds != null && (popScale != 1f || popTowardTarget != 0f)
         if (pops) {
-            val cx = anchor.centerX() + (target.centerX() - anchor.centerX()) * popTowardTarget
-            val cy = anchor.centerY() + (target.centerY() - anchor.centerY()) * popTowardTarget
+            var dx = (target.centerX() - anchor.centerX()) * popTowardTarget
+            var dy = (target.centerY() - anchor.centerY()) * popTowardTarget
+            val dist = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+            if (dist > popMaxDistancePx && dist > 0f) {
+                dx *= popMaxDistancePx / dist
+                dy *= popMaxDistancePx / dist
+            }
+            val cx = anchor.centerX() + dx
+            val cy = anchor.centerY() + dy
             val hw = anchor.width() * popScale / 2f
             val hh = anchor.height() * popScale / 2f
             m.popFrom = RectF(anchor)
@@ -197,20 +210,27 @@ object OriginTransitionController {
         if (popTo != null) {
             // Thu về khung đang nảy trên không (nút thật đứng nguyên ở đó); sau khi thẻ thu xong, nút nảy về chỗ cũ.
             m.popAnim?.cancel()
+            m.popRunning = false
             val base = RectF(m.anchor)
             m.popFrom = base
             m.anchor = lerpRect(base, popTo, m.popQ)
         }
         place(m, target)
+        m.hopTarget = target
+        m.hopStarted = false
         animateTo(m, 0f, springSpec ?: AnimationSystem.MORPH_CLOSE) {
-            if (popTo != null && m.srcBase != null && m.popQ > 0.001f) {
-                startPop(m, target, 0f, AnimationSystem.MENU_POP_BACK) {
-                    finish(m)
-                    onEnd?.invoke()
-                }
-            } else {
+            val done = {
                 finish(m)
                 onEnd?.invoke()
+            }
+            when {
+                // Nút đang nảy về: chờ nó hạ xong rồi mới dọn.
+                m.popRunning -> m.afterPop = done
+                popTo != null && m.srcBase != null && m.popQ > 0.001f -> {
+                    m.hopStarted = true
+                    startPop(m, target, 0f, AnimationSystem.MENU_POP_BACK, done)
+                }
+                else -> done()
             }
         }
     }
@@ -310,6 +330,7 @@ object OriginTransitionController {
         val from = m.popFrom ?: return
         val dest = m.popTo ?: return
         m.popAnim?.cancel()
+        m.popRunning = true
         m.popAnim = AnimationSystem.springFloat(
             from = m.popQ,
             to = to,
@@ -324,8 +345,13 @@ object OriginTransitionController {
             },
             onEnd = { canceled, _, _ ->
                 if (!canceled) {
+                    m.popRunning = false
                     m.popQ = to
                     onDone?.invoke()
+                    m.afterPop?.let {
+                        m.afterPop = null
+                        it()
+                    }
                 }
             }
         )
@@ -369,8 +395,19 @@ object OriginTransitionController {
         m.clipSaved = null
     }
 
+    /** Khi thẻ đã co còn ~45%, nút bắt đầu nảy về luôn để chuyển động liền mạch, không dừng trên không. */
+    private fun maybeStartHop(m: Morph) {
+        if (m.hopStarted || m.popTo == null || m.srcBase == null || m.popQ <= 0.001f) return
+        if (m.progress >= 0.45f) return
+        val target = m.hopTarget ?: return
+        m.hopStarted = true
+        startPop(m, target, 0f, AnimationSystem.MENU_POP_BACK)
+    }
+
     private fun clearPop(m: Morph) {
         m.popWait = false
+        m.popRunning = false
+        m.afterPop = null
         restoreSource(m)
         m.popAnim?.cancel()
         m.popAnim = null
@@ -436,6 +473,7 @@ object OriginTransitionController {
                 m.progress = value
                 render(m)
                 if (closing && m.sourceHidden && value < 0.35f) showSource(m)
+                if (closing) maybeStartHop(m)
             },
             onEnd = { canceled, _, _ ->
                 if (m.anim === handle) {
