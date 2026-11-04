@@ -44,8 +44,8 @@ object AnimationSystem {
     val MENU_MORPH_CLOSE = SpringSpec(0.27f, 1.0f)
     /** Nút ba chấm nảy sang khung to hơn trước khi menu bung (video: nảy lên rồi nở): nảy rõ, nhanh. */
     val MENU_POP = SpringSpec(0.22f, 0.60f)
-    /** Khi đóng, khung nảy hạ về nút cùng lúc thẻ thu lại. */
-    val MENU_POP_CLOSE = SpringSpec(0.20f, 0.90f)
+    /** Khi đóng: thẻ thu về khung nảy trước, rồi nút nảy ngược về chỗ cũ (như video). */
+    val MENU_POP_BACK = SpringSpec(0.24f, 0.70f)
     /** Nút gốc mờ đi/hiện lại khi bề mặt morph: chậm hơn QUICK để nút tan vào menu thay vì biến mất đột ngột. */
     val SOURCE_FADE = SpringSpec(0.32f, 1.0f)
     /** Thu gọn thanh công cụ, toast, đổi trạng thái: vượt nhẹ hơn SETTLE một chút. */

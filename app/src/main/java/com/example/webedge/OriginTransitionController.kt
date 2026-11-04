@@ -195,16 +195,23 @@ object OriginTransitionController {
         }
         val popTo = m.popTo
         if (popTo != null) {
-            // Thu về khung đang nảy trên không rồi hạ xuống nút cùng lúc.
+            // Thu về khung đang nảy trên không (nút thật đứng nguyên ở đó); sau khi thẻ thu xong, nút nảy về chỗ cũ.
+            m.popAnim?.cancel()
             val base = RectF(m.anchor)
             m.popFrom = base
             m.anchor = lerpRect(base, popTo, m.popQ)
         }
         place(m, target)
-        if (popTo != null) startPop(m, target, 0f, AnimationSystem.MENU_POP_CLOSE)
         animateTo(m, 0f, springSpec ?: AnimationSystem.MORPH_CLOSE) {
-            finish(m)
-            onEnd?.invoke()
+            if (popTo != null && m.srcBase != null && m.popQ > 0.001f) {
+                startPop(m, target, 0f, AnimationSystem.MENU_POP_BACK) {
+                    finish(m)
+                    onEnd?.invoke()
+                }
+            } else {
+                finish(m)
+                onEnd?.invoke()
+            }
         }
     }
 
@@ -293,7 +300,13 @@ object OriginTransitionController {
     )
 
     /** Spring riêng cho đoạn nảy: trượt điểm neo giữa khung nút (q=0) và khung nảy (q=1). */
-    private fun startPop(m: Morph, target: RectF, to: Float, spec: AnimationSystem.SpringSpec) {
+    private fun startPop(
+        m: Morph,
+        target: RectF,
+        to: Float,
+        spec: AnimationSystem.SpringSpec,
+        onDone: (() -> Unit)? = null
+    ) {
         val from = m.popFrom ?: return
         val dest = m.popTo ?: return
         m.popAnim?.cancel()
@@ -309,7 +322,12 @@ object OriginTransitionController {
                 driveSource(m, from, dest, q)
                 render(m)
             },
-            onEnd = { canceled, _, _ -> if (!canceled) m.popQ = to }
+            onEnd = { canceled, _, _ ->
+                if (!canceled) {
+                    m.popQ = to
+                    onDone?.invoke()
+                }
+            }
         )
     }
 
