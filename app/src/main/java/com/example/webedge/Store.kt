@@ -23,11 +23,44 @@ data class PersistedTab(
     val thumbnailVersion: Long = 0L
 )
 class Store(context: Context) {
-    companion object { private const val TAG = "Store" }
+    companion object {
+        private const val TAG = "Store"
+        private const val MAX_THUMBNAIL_WIDTH_PX = 360
+        private const val MAX_THUMBNAIL_HEIGHT_PX = 800
+    }
     private val sp = context.getSharedPreferences("edge", Context.MODE_PRIVATE)
     private val thumbnailDir = File(context.filesDir, "tab_thumbnails").apply { mkdirs() }
 
     private fun thumbnailFile(tabId: Long) = File(thumbnailDir, "tab_$tabId.jpg")
+
+    /**
+     * Đọc thumbnail đã lưu với kích thước giới hạn để khôi phục nhiều tab không chiếm RAM quá mức.
+     * inSampleSize dùng lũy thừa 2 theo cơ chế decode của Android; ảnh vẫn giữ nguyên tỷ lệ.
+     */
+    private fun loadThumbnail(tabId: Long): Bitmap? {
+        if (tabId <= 0L) return null
+        val file = thumbnailFile(tabId)
+        if (!file.isFile) return null
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sampleSize = 1
+        while (
+            (bounds.outWidth.toLong() + sampleSize - 1L) / sampleSize > MAX_THUMBNAIL_WIDTH_PX ||
+            (bounds.outHeight.toLong() + sampleSize - 1L) / sampleSize > MAX_THUMBNAIL_HEIGHT_PX
+        ) {
+            sampleSize *= 2
+        }
+
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
+            inScaled = false
+            inSampleSize = sampleSize
+        }
+        return BitmapFactory.decodeFile(file.absolutePath, options)
+    }
 
     /** Ghi thumbnail ra file riêng, dùng AtomicFile để tránh ảnh hỏng nếu app bị kill giữa lúc lưu. */
     private fun saveThumbnail(tab: PersistedTab): Boolean {
@@ -152,14 +185,7 @@ class Store(context: Context) {
                     title = obj.optString("title", ""),
                     isActive = obj.optBoolean("active", false),
                     thumbnail = runCatching {
-                        val id = obj.optLong("id", 0L)
-                        if (id > 0L) {
-                            val options = BitmapFactory.Options().apply {
-                                inPreferredConfig = Bitmap.Config.RGB_565
-                                inScaled = false
-                            }
-                            BitmapFactory.decodeFile(thumbnailFile(id).absolutePath, options)
-                        } else null
+                        loadThumbnail(obj.optLong("id", 0L))
                     }.getOrNull(),
                     thumbnailUrl = obj.optString("thumbnailUrl", ""),
                     thumbnailVersion = obj.optLong("thumbnailVersion", 0L)

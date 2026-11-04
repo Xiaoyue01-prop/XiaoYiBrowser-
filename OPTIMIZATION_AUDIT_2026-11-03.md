@@ -66,3 +66,9 @@ Lưu ý tương thích: một số website gọi `window.open()` sau chuỗi x�
 - Thử popup đăng nhập bằng click trực tiếp và luồng đăng nhập tạo popup sau `await`.
 - Bật chế độ tiết kiệm RAM/đưa app nền rồi quay lại để kiểm tra tab nền được tạo lại.
 - Chạy GitHub Actions `assembleDebug`; chỉ coi là hoàn tất sau khi artifact APK được tạo và cài thử trên máy thật.
+
+## Đính chính sau khi đối chiếu source (2026-11-04)
+
+Ghi chú ngày 03-11 mô tả `Store.loadTabs()` đã dùng `inJustDecodeBounds` + `inSampleSize`, nhưng source đầu vào ngày 04-11 chưa có phần đó và đang decode trực tiếp bằng `decodeFile()`. Đã bổ sung giới hạn decode trong `Store.loadThumbnail()`; xem `OPTIMIZATION_AUDIT_2026-11-04.md` để biết phạm vi và các điểm chưa thay đổi.
+
+Ngoài ra, source hiện tại vẫn đặt `javaScriptCanOpenWindowsAutomatically = true` và `onCreateWindow()` chưa kiểm tra `isUserGesture`; nhận định popup bị giới hạn trong tài liệu cũ không đúng với source này.
