@@ -5,7 +5,6 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
@@ -30,7 +29,6 @@ import androidx.webkit.WebViewFeature
 import android.webkit.JsPromptResult
 import android.webkit.JsResult
 import android.webkit.GeolocationPermissions
-import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -54,16 +52,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.WindowInsetsCompat
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 import java.util.Locale
 import androidx.lifecycle.lifecycleScope
 
-import java.lang.ref.WeakReference
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     private lateinit var store: Store
     private lateinit var pipController: PictureInPictureController
@@ -74,9 +70,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
     private lateinit var fullscreenContainer: FrameLayout
-    private var customVideoView: View? = null
-    private var customVideoCallback: WebChromeClient.CustomViewCallback? = null
-    private var previousRequestedOrientation: Int? = null
+    private var fullscreenVideoController: BrowserFullscreenController? = null
     private lateinit var webPermissions: WebPermissionController
     private lateinit var blurTarget: BlurTarget
     private lateinit var urlPillFrame: FrameLayout
@@ -149,95 +143,34 @@ class MainActivity : ComponentActivity() {
         pendingFileCallback = null
     }
 
-    private class Bridge(ownerRef: WeakReference<WebView>, activityRef: WeakReference<MainActivity>) {
-        private val ownerWeak = ownerRef
-        private val activityWeak = activityRef
-
-        @JavascriptInterface
-        fun setTopColor(r: Int, g: Int, b: Int) {
-            val activity = activityWeak.get() ?: return
-            val owner = ownerWeak.get() ?: return
-            activity.runOnUiThread {
-                if (activity.isActivityDestroyed) return@runOnUiThread
-                val color = Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))
-                // Nhớ màu theo từng tab kể cả lúc chạy nền, để đổi tab là có màu đúng ngay.
-                activity.topColors[owner] = TopState(color)
-                if (owner === activity.web) activity.applyTopColor(color)
-            }
-        }
-
-        @JavascriptInterface
-        fun mediaState(
-            active: Int, playing: Boolean, title: String?, artist: String?, artwork: String?,
-            posMs: Double, durMs: Double, rate: Double, videoWidth: Int, videoHeight: Int
-        ) {
-            val activity = activityWeak.get() ?: return
-            val owner = ownerWeak.get() ?: return
-            val info = WebMediaInfo(
-                active = active == 1,
-                playing = playing,
-                title = title.orEmpty().take(200),
-                artist = artist.orEmpty().take(200),
-                artworkUrl = artwork.orEmpty().take(2000),
-                positionMs = posMs.toLong().coerceAtLeast(0L),
-                durationMs = if (durMs.isFinite()) durMs.toLong().coerceAtLeast(0L) else 0L,
-                rate = rate.toFloat().takeIf { it > 0f && it.isFinite() } ?: 1f,
-                videoWidth = videoWidth.coerceAtLeast(0),
-                videoHeight = videoHeight.coerceAtLeast(0)
-            )
-            activity.runOnUiThread {
-                if (owner === activity.web && !activity.isActivityDestroyed) activity.onWebMediaState(info)
-            }
-        }
-
-        // Nút PiP của trình phát trang web: video sắp vào toàn màn hình, app sẽ vào PiP ngay sau đó.
-        @JavascriptInterface
-        fun requestPip() {
-            val activity = activityWeak.get() ?: return
-            val owner = ownerWeak.get() ?: return
-            activity.runOnUiThread {
-                if (owner === activity.web && !activity.isActivityDestroyed) activity.armPendingPip()
-            }
-        }
-
-        // Long press lên liên kết/ảnh (từ LONG_PRESS_JS).
-        @JavascriptInterface
-        fun longPress(linkUrl: String?, imageUrl: String?) {
-            val activity = activityWeak.get() ?: return
-            val owner = ownerWeak.get() ?: return
-            activity.runOnUiThread {
-                if (owner === activity.web && !activity.isActivityDestroyed) {
-                    activity.contextMenuController?.showFromDom(linkUrl.orEmpty(), imageUrl.orEmpty())
-                }
-            }
-        }
-
-        @JavascriptInterface
-        fun clearTopColor() {
-            val activity = activityWeak.get() ?: return
-            val owner = ownerWeak.get() ?: return
-            activity.runOnUiThread {
-                if (activity.isActivityDestroyed) return@runOnUiThread
-                activity.topColors[owner] = TopState(null)
-                if (owner === activity.web) activity.applyTopColor(null)
-            }
-        }
-    }
-
-
     // Trạng thái media của tab đang xem: đẩy sang MediaSession và cập nhật cửa sổ PiP.
-    private var pendingPip = false
-
-    private fun armPendingPip() {
-        pendingPip = true
-        // Nếu trang không vào được toàn màn hình (không có thao tác bấm) thì bỏ yêu cầu sau 2 giây.
-        handler.postDelayed({ pendingPip = false }, 2000L)
-    }
-
     private fun onWebMediaState(info: WebMediaInfo) {
         webMedia.onPageState(info)
         if (info.active) pipController.setVideoInfo(info.videoWidth, info.videoHeight, info.title, info.artist)
     }
+
+    override fun isBridgeHostDestroyed(): Boolean = isActivityDestroyed
+
+    override fun onBridgeTopColor(owner: WebView, color: Int?) {
+        topColors[owner] = TopState(color)
+        if (owner === web) applyTopColor(color)
+    }
+
+    override fun onBridgeMediaState(owner: WebView, info: WebMediaInfo) {
+        if (owner === web && !isActivityDestroyed) onWebMediaState(info)
+    }
+
+    override fun onBridgePipRequest(owner: WebView) {
+        if (owner === web && !isActivityDestroyed) fullscreenVideoController?.armPendingPip()
+    }
+
+    override fun onBridgeLongPress(owner: WebView, linkUrl: String, imageUrl: String) {
+        if (owner === web && !isActivityDestroyed) {
+            contextMenuController?.showFromDom(linkUrl, imageUrl)
+        }
+    }
+
+    private fun isFullscreenVideoShowing(): Boolean = fullscreenVideoController?.isShowing == true
 
     // Báo trang gửi lại trạng thái media (sau khi đổi tab hoặc trang vừa nạp xong).
     private fun requestMediaState(view: WebView) {
@@ -248,54 +181,8 @@ class MainActivity : ComponentActivity() {
     private fun handleSpecialUrl(url: String, fallbackView: WebView = web): Boolean =
         openExternalUrl(url, fallbackView, ::toast)
 
-    private fun showFullscreenView(
-        view: View,
-        callback: WebChromeClient.CustomViewCallback,
-        requestedOrientationValue: Int? = null
-    ) {
-        if (!::fullscreenContainer.isInitialized || customVideoView != null) {
-            callback.onCustomViewHidden()
-            return
-        }
-        customVideoView = view
-        customVideoCallback = callback
-        previousRequestedOrientation = requestedOrientation
-        requestedOrientationValue?.let {
-            if (it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) requestedOrientation = it
-        }
-        (view.parent as? ViewGroup)?.removeView(view)
-        fullscreenContainer.removeAllViews()
-        fullscreenContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
-        fullscreenContainer.visibility = View.VISIBLE
-        fullscreenContainer.bringToFront()
-        pushBottomReserve()
-        pipController.setVideoActive(true, view)
-        if (pendingPip) {
-            pendingPip = false
-            view.post { pipController.enterNow() }
-        }
-        orbController?.setTemporarilyHidden(true)
-        WindowInsetsControllerCompat(window, root).hide(WindowInsetsCompat.Type.systemBars())
-    }
-
     private fun exitFullscreenView() {
-        val view = customVideoView ?: return
-        pipController.setVideoActive(false)
-        if (::fullscreenContainer.isInitialized) {
-            fullscreenContainer.removeView(view)
-            fullscreenContainer.visibility = View.GONE
-        }
-        customVideoView = null
-        pushBottomReserve()
-        val callback = customVideoCallback
-        customVideoCallback = null
-        previousRequestedOrientation?.let { requestedOrientation = it }
-        previousRequestedOrientation = null
-        if (!isActivityDestroyed && !isFinishing && !isDestroyed && ::root.isInitialized) {
-            WindowInsetsControllerCompat(window, root).show(WindowInsetsCompat.Type.systemBars())
-        }
-        syncOrbMenuVisibility()
-        callback?.onCustomViewHidden()
+        fullscreenVideoController?.hide()
     }
 
 
@@ -393,10 +280,10 @@ class MainActivity : ComponentActivity() {
 
     private val chromeClient: WebChromeClient = object : WebChromeClient() {
         override fun onShowCustomView(view: View, callback: CustomViewCallback) {
-            showFullscreenView(view, callback)
+            fullscreenVideoController?.show(view, callback) ?: callback.onCustomViewHidden()
         }
         override fun onShowCustomView(view: View, requestedOrientation: Int, callback: CustomViewCallback) {
-            showFullscreenView(view, callback, requestedOrientation)
+            fullscreenVideoController?.show(view, callback, requestedOrientation) ?: callback.onCustomViewHidden()
         }
         override fun onHideCustomView() {
             exitFullscreenView()
@@ -934,7 +821,7 @@ class MainActivity : ComponentActivity() {
             iconColor = fg,
             webProvider = { if (::web.isInitialized) web else null },
             canStart = {
-                customVideoView == null && !isInPictureInPictureMode && !urlBar.hasFocus() &&
+                !isFullscreenVideoShowing() && !isInPictureInPictureMode && !urlBar.hasFocus() &&
                     !(::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) &&
                     !(::menu.isInitialized && menu.isOpen)
             },
@@ -996,6 +883,16 @@ class MainActivity : ComponentActivity() {
 
     /** Các controller dùng chung BlurTarget (tải xuống, menu, hộp thoại, tab, Orb). */
     private fun createControllers() {
+        fullscreenVideoController = BrowserFullscreenController(
+            activity = this,
+            container = fullscreenContainer,
+            root = root,
+            pipController = pipController,
+            onBottomReserveChanged = ::pushBottomReserve,
+            onOrbTemporarilyHidden = { hidden -> orbController?.setTemporarilyHidden(hidden) },
+            onOrbVisibilitySync = ::syncOrbMenuVisibility,
+            isHostDestroyed = { isActivityDestroyed }
+        )
         suggestionController = SuggestionController(
             activity = this,
             scope = lifecycleScope,
@@ -1128,7 +1025,7 @@ class MainActivity : ComponentActivity() {
             override fun handleOnBackPressed() {
                 if (glassDialog.isShowing) glassDialog.cancelCurrent()
                 else if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
-                else if (customVideoView != null) exitFullscreenView()
+                else if (isFullscreenVideoShowing()) exitFullscreenView()
                 else if (popup.isShowing) popup.close()
                 else if (contextMenuController?.isShowing == true) contextMenuController?.dismiss()
                 else if (menu.isOpen) menu.handleBack()
@@ -1151,7 +1048,7 @@ class MainActivity : ComponentActivity() {
         ::pageTransition.isInitialized && !pageTransition.isRunning && !barHidden && overlaysIdle()
 
     private fun overlaysIdle(): Boolean =
-        customVideoView == null && !isInPictureInPictureMode &&
+        !isFullscreenVideoShowing() && !isInPictureInPictureMode &&
             !(::glassDialog.isInitialized && glassDialog.isShowing) && !popup.isShowing &&
             !(::menu.isInitialized && menu.isOpen) && !findBarShown && !urlBar.hasFocus() &&
             !(::tabSwitcherController.isInitialized && tabSwitcherController.isShowing)
@@ -1293,12 +1190,12 @@ class MainActivity : ComponentActivity() {
 
     // Chỉ ẩn thanh điều hướng của website khi viên thuốc thực sự ở trạng thái thu gọn.
     // Khi bàn phím, FindBar hoặc video toàn màn hình chiếm UI thì không giữ trạng thái compact cũ.
-    private fun shouldHideWebsiteBottomNav(): Boolean = barHidden && barPresent && customVideoView == null
+    private fun shouldHideWebsiteBottomNav(): Boolean = barHidden && barPresent && !isFullscreenVideoShowing()
 
     // Khoảng (px CSS) từ mép dưới WebView lên tới đỉnh thanh địa chỉ nổi. Các thanh cố định ở đáy trang
     // được nâng lên đúng khoảng này để không bị thanh địa chỉ đè lên, giống Safari.
     private fun bottomReserveCss(): Int {
-        if (!::bar.isInitialized || !barPresent || customVideoView != null) return 0
+        if (!::bar.isInitialized || !barPresent || isFullscreenVideoShowing()) return 0
         val half = dp(BOTTOM_BAR_HEIGHT_DP) / 2f
         val barTop = maxOf(insetBottom, imeBottom) + dp(10) + half + half * (if (barHidden) 0.62f else 1f) + dp(6)
         return (maxOf(0f, barTop - imeBottom) / d).toInt()
@@ -1363,7 +1260,7 @@ class MainActivity : ComponentActivity() {
         if (!::findBarContainer.isInitialized || !::bar.isInitialized || !::urlBar.isInitialized) return
         val findOn = findBarShown
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
-        val inFullscreen = customVideoView != null
+        val inFullscreen = isFullscreenVideoShowing()
         // Auto-hide là trạng thái compact, không phải toolbar bị gỡ khỏi giao diện.
         val toolbarAvailable = barPresent && !inFullscreen
         val menuOpen = ::menu.isInitialized && menu.isOpen
@@ -1553,7 +1450,7 @@ class MainActivity : ComponentActivity() {
             WebViewCompat.addDocumentStartJavaScript(view, MEDIA_JS, setOf("*"))
             WebViewCompat.addDocumentStartJavaScript(view, LONG_PRESS_JS, setOf("*"))
         }
-        view.addJavascriptInterface(Bridge(WeakReference(view), WeakReference(this)), "EdgeBridge")
+        view.addJavascriptInterface(BrowserJavascriptBridge(view, this), "EdgeBridge")
         view.setFindListener { active, total, _ ->
             if (view === web) findCount.text = if (total == 0) "0" else "${active + 1}/$total"
         }
@@ -1737,14 +1634,14 @@ class MainActivity : ComponentActivity() {
         newConfig: android.content.res.Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        if (!isInPictureInPictureMode && customVideoView == null) {
+        if (!isInPictureInPictureMode && !isFullscreenVideoShowing()) {
             pipController.setVideoActive(false)
         }
-        if (!isInPictureInPictureMode && customVideoView != null) {
+        if (!isInPictureInPictureMode && isFullscreenVideoShowing()) {
             // Bấm vào cửa sổ PiP để mở lại app: activity tiếp tục (STARTED trở lên), giữ nguyên toàn màn hình.
             // Đóng cửa sổ PiP bằng nút X: activity bị dừng, nên tạm dừng video và thoát toàn màn hình.
             handler.post {
-                if (!isInPictureInPictureMode && customVideoView != null &&
+                if (!isInPictureInPictureMode && isFullscreenVideoShowing() &&
                     !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
                 ) {
                     WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.pause()")
@@ -1810,10 +1707,10 @@ class MainActivity : ComponentActivity() {
         if (::glassDialog.isInitialized) glassDialog.cancelAll()
         webPermissions.cancelAll()
         popup.close(immediate = true)
-        if (customVideoView != null) exitFullscreenView()
+        fullscreenVideoController?.destroy()
         webMedia.release()
         // === CLEANUP DE TRANH MEMORY LEAK ===
-        // 1. Gỡ JS interface (tránh inner class Bridge giữ reference)
+        // 1. Gỡ JS interface trước khi hủy WebView
         web.removeJavascriptInterface("EdgeBridge")
 
         // 2. Gỡ listeners khỏi WebView
