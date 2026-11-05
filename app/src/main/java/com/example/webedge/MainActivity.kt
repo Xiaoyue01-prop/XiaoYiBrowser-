@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private lateinit var tabBtn: ImageView
     private lateinit var tabManager: TabManager
     private lateinit var tabWebViewLifecycle: TabWebViewLifecycleController
+    private lateinit var tabPersistence: TabPersistenceController
     private lateinit var urlPill: LinearLayout
     private lateinit var pillProgress: PillProgress
     private lateinit var topFade: View
@@ -477,9 +478,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         )
         AdBlocker.init(this)
         tabManager = TabManager()
-        tabManager.restoreTabs(store.loadTabs())
+        tabPersistence = TabPersistenceController(handler, store, tabManager)
+        tabPersistence.restore()
         tabManager.setOnChangeListener {
-            scheduleSaveTabs()
+            tabPersistence.scheduleSave()
             updateTabBadge()
         }
         tabWebViewLifecycle = TabWebViewLifecycleController(
@@ -1575,14 +1577,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
     }
 
-    // Gom nhiều thay đổi liên tiếp (url/title đổi liên tục khi tải trang) thành một lần ghi.
-    private val saveTabsRunnable = Runnable { store.saveTabs(tabManager.exportTabs()) }
-
-    private fun scheduleSaveTabs() {
-        handler.removeCallbacks(saveTabsRunnable)
-        handler.postDelayed(saveTabsRunnable, Constants.SAVE_TABS_DEBOUNCE_MS)
-    }
-
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         pullRefresh?.onTouch(ev)
         if (::tabSwipe.isInitialized) {
@@ -1629,8 +1623,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (::store.isInitialized) store.flush()
         if (::web.isInitialized) {
             tabManager.saveState(web)
-            handler.removeCallbacks(saveTabsRunnable)
-            store.saveTabs(tabManager.exportTabs())
+            tabPersistence.saveNow()
         }
         super.onPause()
     }
@@ -1638,7 +1631,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onSaveInstanceState(outState: Bundle) {
         if (::web.isInitialized) {
             tabManager.saveState(web)
-            store.saveTabs(tabManager.exportTabs())
+            tabPersistence.saveNow()
             web.saveState(outState)
         }
         super.onSaveInstanceState(outState)
