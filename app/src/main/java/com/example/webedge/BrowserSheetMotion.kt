@@ -67,7 +67,7 @@ internal object BrowserSheetMotion {
                             sheet,
                             DynamicAnimation.TRANSLATION_Y,
                             0f,
-                            AnimationSystem.MORPH_CLOSE,
+                            AnimationSystem.DISMISS,
                             velocity
                         )
                         AnimationSystem.fade(scrim, SCRIM_ALPHA, AnimationSystem.SMOOTH)
@@ -80,7 +80,7 @@ internal object BrowserSheetMotion {
     }
 
     fun show(sheet: View, scrim: View) {
-        AnimationSystem.spring(sheet, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MORPH_CLOSE)
+        AnimationSystem.spring(sheet, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.DISMISS)
         AnimationSystem.fade(scrim, SCRIM_ALPHA, AnimationSystem.SMOOTH)
     }
 

@@ -32,12 +32,8 @@ object AnimationSystem {
     val QUICK = SpringSpec(0.20f, 1.0f)
     /** Nhả tay sau khi nhấn: nảy rõ, đúng cảm giác nút kính của iOS. */
     val PRESS_RELEASE = SpringSpec(0.40f, 0.30f)
-    /** Bề mặt mở ra (menu, dialog, thẻ, nút Orb): vượt đích chừng 4-5% rồi đứng yên, kiểu iOS 26. */
+    /** Bề mặt mở ra, bung từ nút (menu, dialog, thẻ, bảng tab, nút Orb): vượt đích chừng 4-5% rồi đứng yên, kiểu iOS 26. */
     val SETTLE = SpringSpec(0.50f, 0.76f)
-    /** Bung từ nút bấm ra bề mặt lớn; preset chung cho các bề mặt morph như MenuTabs. */
-    val MORPH = SpringSpec(0.54f, 0.78f)
-    /** Thu ngược về nút; preset chung, gần như không nảy để không chạy lố qua nút. */
-    val MORPH_CLOSE = SpringSpec(0.40f, 0.90f)
     /** Menu ba chấm: đo từ video tham chiếu (iOS), đạt 90% sau ~0.19s, gần như không nảy (~0.5%). */
     val MENU_MORPH = SpringSpec(0.34f, 0.85f)
     /** Menu ba chấm khi đóng: video đóng xong trong ~0.17s, không nảy. */
@@ -50,12 +46,15 @@ object AnimationSystem {
     val SOURCE_FADE = SpringSpec(0.32f, 1.0f)
     /** Thu gọn thanh công cụ, toast, đổi trạng thái: vượt nhẹ hơn SETTLE một chút. */
     val SMOOTH = SpringSpec(0.54f, 0.66f)
-    /** Đóng lại (scale/alpha được chặn ở 0 nên không bị lật): chỉ nảy rất nhẹ. */
-    val DISMISS = SpringSpec(0.36f, 0.80f)
+    /** Đóng lại, thu về nút, trả về vị trí cũ (scale/alpha được chặn ở 0 nên không bị lật): gần như không nảy, không chạy lố qua nút. */
+    val DISMISS = SpringSpec(0.40f, 0.90f)
 
     // === Hằng số ===
     /** Nút kính phồng lên khi nhấn (như Liquid Glass của iOS 26). */
     const val GLASS_PRESS_SCALE = 1.12f
+
+    /** Scale đầu/cuối chung của mọi bề mặt hiện/ẩn (menu, dialog, thẻ, thanh...). Chỉ truyền 1f khi muốn thuần fade/trượt. */
+    const val SURFACE_SCALE = 0.94f
 
     /** Ngưỡng kết thúc phù hợp cho tiến độ chuẩn hoá (0..1), như morph và resize. */
     val NORMALIZED_VALUE_MIN_CHANGE = DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE
@@ -256,47 +255,47 @@ object AnimationSystem {
     fun attachGlassPress(touch: View, target: View = touch) =
         attachPress(touch, target, GLASS_PRESS_SCALE)
 
-    /** Menu/dialog mở ra: scale + fade từ góc neo (đặt pivot trước khi gọi). */
-    fun popIn(
+    /**
+     * Hiện một bề mặt: bắt đầu từ trạng thái đầu (alpha 0, scale [fromScale], lệch Y [offsetY]) rồi fade + phồng + trượt về nghỉ.
+     * Dùng cho dialog, thẻ, menu, toast. [toAlpha] là độ mờ lúc nghỉ. Muốn bung từ góc thì đặt pivot trước khi gọi.
+     * Không đụng tới visibility; xem [appear] cho view đang GONE.
+     */
+    fun enter(
         view: View,
-        fromScale: Float = 0.8f,
-        springSpec: SpringSpec = SETTLE
+        offsetY: Float = 0f,
+        fromScale: Float = SURFACE_SCALE,
+        toAlpha: Float = 1f,
+        spec: SpringSpec = SETTLE
     ) {
         view.alpha = 0f
         view.scaleX = fromScale
         view.scaleY = fromScale
-        fade(view, 1f, QUICK)
-        scaleTo(view, 1f, 1f, springSpec)
+        fade(view, toAlpha, QUICK)
+        scaleTo(view, 1f, 1f, spec)
+        if (offsetY != 0f) {
+            view.translationY = offsetY
+            spring(view, DynamicAnimation.TRANSLATION_Y, 0f, spec)
+        }
     }
 
-    /** Menu/dialog đóng lại; onEnd chạy khi fade xong. */
-    fun popOut(
+    /** Đóng một bề mặt: thu về [toScale], trượt tới [offsetY] (nếu khác 0) và fade ra; [onEnd] chạy khi fade xong. */
+    fun exit(
         view: View,
-        toScale: Float = 0.85f,
-        springSpec: SpringSpec = DISMISS,
+        offsetY: Float = 0f,
+        toScale: Float = SURFACE_SCALE,
+        spec: SpringSpec = DISMISS,
         onEnd: (() -> Unit)? = null
     ) {
-        scaleTo(view, toScale, toScale, springSpec)
-        fade(view, 0f, springSpec, onEnd)
-    }
-
-    /** Trượt vào từ translationY hiện tại (toast). */
-    fun slideIn(view: View) {
-        fade(view, 1f, QUICK)
-        spring(view, DynamicAnimation.TRANSLATION_Y, 0f, SETTLE)
-    }
-
-    /** Trượt ra (toast); onEnd chạy khi fade xong. */
-    fun slideOut(view: View, toY: Float, onEnd: (() -> Unit)? = null) {
-        spring(view, DynamicAnimation.TRANSLATION_Y, toY, DISMISS)
-        fade(view, 0f, DISMISS, onEnd)
+        scaleTo(view, toScale, toScale, spec)
+        if (offsetY != 0f) spring(view, DynamicAnimation.TRANSLATION_Y, offsetY, spec)
+        fade(view, 0f, spec, onEnd)
     }
 
     /**
-     * Hiện một thanh/bề mặt đang ẩn: fade + trượt từ [offsetY] + phồng nhẹ, rồi đứng yên ([toAlpha] là độ mờ lúc nghỉ).
+     * [enter] cho một thanh/bề mặt đang ẩn (GONE): đặt VISIBLE rồi chạy [enter].
      * Đang hiện thì không làm gì; đang ẩn dở thì đảo chiều từ đúng vị trí hiện tại, không nhảy về đầu.
      */
-    fun appear(view: View, offsetY: Float = 0f, fromScale: Float = 0.94f, toAlpha: Float = 1f) {
+    fun appear(view: View, offsetY: Float = 0f, fromScale: Float = SURFACE_SCALE, toAlpha: Float = 1f) {
         if (view.visibility == View.VISIBLE) {
             if (isSpringingTo(view, DynamicAnimation.ALPHA, 0f)) {
                 fade(view, toAlpha, QUICK)
@@ -307,27 +306,19 @@ object AnimationSystem {
         }
         cancel(view)
         view.visibility = View.VISIBLE
-        view.alpha = 0f
-        view.translationY = offsetY
-        view.scaleX = fromScale
-        view.scaleY = fromScale
-        fade(view, toAlpha, QUICK)
-        spring(view, DynamicAnimation.TRANSLATION_Y, 0f, SETTLE)
-        scaleTo(view, 1f, 1f, SETTLE)
+        enter(view, offsetY, fromScale, toAlpha)
     }
 
     /**
-     * Ẩn bề mặt: fade + trượt ra [offsetY] rồi mới đặt [View.GONE] và trả thuộc tính về gốc.
+     * [exit] rồi mới đặt [View.GONE] và trả thuộc tính về gốc.
      * Nếu trong lúc đó [appear] được gọi lại thì việc ẩn bị huỷ và không đụng vào view.
      */
-    fun disappear(view: View, offsetY: Float = 0f, toScale: Float = 0.94f, onEnd: (() -> Unit)? = null) {
+    fun disappear(view: View, offsetY: Float = 0f, toScale: Float = SURFACE_SCALE, onEnd: (() -> Unit)? = null) {
         if (view.visibility != View.VISIBLE) {
             onEnd?.invoke()
             return
         }
-        spring(view, DynamicAnimation.TRANSLATION_Y, offsetY, DISMISS)
-        scaleTo(view, toScale, toScale, DISMISS)
-        fade(view, 0f, DISMISS) {
+        exit(view, offsetY, toScale) {
             view.visibility = View.GONE
             view.alpha = 1f
             view.translationY = 0f

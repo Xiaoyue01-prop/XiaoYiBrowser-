@@ -174,9 +174,7 @@ class DownloadPromptController(
         root.addView(card, params)
         activeView = card
 
-        card.alpha = 0f
-        card.translationY = -dp(150).toFloat()
-        AnimationSystem.slideIn(card)
+        AnimationSystem.enter(card, offsetY = -dp(150).toFloat(), fromScale = 1f)
     }
 
     private fun finish(confirmed: Boolean) {
@@ -203,7 +201,7 @@ class DownloadPromptController(
         if (view == null) {
             complete()
         } else {
-            AnimationSystem.slideOut(view, -dp(130).toFloat(), complete)
+            AnimationSystem.exit(view, offsetY = -dp(130).toFloat(), toScale = 1f, onEnd = complete)
         }
     }
 }

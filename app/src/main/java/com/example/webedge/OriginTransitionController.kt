@@ -84,7 +84,7 @@ object OriginTransitionController {
 
     /**
      * Bung [view] ra từ [origin] (hoặc từ khung [originRect] nếu không có nút). Không có cả hai thì bung từ giữa với [fallbackScale].
-     * Trả về false khi view chưa có kích thước (chưa layout); lúc đó người gọi nên dùng [AnimationSystem.popIn].
+     * Trả về false khi view chưa có kích thước (chưa layout); lúc đó người gọi nên dùng [AnimationSystem.enter].
      */
     fun open(
         view: View,
@@ -139,7 +139,7 @@ object OriginTransitionController {
         m.roundStart = origin == null && originRect != null
         morphs[view] = m
         place(m, target)
-        val spec = springSpec ?: if (originBounds != null) AnimationSystem.MORPH else AnimationSystem.SETTLE
+        val spec = springSpec ?: AnimationSystem.SETTLE
         val pops = originBounds != null && (popScale != 1f || popTowardTarget != 0f)
         if (pops) {
             var dx = (target.centerX() - anchor.centerX()) * popTowardTarget
@@ -183,7 +183,7 @@ object OriginTransitionController {
         return true
     }
 
-    /** Thu [view] ngược về nút đã bung ra. Không có trạng thái morph thì đóng bằng popOut thường. */
+    /** Thu [view] ngược về nút đã bung ra. Không có trạng thái morph thì đóng bằng exit thường. */
     fun close(
         view: View,
         springSpec: AnimationSystem.SpringSpec? = null,
@@ -192,7 +192,7 @@ object OriginTransitionController {
         val m = morphs[view]
         if (m == null) {
             // Giữ nguyên preset dismiss cũ nếu view không có trạng thái morph.
-            AnimationSystem.popOut(view, 0.88f, springSpec ?: AnimationSystem.DISMISS, onEnd)
+            AnimationSystem.exit(view, spec = springSpec ?: AnimationSystem.DISMISS, onEnd = onEnd)
             return
         }
         val target = boundsOnScreen(view)
@@ -223,7 +223,7 @@ object OriginTransitionController {
         place(m, target)
         m.hopTarget = target
         m.hopStarted = false
-        animateTo(m, 0f, springSpec ?: AnimationSystem.MORPH_CLOSE) {
+        animateTo(m, 0f, springSpec ?: AnimationSystem.DISMISS) {
             val done: () -> Unit = {
                 finish(m)
                 onEnd?.invoke()
@@ -271,7 +271,7 @@ object OriginTransitionController {
     /** Thu một bề mặt về điểm neo nhưng giữ morph để có thể spring bung ngược ra sau đó. */
     fun collapseToSource(
         view: View,
-        springSpec: AnimationSystem.SpringSpec = AnimationSystem.MORPH_CLOSE,
+        springSpec: AnimationSystem.SpringSpec = AnimationSystem.DISMISS,
         onEnd: (() -> Unit)? = null
     ): Boolean {
         val m = morphs[view] ?: return false
@@ -291,7 +291,7 @@ object OriginTransitionController {
     /** Spring bung lại từ điểm neo hiện tại, tiếp tục đúng progress đang dở nếu bị đảo chiều giữa chừng. */
     fun expandFromSource(
         view: View,
-        springSpec: AnimationSystem.SpringSpec = AnimationSystem.MORPH,
+        springSpec: AnimationSystem.SpringSpec = AnimationSystem.SETTLE,
         onEnd: (() -> Unit)? = null
     ): Boolean {
         val m = morphs[view] ?: return false

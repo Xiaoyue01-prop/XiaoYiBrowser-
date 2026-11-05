@@ -485,13 +485,13 @@ class OrbMenuController(
     private fun collapse() {
         if (!isExpanded) return
         isExpanded = false
-        AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 0f, AnimationSystem.MORPH_CLOSE)
+        AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 0f, AnimationSystem.DISMISS)
         subBtns.forEach { btn ->
             btn.isClickable = false
             btn.isEnabled = false
             AnimationSystem.cancel(btn)
-            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MORPH_CLOSE)
-            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MORPH_CLOSE)
+            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.DISMISS)
+            AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.DISMISS)
             AnimationSystem.scaleTo(btn, 0f, 0f, AnimationSystem.DISMISS)
             AnimationSystem.fade(btn, 0f, AnimationSystem.DISMISS) {
                 if (!isExpanded) btn.visibility = View.GONE

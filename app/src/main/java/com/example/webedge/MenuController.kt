@@ -318,7 +318,7 @@ class MenuController(
                 restorePillNow()
                 card.pivotX = card.width.toFloat()
                 card.pivotY = card.height.toFloat()
-                AnimationSystem.popIn(card, 0.6f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.enter(card, spec = AnimationSystem.MENU_MORPH)
             }
             syncBlurFor(850)
         }
@@ -448,7 +448,7 @@ class MenuController(
             onVisibilityChanged()
             return
         }
-        // Menu đã nằm gọn trong Pill thì đóng thẳng lớp đang GONE, tránh fallback popOut
+        // Menu đã nằm gọn trong Pill thì đóng thẳng lớp đang GONE, tránh fallback exit
         // làm thẻ nhỏ bật ngược ra ngoài khi người dùng nhấn Back trong lúc toolbar compact.
         if (toolbarCompact && layer.visibility != View.VISIBLE) {
             OriginTransitionController.cancel(card)

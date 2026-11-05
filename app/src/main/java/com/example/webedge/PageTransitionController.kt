@@ -227,7 +227,7 @@ class PageTransitionController(
         r.spring = AnimationSystem.springFloat(
             from = r.progress,
             to = 1f,
-            spec = AnimationSystem.MORPH_CLOSE,
+            spec = AnimationSystem.DISMISS,
             minimumVisibleChange = AnimationSystem.NORMALIZED_VALUE_MIN_CHANGE,
             onUpdate = { render(r, it) },
             onEnd = { canceled, _, _ -> if (!canceled && current === r) hold(r) }

@@ -216,7 +216,7 @@ class GlassDialogController(
 
         AnimationSystem.fade(scrim, 1f, AnimationSystem.SMOOTH)
         card.alpha = 0f
-        card.post { AnimationSystem.popIn(card, 0.8f) }
+        card.post { AnimationSystem.enter(card) }
 
         activeInput?.let { input ->
             input.post {
@@ -261,7 +261,7 @@ class GlassDialogController(
         val card = layer.getChildAt(1)
         val scrim = layer.getChildAt(0)
         AnimationSystem.fade(scrim, 0f)
-        AnimationSystem.popOut(card, 0.9f) { complete() }
+        AnimationSystem.exit(card) { complete() }
         // Phòng hờ: nếu animation không báo kết thúc thì vẫn dọn để hàng đợi không bị kẹt.
         layer.postDelayed({ complete() }, 1000L)
     }

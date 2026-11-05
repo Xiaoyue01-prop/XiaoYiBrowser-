@@ -428,11 +428,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         root.addView(t, lp)
         toastView = t
-        t.alpha = 0f
-        t.translationY = dp(24).toFloat()
-        AnimationSystem.slideIn(t)
+        AnimationSystem.enter(t, offsetY = dp(24).toFloat(), fromScale = 1f)
         t.postDelayed({
-            AnimationSystem.slideOut(t, dp(16).toFloat()) {
+            AnimationSystem.exit(t, offsetY = dp(16).toFloat(), toScale = 1f) {
                 root.removeView(t)
                 if (toastView === t) toastView = null
             }

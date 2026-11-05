@@ -346,7 +346,7 @@ class TabSwitcherController(
             card.isClickable = false
             card.pivotX = card.width / 2f
             card.pivotY = card.height / 2f
-            AnimationSystem.popOut(card, 0.8f) {
+            AnimationSystem.exit(card) {
                 // Các thẻ còn lại trượt lấp chỗ trống bằng spring (không dùng Transition của Android).
                 val others = cardViews.values.filter { it !== card }
                 AnimationSystem.reflow(columns, others) {
@@ -469,10 +469,8 @@ class TabSwitcherController(
             }
             AnimationSystem.press(card, Constants.PRESS_SCALE_CARD)
             card.alpha = 0f
-            card.scaleX = 0.92f
-            card.scaleY = 0.92f
             val delay = 35L + (thisIndex * 28L).coerceAtMost(240L)
-            card.postDelayed({ AnimationSystem.popIn(card, 0.92f) }, delay)
+            card.postDelayed({ AnimationSystem.enter(card) }, delay)
 
             val params = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(dp(4), dp(4), dp(4), dp(7))
@@ -613,8 +611,8 @@ class TabSwitcherController(
                         popDelayMs = if (canPop) Constants.MENU_POP_DELAY_MS else 0L,
                         popMaxDistancePx = dp(Constants.TAB_POP_MAX_DP).toFloat()
                     )) {
-                    // popIn tự đặt alpha = 0 rồi fade lên, không cần hiện thủ công.
-                    AnimationSystem.popIn(container, 0.88f)
+                    // enter tự đặt alpha = 0 rồi fade lên, không cần hiện thủ công.
+                    AnimationSystem.enter(container)
                 }
                 // Alpha do morph tự quản (open() đã áp trạng thái đầu); không ép = 1 ở đây vì lúc chờ nút nảy thẻ phải ẩn.
             }
