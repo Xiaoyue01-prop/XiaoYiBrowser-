@@ -40,7 +40,7 @@ fun WebSettings.applyBrowserDefaults() {
         runCatching {
             WebSettingsCompat.setHyperlinkContextMenuItems(
                 this,
-                WebSettingsCompat.HyperlinkContextMenuItems.DISABLED
+                WebSettingsCompat.HYPERLINK_CONTEXT_MENU_DISABLED
             )
         }
     }
