@@ -3,13 +3,13 @@
 ## Toolchain and dependency baseline (2026-11-05)
 
 - Android Gradle Plugin: 9.3.1
-- Gradle used by GitHub Actions: 9.7.1
+- Gradle used by GitHub Actions: 9.7.0 (matches Kotlin 2.4.21 fully-supported range)
 - Kotlin Gradle Plugin: 2.4.21
 - Java/JVM target: 17
 - compileSdk: 37
 - targetSdk/minSdk: 36
 
-AGP 9.3.1 supports API 37 and Kotlin Gradle Plugin 2.4.21 documents compatibility through AGP 9.3.1 / Gradle 9.7.0. Gradle 9.7.1 is the recommended patch release. The project temporarily opts out of AGP's built-in Kotlin and new DSL (`android.builtInKotlin=false`, `android.newDsl=false`) because this project still uses `org.jetbrains.kotlin.android` and the legacy Android DSL. These flags are migration bridges for AGP 9.x, not a permanent solution; migrate to built-in Kotlin and the new DSL before AGP 10.
+AGP 9.3.1 supports API 37 and Kotlin Gradle Plugin 2.4.21 documents full compatibility through AGP 9.3.1 / Gradle 9.7.0. Use Gradle 9.7.0 rather than 9.7.1 to stay inside that published compatibility range. The project temporarily opts out of AGP's built-in Kotlin and new DSL (`android.builtInKotlin=false`, `android.newDsl=false`) because this project still uses `org.jetbrains.kotlin.android` and the legacy Android DSL. These flags are migration bridges for AGP 9.x, not a permanent solution; migrate to built-in Kotlin and the new DSL before AGP 10.
 
 ## Updated libraries
 
@@ -35,4 +35,6 @@ The app compiles against API 37 but deliberately keeps `targetSdk = 36` for this
 
 ## Build verification
 
-GitHub Actions installs Android SDK Platform 37 / Build Tools 36.0.0 and uses Gradle 9.7.1. This source ZIP was updated and statically checked in the editing environment, but a full Android Gradle build was not run here because the environment has no network access or Android SDK installation. The first CI run is the required compile verification before installing the APK.
+GitHub Actions installs Android SDK Platform 37 / Build Tools 36.0.0 and uses Gradle 9.7.0. CI now builds both Debug and minified Release APKs and uploads both artifacts. A full Android Gradle build was not run in the editing environment because it has no network access or Android SDK installation; the first CI run remains the authoritative compile verification.
+
+Gradle Wrapper files are not included in this ZIP because an authentic wrapper JAR could not be retrieved in the isolated editing environment. CI pins Gradle 9.7.0 through gradle/actions/setup-gradle. Generate and commit the wrapper from a trusted Gradle 9.7.0 installation before making local builds independent of a separately installed Gradle executable.
