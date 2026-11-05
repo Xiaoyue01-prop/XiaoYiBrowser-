@@ -84,6 +84,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private lateinit var tabManager: TabManager
     private lateinit var tabWebViewLifecycle: TabWebViewLifecycleController
     private lateinit var tabPersistence: TabPersistenceController
+    private lateinit var tabOperations: TabOperationsController
     private lateinit var urlPill: LinearLayout
     private lateinit var pillProgress: PillProgress
     private lateinit var topFade: View
@@ -488,6 +489,14 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             createWebView = { WebView(this) },
             configureWebView = ::configureTabWebView,
             beforeDestroy = { view -> if (::pageTransition.isInitialized) pageTransition.forget(view) }
+        )
+        tabOperations = TabOperationsController(
+            tabManager = tabManager,
+            captureActiveTab = ::captureActiveTab,
+            activateTab = ::activateTab,
+            destroyWebView = ::destroyTabWebView,
+            currentWebView = { if (::web.isInitialized) web else null },
+            showMessage = ::toast
         )
         d = resources.displayMetrics.density
         // Summit hiện chỉ phát hành giao diện sáng; không đổi màu theo Dark Mode của hệ thống.
@@ -1518,8 +1527,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     private fun createBrowserTab() {
-        val tab = tabManager.addNew(title = "Tab mới")
-        activateTab(tab)
+        tabOperations.createNewTab()
     }
 
     /** Link http/https do app khác gửi tới (bấm link trong Telegram, Messages...). */
@@ -1531,17 +1539,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     private fun openLinkInNewTab(url: String) {
-        captureActiveTab()
-        val tab = tabManager.addNew(url = url, title = url)
-        activateTab(tab)
+        tabOperations.openInForeground(url)
     }
 
-    // Mở liên kết ở tab nền: tab mới được thêm nhưng tab đang xem giữ nguyên.
+    // Mở liên kết ở tab nền: tab đang xem tiếp tục giữ nguyên.
     private fun openLinkInBackgroundTab(url: String) {
-        val previous = tabManager.getActive()
-        tabManager.addNew(url = url, title = url)
-        previous?.let { tabManager.switchTo(it.id) }
-        toast("Đã mở ở tab nền")
+        tabOperations.openInBackground(url)
     }
 
     // launchMode=singleTask: link mới tới khi app đang chạy sẽ vào đây thay vì mở thêm một cửa sổ.
@@ -1552,11 +1555,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     private fun closeBrowserTab(tab: TabManager.Tab) {
-        val wasActive = tab.isActive
-        if (wasActive) captureActiveTab()
-        val removed = tabManager.close(tab.id) ?: return
-        if (wasActive) tabManager.getActive()?.let(::activateTab)
-        removed.webView?.let { view -> if (view !== web) destroyTabWebView(view) }
+        tabOperations.closeTab(tab)
     }
 
     private fun destroyTabWebView(view: WebView) {
