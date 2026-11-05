@@ -492,7 +492,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         )
         tabOperations = TabOperationsController(
             tabManager = tabManager,
-            captureActiveTab = ::captureActiveTab,
+            captureActiveTab = { captureActiveTab() },
             activateTab = ::activateTab,
             destroyWebView = tabWebViewLifecycle::destroy,
             currentWebView = { if (::web.isInitialized) web else null },
@@ -993,7 +993,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             isNight = isNight,
             accentColor = accent,
             dp = ::dp,
-            captureActiveTab = ::captureActiveTab,
+            captureActiveTab = { captureActiveTab() },
             onActivateTab = ::activateTab,
             onCloseTab = ::closeBrowserTab,
             onCreateTab = ::createBrowserTab,
