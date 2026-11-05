@@ -153,7 +153,14 @@ object Icons {
     const val SHIELD = "M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 19.93c-3.72-1.17-7-5.74-7-9.93V6.3l7-3.11 7 3.11V11c0 4.19-3.28 8.76-7 9.93z"
 }
 
-class PathIcon(pathData: String, color: Int) : Drawable() {
+/** Common contract for app-drawn monochrome icons that follow the active page contrast. */
+internal interface AdaptiveForegroundDrawable {
+    val adaptiveBaseColor: Int
+    fun setAdaptiveForegroundColor(color: Int)
+}
+
+class PathIcon(pathData: String, color: Int) : Drawable(), AdaptiveForegroundDrawable {
+    override val adaptiveBaseColor: Int = color
     private val path: Path? = try {
         PathParser.createPathFromPathData(pathData)
     } catch (e: Exception) {
@@ -173,6 +180,12 @@ class PathIcon(pathData: String, color: Int) : Drawable() {
         canvas.scale(sc, sc)
         canvas.drawPath(p, paint)
         canvas.restore()
+    }
+    override fun setAdaptiveForegroundColor(color: Int) {
+        if (paint.color != color) {
+            paint.color = color
+            invalidateSelf()
+        }
     }
     override fun setAlpha(alpha: Int) { paint.alpha = alpha }
     override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }

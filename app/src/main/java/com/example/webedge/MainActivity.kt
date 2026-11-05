@@ -164,7 +164,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onBridgePageBackground(owner: WebView, color: Int?) {
         pageBackgrounds[owner] = PageBackgroundState(color)
         if (owner === web && !isActivityDestroyed) {
-            GlassSystem.setPageBackground(color)
+            GlassSystem.setPageBackground(color, window.decorView)
         }
     }
 
@@ -221,7 +221,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             tabManager.updateForWebView(view, url, view.title ?: url)
             // A navigation must not reuse the previous document's background tone.
             pageBackgrounds.remove(view)
-            if (view === web) GlassSystem.setPageBackground(null)
+            if (view === web) GlassSystem.setPageBackground(null, window.decorView)
             if (view !== web) return
             // Chụp trang cũ trước khi mờ đi và trước khi nội dung đổi, để lần sau vuốt quay lại có ảnh xem trước.
             if (view.url != url) pageTransition.remember(view)
@@ -280,7 +280,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             pageBackgrounds.remove(view)
-            if (view === web) GlassSystem.setPageBackground(null)
+            if (view === web) GlassSystem.setPageBackground(null, window.decorView)
             val tab = tabManager.getForWebView(view)
             val lastUrl = view.url
             if (tab != null) {
@@ -1520,7 +1520,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         tabManager.switchTo(tab.id)
         // Apply the selected tab's page material independently from its status-bar/header color.
-        GlassSystem.setPageBackground(pageBackgrounds[target]?.color)
+        GlassSystem.setPageBackground(pageBackgrounds[target]?.color, window.decorView)
         // Dải thanh trạng thái theo tab mới ngay lúc đổi, rồi nhờ script báo lại để chắc chắn (script
         // chỉ báo khi giá trị đổi, còn báo cáo lúc tab chạy nền đã bị bỏ qua).
         solidTop = topColors[target]?.color
@@ -1672,7 +1672,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     override fun onDestroy() {
         isActivityDestroyed = true
-        GlassSystem.setPageBackground(null)
+        GlassSystem.setPageBackground(null, window.decorView)
         val cleanupController = BrowserActivityCleanupController()
         if (::pageTransition.isInitialized) pageTransition.cancelNow()
         if (::tabSwipe.isInitialized) tabSwipe.cancelNow()

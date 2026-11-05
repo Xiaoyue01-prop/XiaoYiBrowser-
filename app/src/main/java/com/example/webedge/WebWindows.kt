@@ -350,6 +350,7 @@ class PopupWindowController(
         scrim = scrimView
         closing = false
         dlg.show()
+        GlassSystem.bindForegroundRoot(root)
         dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         // Dialog decor có thể phát insets sau show; đồng bộ cùng sheet công cụ.
         ViewCompat.requestApplyInsets(root)

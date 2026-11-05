@@ -1,6 +1,7 @@
 package com.example.webedge
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
@@ -11,7 +12,9 @@ import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
-import android.widget.ImageView
+import android.graphics.drawable.InsetDrawable
+import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.ScaleDrawable
 import android.graphics.Rect
 import android.graphics.RenderEffect
 import android.graphics.RuntimeShader
@@ -24,8 +27,13 @@ import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.ViewTreeObserver
+import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
+import android.webkit.WebView
+import java.lang.ref.WeakReference
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 
@@ -45,31 +53,192 @@ object GlassSystem {
     // Adaptive material: only the surface tint changes; blur and Liquid Glass rims stay fixed.
     private val blurSurfaces = java.util.WeakHashMap<BlurView, Unit>()
     private val fallbackSurfaces = java.util.WeakHashMap<GradientDrawable, Unit>()
+
+    // Keep each native view's original palette so switching back to a light page restores it exactly.
+    private data class ForegroundColorState(
+        var original: ColorStateList?,
+        var applied: ColorStateList? = null
+    )
+    private val textColorStates = java.util.WeakHashMap<TextView, ForegroundColorState>()
+    private val hintColorStates = java.util.WeakHashMap<EditText, ForegroundColorState>()
+    private val imageTintStates = java.util.WeakHashMap<ImageView, ForegroundColorState>()
+    private val foregroundRoots = java.util.WeakHashMap<View, Unit>()
+    private val foregroundObservers = java.util.WeakHashMap<View, ViewTreeObserver.OnGlobalLayoutListener>()
+
     private var pageBackgroundColor: Int? = null
     private var currentOverlayColor: Int = Color.argb(GLASS_TINT_ALPHA, 255, 255, 255)
 
     /**
-     * Update the one shared glass material from the active webpage background.
-     * A null color restores the original light-page material.
+     * Update the shared glass material and the native foreground palette from the active webpage.
+     * A null color restores the original light-page material and app colors.
      */
-    fun setPageBackground(color: Int?) {
+    fun setPageBackground(color: Int?, foregroundRoot: View? = null) {
         val overlay = overlayForPage(color)
-        if (pageBackgroundColor == color && currentOverlayColor == overlay) return
-
         pageBackgroundColor = color
-        if (currentOverlayColor == overlay) return
-        currentOverlayColor = overlay
 
-        // Snapshot the weak-key sets before updating views; a view may detach during a redraw.
-        blurSurfaces.keys.toList().forEach { surface ->
-            surface.setOverlayColor(overlay)
-            surface.invalidate()
+        if (currentOverlayColor != overlay) {
+            currentOverlayColor = overlay
+            // Snapshot weak-key sets before updating views; a view may detach during a redraw.
+            blurSurfaces.keys.toList().forEach { surface ->
+                surface.setOverlayColor(overlay)
+                surface.invalidate()
+            }
+            fallbackSurfaces.keys.toList().forEach { drawable ->
+                drawable.setColor(overlay)
+                drawable.invalidateSelf()
+            }
         }
-        fallbackSurfaces.keys.toList().forEach { drawable ->
-            drawable.setColor(overlay)
-            drawable.invalidateSelf()
+
+        if (foregroundRoot != null) {
+            foregroundRoots[foregroundRoot] = Unit
+            observeForegroundChanges(foregroundRoot)
+        }
+        // Keep every active native layer in sync, including sheets that live in their own Dialog window.
+        foregroundRoots.keys.toList().forEach { root -> applyForegroundContrast(root, color) }
+    }
+
+    /** Register another native window/root (for example a bottom sheet Dialog) with the same page tone. */
+    fun bindForegroundRoot(root: View) {
+        foregroundRoots[root] = Unit
+        observeForegroundChanges(root)
+        applyForegroundContrast(root, pageBackgroundColor)
+    }
+
+    /**
+     * New sheets and menu rows are often created after the webpage reports its background.
+     * A single native layout observer catches those additions before they are drawn, without polling.
+     */
+    private fun observeForegroundChanges(root: View) {
+        if (foregroundObservers.containsKey(root)) return
+        val rootRef = WeakReference(root)
+        val listener = object : ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                val currentRoot = rootRef.get() ?: return
+                applyForegroundContrast(currentRoot, pageBackgroundColor)
+            }
+        }
+        foregroundObservers[root] = listener
+        root.viewTreeObserver.addOnGlobalLayoutListener(listener)
+    }
+
+    /** Recolors neutral dark app labels, editable text, hints and monochrome icons. */
+    fun applyForegroundContrast(root: View, pageColor: Int?) {
+        val useLightForeground = pageColor != null && pageLuminance(pageColor) < 0.40f
+
+        fun updateTextColor(view: TextView) {
+            val current = view.textColors
+            val state = textColorStates[view] ?: ForegroundColorState(current).also {
+                textColorStates[view] = it
+            }
+            // If another UI component deliberately changes this label's color, adopt that as
+            // the new base palette instead of fighting the component on the next layout pass.
+            if (state.applied != null && current != state.applied) {
+                state.original = current
+                state.applied = null
+            }
+            val original = state.original ?: current
+            val desired = if (useLightForeground && isNeutralDark(original.defaultColor)) {
+                ColorStateList.valueOf(Color.WHITE)
+            } else original
+            if (current != desired) view.setTextColor(desired)
+            state.applied = desired
+        }
+
+        fun updateHintColor(view: EditText) {
+            val current = view.hintTextColors
+            val state = hintColorStates[view] ?: ForegroundColorState(current).also {
+                hintColorStates[view] = it
+            }
+            if (state.applied != null && current != state.applied) {
+                state.original = current
+                state.applied = null
+            }
+            val original = state.original ?: current
+            val isMutedNeutral = isNeutralDark(original.defaultColor) ||
+                (isNeutral(original.defaultColor) && pageLuminance(original.defaultColor) < 0.72f)
+            val desired = if (useLightForeground && isMutedNeutral) {
+                ColorStateList.valueOf(Color.rgb(190, 194, 202))
+            } else original
+            if (current != desired) view.setHintTextColor(desired)
+            state.applied = desired
+        }
+
+        fun updateImageTint(view: ImageView) {
+            val current = view.imageTintList
+            var state = imageTintStates[view]
+            if (state == null) {
+                val initial = current ?: return
+                state = ForegroundColorState(initial)
+                imageTintStates[view] = state
+            }
+            val colorState = state ?: return
+            if (colorState.applied != null && current != colorState.applied) {
+                colorState.original = current
+                colorState.applied = null
+            }
+            val original = colorState.original ?: return
+            val desired = if (useLightForeground && isNeutralDark(original.defaultColor)) {
+                ColorStateList.valueOf(Color.WHITE)
+            } else original
+            if (current != desired) view.imageTintList = desired
+            colorState.applied = desired
+        }
+
+        fun visit(view: View) {
+            // The webpage owns its own palette; all native text (including editable fields)
+            // follows the page contrast, while input backgrounds and accent colors stay untouched.
+            if (view is WebView) return
+
+            if (view is TextView) {
+                updateTextColor(view)
+                if (view is EditText) updateHintColor(view)
+                view.compoundDrawablesRelative.forEach { applyIconDrawable(it, useLightForeground) }
+                view.compoundDrawables.forEach { applyIconDrawable(it, useLightForeground) }
+            }
+
+            if (view is ImageView) {
+                applyIconDrawable(view.drawable, useLightForeground)
+                updateImageTint(view)
+            }
+
+            if (view is ViewGroup) {
+                for (index in 0 until view.childCount) visit(view.getChildAt(index))
+            }
+        }
+        visit(root)
+    }
+
+    private fun applyIconDrawable(drawable: Drawable?, useLightForeground: Boolean) {
+        when (drawable) {
+            is AdaptiveForegroundDrawable -> drawable.setAdaptiveForegroundColor(
+                if (useLightForeground && isNeutralDark(drawable.adaptiveBaseColor)) {
+                    Color.WHITE
+                } else drawable.adaptiveBaseColor
+            )
+            is LayerDrawable -> for (index in 0 until drawable.numberOfLayers) {
+                applyIconDrawable(drawable.getDrawable(index), useLightForeground)
+            }
+            is InsetDrawable -> applyIconDrawable(drawable.drawable, useLightForeground)
+            is ScaleDrawable -> applyIconDrawable(drawable.drawable, useLightForeground)
         }
     }
+
+    private fun pageLuminance(color: Int): Float {
+        val r = Color.red(color) / 255f
+        val g = Color.green(color) / 255f
+        val b = Color.blue(color) / 255f
+        return 0.2126f * r + 0.7152f * g + 0.0722f * b
+    }
+
+    private fun isNeutral(color: Int): Boolean {
+        val r = Color.red(color)
+        val g = Color.green(color)
+        val b = Color.blue(color)
+        return maxOf(r, g, b) - minOf(r, g, b) <= 64
+    }
+
+    private fun isNeutralDark(color: Int): Boolean =
+        isNeutral(color) && pageLuminance(color) < 0.48f
 
     private fun overlayForPage(color: Int?): Int {
         if (color == null) return Color.argb(GLASS_TINT_ALPHA, 255, 255, 255)

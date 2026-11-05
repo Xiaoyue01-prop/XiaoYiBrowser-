@@ -650,8 +650,11 @@ private class StrokeGlyph(
     glyphColor: Int,
     strokePx: Float,
     haloColor: Int = Color.TRANSPARENT
-) : Drawable() {
+) : Drawable(), AdaptiveForegroundDrawable {
     enum class Kind { CHECK, CROSS, PLUS }
+
+    override val adaptiveBaseColor: Int = glyphColor
+    private val baseHaloColor = haloColor
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -666,6 +669,17 @@ private class StrokeGlyph(
     }
     private val hasHalo = Color.alpha(haloColor) > 0
     private val path = Path()
+
+    override fun setAdaptiveForegroundColor(color: Int) {
+        if (paint.color == color) return
+        paint.color = color
+        if (hasHalo) {
+            halo.color = if (Color.luminance(color) > 0.5f) {
+                Color.argb(190, 18, 18, 22)
+            } else baseHaloColor
+        }
+        invalidateSelf()
+    }
 
     override fun draw(canvas: Canvas) {
         val b = bounds

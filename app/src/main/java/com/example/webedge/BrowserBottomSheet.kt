@@ -232,6 +232,7 @@ class BrowserBottomSheet(
         scrimView = scrim
         closing = false
         dlg.show()
+        GlassSystem.bindForegroundRoot(windowRoot)
         dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         // Dialog decor đôi khi chỉ phát insets sau show(); yêu cầu dispatch lại để
         // sheet nhận đúng vùng status/navigation bar và bàn phím trên mọi phiên bản Android.

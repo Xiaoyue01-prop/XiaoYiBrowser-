@@ -16,7 +16,8 @@ import androidx.dynamicanimation.animation.DynamicAnimation
 import eightbitlab.com.blurview.BlurTarget
 
 /** Orb chính dạng vòng nhẫn, phong cách HarmonyOS. */
-class RingIcon(color: Int) : Drawable() {
+class RingIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
+    override val adaptiveBaseColor: Int = color
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = color
         style = Paint.Style.STROKE
@@ -35,6 +36,12 @@ class RingIcon(color: Int) : Drawable() {
         canvas.drawCircle(cx, cy, radius, paint)
     }
 
+    override fun setAdaptiveForegroundColor(color: Int) {
+        if (paint.color != color) {
+            paint.color = color
+            invalidateSelf()
+        }
+    }
     override fun setAlpha(alpha: Int) { paint.alpha = alpha }
     override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
 
