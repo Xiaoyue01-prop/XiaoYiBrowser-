@@ -1490,7 +1490,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     private fun captureActiveTab(withThumbnail: Boolean = true) {
-        if (::web.isInitialized) tabManager.saveState(web, withThumbnail)
+        if (::web.isInitialized) tabPersistence.captureActiveTab(web, withThumbnail)
     }
 
     private fun activateTab(tab: TabManager.Tab) {

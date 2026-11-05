@@ -28,9 +28,14 @@ class TabPersistenceController(
         persist()
     }
 
+    /** Captures URL/title and, when requested, the current tab thumbnail without forcing a disk write. */
+    fun captureActiveTab(webView: WebView, withThumbnail: Boolean = true) {
+        tabManager.saveState(webView, withThumbnail)
+    }
+
     /** Captures the active WebView state and persists the resulting tab snapshot immediately. */
     fun saveActiveTabNow(webView: WebView, withThumbnail: Boolean = true) {
-        tabManager.saveState(webView, withThumbnail)
+        captureActiveTab(webView, withThumbnail)
         saveNow()
     }
 
