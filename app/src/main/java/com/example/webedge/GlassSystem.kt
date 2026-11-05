@@ -39,25 +39,25 @@ import eightbitlab.com.blurview.BlurView
  */
 object GlassSystem {
     // One light-mode material system: consistent frost, edge and corner language.
-    private const val BLUR_OVERLAY_ALPHA = 38
-    internal const val FALLBACK_FILL_ALPHA = 80
+    private const val GLASS_BLUR_RADIUS_DP = 12f
+    private const val GLASS_TINT_ALPHA = 24
 
     // Viền kính kiểu liquid glass: một vòng ngoài xám lạnh (giữ nét trên nền trắng) và một vành sáng mảnh
     // bên trong, sáng nhất ở góc trên-trái và dưới-phải. Chỉnh độ đậm viền toàn app ở hai hằng số này.
     private const val RIM_OUTER_DP = 1.25f
     private const val RIM_HIGHLIGHT_DP = 0.8f
 
-    enum class Preset(val radiusDp: Int, val blurRadiusDp: Float) {
-        ADDRESS_BAR(28, 18f),
-        TOOLBAR_BUTTON(20, 16f),
-        TOAST(22, 18f),
-        SUGGESTIONS(22, 18f),
-        FIND_BAR(28, 18f),
-        MENU_CARD(26, 20f),
-        ORB_BUTTON(20, 16f),
-        ORB_SUB_BUTTON(16, 16f),
-        TABS_DIALOG(0, 20f),
-        TABS_BUTTON(24, 16f)
+    enum class Preset(val radiusDp: Int) {
+        ADDRESS_BAR(28),
+        TOOLBAR_BUTTON(20),
+        TOAST(22),
+        SUGGESTIONS(22),
+        FIND_BAR(28),
+        MENU_CARD(26),
+        ORB_BUTTON(20),
+        ORB_SUB_BUTTON(16),
+        TABS_DIALOG(0),
+        TABS_BUTTON(24)
     }
 
     /**
@@ -70,13 +70,13 @@ object GlassSystem {
     fun create(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
         GradientDrawable().apply {
             cornerRadius = radiusDp.coerceAtLeast(0) * density
-            setColor(Color.argb(FALLBACK_FILL_ALPHA, 255, 255, 255))
+            setColor(Color.argb(GLASS_TINT_ALPHA, 255, 255, 255))
         }
 
     fun createInputField(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
         GradientDrawable().apply {
             cornerRadius = radiusDp.coerceAtLeast(0) * density
-            setColor(Color.argb(16, 255, 255, 255))
+            setColor(Color.argb(GLASS_TINT_ALPHA, 255, 255, 255))
         }
 
 
@@ -91,8 +91,8 @@ object GlassSystem {
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
             setupWith(target)
-                .setBlurRadius(16f * density)
-                .setOverlayColor(Color.argb(20, 255, 255, 255))
+                .setBlurRadius(GLASS_BLUR_RADIUS_DP * density)
+                .setOverlayColor(Color.argb(GLASS_TINT_ALPHA, 255, 255, 255))
         }
 
     /** Viền kính liquid glass vẽ đè lên nội dung (foreground của thẻ kính). */
@@ -422,17 +422,12 @@ half4 main(float2 coord) {
         preset: Preset,
         density: Float,
         isNight: Boolean,
-        overlayColorOverride: Int? = null,
         rim: Boolean = true
     ): BlurView {
         val shape = GradientDrawable().apply {
             cornerRadius = preset.radiusDp * density
             setColor(Color.TRANSPARENT)
         }
-
-        val overlayColor = overlayColorOverride ?: Color.argb(
-            BLUR_OVERLAY_ALPHA, 255, 255, 255
-        )
 
         return BlurView(context).apply {
             background = shape
@@ -442,8 +437,8 @@ half4 main(float2 coord) {
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
             setupWith(target)
-                .setBlurRadius(preset.blurRadiusDp * density)
-                .setOverlayColor(overlayColor)
+                .setBlurRadius(GLASS_BLUR_RADIUS_DP * density)
+                .setOverlayColor(Color.argb(GLASS_TINT_ALPHA, 255, 255, 255))
         }
     }
 
@@ -470,7 +465,7 @@ half4 main(float2 coord) {
             }
             glass.background = GradientDrawable().apply {
                 cornerRadius = radius
-                setColor(if (isNight) Color.argb(48, 255, 255, 255) else Color.argb(100, 255, 255, 255))
+                setColor(Color.argb(GLASS_TINT_ALPHA, 255, 255, 255))
             }
             glass.foreground = GlassRimDrawable(radius, density)
             glass.alpha = 0f
