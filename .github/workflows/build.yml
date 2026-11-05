@@ -4,10 +4,13 @@ on:
   workflow_dispatch:
   push:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -16,10 +19,13 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: 17
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
@@ -27,21 +33,48 @@ jobs:
       - name: Set up Gradle 9.7.0
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.7.0'
+          gradle-version: 9.7.0
 
-      - name: Verify build toolchain
+      - name: Generate verified Gradle Wrapper
+        shell: bash
         run: |
-          java -version
-          gradle --version
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/gradle-wrapper-bootstrap"
+          cd "$RUNNER_TEMP/gradle-wrapper-bootstrap"
+          gradle --no-daemon wrapper --gradle-version 9.7.0 --distribution-type bin
+          install -D -m 0755 gradlew "$GITHUB_WORKSPACE/gradlew"
+          install -D -m 0644 gradlew.bat "$GITHUB_WORKSPACE/gradlew.bat"
+          install -D -m 0644 gradle/wrapper/gradle-wrapper.jar "$GITHUB_WORKSPACE/gradle/wrapper/gradle-wrapper.jar"
+          install -D -m 0644 gradle/wrapper/gradle-wrapper.properties "$GITHUB_WORKSPACE/gradle/wrapper/gradle-wrapper.properties"
+          printf '\ndistributionSha256Sum=84fbba45c7f4c64abc77460e1c00f541e9f960e3c7ed2538f1ede19eacd873ae\n' >> "$GITHUB_WORKSPACE/gradle/wrapper/gradle-wrapper.properties"
+
+      - name: Verify Gradle Wrapper
+        run: ./gradlew --version
 
       - name: Build debug and release APKs
-        run: gradle --no-daemon --stacktrace clean assembleDebug assembleRelease
+        run: ./gradlew --no-daemon --stacktrace clean assembleDebug assembleRelease
 
-      - name: Upload APK artifacts
+      - name: Package wrapper-ready full project
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip -qr Summit-Wrapper-Ready-Project.zip . \
+            -x '.git/*' '.gradle/*' 'app/build/*' 'build/*' '*.apk' '*.zip'
+
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: Summit-APKs
-          if-no-files-found: error
           path: |
             app/build/outputs/apk/debug/app-debug.apk
             app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload wrapper-ready full project
+        uses: actions/upload-artifact@v4
+        with:
+          name: Summit-Wrapper-Ready-Project
+          path: Summit-Wrapper-Ready-Project.zip
+          if-no-files-found: error
+          retention-days: 30
