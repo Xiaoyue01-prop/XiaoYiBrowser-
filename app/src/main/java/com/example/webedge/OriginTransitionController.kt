@@ -382,6 +382,10 @@ object OriginTransitionController {
      * Đếm tham chiếu để nhiều hiệu ứng (nút nảy, viên thuốc bị hút) dùng chung mà không ghi đè trạng thái gốc.
      * Trả về danh sách để gọi [releaseUnclipped] sau.
      */
+    /** Tâm (toạ độ màn hình) của khung nảy trên không mà thẻ đang bung ra từ đó; null nếu không có. */
+    fun popCenterOnScreen(view: View): android.graphics.PointF? =
+        morphs[view]?.popTo?.let { android.graphics.PointF(it.centerX(), it.centerY()) }
+
     fun holdUnclipped(src: View): List<ViewGroup> {
         val list = mutableListOf<ViewGroup>()
         var parent = src.parent

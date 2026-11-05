@@ -174,20 +174,21 @@ class OrbMenuController(
      * This is stronger than visibility alone and prevents stale/animated views
      * from remaining above the FindBar or receiving touches.
      */
-    /** Trả về tâm (toạ độ màn hình) của bề mặt đang hút orb vào (menu ba chấm); null thì chỉ mờ đi như cũ. */
+    /** Trả về tâm (toạ độ màn hình) của viên thuốc khi menu ba chấm mở (orb thu vào đó); null thì chỉ mờ đi như cũ. */
     var absorbTarget: (() -> android.graphics.PointF?)? = null
     private var absorbedState: FloatArray? = null
 
     private fun absorbInto(target: android.graphics.PointF, onDone: () -> Unit) {
         val loc = IntArray(2)
         mainBtn.getLocationOnScreen(loc)
-        val dx = (target.x - (loc[0] + mainBtn.width / 2f)) * Constants.ABSORB_FRACTION
-        val dy = (target.y - (loc[1] + mainBtn.height / 2f)) * Constants.ABSORB_FRACTION
+        // Đoạn 1: orb thu hẳn vào tâm viên thuốc.
+        val dx = target.x - (loc[0] + mainBtn.width / 2f)
+        val dy = target.y - (loc[1] + mainBtn.height / 2f)
         absorbedState = floatArrayOf(dx, dy)
         AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_X, dx, AnimationSystem.MENU_MORPH)
         AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_Y, dy, AnimationSystem.MENU_MORPH)
         AnimationSystem.scaleTo(mainBtn, Constants.ABSORB_SCALE, Constants.ABSORB_SCALE, AnimationSystem.MENU_MORPH)
-        AnimationSystem.fade(mainBtn, 0f, AnimationSystem.QUICK) { onDone() }
+        AnimationSystem.fade(mainBtn, 0f, AnimationSystem.MENU_MORPH) { onDone() }
     }
 
     fun setTemporarilyHidden(hidden: Boolean) {

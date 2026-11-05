@@ -105,69 +105,84 @@ class MenuController(
     /** Viên thuốc địa chỉ: menu phải rộng đủ để phủ kín nó (không để lộ mép viên thuốc bên trái thẻ). */
     var coverView: View? = null
 
-    // Viên thuốc bị menu hút vào khi nở ra và nảy ra lại khi thu về.
+    // Hai đoạn: (1) orb thu vào viên thuốc, (2) viên thuốc bị thẻ menu trên không hút vào.
+    // Thu về: thẻ về lại nút xong thì viên thuốc mới nảy ra, rồi orb nảy ra khỏi viên thuốc.
     private var pillBase: FloatArray? = null
-    private var pillVec: FloatArray? = null
-    private var pillFollow = false
+    private var pillAbsorbed = false
     private var pillClipHold: List<ViewGroup>? = null
 
-    /** Tâm (toạ độ màn hình) của thẻ menu đang mở; orb dùng để biết trôi về đâu. */
-    fun cardCenterOnScreen(): android.graphics.PointF? {
+    /** Tâm (toạ độ màn hình) của thẻ menu đang mở; dùng làm đích dự phòng khi chưa có khung nảy. */
+    private fun cardCenterOnScreen(): android.graphics.PointF? {
         val b = menuCard?.let { OriginTransitionController.boundsOnScreen(it) } ?: return null
         return android.graphics.PointF(b.centerX(), b.centerY())
     }
 
-    private fun setupPillAbsorb(card: View) {
+    private fun startPillAbsorb(card: View) {
         val pill = coverView ?: return
         if (toolbarCompact || !pill.isShown || pill.alpha < 0.9f) return
-        val cardB = OriginTransitionController.boundsOnScreen(card) ?: return
         val pillB = OriginTransitionController.boundsOnScreen(pill) ?: return
-        pillBase = floatArrayOf(pill.translationX, pill.translationY, pill.scaleX, pill.scaleY, pill.alpha)
-        pillVec = floatArrayOf(
-            (cardB.centerX() - pillB.centerX()) * Constants.ABSORB_FRACTION,
-            (cardB.centerY() - pillB.centerY()) * Constants.ABSORB_FRACTION
-        )
-        pillFollow = true
+        // Đích là khung nảy trên không (nơi thẻ đang bung ra), theo hướng mũi tên bạn vẽ.
+        val air = OriginTransitionController.popCenterOnScreen(card) ?: cardCenterOnScreen() ?: return
+        val base = floatArrayOf(pill.translationX, pill.translationY, pill.scaleX, pill.scaleY, pill.alpha)
+        pillBase = base
         if (pillClipHold == null) pillClipHold = OriginTransitionController.holdUnclipped(pill)
+        val dx = air.x - pillB.centerX()
+        val dy = air.y - pillB.centerY()
+        pill.postDelayed({
+            // Đóng sớm trong lúc chờ thì bỏ đoạn hút này.
+            if (menuCard === card && pillBase === base) {
+                pillAbsorbed = true
+                AnimationSystem.spring(pill, DynamicAnimation.TRANSLATION_X, base[0] + dx, AnimationSystem.MENU_MORPH)
+                AnimationSystem.spring(pill, DynamicAnimation.TRANSLATION_Y, base[1] + dy, AnimationSystem.MENU_MORPH)
+                AnimationSystem.scaleTo(pill, base[2] * Constants.ABSORB_SCALE, base[3] * Constants.ABSORB_SCALE, AnimationSystem.MENU_MORPH)
+                AnimationSystem.fade(pill, 0f, AnimationSystem.MENU_MORPH)
+            }
+        }, Constants.PILL_ABSORB_DELAY_MS)
     }
 
-    /** Theo tiến độ nở của thẻ: viên thuốc co lại, mờ đi và trôi về tâm thẻ. */
-    private fun applyPillAbsorb(p: Float) {
-        if (!pillFollow) return
-        val pill = coverView ?: return
-        val b = pillBase ?: return
-        val v = pillVec ?: return
-        val x = ((p - 0.05f) / 0.55f).coerceIn(0f, 1f)
-        val t = x * x * (3f - 2f * x)
-        val s = 1f - (1f - Constants.ABSORB_SCALE) * t
-        pill.translationX = b[0] + v[0] * t
-        pill.translationY = b[1] + v[1] * t
-        pill.scaleX = b[2] * s
-        pill.scaleY = b[3] * s
-        pill.alpha = b[4] * (1f - t)
-    }
-
-    /** Thu về: viên thuốc nảy ra khỏi thẻ về đúng chỗ cũ bằng spring có độ nảy. */
-    private fun springPillBack() {
+    /** Thẻ đã về lại nút: viên thuốc nảy ra từ nút về chỗ cũ, orb nảy ra khỏi viên thuốc sau đó một nhịp. */
+    private fun springPillOut() {
         val pill = coverView
         val b = pillBase
-        pillFollow = false
         pillBase = null
-        pillVec = null
-        if (pill == null || b == null) return
+        pillAbsorbed = false
+        if (pill == null || b == null) {
+            releasePillClip()
+            return
+        }
+        val btn = originView?.let { OriginTransitionController.boundsOnScreen(it) }
+        val pillB = OriginTransitionController.boundsOnScreen(pill)
+        AnimationSystem.cancel(pill)
+        pill.translationX = b[0] + if (btn != null && pillB != null) btn.centerX() - pillB.centerX() else 0f
+        pill.translationY = b[1] + if (btn != null && pillB != null) btn.centerY() - pillB.centerY() else 0f
+        pill.scaleX = b[2] * Constants.ABSORB_SCALE
+        pill.scaleY = b[3] * Constants.ABSORB_SCALE
+        pill.alpha = 0f
         AnimationSystem.spring(pill, DynamicAnimation.TRANSLATION_X, b[0], AnimationSystem.MENU_POP_BACK)
         AnimationSystem.spring(pill, DynamicAnimation.TRANSLATION_Y, b[1], AnimationSystem.MENU_POP_BACK)
         AnimationSystem.scaleTo(pill, b[2], b[3], AnimationSystem.MENU_POP_BACK)
         AnimationSystem.fade(pill, b[4], AnimationSystem.QUICK)
+        // Viên thuốc đã nằm trong thanh dưới nên không cần tắt clip nữa.
+        releasePillClip()
+    }
+
+    /** Menu đã đóng xong: nếu viên thuốc bị hút thì cho nó nảy ra trước, rồi mới trả orb. */
+    private fun returnAbsorbed() {
+        if (pillAbsorbed) {
+            springPillOut()
+            root.postDelayed({ onVisibilityChanged() }, Constants.ORB_RETURN_DELAY_MS)
+        } else {
+            restorePillNow()
+            onVisibilityChanged()
+        }
     }
 
     /** Đóng không có animation: trả viên thuốc về nguyên trạng ngay. */
     private fun restorePillNow() {
         val pill = coverView
         val b = pillBase
-        pillFollow = false
         pillBase = null
-        pillVec = null
+        pillAbsorbed = false
         if (pill != null && b != null) {
             AnimationSystem.cancel(pill)
             pill.translationX = b[0]
@@ -273,8 +288,7 @@ class MenuController(
         fun startMenuAnimation() {
             if (menuCard !== card || menuAnimationStarted) return
             menuAnimationStarted = true
-            // Thẻ đã đo xong nên biết tâm thẻ: viên thuốc và orb bị hút về đó khi menu nở ra.
-            setupPillAbsorb(card)
+            // Đoạn 1: orb thu vào viên thuốc (orb tự lấy tâm viên thuốc qua absorbTarget).
             onVisibilityChanged()
             val radiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * d
             val morphing = OriginTransitionController.open(
@@ -297,9 +311,10 @@ class MenuController(
                 // Video: nút nảy lên (phóng ~1.45x, dời ~30% về phía tâm menu) rồi menu mới nở ra từ đó.
                 popScale = if (toolbarCompact) 1f else Constants.MENU_POP_SCALE,
                 popTowardTarget = if (toolbarCompact) 0f else Constants.MENU_POP_TOWARD,
-                popDelayMs = Constants.MENU_POP_DELAY_MS,
-                onProgress = { p -> applyPillAbsorb(p) }
+                popDelayMs = Constants.MENU_POP_DELAY_MS
             )
+            // Đoạn 2: ngay sau đó viên thuốc bị hút vào khung nảy trên không.
+            if (morphing) startPillAbsorb(card)
             if (!morphing) {
                 restorePillNow()
                 card.pivotX = card.width.toFloat()
@@ -449,13 +464,10 @@ class MenuController(
         }
         // Thu hồi: co ngược về nút ba chấm đã bung ra.
         syncBlurFor(600)
-        // Viên thuốc và orb nảy ra khỏi thẻ ngay lúc thẻ bắt đầu thu (thẻ nằm trên nên chúng trồi ra từ phía dưới).
-        springPillBack()
-        onVisibilityChanged()
         OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
-            releasePillClip()
             root.removeView(layer)
-            onVisibilityChanged()
+            // Thẻ đã về lại nút: viên thuốc nảy ra trước, orb nảy ra sau.
+            returnAbsorbed()
             originView?.let { source ->
                 if (toolbarCompact) {
                     AnimationSystem.scaleTo(source, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)

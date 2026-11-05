@@ -1843,8 +1843,12 @@ class MainActivity : ComponentActivity() {
             onHome = { load(store.homeUrl) }
         )
         orbController?.alignWith(backBtn)
-        // Menu ba chấm nở ra sẽ hút orb vào tâm thẻ; orb nảy ra lại khi menu thu về.
-        orbController?.absorbTarget = { if (::menu.isInitialized) menu.cardCenterOnScreen() else null }
+        // Menu ba chấm mở: orb thu vào viên thuốc trước, rồi viên thuốc mới bị menu hút vào.
+        orbController?.absorbTarget = {
+            if (::menu.isInitialized && menu.isOpen && ::urlPillFrame.isInitialized) {
+                OriginTransitionController.boundsOnScreen(urlPillFrame)?.let { android.graphics.PointF(it.centerX(), it.centerY()) }
+            } else null
+        }
         backBtn.visibility = View.INVISIBLE
         backBtn.setOnClickListener(null)
         syncOrbMenuVisibility()
