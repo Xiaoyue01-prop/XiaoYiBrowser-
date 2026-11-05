@@ -39,8 +39,8 @@ import eightbitlab.com.blurview.BlurView
  */
 object GlassSystem {
     // One light-mode material system: consistent frost, edge and corner language.
-    private const val BLUR_OVERLAY_ALPHA = 68
-    internal const val FALLBACK_FILL_ALPHA = 126
+    private const val BLUR_OVERLAY_ALPHA = 38
+    internal const val FALLBACK_FILL_ALPHA = 80
 
     // Viền kính kiểu liquid glass: một vòng ngoài xám lạnh (giữ nét trên nền trắng) và một vành sáng mảnh
     // bên trong, sáng nhất ở góc trên-trái và dưới-phải. Chỉnh độ đậm viền toàn app ở hai hằng số này.
@@ -76,7 +76,7 @@ object GlassSystem {
     fun createInputField(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
         GradientDrawable().apply {
             cornerRadius = radiusDp.coerceAtLeast(0) * density
-            setColor(Color.argb(24, 255, 255, 255))
+            setColor(Color.argb(16, 255, 255, 255))
         }
 
 
@@ -92,7 +92,7 @@ object GlassSystem {
             clipToOutline = true
             setupWith(target)
                 .setBlurRadius(16f * density)
-                .setOverlayColor(Color.argb(34, 255, 255, 255))
+                .setOverlayColor(Color.argb(20, 255, 255, 255))
         }
 
     /** Viền kính liquid glass vẽ đè lên nội dung (foreground của thẻ kính). */
@@ -470,7 +470,7 @@ half4 main(float2 coord) {
             }
             glass.background = GradientDrawable().apply {
                 cornerRadius = radius
-                setColor(if (isNight) Color.argb(64, 255, 255, 255) else Color.argb(150, 255, 255, 255))
+                setColor(if (isNight) Color.argb(48, 255, 255, 255) else Color.argb(100, 255, 255, 255))
             }
             glass.foreground = GlassRimDrawable(radius, density)
             glass.alpha = 0f
