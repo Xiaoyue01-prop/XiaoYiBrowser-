@@ -467,7 +467,7 @@ class TabSwitcherController(
                 if (!tab.isActive) onActivateTab(tab)
                 dismissAnimated()
             }
-            AnimationSystem.attachPress(card, card, Constants.PRESS_SCALE_CARD)
+            AnimationSystem.press(card, Constants.PRESS_SCALE_CARD)
             card.alpha = 0f
             card.scaleX = 0.92f
             card.scaleY = 0.92f

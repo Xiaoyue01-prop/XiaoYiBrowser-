@@ -41,6 +41,8 @@ object OriginTransitionController {
         val contentSpan: Float
     ) {
         var opening = true
+        // Neo bằng khung toạ độ (không có nút thật): vẫn bắt đầu bo tròn như nút.
+        var roundStart = false
         var sx = 1f
         var sy = 1f
         var tx = 0f
@@ -81,7 +83,7 @@ object OriginTransitionController {
     private val hideCount = WeakHashMap<View, Int>()
 
     /**
-     * Bung [view] ra từ [origin]. Không có nút gốc thì bung từ giữa với [fallbackScale].
+     * Bung [view] ra từ [origin] (hoặc từ khung [originRect] nếu không có nút). Không có cả hai thì bung từ giữa với [fallbackScale].
      * Trả về false khi view chưa có kích thước (chưa layout); lúc đó người gọi nên dùng [AnimationSystem.popIn].
      */
     fun open(
@@ -108,7 +110,9 @@ object OriginTransitionController {
         popDelayMs: Long = 0L,
         popSpring: AnimationSystem.SpringSpec? = null,
         // Giới hạn quãng nảy (px): bề mặt lớn như bảng tab có tâm rất xa nút nên cần chặn lại.
-        popMaxDistancePx: Float = Float.MAX_VALUE
+        popMaxDistancePx: Float = Float.MAX_VALUE,
+        // Khung neo theo toạ độ màn hình khi không có nút gốc (vd. điểm ngón tay giữ lâu). Chỉ dùng khi [origin] = null.
+        originRect: RectF? = null
     ): Boolean {
         val target = boundsOnScreen(view) ?: return false
         val old = morphs[view]
@@ -116,7 +120,7 @@ object OriginTransitionController {
         old?.popAnim?.cancel()
         AnimationSystem.cancel(view)
 
-        val originBounds = origin?.let { boundsOnScreen(it) }
+        val originBounds = origin?.let { boundsOnScreen(it) } ?: originRect
         val anchor = originBounds ?: centered(target, fallbackScale)
         val m = Morph(
             view = view,
@@ -132,6 +136,7 @@ object OriginTransitionController {
             contentStart = contentStart,
             contentSpan = contentSpan
         )
+        m.roundStart = origin == null && originRect != null
         morphs[view] = m
         place(m, target)
         val spec = springSpec ?: if (originBounds != null) AnimationSystem.MORPH else AnimationSystem.SETTLE
@@ -454,7 +459,7 @@ object OriginTransitionController {
         v.pivotY = v.height / 2f
         applyAnchor(m, target)
         // Bắt đầu tròn như nút rồi bo dần về góc của thẻ.
-        m.startRadius = if (m.source != null) maxOf(m.endRadius, minOf(v.width, v.height) / 2f) else m.endRadius
+        m.startRadius = if (m.source != null || m.roundStart) maxOf(m.endRadius, minOf(v.width, v.height) / 2f) else m.endRadius
         val outline = m.outline ?: MorphOutline(m.startRadius).also { m.outline = it }
         v.outlineProvider = outline
         v.clipToOutline = true

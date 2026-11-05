@@ -2,6 +2,7 @@ package com.example.webedge
 
 import android.app.Activity
 import android.graphics.Color
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
@@ -15,6 +16,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.view.doOnLayout
 import eightbitlab.com.blurview.BlurTarget
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -73,7 +75,6 @@ class ContextMenuController(
     private var touchWebX = 0f
     private var touchWebY = 0f
     private var hitResolutionToken = 0
-    private var closeTranslationY = 0f
     private var touchSequence = 0
     private var domTargetSequence = -1
     private var domTarget: DomTarget? = null
@@ -416,17 +417,29 @@ class ContextMenuController(
                 leftMargin = x
                 topMargin = y
             }
-            // Gốc biến đổi chính là ngón tay: menu bung ra từ điểm giữ rồi vượt đích nhẹ.
-            panel.pivotX = touchX - x
-            panel.pivotY = touchY - y
-            closeTranslationY = 0f
-            AnimationSystem.spatialPopIn(
-                panel,
-                fromScaleX = 0.30f,
-                fromScaleY = 0.30f,
-                fromTranslationY = 0f,
-                springSpec = AnimationSystem.MORPH
-            )
+            // Chờ layout xong (khung thật của panel) rồi mới morph từ điểm ngón tay, giống menu ba chấm.
+            panel.doOnLayout {
+                if (card !== panel) return@doOnLayout
+                // touchX/touchY tính theo root; Origin dùng toạ độ màn hình.
+                val rootLoc = IntArray(2).also { root.getLocationOnScreen(it) }
+                val half = dp(14).toFloat()
+                val sx = rootLoc[0] + touchX
+                val sy = rootLoc[1] + touchY
+                OriginTransitionController.open(
+                    panel,
+                    origin = null,
+                    originRect = RectF(sx - half, sy - half, sx + half, sy + half),
+                    endCornerRadiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * density,
+                    springSpec = AnimationSystem.MENU_MORPH,
+                    // Vỏ kính đặc ngay từ điểm chạm, chỉ nội dung hiện muộn hơn (như menu ba chấm).
+                    fadeIn = false,
+                    // BlurView nằm trong panel: bù ngược transform để vùng blur đứng yên theo toạ độ cửa sổ.
+                    counterTransformView = blur,
+                    contentViews = { listOf<View>(scroll) },
+                    contentStart = 0f,
+                    contentSpan = 0.25f
+                )
+            }
         }
         layer = layerView
         card = panel
@@ -443,16 +456,11 @@ class ContextMenuController(
         card = null
         layer = null
         if (animate) {
-            AnimationSystem.spatialPopOut(
-                old,
-                toScaleX = 0.30f,
-                toScaleY = 0.30f,
-                toTranslationY = 0f,
-                springSpec = AnimationSystem.MORPH_CLOSE
-            ) {
+            OriginTransitionController.close(old, AnimationSystem.MENU_MORPH_CLOSE) {
                 oldLayer?.let(root::removeView)
             }
         } else {
+            OriginTransitionController.cancel(old)
             AnimationSystem.cancel(old)
             oldLayer?.let(root::removeView)
         }
