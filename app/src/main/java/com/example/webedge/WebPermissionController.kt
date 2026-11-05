@@ -65,7 +65,10 @@ class WebPermissionController(
         dialog().show(
             title = "Quyền trang web",
             message = "$displayOrigin muốn sử dụng $requestedLabels. Chỉ cho phép nếu bạn tin tưởng trang này.",
-            positive = "Cho phép", negative = "Từ chối"
+            positive = "Cho phép", negative = "Từ chối",
+            // Chỉ lần này: cấp cho yêu cầu hiện tại, không ghi vào Store nên trang vẫn ở trạng thái "Hỏi" trong Privacy Dashboard.
+            neutral = "Chỉ lần này",
+            onNeutral = { ensureRuntimeAndGrantMedia() }
         ) { allowed, _ ->
             if (!allowed) {
                 store.setMediaPermission(origin, PermissionState.DENY)
@@ -117,8 +120,12 @@ class WebPermissionController(
             PermissionState.ASK -> {
                 dialog().show(
                     title = "Vị trí của bạn",
-                    message = "$host muốn truy cập vị trí của bạn. Vị trí chỉ được cấp cho yêu cầu này.",
-                    positive = "Cho phép", negative = "Từ chối"
+                    message = "$host muốn truy cập vị trí của bạn.",
+                    positive = "Cho phép", negative = "Từ chối",
+                    neutral = "Chỉ lần này",
+                    onNeutral = {
+                        pendingGeoOrigin = origin; pendingGeoCallback = callback; ensureRuntimeAndGrantGeo()
+                    }
                 ) { allowed, _ ->
                     if (!allowed) {
                         store.setGeoPermission(origin, PermissionState.DENY)

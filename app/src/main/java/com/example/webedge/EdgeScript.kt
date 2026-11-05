@@ -429,7 +429,7 @@ function finishCompactAnimation(rec, hide){
 // Spring vật lý dùng cùng tinh thần SETTLE/DISMISS của AnimationSystem bên Android.
 // Đảo hướng cuộn giữa chừng vẫn giữ nguyên vị trí và vận tốc nên không bị giật về đầu.
 function springCompactTo(rec, target, hide){
-  // Thu vào gần cùng nhịp SMOOTH của pill; bung ra dùng SETTLE để có độ nảy rõ hơn.
+  // Thu vào và bung ra đều gần nhịp SETTLE (thu vào nhanh hơn một chút, bung ra nảy rõ hơn).
   var response = hide ? 0.50 : 0.46;
   var damping = hide ? 0.62 : 0.72;
   var omega = 2 * Math.PI / response;

@@ -32,7 +32,7 @@ object AnimationSystem {
     val QUICK = SpringSpec(0.20f, 1.0f)
     /** Nhả tay sau khi nhấn: nảy rõ, đúng cảm giác nút kính của iOS. */
     val PRESS_RELEASE = SpringSpec(0.40f, 0.30f)
-    /** Bề mặt mở ra, bung từ nút (menu, dialog, thẻ, bảng tab, nút Orb): vượt đích chừng 4-5% rồi đứng yên, kiểu iOS 26. */
+    /** Preset mặc định: bề mặt mở ra/bung từ nút (menu, dialog, thẻ, bảng tab, nút Orb), thu gọn thanh công cụ, toast, đổi trạng thái. Vượt đích chừng 4-5% rồi đứng yên, kiểu iOS 26. */
     val SETTLE = SpringSpec(0.50f, 0.76f)
     /** Menu ba chấm: đo từ video tham chiếu (iOS), đạt 90% sau ~0.19s, gần như không nảy (~0.5%). */
     val MENU_MORPH = SpringSpec(0.34f, 0.85f)
@@ -44,8 +44,6 @@ object AnimationSystem {
     val MENU_POP_BACK = SpringSpec(0.24f, 0.70f)
     /** Nút gốc mờ đi/hiện lại khi bề mặt morph: chậm hơn QUICK để nút tan vào menu thay vì biến mất đột ngột. */
     val SOURCE_FADE = SpringSpec(0.32f, 1.0f)
-    /** Thu gọn thanh công cụ, toast, đổi trạng thái: vượt nhẹ hơn SETTLE một chút. */
-    val SMOOTH = SpringSpec(0.54f, 0.66f)
     /** Đóng lại, thu về nút, trả về vị trí cũ (scale/alpha được chặn ở 0 nên không bị lật): gần như không nảy, không chạy lố qua nút. */
     val DISMISS = SpringSpec(0.40f, 0.90f)
 
@@ -55,6 +53,9 @@ object AnimationSystem {
 
     /** Scale đầu/cuối chung của mọi bề mặt hiện/ẩn (menu, dialog, thẻ, thanh...). Chỉ truyền 1f khi muốn thuần fade/trượt. */
     const val SURFACE_SCALE = 0.94f
+
+    /** Scale khi nút/thẻ thu gần về một điểm (về viên thuốc, hút vào Orb) trước khi mờ hẳn. */
+    const val COLLAPSE_SCALE = 0.08f
 
     /** Ngưỡng kết thúc phù hợp cho tiến độ chuẩn hoá (0..1), như morph và resize. */
     val NORMALIZED_VALUE_MIN_CHANGE = DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE
@@ -101,7 +102,7 @@ object AnimationSystem {
     fun springFloat(
         from: Float,
         to: Float,
-        spec: SpringSpec = SMOOTH,
+        spec: SpringSpec = SETTLE,
         minimumVisibleChange: Float = DynamicAnimation.MIN_VISIBLE_CHANGE_PIXELS,
         onUpdate: (Float) -> Unit,
         onEnd: ((canceled: Boolean, value: Float, velocity: Float) -> Unit)? = null
@@ -124,7 +125,7 @@ object AnimationSystem {
         view: View,
         prop: DynamicAnimation.ViewProperty,
         target: Float,
-        spec: SpringSpec = SMOOTH,
+        spec: SpringSpec = SETTLE,
         velocity: Float = 0f,
         onEnd: (() -> Unit)? = null
     ) {
@@ -172,7 +173,7 @@ object AnimationSystem {
         spring(view, DynamicAnimation.ALPHA, to, spec, onEnd = onEnd)
     }
 
-    fun scaleTo(view: View, sx: Float, sy: Float = sx, spec: SpringSpec = SMOOTH) {
+    fun scaleTo(view: View, sx: Float, sy: Float = sx, spec: SpringSpec = SETTLE) {
         spring(view, DynamicAnimation.SCALE_X, sx, spec)
         spring(view, DynamicAnimation.SCALE_Y, sy, spec)
     }

@@ -494,8 +494,8 @@ half4 main(float2 coord) {
                 AnimationSystem.fade(glass, 1f, AnimationSystem.QUICK)
                 AnimationSystem.scaleTo(view, LIFT_SCALE_X, liftScaleY(), AnimationSystem.MENU_POP)
             } else {
-                AnimationSystem.fade(glass, 0f, AnimationSystem.SMOOTH)
-                AnimationSystem.fade(solid, 1f, AnimationSystem.SMOOTH)
+                AnimationSystem.fade(glass, 0f, AnimationSystem.SETTLE)
+                AnimationSystem.fade(solid, 1f, AnimationSystem.SETTLE)
                 AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_POP_BACK)
             }
         }

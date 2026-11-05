@@ -263,7 +263,7 @@ class OrbMenuController(
                 AnimationSystem.scaleTo(mainBtn, 1f, 1f, AnimationSystem.MENU_POP_BACK)
                 AnimationSystem.fade(mainBtn, 1f, AnimationSystem.QUICK)
             } else if (mainBtn.visibility == View.VISIBLE) {
-                AnimationSystem.fade(mainBtn, 1f, AnimationSystem.SMOOTH)
+                AnimationSystem.fade(mainBtn, 1f, AnimationSystem.SETTLE)
             } else {
                 mainBtn.alpha = 1f
             }
@@ -337,7 +337,7 @@ class OrbMenuController(
                 val target = translationAtPill(btn, pillAnchor, base.first, base.second)
                 AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, target.first, AnimationSystem.MENU_MORPH_CLOSE)
                 AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, target.second, AnimationSystem.MENU_MORPH_CLOSE)
-                AnimationSystem.scaleTo(btn, 0.06f, 0.06f, AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.scaleTo(btn, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
                 AnimationSystem.fade(btn, 0f, AnimationSystem.MENU_MORPH_CLOSE)
             }
         } else {

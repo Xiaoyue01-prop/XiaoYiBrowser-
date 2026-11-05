@@ -368,7 +368,7 @@ class MenuController(
                 // nên nút nguồn phải tiếp tục được giấu trong lúc thẻ thu vào Pill.
                 originView?.let { source ->
                     AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
-                    AnimationSystem.scaleTo(source, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
+                    AnimationSystem.scaleTo(source, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
                 }
             }
             val morphed = retargeted && OriginTransitionController.collapseToSource(
@@ -380,7 +380,7 @@ class MenuController(
                 OriginTransitionController.cancel(card)
                 originView?.let { source ->
                     AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
-                    AnimationSystem.scaleTo(source, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
+                    AnimationSystem.scaleTo(source, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
                 }
                 fallbackCollapseToPill(layer, card, pillAnchor)
             }
@@ -418,7 +418,7 @@ class MenuController(
         compactFallback = CompactFallback(card.translationX, card.translationY, card.scaleX, card.scaleY)
         AnimationSystem.spring(card, DynamicAnimation.TRANSLATION_X, targetX, AnimationSystem.MENU_MORPH_CLOSE)
         AnimationSystem.spring(card, DynamicAnimation.TRANSLATION_Y, targetY, AnimationSystem.MENU_MORPH_CLOSE)
-        AnimationSystem.scaleTo(card, 0.04f, 0.04f, AnimationSystem.MENU_MORPH_CLOSE)
+        AnimationSystem.scaleTo(card, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
         AnimationSystem.fade(card, 0f, AnimationSystem.MENU_MORPH_CLOSE) {
             if (menuLayer === layer && toolbarCompact) layer.visibility = View.GONE
         }
@@ -456,7 +456,7 @@ class MenuController(
             root.removeView(layer)
             onVisibilityChanged()
             originView?.let { source ->
-                AnimationSystem.scaleTo(source, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.scaleTo(source, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
                 AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
             }
             return
@@ -469,7 +469,7 @@ class MenuController(
             returnAbsorbed()
             originView?.let { source ->
                 if (toolbarCompact) {
-                    AnimationSystem.scaleTo(source, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
+                    AnimationSystem.scaleTo(source, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
                     AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
                 } else {
                     AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
@@ -524,7 +524,7 @@ class MenuController(
             }
             card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
             page.alpha = 0f
-            page.postDelayed({ AnimationSystem.fade(page, 1f, AnimationSystem.SMOOTH) }, 40L)
+            page.postDelayed({ AnimationSystem.fade(page, 1f, AnimationSystem.SETTLE) }, 40L)
             card.animateSizeFrom(oldW, oldH)
             syncBlurFor(900)
         } else {

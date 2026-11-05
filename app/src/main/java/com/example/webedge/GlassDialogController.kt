@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -37,12 +38,15 @@ class GlassDialogController(
         val positive: String,
         val negative: String?,
         val defaultInput: String?,
+        val neutral: String?,
+        val onNeutral: (() -> Unit)?,
         val onResult: (confirmed: Boolean, input: String?) -> Unit
     )
 
     private val queue = ArrayDeque<Request>()
     private var active: Request? = null
     private var activeLayer: FrameLayout? = null
+    private var activeCard: View? = null
     private var activeInput: EditText? = null
     private var finishing = false
 
@@ -50,7 +54,8 @@ class GlassDialogController(
 
     /**
      * Hiện hộp thoại. [negative] = null thì chỉ có một nút. [defaultInput] != null thì hiện ô nhập (prompt).
-     * [onResult] luôn được gọi đúng một lần: confirmed = true khi bấm nút khẳng định,
+     * [neutral] != null thì thêm nút thứ ba (vd. "Chỉ lần này") và ba nút xếp dọc; bấm nút này chạy [onNeutral].
+     * [onResult] hoặc [onNeutral] luôn được gọi đúng một lần: confirmed = true khi bấm nút khẳng định,
      * false khi bấm nút còn lại, chạm ra ngoài hoặc bấm Back; input chỉ có giá trị khi confirmed.
      */
     fun show(
@@ -59,9 +64,11 @@ class GlassDialogController(
         positive: String,
         negative: String? = null,
         defaultInput: String? = null,
+        neutral: String? = null,
+        onNeutral: (() -> Unit)? = null,
         onResult: (confirmed: Boolean, input: String?) -> Unit
     ) {
-        queue.addLast(Request(title, message, positive, negative, defaultInput, onResult))
+        queue.addLast(Request(title, message, positive, negative, defaultInput, neutral, onNeutral, onResult))
         if (active == null) showNext()
     }
 
@@ -77,6 +84,7 @@ class GlassDialogController(
         active = null
         activeLayer?.let { runCatching { root.removeView(it) } }
         activeLayer = null
+        activeCard = null
         activeInput = null
         for (r in pending) runCatching { r.onResult(false, null) }
     }
@@ -90,15 +98,17 @@ class GlassDialogController(
         active = req
         finishing = false
 
+        // Lớp phủ KHÔNG có padding để lớp tối phủ kín cả mép trên/dưới (thanh trạng thái, vùng cử chỉ).
+        // Padding chừa chỗ cho thẻ nằm ở [holder] riêng.
         val layer = FrameLayout(activity).apply {
             isClickable = true
             isFocusable = true
-            setPadding(0, dp(48), 0, dp(48))
         }
+        val holder = FrameLayout(activity).apply { setPadding(0, dp(48), 0, dp(48)) }
         // Khi bàn phím hiện (prompt), đẩy hộp thoại lên để không bị che.
-        ViewCompat.setOnApplyWindowInsetsListener(layer) { v, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(layer) { _, insets ->
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            v.setPadding(0, dp(48), 0, dp(48) + ime)
+            holder.setPadding(0, dp(48), 0, dp(48) + ime)
             insets
         }
 
@@ -108,6 +118,7 @@ class GlassDialogController(
             setOnClickListener { cancelCurrent() }
         }
         layer.addView(scrim, FrameLayout.LayoutParams(-1, -1))
+        layer.addView(holder, FrameLayout.LayoutParams(-1, -1))
 
         // Thẻ kính: nền dự phòng + BlurView + viền, giống thẻ menu ba chấm.
         val card = FrameLayout(activity).apply {
@@ -198,23 +209,37 @@ class GlassDialogController(
             return b
         }
 
-        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        if (req.negative != null) {
-            row.addView(button(req.negative, false) { finish(false) }, LinearLayout.LayoutParams(0, dp(50), 1f))
-            row.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(1, dp(50)))
+        if (req.neutral != null) {
+            // Ba lựa chọn xếp dọc (như alert iOS): khẳng định, chỉ lần này, từ chối.
+            val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+            column.addView(button(req.positive, true) { finish(true) }, LinearLayout.LayoutParams(-1, dp(50)))
+            column.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(-1, 1))
+            column.addView(button(req.neutral, false) { finish(false, neutral = true) }, LinearLayout.LayoutParams(-1, dp(50)))
+            if (req.negative != null) {
+                column.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(-1, 1))
+                column.addView(button(req.negative, false) { finish(false) }, LinearLayout.LayoutParams(-1, dp(50)))
+            }
+            content.addView(column, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        } else {
+            val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+            if (req.negative != null) {
+                row.addView(button(req.negative, false) { finish(false) }, LinearLayout.LayoutParams(0, dp(50), 1f))
+                row.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(1, dp(50)))
+            }
+            row.addView(button(req.positive, true) { finish(true) }, LinearLayout.LayoutParams(0, dp(50), 1f))
+            content.addView(row, LinearLayout.LayoutParams(-1, dp(50)))
         }
-        row.addView(button(req.positive, true) { finish(true) }, LinearLayout.LayoutParams(0, dp(50), 1f))
-        content.addView(row, LinearLayout.LayoutParams(-1, dp(50)))
 
         card.addView(content, FrameLayout.LayoutParams(-1, -2))
 
         val width = minOf(dp(300), activity.resources.displayMetrics.widthPixels - dp(48))
-        layer.addView(card, FrameLayout.LayoutParams(width, -2, Gravity.CENTER))
+        holder.addView(card, FrameLayout.LayoutParams(width, -2, Gravity.CENTER))
         root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         activeLayer = layer
+        activeCard = card
         ViewCompat.requestApplyInsets(layer)
 
-        AnimationSystem.fade(scrim, 1f, AnimationSystem.SMOOTH)
+        AnimationSystem.fade(scrim, 1f, AnimationSystem.SETTLE)
         card.alpha = 0f
         card.post { AnimationSystem.enter(card) }
 
@@ -226,7 +251,7 @@ class GlassDialogController(
         }
     }
 
-    private fun finish(confirmed: Boolean) {
+    private fun finish(confirmed: Boolean, neutral: Boolean = false) {
         val req = active ?: return
         if (finishing) return
         finishing = true
@@ -238,7 +263,7 @@ class GlassDialogController(
         }
 
         // Trả kết quả ngay để trang không phải chờ hiệu ứng đóng.
-        runCatching { req.onResult(confirmed, text) }
+        runCatching { if (neutral) req.onNeutral?.invoke() else req.onResult(confirmed, text) }
 
         if (layer == null) {
             active = null
@@ -253,15 +278,16 @@ class GlassDialogController(
             if (active === req) {
                 active = null
                 activeLayer = null
+                activeCard = null
                 activeInput = null
             }
             showNext()
         }
-        // Thẻ là con thứ hai của lớp phủ (sau lớp tối): thu nhỏ rồi gỡ ra.
-        val card = layer.getChildAt(1)
+        // Lớp tối là con đầu của lớp phủ: mờ đi, còn thẻ thu nhỏ rồi gỡ ra.
+        val card = activeCard
         val scrim = layer.getChildAt(0)
         AnimationSystem.fade(scrim, 0f)
-        AnimationSystem.exit(card) { complete() }
+        if (card == null) complete() else AnimationSystem.exit(card) { complete() }
         // Phòng hờ: nếu animation không báo kết thúc thì vẫn dọn để hàng đợi không bị kẹt.
         layer.postDelayed({ complete() }, 1000L)
     }

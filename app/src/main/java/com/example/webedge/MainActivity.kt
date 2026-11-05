@@ -200,7 +200,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             if (request.isForMainFrame && !isActivityDestroyed && view === web) {
                 toast("Không tải được trang (${error.errorCode})")
-                AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
+                AnimationSystem.fade(view, 1f, AnimationSystem.SETTLE)
             }
         }
         override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
@@ -236,7 +236,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             view.evaluateJavascript(MEDIA_JS, null)
             if (view !== web) return
             injectInsets()
-            AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
+            AnimationSystem.fade(view, 1f, AnimationSystem.SETTLE)
             pageTransition.onPageReady()
             tabSwipe.onPageReady()
         }
@@ -259,7 +259,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             if (view !== web) return
             pullRefresh?.finish()
             injectInsets()
-            AnimationSystem.fade(view, 1f, AnimationSystem.SMOOTH)
+            AnimationSystem.fade(view, 1f, AnimationSystem.SETTLE)
             pageTransition.onPageReady()
             tabSwipe.onPageReady()
             currentUrl = url
@@ -1258,13 +1258,15 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         backBtn.isClickable = !hide
         menuBtn.isClickable = !hide
         reloadBtn.isClickable = !hide
-        AnimationSystem.fade(backBtn, if (hide) 0f else backAlpha(), AnimationSystem.SMOOTH)
+        tabBtn.isClickable = !hide
+        AnimationSystem.fade(backBtn, if (hide) 0f else backAlpha(), AnimationSystem.SETTLE)
         AnimationSystem.scaleTo(backBtn, if (hide) 0.5f else 1f)
         syncOrbMenuVisibility()
         // Menu trigger cũng co về Pill; nếu bảng menu đang mở thì chính MenuController morph cả thẻ.
         if (!::menu.isInitialized || !menu.isOpen) animateMenuButtonCompact(hide)
-        AnimationSystem.fade(reloadBtn, if (hide) 0f else 1f, AnimationSystem.SMOOTH)
-        AnimationSystem.fade(bottomFade, if (hide) 0.35f else 1f, AnimationSystem.SMOOTH)
+        AnimationSystem.fade(reloadBtn, if (hide) 0f else 1f, AnimationSystem.SETTLE)
+        AnimationSystem.fade(tabBtn, if (hide) 0f else 1f, AnimationSystem.SETTLE)
+        AnimationSystem.fade(bottomFade, if (hide) 0.35f else 1f, AnimationSystem.SETTLE)
         pushBottomReserve()
     }
 
@@ -1325,7 +1327,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             val targetY = pillLoc[1] + urlPillFrame.height / 2f - buttonLoc[1] - menuBtn.height / 2f
             AnimationSystem.spring(menuBtn, DynamicAnimation.TRANSLATION_X, targetX, AnimationSystem.MENU_MORPH_CLOSE)
             AnimationSystem.spring(menuBtn, DynamicAnimation.TRANSLATION_Y, targetY, AnimationSystem.MENU_MORPH_CLOSE)
-            AnimationSystem.scaleTo(menuBtn, 0.08f, 0.08f, AnimationSystem.MENU_MORPH_CLOSE)
+            AnimationSystem.scaleTo(menuBtn, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
             AnimationSystem.fade(menuBtn, 0f, AnimationSystem.MENU_MORPH_CLOSE)
         } else {
             AnimationSystem.spring(menuBtn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)

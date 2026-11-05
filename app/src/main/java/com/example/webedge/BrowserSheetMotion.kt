@@ -70,7 +70,7 @@ internal object BrowserSheetMotion {
                             AnimationSystem.DISMISS,
                             velocity
                         )
-                        AnimationSystem.fade(scrim, SCRIM_ALPHA, AnimationSystem.SMOOTH)
+                        AnimationSystem.fade(scrim, SCRIM_ALPHA, AnimationSystem.SETTLE)
                     }
                     true
                 }
@@ -81,7 +81,7 @@ internal object BrowserSheetMotion {
 
     fun show(sheet: View, scrim: View) {
         AnimationSystem.spring(sheet, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.DISMISS)
-        AnimationSystem.fade(scrim, SCRIM_ALPHA, AnimationSystem.SMOOTH)
+        AnimationSystem.fade(scrim, SCRIM_ALPHA, AnimationSystem.SETTLE)
     }
 
     /** Gọi sau khi caller đã đặt cờ closing để ngăn nhiều lần đóng chồng nhau. */

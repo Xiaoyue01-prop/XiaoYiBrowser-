@@ -148,7 +148,7 @@ class PullToRefreshController(
     private fun startRefresh() {
         refreshing = true
         AnimationSystem.spring(
-            indicator, DynamicAnimation.TRANSLATION_Y, topInset() + HOLD_TOP_DP * density, AnimationSystem.SMOOTH
+            indicator, DynamicAnimation.TRANSLATION_Y, topInset() + HOLD_TOP_DP * density, AnimationSystem.SETTLE
         )
         AnimationSystem.scaleTo(indicator, 1f)
         AnimationSystem.fade(indicator, 1f)

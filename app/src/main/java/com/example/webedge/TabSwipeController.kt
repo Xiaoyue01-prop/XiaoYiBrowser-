@@ -415,7 +415,7 @@ class TabSwipeController(
         pillContent.translationX = -r.sgn * pill.width * PILL_SHIFT
         pillContent.alpha = 0f
         AnimationSystem.spring(pillContent, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.SETTLE)
-        AnimationSystem.fade(pillContent, 1f, AnimationSystem.SMOOTH)
+        AnimationSystem.fade(pillContent, 1f, AnimationSystem.SETTLE)
     }
 
     // ---------------- Hoà vào trang thật ----------------
