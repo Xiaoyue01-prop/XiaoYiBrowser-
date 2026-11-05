@@ -1,6 +1,7 @@
 package com.example.webedge
 
 import android.os.Handler
+import android.webkit.WebView
 
 /** Owns debounced persistence of tab metadata and thumbnails. */
 class TabPersistenceController(
@@ -25,6 +26,12 @@ class TabPersistenceController(
     fun saveNow() {
         handler.removeCallbacks(saveRunnable)
         persist()
+    }
+
+    /** Captures the active WebView state and persists the resulting tab snapshot immediately. */
+    fun saveActiveTabNow(webView: WebView, withThumbnail: Boolean = true) {
+        tabManager.saveState(webView, withThumbnail)
+        saveNow()
     }
 
     /** Cancels a delayed write without touching the persisted snapshot. */

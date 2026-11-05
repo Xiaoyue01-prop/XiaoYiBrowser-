@@ -494,7 +494,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             tabManager = tabManager,
             captureActiveTab = ::captureActiveTab,
             activateTab = ::activateTab,
-            destroyWebView = ::destroyTabWebView,
+            destroyWebView = tabWebViewLifecycle::destroy,
             currentWebView = { if (::web.isInitialized) web else null },
             showMessage = ::toast
         )
@@ -1558,10 +1558,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         tabOperations.closeTab(tab)
     }
 
-    private fun destroyTabWebView(view: WebView) {
-        tabWebViewLifecycle.destroy(view)
-    }
-
     /** Giải phóng WebView của các tab nền lâu không dùng để tiết kiệm RAM; mở lại tab sẽ tải lại từ URL đã lưu. */
     private fun trimBackgroundTabs(max: Int = Constants.MAX_LIVE_WEBVIEWS) {
         tabWebViewLifecycle.trim(tabManager, max, if (::web.isInitialized) web else null)
@@ -1621,16 +1617,14 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         downloadPromptController?.dismissAll()
         if (::store.isInitialized) store.flush()
         if (::web.isInitialized) {
-            tabManager.saveState(web)
-            tabPersistence.saveNow()
+            tabPersistence.saveActiveTabNow(web)
         }
         super.onPause()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         if (::web.isInitialized) {
-            tabManager.saveState(web)
-            tabPersistence.saveNow()
+            tabPersistence.saveActiveTabNow(web)
             web.saveState(outState)
         }
         super.onSaveInstanceState(outState)
@@ -1662,6 +1656,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     override fun onDestroy() {
         isActivityDestroyed = true
+        val cleanupController = BrowserActivityCleanupController()
         if (::pageTransition.isInitialized) pageTransition.cancelNow()
         if (::tabSwipe.isInitialized) tabSwipe.cancelNow()
         pullRefresh?.destroy()
@@ -1674,16 +1669,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         popup.close(immediate = true)
         fullscreenVideoController?.destroy()
         webMedia.release()
-        // === CLEANUP DE TRANH MEMORY LEAK ===
-        // 1. Gỡ JS interface trước khi hủy WebView
-        web.removeJavascriptInterface("EdgeBridge")
-
-        // 2. Gỡ listeners khỏi WebView
-        web.webViewClient = WebViewClient()
-        web.webChromeClient = WebChromeClient()
-        web.setDownloadListener(null)
-        web.setFindListener(null)
-        web.setOnScrollChangeListener(null as View.OnScrollChangeListener?)
+        // Gỡ listener và giải phóng toàn bộ WebView sau khi các controller phụ thuộc đã dừng.
+        cleanupController.detachWebViewCallbacks(web)
 
         // 3. Hủy tất cả Runnable đang chờ trong Handler
         handler.removeCallbacksAndMessages(null)
@@ -1697,14 +1684,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         orbController?.destroy()
         orbController = null
 
-        // 6. Destroy every tab WebView last, including views detached in the background.
-        tabManager.getAll().forEach {
-            it.thumbnail?.recycle()
-            it.thumbnail = null
-            it.thumbnailUrl = null
-        }
-        // Do not clear persistent WebView cache/history during ordinary Activity teardown.
-        tabWebViewLifecycle.destroyAll(tabManager)
+        // Destroy every tab WebView last, including views detached in the background.
+        // Persistent WebView cache/history is intentionally preserved.
+        cleanupController.destroyTabWebViews(tabManager, tabWebViewLifecycle)
 
         super.onDestroy()
     }
