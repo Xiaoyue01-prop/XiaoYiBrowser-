@@ -27,7 +27,6 @@ import android.webkit.WebView
 import androidx.dynamicanimation.animation.DynamicAnimation
 import java.text.DecimalFormat
 import java.util.Date
-import java.util.Locale
 
 /** Giao diện Downloads và Privacy Dashboard được mở từ MenuController. */
 class BrowserToolsController(

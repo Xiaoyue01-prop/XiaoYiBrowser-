@@ -60,9 +60,6 @@ import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 import java.util.Locale
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 import java.lang.ref.WeakReference
 
@@ -127,8 +124,7 @@ class MainActivity : ComponentActivity() {
     private val topColors = java.util.WeakHashMap<WebView, TopState>()
     private var orbController: OrbMenuController? = null
     private var programmatic = false
-    private var suggestJob: Job? = null
-    private val suggestionRepo = SuggestionRepository()
+    private lateinit var suggestionController: SuggestionController
     private var isActivityDestroyed = false
     private val handler = Handler(Looper.getMainLooper())
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
@@ -1000,6 +996,18 @@ class MainActivity : ComponentActivity() {
 
     /** Các controller dùng chung BlurTarget (tải xuống, menu, hộp thoại, tab, Orb). */
     private fun createControllers() {
+        suggestionController = SuggestionController(
+            activity = this,
+            scope = lifecycleScope,
+            density = d,
+            input = urlBar,
+            container = suggestBox,
+            blurView = suggestBlurView,
+            searchEngine = { store.searchEngine },
+            repository = SuggestionRepository(),
+            mutedColor = sub,
+            onOpenSuggestion = { value -> load(value); leaveEdit() }
+        )
         downloadPromptController = DownloadPromptController(
             activity = this,
             root = root,
@@ -1441,7 +1449,6 @@ class MainActivity : ComponentActivity() {
     private var barPresent = true
     private var bottomFadePresent = true
     private var findBarShown = false
-    private var suggestShown = false
 
     private fun backAlpha(): Float = if (web.canGoBack()) 1f else 0.3f
 
@@ -1473,75 +1480,12 @@ class MainActivity : ComponentActivity() {
 
     // ---------------- Gợi ý tìm kiếm ----------------
     private fun scheduleSuggest(q: String) {
-        val text = q.trim()
-        if (text.isEmpty()) {
-            hideSuggestions()
-            return
-        }
-        // Hủy request cũ nếu đang chạy, tránh giật lag khi gõ nhanh
-        suggestJob?.cancel()
-        suggestJob = lifecycleScope.launch {
-            delay(Constants.SUGGEST_DEBOUNCE_MS)
-            val result = suggestionRepo.fetch(store.searchEngine, text)
-            if (!isActivityDestroyed && urlBar.hasFocus()) showSuggestions(result)
-        }
+        if (::suggestionController.isInitialized) suggestionController.schedule(q)
     }
 
     private fun hideSuggestions() {
-        suggestJob?.cancel()
-        hideSuggestionsUi()
+        if (::suggestionController.isInitialized) suggestionController.hide()
     }
-
-    private fun hideSuggestionsUi() {
-        if (!suggestShown) return
-        suggestShown = false
-        val offset = dp(12).toFloat()
-        AnimationSystem.disappear(suggestBlurView, offset)
-        // Giữ nguyên các hàng cho tới khi hộp ẩn xong để nó không co lại trong lúc mờ đi.
-        AnimationSystem.disappear(suggestBox, offset) {
-            if (!suggestShown) suggestBox.removeAllViews()
-        }
-    }
-
-    private fun showSuggestions(items: List<String>) {
-        if (items.isEmpty()) {
-            hideSuggestionsUi()
-            return
-        }
-        suggestBox.removeAllViews()
-        for (text in items) {
-            val row = LinearLayout(this)
-            row.orientation = LinearLayout.HORIZONTAL
-            row.gravity = Gravity.CENTER_VERTICAL
-            row.setPadding(dp(18), 0, dp(18), 0)
-            row.background = roundedPressBackground(false)
-            val ic = ImageView(this)
-            ic.setImageDrawable(PathIcon(Icons.SEARCH, sub))
-            row.addView(ic, LinearLayout.LayoutParams(dp(18), dp(18)))
-            val t = TextView(this)
-            t.text = text
-            t.textSize = 15f
-            t.setTextColor(Color.BLACK)
-            t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-            t.setSingleLine()
-            t.ellipsize = TextUtils.TruncateAt.END
-            t.setPadding(dp(12), 0, 0, 0)
-            row.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            row.setOnClickListener {
-                load(text)
-                leaveEdit()
-            }
-            press(row, Constants.PRESS_SCALE_ROW)
-            suggestBox.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
-        }
-        if (!suggestShown) {
-            suggestShown = true
-            val offset = dp(12).toFloat()
-            AnimationSystem.appear(suggestBlurView, offset)
-            AnimationSystem.appear(suggestBox, offset)
-        }
-    }
-
 
     // ---------------- Tìm trong trang ----------------
 
@@ -1881,8 +1825,7 @@ class MainActivity : ComponentActivity() {
 
         // 3. Hủy tất cả Runnable đang chờ trong Handler
         handler.removeCallbacksAndMessages(null)
-        suggestJob?.cancel()
-        suggestJob = null
+        if (::suggestionController.isInitialized) suggestionController.destroy()
 
         // 4. Hủy callbacks
         pendingFileCallback?.onReceiveValue(null)

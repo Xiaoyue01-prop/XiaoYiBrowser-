@@ -18,12 +18,9 @@ import android.text.TextUtils
 import android.util.Log
 import android.util.Rational
 import android.view.Gravity
-import android.view.MotionEvent
-import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
-import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -35,9 +32,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.dynamicanimation.animation.DynamicAnimation
 
 // Chế độ cửa sổ của trang web: Picture-in-Picture cho video toàn màn hình và cửa sổ popup.
 
@@ -135,7 +130,6 @@ class PictureInPictureController(
  * Chỉ mở một popup tại một thời điểm.
  */
 /** Tay nắm (13dp) + thanh tiêu đề (56dp). */
-private const val POPUP_HEADER_DP = 69
 
 class PopupWindowController(
     private val activity: Activity,
@@ -261,7 +255,7 @@ class PopupWindowController(
         dragZone.addView(header, LinearLayout.LayoutParams(-1, dp(56)))
         // Trang phủ kín sheet và nằm DƯỚI tiêu đề trong suốt, để phần trang sát mép tiêu đề mờ dần như header menu Tab.
         // Dùng FrameLayout chồng lớp (LinearLayout bỏ qua margin âm nên trang bị hụt đúng bằng chiều cao tiêu đề ở đáy).
-        val headerPx = dp(POPUP_HEADER_DP)
+        val headerPx = dp(BrowserSheetMotion.HEADER_HEIGHT_DP)
         val pageHost = FrameLayout(activity)
         pageHost.addView(popup, FrameLayout.LayoutParams(-1, -1))
         pageHost.addView(dragZone, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
@@ -271,7 +265,7 @@ class PopupWindowController(
         // Đẩy nội dung trang xuống dưới tiêu đề lúc nghỉ (WebView không có padding nội dung):
         // thêm padding-top cho <html>, quy đổi dp -> px CSS theo tỉ lệ viewport hiện tại.
         val widthDp = (activity.resources.displayMetrics.widthPixels / activity.resources.displayMetrics.density).toInt()
-        val headerDp = POPUP_HEADER_DP
+        val headerDp = BrowserSheetMotion.HEADER_HEIGHT_DP
         fun injectHeaderSpace(view: WebView) {
             view.evaluateJavascript(
                 "(function(){var p=Math.round($headerDp*window.innerWidth/$widthDp);" +
@@ -316,49 +310,13 @@ class PopupWindowController(
         }
 
         // --- Kéo xuống để đóng ---
-        var downY = 0f
-        var tracker: VelocityTracker? = null
-        dragZone.setOnTouchListener { _, ev ->
-            when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downY = ev.rawY
-                    tracker?.recycle()
-                    tracker = VelocityTracker.obtain().also { it.addMovement(ev) }
-                    AnimationSystem.cancel(sheetView)
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    tracker?.addMovement(ev)
-                    val dy = (ev.rawY - downY).coerceAtLeast(0f)
-                    sheetView.translationY = dy
-                    val fraction = (dy / sheetView.height.coerceAtLeast(1)).coerceIn(0f, 1f)
-                    scrimView.alpha = SCRIM_ALPHA * (1f - fraction)
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    tracker?.addMovement(ev)
-                    tracker?.computeCurrentVelocity(1000)
-                    val vy = tracker?.yVelocity ?: 0f
-                    tracker?.recycle()
-                    tracker = null
-                    val dy = sheetView.translationY
-                    if (ev.actionMasked == MotionEvent.ACTION_UP && (dy > dp(120) || vy > dp(900))) {
-                        animateClose(vy.coerceAtLeast(0f))
-                    } else {
-                        AnimationSystem.spring(sheetView, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MORPH_CLOSE, vy)
-                        AnimationSystem.fade(scrimView, SCRIM_ALPHA, AnimationSystem.SMOOTH)
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
+        BrowserSheetMotion.bindDragZone(dragZone, sheetView, scrimView, dp, ::animateClose)
 
         // --- Cửa sổ: trong suốt, toàn màn hình, tự lo vùng thanh hệ thống và bàn phím ---
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            sheetLp.topMargin = bars.top + dp(10)
+            sheetLp.topMargin = bars.top + dp(BrowserSheetMotion.TOP_MARGIN_DP)
             sheetView.layoutParams = sheetLp
             // Edge-to-edge: trang tràn xuống sát đáy, chỉ nhường chỗ khi bàn phím hiện (ime.bottom đã gồm cả thanh điều hướng).
             sheetView.setPadding(0, 0, 0, ime.bottom)
@@ -371,16 +329,7 @@ class PopupWindowController(
             }
         }
         dlg.setContentView(root)
-        dlg.window?.apply {
-            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            setWindowAnimations(0)
-            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-            WindowCompat.setDecorFitsSystemWindows(this, false)
-            // Thanh điều hướng trong suốt hẳn, vạch cử chỉ đổi màu theo nền sheet để không chìm vào trang.
-            isNavigationBarContrastEnforced = false
-            WindowCompat.getInsetsController(this, root).isAppearanceLightNavigationBars = !night
-        }
+        dlg.window?.let { BrowserSheetMotion.configureWindow(it, root, night) }
         dlg.setOnDismissListener {
             if (webView === popup) {
                 popup.stopLoading()
@@ -402,10 +351,12 @@ class PopupWindowController(
         closing = false
         dlg.show()
         dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        // Dialog decor có thể phát insets sau show; đồng bộ cùng sheet công cụ.
+        ViewCompat.requestApplyInsets(root)
         root.post {
             if (closing) return@post
-            AnimationSystem.spring(sheetView, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MORPH_CLOSE)
-            AnimationSystem.fade(scrimView, SCRIM_ALPHA, AnimationSystem.SMOOTH)
+            ViewCompat.requestApplyInsets(root)
+            BrowserSheetMotion.show(sheetView, scrimView)
         }
         transport.webView = popup
         resultMsg?.sendToTarget()
@@ -416,20 +367,8 @@ class PopupWindowController(
     private fun animateClose(velocity: Float = 0f) {
         val dlg = dialog ?: return
         if (closing) return
-        val sheetView = sheet
-        val scrimView = scrim
-        if (sheetView == null || scrimView == null || !dlg.isShowing || sheetView.height <= 0) {
-            dlg.dismiss()
-            return
-        }
         closing = true
-        AnimationSystem.fade(scrimView, 0f, AnimationSystem.DISMISS)
-        AnimationSystem.spring(
-            sheetView, DynamicAnimation.TRANSLATION_Y, sheetView.height.toFloat() + dp(40),
-            AnimationSystem.DISMISS, velocity
-        ) { if (dlg.isShowing) dlg.dismiss() }
-        // Phòng khi spring bị huỷ giữa chừng (view rời cửa sổ): vẫn đóng.
-        scrimView.postDelayed({ if (dlg.isShowing) dlg.dismiss() }, CLOSE_FALLBACK_MS)
+        BrowserSheetMotion.close(dlg, sheet, scrim, dp, velocity)
     }
 
     /** [immediate] = true: đóng ngay không animation (khi Activity đang bị huỷ). */
@@ -437,8 +376,4 @@ class PopupWindowController(
         if (immediate) dialog?.dismiss() else animateClose()
     }
 
-    private companion object {
-        const val SCRIM_ALPHA = 0.5f
-        const val CLOSE_FALLBACK_MS = 900L
-    }
 }

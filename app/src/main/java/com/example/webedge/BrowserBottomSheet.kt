@@ -7,20 +7,15 @@ import android.graphics.Outline
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
-import android.view.MotionEvent
-import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
-import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.dynamicanimation.animation.DynamicAnimation
 import eightbitlab.com.blurview.BlurTarget
 
 /** Khung sheet lớn dùng chung cho các công cụ trong menu, đồng bộ với sheet popup của website. */
@@ -150,7 +145,7 @@ class BrowserBottomSheet(
         sheet.addView(dragZone, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
         // Giống menu Tab: vùng mờ = chiều cao tiêu đề + 24dp; mép dưới (thanh điều hướng) để nguyên nội dung.
-        val headerPx = dp(HEADER_DP)
+        val headerPx = dp(BrowserSheetMotion.HEADER_HEIGHT_DP)
         findScrollViews(content).forEach { scroll ->
             val first = (content as? ViewGroup)?.getChildAt(0) === scroll
             if (first) {
@@ -176,48 +171,7 @@ class BrowserBottomSheet(
             (lastChild as? ViewGroup)?.clipToPadding = false
         }
 
-        var downY = 0f
-        var tracker: VelocityTracker? = null
-        dragZone.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downY = event.rawY
-                    tracker?.recycle()
-                    tracker = VelocityTracker.obtain().also { it.addMovement(event) }
-                    AnimationSystem.cancel(sheet)
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    tracker?.addMovement(event)
-                    val dy = (event.rawY - downY).coerceAtLeast(0f)
-                    sheet.translationY = dy
-                    val fraction = (dy / sheet.height.coerceAtLeast(1)).coerceIn(0f, 1f)
-                    scrim.alpha = SCRIM_ALPHA * (1f - fraction)
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    tracker?.addMovement(event)
-                    tracker?.computeCurrentVelocity(1000)
-                    val velocity = tracker?.yVelocity ?: 0f
-                    tracker?.recycle()
-                    tracker = null
-                    val distance = sheet.translationY
-                    if (event.actionMasked == MotionEvent.ACTION_UP &&
-                        (distance > dp(120) || velocity > dp(900))
-                    ) {
-                        animateClose(velocity.coerceAtLeast(0f))
-                    } else {
-                        AnimationSystem.spring(
-                            sheet, DynamicAnimation.TRANSLATION_Y, 0f,
-                            AnimationSystem.MORPH_CLOSE, velocity
-                        )
-                        AnimationSystem.fade(scrim, SCRIM_ALPHA, AnimationSystem.SMOOTH)
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
+        BrowserSheetMotion.bindDragZone(dragZone, sheet, scrim, ::dp, ::animateClose)
 
         ViewCompat.setOnApplyWindowInsetsListener(windowRoot) { _, insets ->
             val bars = insets.getInsets(
@@ -228,7 +182,7 @@ class BrowserBottomSheet(
             // Đồng bộ chính xác với PopupWindowController trong WebWindows:
             // scrim phủ toàn cửa sổ, sheet bắt đầu ngay dưới status bar một khoảng
             // nhỏ, còn phần đáy kéo xuyên qua navigation bar như popup Summit.
-            sheetLp.topMargin = bars.top + dp(10)
+            sheetLp.topMargin = bars.top + dp(BrowserSheetMotion.TOP_MARGIN_DP)
             sheetLp.bottomMargin = 0
             sheet.layoutParams = sheetLp
             // Chỉ nhường vùng bàn phím; không đẩy nội dung lên khỏi navigation bar.
@@ -251,21 +205,7 @@ class BrowserBottomSheet(
             }
         }
         dlg.setContentView(windowRoot)
-        dlg.window?.apply {
-            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            setWindowAnimations(0)
-            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-
-            // Cùng cấu hình cửa sổ với PopupWindowController: scrim được vẽ
-            // phía sau status/navigation bar để trang nền vẫn hiện mờ ở phía sau.
-            WindowCompat.setDecorFitsSystemWindows(this, false)
-            statusBarColor = Color.TRANSPARENT
-            navigationBarColor = Color.TRANSPARENT
-            isStatusBarContrastEnforced = false
-            isNavigationBarContrastEnforced = false
-            WindowCompat.getInsetsController(this, windowRoot).isAppearanceLightNavigationBars = !isNight
-        }
+        dlg.window?.let { BrowserSheetMotion.configureWindow(it, windowRoot, isNight) }
         dlg.setOnDismissListener {
             glassDialog?.cancelAll()
             if (dialog === dlg) {
@@ -299,8 +239,7 @@ class BrowserBottomSheet(
         root.post {
             if (closing || dialog !== dlg) return@post
             ViewCompat.requestApplyInsets(windowRoot)
-            AnimationSystem.spring(sheet, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MORPH_CLOSE)
-            AnimationSystem.fade(scrim, SCRIM_ALPHA, AnimationSystem.SMOOTH)
+            BrowserSheetMotion.show(sheet, scrim)
         }
     }
 
@@ -313,22 +252,8 @@ class BrowserBottomSheet(
     private fun animateClose(velocity: Float = 0f) {
         val dlg = dialog ?: return
         if (closing) return
-        val sheet = sheetView
-        val scrim = scrimView
-        if (sheet == null || scrim == null || !dlg.isShowing || sheet.height <= 0) {
-            dlg.dismiss()
-            return
-        }
         closing = true
-        AnimationSystem.fade(scrim, 0f, AnimationSystem.DISMISS)
-        AnimationSystem.spring(
-            sheet,
-            DynamicAnimation.TRANSLATION_Y,
-            sheet.height.toFloat() + dp(40),
-            AnimationSystem.DISMISS,
-            velocity
-        ) { if (dlg.isShowing) dlg.dismiss() }
-        scrim.postDelayed({ if (dlg.isShowing) dlg.dismiss() }, CLOSE_FALLBACK_MS)
+        BrowserSheetMotion.close(dlg, sheetView, scrimView, ::dp, velocity)
     }
 
     fun dismiss(immediate: Boolean = false) {
@@ -337,9 +262,6 @@ class BrowserBottomSheet(
     }
 
     private companion object {
-        const val SCRIM_ALPHA = 0.5f
-        const val CLOSE_FALLBACK_MS = 900L
-        const val HEADER_DP = 69             // tay nắm (13) + thanh tiêu đề (56)
         const val EDGE_EXTRA_DP = 24         // vùng mờ kéo dài xuống dưới tiêu đề, như menu Tab
         const val EDGE_BLUR_RADIUS_DP = 14   // độ mờ tối đa ở sát mép tiêu đề, cùng giá trị với menu Tab
         const val EDGE_VEIL = 0.30f          // phủ trắng nhẹ ở sát mép, cùng giá trị với menu Tab
