@@ -82,6 +82,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private lateinit var reloadBtn: ImageView
     private lateinit var tabBtn: ImageView
     private lateinit var tabManager: TabManager
+    private lateinit var tabWebViewLifecycle: TabWebViewLifecycleController
     private lateinit var urlPill: LinearLayout
     private lateinit var pillProgress: PillProgress
     private lateinit var topFade: View
@@ -481,6 +482,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             scheduleSaveTabs()
             updateTabBadge()
         }
+        tabWebViewLifecycle = TabWebViewLifecycleController(
+            createWebView = { WebView(this) },
+            configureWebView = ::configureTabWebView,
+            beforeDestroy = { view -> if (::pageTransition.isInitialized) pageTransition.forget(view) }
+        )
         d = resources.displayMetrics.density
         // Summit hiện chỉ phát hành giao diện sáng; không đổi màu theo Dark Mode của hệ thống.
         isNight = false
@@ -747,9 +753,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     /** Gốc giao diện: WebView của tab đầu, BlurTarget và các lớp kính nằm trên nó. */
     private fun createRootAndGlass() {
         // --- WebView của tab đầu tiên; các tab mới có WebView riêng ---
-        web = WebView(this)
-        configureTabWebView(web)
-        tabManager.getActive()?.webView = web
+        val initialTab = tabManager.getActive() ?: tabManager.addNew()
+        web = tabWebViewLifecycle.obtain(initialTab)
 
         root = FrameLayout(this)
         root.setBackgroundColor(pageBg)
@@ -1480,20 +1485,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private fun activateTab(tab: TabManager.Tab) {
         contextMenuController?.dismiss(false)
         if (::pageTransition.isInitialized) pageTransition.cancelNow()
-        val target = tab.webView ?: WebView(this).also { created ->
-            configureTabWebView(created)
-            tab.webView = created
-        }
         val previous = if (::web.isInitialized) web else null
+        val target = tabWebViewLifecycle.attach(tab, blurTarget, previous)
         if (previous !== target) {
-            previous?.let { old ->
-                runCatching { old.onPause() }
-                (old.parent as? ViewGroup)?.removeView(old)
-            }
-            (target.parent as? ViewGroup)?.removeView(target)
             web = target
-            blurTarget.addView(target, FrameLayout.LayoutParams(-1, -1))
-            runCatching { target.onResume() }
             // Media của tab cũ không còn điều khiển được; tab mới tự báo lại trạng thái của nó.
             webMedia.reset()
             requestMediaState(target)
@@ -1563,34 +1558,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     private fun destroyTabWebView(view: WebView) {
-        if (::pageTransition.isInitialized) pageTransition.forget(view)
-        runCatching { view.stopLoading() }
-        runCatching { view.removeJavascriptInterface("EdgeBridge") }
-        runCatching { view.webViewClient = WebViewClient() }
-        runCatching { view.webChromeClient = WebChromeClient() }
-        runCatching { view.setDownloadListener(null) }
-        runCatching { view.setFindListener(null) }
-        runCatching { view.setOnScrollChangeListener(null as View.OnScrollChangeListener?) }
-        runCatching { view.onPause() }
-        (view.parent as? ViewGroup)?.removeView(view)
-        runCatching { view.loadUrl("about:blank") }
-        runCatching { view.removeAllViews() }
-        runCatching { view.destroy() }
+        tabWebViewLifecycle.destroy(view)
     }
 
     /** Giải phóng WebView của các tab nền lâu không dùng để tiết kiệm RAM; mở lại tab sẽ tải lại từ URL đã lưu. */
     private fun trimBackgroundTabs(max: Int = Constants.MAX_LIVE_WEBVIEWS) {
-        for (tab in tabManager.staleLiveTabs(max)) discardTabWebView(tab)
-    }
-
-    private fun discardTabWebView(tab: TabManager.Tab) {
-        val view = tab.webView ?: return
-        if (view === web) return
-        // Ghi lại URL/tiêu đề trước khi hủy để mở lại đúng trang (thumbnail giữ nguyên).
-        tab.url = view.url ?: tab.url
-        tab.title = view.title ?: tab.title
-        tab.webView = null
-        destroyTabWebView(view)
+        tabWebViewLifecycle.trim(tabManager, max, if (::web.isInitialized) web else null)
     }
 
     override fun onLowMemory() {
@@ -1733,15 +1706,13 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         orbController = null
 
         // 6. Destroy every tab WebView last, including views detached in the background.
-        val tabViews = tabManager.getAll().mapNotNull { it.webView }.distinct()
         tabManager.getAll().forEach {
             it.thumbnail?.recycle()
             it.thumbnail = null
             it.thumbnailUrl = null
-            it.webView = null
         }
         // Do not clear persistent WebView cache/history during ordinary Activity teardown.
-        tabViews.forEach(::destroyTabWebView)
+        tabWebViewLifecycle.destroyAll(tabManager)
 
         super.onDestroy()
     }
