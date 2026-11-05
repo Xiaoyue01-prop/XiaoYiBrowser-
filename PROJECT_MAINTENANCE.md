@@ -1,58 +1,38 @@
-# Summit — cấu trúc và ghi chú bảo trì
+# Summit project maintenance notes
 
-## Mục tiêu kiến trúc
+## Toolchain and dependency baseline (2026-11-05)
 
-Summit là trình duyệt Android dựa trên WebView. `MainActivity` là composition root: khởi tạo giao diện, quản lý vòng đời Activity và kết nối các controller. Tính năng có trạng thái/lifecycle riêng nên nằm trong controller chuyên trách; không tạo lớp chỉ để bọc một hàm đơn giản.
+- Android Gradle Plugin: 9.3.1
+- Gradle used by GitHub Actions: 9.7.1
+- Kotlin Gradle Plugin: 2.4.21
+- Java/JVM target: 17
+- compileSdk: 37
+- targetSdk/minSdk: 36
 
-## Bản đồ mã nguồn
+AGP 9.3.1 supports API 37 and Kotlin Gradle Plugin 2.4.21 documents compatibility through AGP 9.3.1 / Gradle 9.7.0. Gradle 9.7.1 is the recommended patch release. The project temporarily opts out of AGP's built-in Kotlin and new DSL (`android.builtInKotlin=false`, `android.newDsl=false`) because this project still uses `org.jetbrains.kotlin.android` and the legacy Android DSL. These flags are migration bridges for AGP 9.x, not a permanent solution; migrate to built-in Kotlin and the new DSL before AGP 10.
 
-- `MainActivity.kt`: điều phối giao diện chính, tab đang hoạt động, callback của WebView và lifecycle Activity. Các luồng có vòng đời độc lập đã được tách ra; tiếp tục giảm file này theo từng cụm có ranh giới rõ.
-- `BrowserJavascriptBridge.kt`: cầu nối `@JavascriptInterface`, kiểm tra lifecycle, chuyển callback về UI thread và chỉ giữ weak reference tới Activity/WebView.
-- `BrowserFullscreenController.kt`: quản lý custom fullscreen view, orientation, thanh hệ thống và yêu cầu PiP phát sinh từ trình phát web.
-- `SuggestionController.kt` + `Search.kt`: debounce/UI gợi ý và repository tìm kiếm.
-- `MenuController.kt` + `MenuCardLayout.kt`: điều hướng menu và custom View bố trí thẻ.
-- `BrowserToolsController.kt` + `BrowserBottomSheet.kt`: nội dung Downloads/Privacy Dashboard và sheet công cụ.
-- `WebWindows.kt`: popup website và `PictureInPictureController`.
-- `BrowserSheetMotion.kt`: chuyển động mở/đóng, kéo để đóng, scrim và cấu hình cửa sổ dùng chung giữa popup website và sheet công cụ.
-- `AnimationSystem.kt`, `GlassSystem.kt`, `OriginTransitionController.kt`: lõi animation, blur/kính và hình học morph. Không tạo engine animation hoặc blur thứ hai.
-- `TabManager.kt`, `TabSwitcherController.kt`, `TabSwipeController.kt`, `PageTransitionController.kt`: trạng thái tab, UI chuyển tab, vuốt đổi tab và chuyển trang.
-- `Store.kt`: lưu trữ cài đặt, lịch sử và metadata tab.
-- `WebMedia.kt`: cầu nối media web tới Media3 MediaSession/service.
-- `WebPermissionController.kt`: xử lý permission WebView/Android; `BrowserToolsController` chỉ cung cấp giao diện.
-- `EdgeScript.kt`: script edge-to-edge, nhận diện và điều chỉnh các thanh cố định của website.
-- `WebUtils.kt`: cấu hình WebView và xử lý liên kết ngoài; `AdBlocker.kt`: lọc request theo danh sách domain.
+## Updated libraries
 
-## Quy tắc khi chỉnh sửa
+- AndroidX Core KTX 1.19.1
+- AndroidX Activity KTX 1.13.0
+- AndroidX Lifecycle Runtime KTX 2.11.0
+- AndroidX DynamicAnimation 1.1.0
+- AndroidX WebKit 1.18.0
+- Kotlin Coroutines Android 1.11.0
+- Media3 Session 1.11.1 (already current stable at this baseline)
+- BlurView 3.2.0 (already current stable at this baseline)
 
-1. Giữ nguyên thứ tự callback/lifecycle của WebView, quyền trang, quản lý tab, PiP và DownloadManager trừ khi có yêu cầu thay đổi rõ.
-2. `AnimationSystem` là nơi cấu hình spring/press/fade; `OriginTransitionController` quản lý hình học morph. Giữ fan geometry của OrbMenu.
-3. `GlassSystem` là nơi dùng chung blur/rim/edge blur. Không tạo hệ blur thứ hai hoặc thay đổi thông số kính trong một đợt refactor cấu trúc.
-4. Popup website và sheet công cụ dùng chung `BrowserSheetMotion`; insets dành riêng cho nội dung vẫn do từng sheet quản lý.
-5. Không xóa Android override/callback chỉ vì không thấy call-site tĩnh. Kiểm tra Manifest, WebViewClient/WebChromeClient, BroadcastReceiver và Activity Result trước khi xóa.
-6. Không nâng dependency đồng loạt nếu không có lý do tương thích/tính năng cụ thể.
-7. Chỉ giữ tài liệu bảo trì này và README cần thiết; không lưu nhiều bản audit/ghi chú cùng nội dung trong thư mục gốc.
+## Android 17 / local network decision
 
-## Cấu hình build
+The app compiles against API 37 but deliberately keeps `targetSdk = 36` for this update. Android 17's `ACCESS_LOCAL_NETWORK` runtime permission is mandatory only for apps targeting API 37+. Summit is a general-purpose browser, so target 37 must not be enabled until the browser has a tested permission flow that requests LAN access contextually and handles private IPv4, localhost, `.local` hosts, DNS-resolved private hosts, redirects, WebView subresources, and permission denial/revocation. Declaring/requesting this permission prematurely would either cause unnecessary prompts or break LAN browsing.
 
-- JDK 17, Gradle 8.11.1, Android Gradle Plugin 8.9.1, Kotlin 2.2.10.
-- `compileSdk = 36`, `targetSdk = 36`, `minSdk = 36`.
-- CI: `.github/workflows/build.yml`, task `gradle assembleDebug`.
-- Archive source hiện tại không kèm Gradle Wrapper; dùng GitHub Actions để xác nhận build.
+## WebView security and feature migration backlog
 
-## Ghi chú kỹ thuật
+- `addJavascriptInterface` remains in use because the current injected scripts (`EdgeScript`, media monitoring and long-press handling) directly call `window.EdgeBridge`. Migrating to `WebViewCompat.addWebMessageListener` needs a coordinated protocol rewrite and origin/frame policy; do not replace only the Kotlin bridge or the existing scripts will silently stop working.
+- WebView profile isolation / Private Browsing is not enabled yet. It requires profile ownership to be integrated with tab creation, popup windows, cookies, WebStorage, service workers, downloads, tab persistence and clear-data flows. Do not present an incognito mode as isolated until all these stores are verified.
+- Mixed-content compatibility and third-party cookies are intentionally unchanged in this dependency/toolchain pass to avoid breaking legacy sites and sign-in flows. Revisit with per-site controls and regression tests.
+- Existing Media3 and BlurView dependencies were already at their stable baseline versions and remain unchanged.
 
-- Thumbnail tab được giới hạn kích thước; snapshot chuyển trang dùng cache LRU và quản lý ownership trước khi recycle.
-- Script media không dùng timer polling liên tục; theo dõi thay đổi DOM khi media hoạt động.
-- Popup website và sheet công cụ dùng chung chuyển động, vùng kéo, scrim và cấu hình window; mỗi loại giữ logic insets nội dung riêng.
-- AdBlock chỉ đếm request thực sự bị danh sách domain chặn; số liệu không đại diện cho mọi tracker.
-- `Store.loadTabs()` vẫn khôi phục metadata/thumbnail đồng bộ; lazy thumbnail cần thiết kế ownership bitmap trước khi triển khai.
+## Build verification
 
-## Checklist kiểm thử trước khi phát hành
-
-1. Chạy GitHub Actions `assembleDebug`.
-2. Mở/đóng popup website, Downloads, Privacy Dashboard; kiểm tra status bar, navigation bar, IME và kéo để đóng.
-3. Thử quyền Camera, Microphone, Location riêng biệt; thử tải, mở, chia sẻ, hủy và xóa tệp.
-4. Thử nhiều tab, chuyển tab trong animation, phục hồi tab, renderer bị thu hồi, media nền, PiP và notification controls.
-5. Thử các trang có header fixed/sticky, thanh điều hướng đáy và chế độ compact pill.
-
-Kiểm tra tĩnh và tính toàn vẹn ZIP không thay thế build Gradle và thử nghiệm trên thiết bị thật.
+GitHub Actions installs Android SDK Platform 37 / Build Tools 36.0.0 and uses Gradle 9.7.1. This source ZIP was updated and statically checked in the editing environment, but a full Android Gradle build was not run here because the environment has no network access or Android SDK installation. The first CI run is the required compile verification before installing the APK.

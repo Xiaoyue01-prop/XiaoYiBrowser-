@@ -46,10 +46,6 @@ fun WebSettings.applyBrowserDefaults() {
     }
 }
 
-private const val FALLBACK_DESKTOP_UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-    "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
-
 private val WV_MARKER = Regex(""";\s*wv""", RegexOption.IGNORE_CASE)
 private val VERSION_4_0 = Regex("""\s*Version/4\.0""", RegexOption.IGNORE_CASE)
 
@@ -63,16 +59,17 @@ fun cleanMobileUserAgent(raw: String): String =
  * khiến website vẫn trả về giao diện mobile.
  */
 fun desktopUserAgent(mobileUa: String): String {
+    // Ưu tiên phiên bản Chromium thật trong UA của WebView; nếu provider rút gọn UA,
+    // lấy versionName của WebView provider thay vì đóng đinh một phiên bản Chrome cũ.
     val chromeVersion = Regex("""(?:Chrome|CriOS)/([0-9.]+)""", RegexOption.IGNORE_CASE)
         .find(mobileUa)
         ?.groupValues
         ?.getOrNull(1)
         ?.takeIf { it.isNotBlank() }
-        ?: Regex("""Chrome/([0-9.]+)""", RegexOption.IGNORE_CASE)
-            .find(FALLBACK_DESKTOP_UA)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?: "142.0.0.0"
+        ?: WebView.getCurrentWebViewPackage()
+            ?.versionName
+            ?.let { Regex("""^\d+(?:\.\d+){1,3}""").find(it)?.value }
+        ?: "0.0.0.0"
 
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$chromeVersion Safari/537.36"
