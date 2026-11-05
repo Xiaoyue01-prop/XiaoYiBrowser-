@@ -8,6 +8,7 @@ import java.lang.ref.WeakReference
 internal interface BrowserJavascriptBridgeHost {
     fun isBridgeHostDestroyed(): Boolean
     fun onBridgeTopColor(owner: WebView, color: Int?)
+    fun onBridgePageBackground(owner: WebView, color: Int?)
     fun onBridgeMediaState(owner: WebView, info: WebMediaInfo)
     fun onBridgePipRequest(owner: WebView)
     fun onBridgeLongPress(owner: WebView, linkUrl: String, imageUrl: String)
@@ -79,6 +80,22 @@ internal class BrowserJavascriptBridge(
     @JavascriptInterface
     fun clearTopColor() {
         dispatch { host, owner -> host.onBridgeTopColor(owner, null) }
+    }
+
+    /** Reports the page canvas/background independently from the top-bar color. */
+    @JavascriptInterface
+    fun setPageBackground(r: Int, g: Int, b: Int) {
+        val color = android.graphics.Color.rgb(
+            r.coerceIn(0, 255),
+            g.coerceIn(0, 255),
+            b.coerceIn(0, 255)
+        )
+        dispatch { host, owner -> host.onBridgePageBackground(owner, color) }
+    }
+
+    @JavascriptInterface
+    fun clearPageBackground() {
+        dispatch { host, owner -> host.onBridgePageBackground(owner, null) }
     }
 
     private fun dispatch(action: (BrowserJavascriptBridgeHost, WebView) -> Unit) {

@@ -116,9 +116,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private var mobileUa = ""
     private var solidTop: Int? = null
 
-    // Màu dải thanh trạng thái mà trang của từng tab đã báo (không có mục = chưa biết).
+    // Màu dải thanh trạng thái và màu nền trang được lưu độc lập theo từng WebView.
     private class TopState(val color: Int?)
     private val topColors = java.util.WeakHashMap<WebView, TopState>()
+    private class PageBackgroundState(val color: Int?)
+    private val pageBackgrounds = java.util.WeakHashMap<WebView, PageBackgroundState>()
     private var orbController: OrbMenuController? = null
     private var programmatic = false
     private lateinit var suggestionController: SuggestionController
@@ -157,6 +159,13 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onBridgeTopColor(owner: WebView, color: Int?) {
         topColors[owner] = TopState(color)
         if (owner === web) applyTopColor(color)
+    }
+
+    override fun onBridgePageBackground(owner: WebView, color: Int?) {
+        pageBackgrounds[owner] = PageBackgroundState(color)
+        if (owner === web && !isActivityDestroyed) {
+            GlassSystem.setPageBackground(color)
+        }
     }
 
     override fun onBridgeMediaState(owner: WebView, info: WebMediaInfo) {
@@ -210,6 +219,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             tabManager.updateForWebView(view, url, view.title ?: url)
+            // A navigation must not reuse the previous document's background tone.
+            pageBackgrounds.remove(view)
+            if (view === web) GlassSystem.setPageBackground(null)
             if (view !== web) return
             // Chụp trang cũ trước khi mờ đi và trước khi nội dung đổi, để lần sau vuốt quay lại có ảnh xem trước.
             if (view.url != url) pageTransition.remember(view)
@@ -267,6 +279,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            pageBackgrounds.remove(view)
+            if (view === web) GlassSystem.setPageBackground(null)
             val tab = tabManager.getForWebView(view)
             val lastUrl = view.url
             if (tab != null) {
@@ -1505,6 +1519,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             requestMediaState(target)
         }
         tabManager.switchTo(tab.id)
+        // Apply the selected tab's page material independently from its status-bar/header color.
+        GlassSystem.setPageBackground(pageBackgrounds[target]?.color)
         // Dải thanh trạng thái theo tab mới ngay lúc đổi, rồi nhờ script báo lại để chắc chắn (script
         // chỉ báo khi giá trị đổi, còn báo cáo lúc tab chạy nền đã bị bỏ qua).
         solidTop = topColors[target]?.color
@@ -1656,6 +1672,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     override fun onDestroy() {
         isActivityDestroyed = true
+        GlassSystem.setPageBackground(null)
         val cleanupController = BrowserActivityCleanupController()
         if (::pageTransition.isInitialized) pageTransition.cancelNow()
         if (::tabSwipe.isInitialized) tabSwipe.cancelNow()

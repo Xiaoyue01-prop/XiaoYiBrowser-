@@ -34,13 +34,77 @@ import eightbitlab.com.blurview.BlurView
  *
  * BlurView needs a View and a BlurTarget, unlike the old Drawable-only helper.
  * Keep creation/configuration here so UI code does not need to know BlurView's API.
- * All glass surfaces share one light-mode material. Drawable helpers are only a
- * first-frame/fallback layer; BlurView is the primary renderer.
+ * All glass surfaces share one adaptive material driven by the active webpage background.
+ * Drawable helpers are the first-frame/fallback layer; BlurView is the primary renderer.
  */
 object GlassSystem {
     // One light-mode material system: consistent frost, edge and corner language.
     private const val GLASS_BLUR_RADIUS_DP = 6f
     private const val GLASS_TINT_ALPHA = 6
+
+    // Adaptive material: only the surface tint changes; blur and Liquid Glass rims stay fixed.
+    private val blurSurfaces = java.util.WeakHashMap<BlurView, Unit>()
+    private val fallbackSurfaces = java.util.WeakHashMap<GradientDrawable, Unit>()
+    private var pageBackgroundColor: Int? = null
+    private var currentOverlayColor: Int = Color.argb(GLASS_TINT_ALPHA, 255, 255, 255)
+
+    /**
+     * Update the one shared glass material from the active webpage background.
+     * A null color restores the original light-page material.
+     */
+    fun setPageBackground(color: Int?) {
+        val overlay = overlayForPage(color)
+        if (pageBackgroundColor == color && currentOverlayColor == overlay) return
+
+        pageBackgroundColor = color
+        if (currentOverlayColor == overlay) return
+        currentOverlayColor = overlay
+
+        // Snapshot the weak-key sets before updating views; a view may detach during a redraw.
+        blurSurfaces.keys.toList().forEach { surface ->
+            surface.setOverlayColor(overlay)
+            surface.invalidate()
+        }
+        fallbackSurfaces.keys.toList().forEach { drawable ->
+            drawable.setColor(overlay)
+            drawable.invalidateSelf()
+        }
+    }
+
+    private fun overlayForPage(color: Int?): Int {
+        if (color == null) return Color.argb(GLASS_TINT_ALPHA, 255, 255, 255)
+
+        val r = Color.red(color) / 255f
+        val g = Color.green(color) / 255f
+        val b = Color.blue(color) / 255f
+        val luminance = 0.2126f * r + 0.7152f * g + 0.0722f * b
+        val maxChannel = maxOf(r, g, b)
+        val minChannel = minOf(r, g, b)
+        val saturation = if (maxChannel <= 0f) 0f else (maxChannel - minChannel) / maxChannel
+
+        return when {
+            // A very dark, strongly colored page gets a restrained neutral veil to preserve its hue.
+            luminance < 0.23f && saturation > 0.38f -> Color.argb(16, 202, 206, 216)
+            // Dark neutral pages need a little more lift so the glass remains visible.
+            luminance < 0.29f -> Color.argb(24, 202, 206, 216)
+            // Mid-dark backgrounds use a lighter but still restrained neutral overlay.
+            luminance < 0.43f -> Color.argb(17, 198, 202, 212)
+            // Light and colorful pages retain the original ultra-transparent white material.
+            else -> Color.argb(GLASS_TINT_ALPHA, 255, 255, 255)
+        }
+    }
+
+    private fun registerFallbackSurface(drawable: GradientDrawable): GradientDrawable {
+        drawable.setColor(currentOverlayColor)
+        fallbackSurfaces[drawable] = Unit
+        return drawable
+    }
+
+    private fun registerBlurSurface(view: BlurView): BlurView {
+        view.setOverlayColor(currentOverlayColor)
+        blurSurfaces[view] = Unit
+        return view
+    }
 
     // Viền kính kiểu liquid glass: một vòng ngoài xám lạnh (giữ nét trên nền trắng) và một vành sáng mảnh
     // bên trong, sáng nhất ở góc trên-trái và dưới-phải. Chỉnh độ đậm viền toàn app ở hai hằng số này.
@@ -62,27 +126,29 @@ object GlassSystem {
 
     /**
      * Drawable fallback for surfaces that have not been converted to real blur yet.
-     * Light appearance fallback used until BlurView draws its first frame.
+     * Uses the same shared adaptive tint as BlurView.
      */
     fun create(preset: Preset, density: Float, isNight: Boolean): GradientDrawable =
         create(preset.radiusDp, density, isNight)
 
     fun create(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
-        GradientDrawable().apply {
-            cornerRadius = radiusDp.coerceAtLeast(0) * density
-            setColor(Color.argb(GLASS_TINT_ALPHA, 255, 255, 255))
-        }
+        registerFallbackSurface(
+            GradientDrawable().apply {
+                cornerRadius = radiusDp.coerceAtLeast(0) * density
+            }
+        )
 
     fun createInputField(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
-        GradientDrawable().apply {
-            cornerRadius = radiusDp.coerceAtLeast(0) * density
-            setColor(Color.argb(GLASS_TINT_ALPHA, 255, 255, 255))
-        }
+        registerFallbackSurface(
+            GradientDrawable().apply {
+                cornerRadius = radiusDp.coerceAtLeast(0) * density
+            }
+        )
 
 
     /** Real blurred material for compact editable fields. */
-    fun createInputBlurView(context: Context, target: BlurTarget, density: Float): BlurView =
-        BlurView(context).apply {
+    fun createInputBlurView(context: Context, target: BlurTarget, density: Float): BlurView {
+        val view = BlurView(context).apply {
             background = GradientDrawable().apply {
                 cornerRadius = 12f * density
                 setColor(Color.TRANSPARENT)
@@ -90,10 +156,10 @@ object GlassSystem {
             foreground = GlassRimDrawable(12f * density, density)
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
-            setupWith(target)
-                .setBlurRadius(GLASS_BLUR_RADIUS_DP * density)
-                .setOverlayColor(Color.argb(GLASS_TINT_ALPHA, 255, 255, 255))
+            setupWith(target).setBlurRadius(GLASS_BLUR_RADIUS_DP * density)
         }
+        return registerBlurSurface(view)
+    }
 
     /** Viền kính liquid glass vẽ đè lên nội dung (foreground của thẻ kính). */
     fun createBorder(radiusDp: Int, density: Float, isNight: Boolean): Drawable =
@@ -429,17 +495,16 @@ half4 main(float2 coord) {
             setColor(Color.TRANSPARENT)
         }
 
-        return BlurView(context).apply {
+        val view = BlurView(context).apply {
             background = shape
             if (rim && preset.radiusDp > 0) {
                 foreground = GlassRimDrawable(preset.radiusDp * density, density)
             }
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
-            setupWith(target)
-                .setBlurRadius(GLASS_BLUR_RADIUS_DP * density)
-                .setOverlayColor(Color.argb(GLASS_TINT_ALPHA, 255, 255, 255))
+            setupWith(target).setBlurRadius(GLASS_BLUR_RADIUS_DP * density)
         }
+        return registerBlurSurface(view)
     }
 
     /**
@@ -463,10 +528,9 @@ half4 main(float2 coord) {
                 setColor(if (isNight) Color.rgb(76, 76, 81) else Color.WHITE)
                 setStroke(density.toInt().coerceAtLeast(1), if (isNight) Color.rgb(92, 92, 98) else Color.rgb(220, 220, 226))
             }
-            glass.background = GradientDrawable().apply {
+            glass.background = GlassSystem.registerFallbackSurface(GradientDrawable().apply {
                 cornerRadius = radius
-                setColor(Color.argb(GLASS_TINT_ALPHA, 255, 255, 255))
-            }
+            })
             glass.foreground = GlassRimDrawable(radius, density)
             glass.alpha = 0f
             view.addView(solid, FrameLayout.LayoutParams(-1, -1))

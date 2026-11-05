@@ -11,10 +11,16 @@ window.__edgeMode = %MODE%;
 window.__edgeBottom = %BOTTOM%;
 window.__edgeCompact = %COMPACT%;
 %PILL_METRICS%
-if (window.__edgeStarted) { if (window.__edgeRun) window.__edgeRun(); return; }
+if (window.__edgeStarted) {
+  if (window.__edgeRun) window.__edgeRun();
+  else if (window.__edgePageBgRun) window.__edgePageBgRun();
+  return;
+}
 window.__edgeStarted = true;
 
 var last = '';
+var lastPageBg = '';
+var pageBgTimer = null;
 var styleCache = new WeakMap();
 var rafId = null;
 
@@ -98,6 +104,148 @@ function climb(el){
     if (c) return c;
   }
   return null;
+}
+
+// ---- Màu nền canvas của trang: độc lập hoàn toàn với màu header/status bar ----
+function gradientBackgroundColor(style){
+  try {
+    var image = style && style.backgroundImage;
+    if (!image || image === 'none' || !/gradient\(/i.test(image)) return null;
+    image = image.replace(/url\([^)]*\)/gi, '');
+    var matches = image.match(/rgba?\([^)]*\)|hsla?\([^)]*\)|#[0-9a-f]{3,8}/gi) || [];
+    var colors = [];
+    for (var i = 0; i < matches.length; i++) {
+      var c = rgbOf(matches[i]);
+      if (c) colors.push(c);
+    }
+    if (!colors.length) return null;
+    var total = [0, 0, 0];
+    colors.forEach(function(c){
+      total[0] += c[0];
+      total[1] += c[1];
+      total[2] += c[2];
+    });
+    return [
+      total[0] / colors.length,
+      total[1] / colors.length,
+      total[2] / colors.length,
+      1
+    ];
+  } catch (e) { return null; }
+}
+
+function pageCanvasColor(){
+  try {
+    var body = document.body;
+    var root = document.documentElement;
+
+    // Theo quy tắc canvas của CSS, nền body được ưu tiên; nếu body trong suốt thì dùng html.
+    var bodyStyle = body ? getComputedStyle(body) : null;
+    var rootStyle = root ? getComputedStyle(root) : null;
+    var bodyColor = bodyStyle
+      ? (rgbOf(bodyStyle.backgroundColor) || gradientBackgroundColor(bodyStyle)) : null;
+    var rootColor = rootStyle
+      ? (rgbOf(rootStyle.backgroundColor) || gradientBackgroundColor(rootStyle)) : null;
+    function isLightNeutral(c){
+      if (!c) return false;
+      var rr = c[0] / 255, gg = c[1] / 255, bb = c[2] / 255;
+      var hi = Math.max(rr, gg, bb), lo = Math.min(rr, gg, bb);
+      var lum = 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
+      var sat = hi <= 0 ? 0 : (hi - lo) / hi;
+      return lum >= 0.68 && sat < 0.24;
+    }
+    if (bodyColor && !isLightNeutral(bodyColor)) return bodyColor;
+    if (!bodyColor && rootColor && !isLightNeutral(rootColor)) return rootColor;
+
+    // Một số SPA để body trắng/trong suốt nhưng đặt nền thật trên app/root container.
+    // Lấy mẫu ở vùng nội dung, bỏ qua header/footer fixed để không nhầm màu thanh điều hướng.
+    if (!document.elementsFromPoint) return null;
+    var w = window.innerWidth, h = window.innerHeight;
+    if (w < 2 || h < 2) return null;
+
+    var xs = [0.18, 0.5, 0.82];
+    var ys = [0.38, 0.58, 0.76];
+    var buckets = Object.create(null);
+
+    for (var yi = 0; yi < ys.length; yi++) {
+      for (var xi = 0; xi < xs.length; xi++) {
+        var stack = document.elementsFromPoint(w * xs[xi], h * ys[yi]);
+        var picked = null;
+        for (var si = 0; si < stack.length && !picked; si++) {
+          var el = stack[si];
+          while (el && el !== body && el !== root) {
+            try {
+              var cs = getComputedStyle(el);
+              var op = parseFloat(cs.opacity);
+              if (cs.display !== 'none' && !(op < 0.8) &&
+                  cs.position !== 'fixed' && cs.position !== 'sticky') {
+                var rect = el.getBoundingClientRect();
+                if (rect.width >= w * 0.55 && rect.height >= h * 0.20) {
+                  var c = rgbOf(cs.backgroundColor) || gradientBackgroundColor(cs);
+                  if (c) {
+                    picked = {
+                      color: c,
+                      area: Math.min(1, (rect.width * rect.height) / (w * h))
+                    };
+                    break;
+                  }
+                }
+              }
+            } catch (e) {}
+            el = el.parentElement;
+          }
+        }
+
+        if (picked) {
+          var key = Math.round(picked.color[0]) + ',' +
+                    Math.round(picked.color[1]) + ',' +
+                    Math.round(picked.color[2]);
+          var bucket = buckets[key];
+          if (!bucket) {
+            bucket = buckets[key] = { count: 0, area: 0, color: picked.color };
+          }
+          bucket.count++;
+          bucket.area = Math.max(bucket.area, picked.area);
+        }
+      }
+    }
+
+    var best = null, bestScore = -1;
+    Object.keys(buckets).forEach(function(key){
+      var item = buckets[key];
+      var score = item.count * 10 + item.area;
+      if (score > bestScore) { best = item; bestScore = score; }
+    });
+    // Chỉ để sample container ghi đè body trắng khi nhiều điểm cùng xác nhận một màu nền lớn.
+    if (best && best.count >= 2) return best.color;
+    return bodyColor || rootColor || (best ? best.color : null);
+  } catch (e) { return null; }
+}
+
+function reportPageBackground(color){
+  var key = color
+    ? Math.round(color[0]) + ',' + Math.round(color[1]) + ',' + Math.round(color[2])
+    : 'none';
+  if (key === lastPageBg) return;
+  lastPageBg = key;
+  try {
+    if (!color) EdgeBridge.clearPageBackground();
+    else EdgeBridge.setPageBackground(
+      Math.round(color[0]), Math.round(color[1]), Math.round(color[2])
+    );
+  } catch (e) {}
+}
+
+function runPageBackground(){
+  reportPageBackground(pageCanvasColor());
+}
+
+function schedPageBackground(){
+  if (pageBgTimer) return;
+  pageBgTimer = setTimeout(function(){
+    pageBgTimer = null;
+    runPageBackground();
+  }, 180);
 }
 
 function report(v){
@@ -614,14 +762,26 @@ function schedLift(){
   liftTimer = setTimeout(function(){ liftTimer = null; liftLast = Date.now(); runLift(); }, wait);
 }
 
-function schedAll(){ sched(); schedLift(); }
+function schedAll(){ sched(); schedLift(); schedPageBackground(); }
 
-window.__edgeRun = function(){ run(); runLift(); };
+window.__edgeRun = function(){ run(); runLift(); schedPageBackground(); };
+window.__edgePageBgRun = function(){ runPageBackground(); };
 // Đổi tab: native đã bỏ qua báo cáo màu lúc trang này chạy nền, nên xoá bộ nhớ 'last' để báo lại.
 window.__edgeForceTop = function(){ last = ''; run(); };
 window.__edgeLift = function(){ runLift(); };
-window.addEventListener('scroll', sched, {passive: true});
+window.addEventListener('scroll', function(){
+  sched();
+  schedPageBackground();
+}, {passive: true});
 window.addEventListener('resize', schedAll);
+window.addEventListener('load', schedPageBackground, true);
+window.addEventListener('pageshow', schedPageBackground);
+
+try {
+  var colorSchemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  if (colorSchemeQuery.addEventListener) colorSchemeQuery.addEventListener('change', schedPageBackground);
+  else if (colorSchemeQuery.addListener) colorSchemeQuery.addListener(schedPageBackground);
+} catch (e) {}
 
 try {
   var observer = new MutationObserver(schedAll);
@@ -629,6 +789,8 @@ try {
     {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style']});
   window.addEventListener('beforeunload', function(){
     observer.disconnect();
+    if (pageBgTimer) clearTimeout(pageBgTimer);
+    pageBgTimer = null;
     styleCache = null;
   });
 } catch (e) {}
