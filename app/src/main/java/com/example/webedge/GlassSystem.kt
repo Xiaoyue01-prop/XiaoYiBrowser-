@@ -31,6 +31,7 @@ import android.view.ViewTreeObserver
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.webkit.WebView
 import java.lang.ref.WeakReference
@@ -677,19 +678,141 @@ half4 main(float2 coord) {
     }
 
     /**
-     * Thanh nền (track) của thanh chọn phân đoạn: một lớp phủ trong suốt xám trung tính (kiểu systemFill của iOS)
-     * nên màu nền phía sau (thẻ, sheet) thấu qua thay vì một mảng xám đặc. Không dùng BlurView vì track nằm trên
-     * thẻ đặc, không có gì phía sau để làm mờ. Viền mảnh giữ nét cho track ở cả nền sáng lẫn tối.
+     * Lớp nền (không viền) của track thanh chọn phân đoạn: lớp phủ xám trung tính trong suốt kiểu systemFill
+     * của iOS nên màu phía sau thấu qua. Viền do [SegmentedControl] vẽ bằng viền kính chung của app.
      */
     fun createSegmentedTrack(radiusDp: Int, density: Float, isNight: Boolean): Drawable =
         GradientDrawable().apply {
             cornerRadius = radiusDp * density
             setColor(if (isNight) Color.argb(72, 120, 120, 128) else Color.argb(30, 118, 118, 128))
-            setStroke(
-                density.toInt().coerceAtLeast(1),
-                if (isNight) Color.argb(36, 255, 255, 255) else Color.argb(34, 60, 60, 67)
+        }
+
+    /**
+     * Thanh chọn phân đoạn hoàn chỉnh. Xếp lớp từ dưới lên: nền track, [backdrop] tuỳ chọn (ví dụ BlurView),
+     * viền kính chung của app, viên kính trượt [SegmentedGlassThumb], rồi nhãn. Dùng chung cho mọi thanh phân
+     * đoạn (quyền website, Tab/Riêng tư) nên viền và chuyển động luôn giống nhau.
+     * Người gọi thêm [view] vào layout và tự đặt kích thước (cao 48dp là vừa với viên 40dp).
+     */
+    class SegmentedControl(
+        context: Context,
+        private val density: Float,
+        isNight: Boolean,
+        labels: List<String>,
+        initialIndex: Int,
+        private val selectedColor: Int,
+        private val normalColor: Int,
+        trackFill: Drawable,
+        backdrop: View? = null,
+        radiusDp: Int = 24,
+        textSizeSp: Float = 12f,
+        private val onSelect: (Int) -> Unit
+    ) {
+        val view = FrameLayout(context)
+        val options: List<TextView>
+        var selectedIndex: Int = initialIndex.coerceIn(0, labels.size - 1)
+            private set
+
+        private val count = labels.size
+        private val track = FrameLayout(context)
+        private val thumb = SegmentedGlassThumb(context, density, isNight)
+        private val indicator = thumb.view
+
+        init {
+            val pad = (4 * density).toInt()
+            val cellHeight = (40 * density).toInt()
+            view.background = trackFill
+            view.clipChildren = false
+            view.clipToPadding = false
+            backdrop?.let { view.addView(it, FrameLayout.LayoutParams(-1, -1)) }
+            view.addView(
+                View(context).apply { foreground = GlassRimDrawable(radiusDp * density, density) },
+                FrameLayout.LayoutParams(-1, -1)
+            )
+
+            // Track có padding để viên kính luôn cách mép, spring không bị cắt; nền và viền nằm ngoài padding.
+            track.setPadding(pad, pad, pad, pad)
+            track.clipChildren = false
+            track.clipToPadding = false
+            view.addView(track, FrameLayout.LayoutParams(-1, -1))
+            track.addView(indicator, FrameLayout.LayoutParams(0, cellHeight, Gravity.TOP or Gravity.START))
+
+            options = labels.map { title ->
+                TextView(context).apply {
+                    text = title
+                    textSize = textSizeSp
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    gravity = Gravity.CENTER
+                    setPadding((3 * density).toInt(), 0, (3 * density).toInt(), 0)
+                    isSingleLine = true
+                    includeFontPadding = false
+                }
+            }
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                clipChildren = false
+                clipToPadding = false
+                elevation = 3f * density
+            }
+            options.forEach { row.addView(it, LinearLayout.LayoutParams(0, -1, 1f)) }
+            track.addView(row, FrameLayout.LayoutParams(-1, -1))
+
+            refreshOptions()
+            track.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateIndicator(animate = false) }
+            thumb.attach(
+                track, count,
+                currentIndex = { selectedIndex },
+                onHover = { refreshOptions(it) },
+                onRelease = { index ->
+                    if (index != selectedIndex) {
+                        selectedIndex = index
+                        onSelect(index)
+                    }
+                    refreshOptions()
+                    updateIndicator(animate = true)
+                }
             )
         }
+
+        /** Đổi ô đang chọn từ bên ngoài (không gọi onSelect). */
+        fun select(index: Int, animate: Boolean = true) {
+            selectedIndex = index.coerceIn(0, count - 1)
+            refreshOptions()
+            updateIndicator(animate)
+        }
+
+        private fun refreshOptions(hover: Int = -1) {
+            options.forEachIndexed { index, option ->
+                val active = if (hover >= 0) index == hover else index == selectedIndex
+                option.setTextColor(if (active) selectedColor else normalColor)
+                AnimationSystem.scaleTo(option, if (hover == index) 1.12f else 1f, spec = AnimationSystem.MENU_POP)
+            }
+        }
+
+        private fun updateIndicator(animate: Boolean) {
+            val available = track.width - track.paddingLeft - track.paddingRight
+            if (available <= 0) return
+            val cellWidth = available / count
+            val innerHeight = track.height - track.paddingTop - track.paddingBottom
+            val params = indicator.layoutParams as FrameLayout.LayoutParams
+            if (params.width != cellWidth || params.height != innerHeight) {
+                params.width = cellWidth
+                params.height = innerHeight
+                indicator.layoutParams = params
+            }
+            val target = selectedIndex * cellWidth.toFloat()
+            if (animate) {
+                AnimationSystem.spring(
+                    indicator,
+                    androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X,
+                    target,
+                    AnimationSystem.MENU_MORPH
+                )
+            } else {
+                indicator.translationX = target
+            }
+        }
+    }
 
     /**
      * Viên chọn của thanh chọn phân đoạn kiểu iOS 26 (tab bar trong video tham chiếu).

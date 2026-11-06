@@ -525,109 +525,28 @@ class BrowserToolsController(
         row.addView(stateText)
         group.addView(row)
 
-        // Track + moving indicator: the selected capsule slides between options
-        // like the segmented control shown in the reference video. The indicator
-        // stays inset from every edge, so its spring motion cannot be clipped.
+        // Thanh chọn phân đoạn dùng chung của app (viền kính chung, viên kính trượt): xem GlassSystem.SegmentedControl.
         val choices = listOf(
             "Hỏi lại" to PermissionState.ASK,
             "Cho phép" to PermissionState.ALLOW,
             "Chặn" to PermissionState.DENY
         )
-        var selectedState = initialState
-        var indicatorWidth = 0
-
-        val track = FrameLayout(activity).apply {
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            clipChildren = false
-            clipToPadding = false
-            background = GlassSystem.createSegmentedTrack(24, density, isNight)
+        val control = GlassSystem.SegmentedControl(
+            context = activity,
+            density = density,
+            isNight = isNight,
+            labels = choices.map { it.first },
+            initialIndex = choices.indexOfFirst { it.second == initialState },
+            selectedColor = accent,
+            normalColor = muted,
+            trackFill = GlassSystem.createSegmentedTrack(24, density, isNight)
+        ) { index ->
+            val state = choices[index].second
+            onChange(state)
+            stateText.text = permissionLabel(state)
+            toast("Đã cập nhật quyền: $label")
         }
-        val thumb = GlassSystem.SegmentedGlassThumb(activity, density, isNight)
-        val indicator = thumb.view
-        track.addView(
-            indicator,
-            FrameLayout.LayoutParams(0, dp(40), Gravity.TOP or Gravity.START)
-        )
-
-        val optionRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            clipChildren = false
-            clipToPadding = false
-            elevation = dp(3).toFloat()
-        }
-        val optionViews = mutableListOf<Pair<TextView, PermissionState>>()
-
-        fun selectedIndex(): Int = choices.indexOfFirst { it.second == selectedState }.coerceAtLeast(0)
-
-        fun updateIndicator(animate: Boolean) {
-            val available = track.width - track.paddingLeft - track.paddingRight
-            if (available <= 0) return
-            indicatorWidth = available / choices.size
-            val params = indicator.layoutParams as FrameLayout.LayoutParams
-            if (params.width != indicatorWidth || params.height != track.height - track.paddingTop - track.paddingBottom) {
-                params.width = indicatorWidth
-                params.height = track.height - track.paddingTop - track.paddingBottom
-                indicator.layoutParams = params
-            }
-            val target = selectedIndex() * indicatorWidth.toFloat()
-            if (animate) {
-                AnimationSystem.spring(
-                    indicator,
-                    DynamicAnimation.TRANSLATION_X,
-                    target,
-                    AnimationSystem.MENU_MORPH
-                )
-            } else {
-                indicator.translationX = target
-            }
-        }
-
-        choices.forEach { (title, state) ->
-            val option = TextView(activity).apply {
-                text = title
-                textSize = 12f
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                gravity = Gravity.CENTER
-                minHeight = dp(40)
-                setPadding(dp(3), 0, dp(3), 0)
-                isSingleLine = true
-                includeFontPadding = false
-            }
-            optionViews += option to state
-            optionRow.addView(option, LinearLayout.LayoutParams(0, dp(40), 1f))
-        }
-        track.addView(optionRow, FrameLayout.LayoutParams(-1, -1))
-        optionViews.forEach { (view, state) ->
-            view.setTextColor(if (state == selectedState) accent else muted)
-        }
-        track.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            updateIndicator(animate = false)
-        }
-        fun refreshOptions(hover: Int = -1) {
-            optionViews.forEachIndexed { index, (view, state) ->
-                val active = if (hover >= 0) index == hover else state == selectedState
-                view.setTextColor(if (active) accent else muted)
-                AnimationSystem.scaleTo(view, if (hover == index) 1.12f else 1f, spec = AnimationSystem.MENU_POP)
-            }
-        }
-        thumb.attach(
-            track, choices.size,
-            currentIndex = { selectedIndex() },
-            onHover = { refreshOptions(it) },
-            onRelease = { index ->
-                val state = choices[index].second
-                if (selectedState != state) {
-                    selectedState = state
-                    onChange(state)
-                    stateText.text = permissionLabel(state)
-                    toast("Đã cập nhật quyền: $label")
-                }
-                refreshOptions()
-                updateIndicator(animate = true)
-            }
-        )
-        group.addView(track, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
+        group.addView(control.view, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
         group.clipChildren = false
         group.clipToPadding = false
         parent.clipChildren = false

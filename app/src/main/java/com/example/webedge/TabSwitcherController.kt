@@ -127,36 +127,36 @@ class TabSwitcherController(
         return button
     }
 
-    private fun createGlassPill(text: String): FrameLayout {
-        val frame = FrameLayout(activity).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = dp(24).toFloat()
-                setColor(Color.argb(118, 255, 255, 255))
-                setStroke(dp(1), Color.argb(100, 130, 130, 140))
-            }
-            clipChildren = false
-            clipToPadding = false
-        }
-        frame.addView(GlassSystem.createBlurView(
-            activity, blurTarget, GlassSystem.Preset.TABS_BUTTON,
-            activity.resources.displayMetrics.density, false, rim = false
+    /**
+     * Viên thuốc đáy dạng segmented: ô trái "N tab", ô phải "Riêng tư". Nền mờ thật (BlurView) lót dưới,
+     * viền và viên kính trượt do [GlassSystem.SegmentedControl] lo để giống mọi thanh phân đoạn khác.
+     * [onModeChange] nhận true khi chọn "Riêng tư".
+     */
+    private fun createModePill(onModeChange: (Boolean) -> Unit): FrameLayout {
+        val density = activity.resources.displayMetrics.density
+        val backdrop = GlassSystem.createBlurView(
+            activity, blurTarget, GlassSystem.Preset.TABS_BUTTON, density, false, rim = false
         ).apply {
             isClickable = false
             isFocusable = false
-            // Leave a one-dp inset so the pill's glass outline is not covered.
-        }, FrameLayout.LayoutParams(-1, -1).apply {
-            setMargins(dp(1), dp(1), dp(1), dp(1))
-        })
-        frame.addView(TextView(activity).apply {
-            this.text = text
-            countLabel = this
-            textSize = 16f
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            setTextColor(Color.BLACK)
-            gravity = Gravity.CENTER
-            setPadding(dp(14), dp(7), dp(14), dp(7))
-        }, FrameLayout.LayoutParams(-1, -1))
-        return frame
+        }
+        val control = GlassSystem.SegmentedControl(
+            context = activity,
+            density = density,
+            isNight = false,
+            labels = listOf("${tabManager.count()} tab", "Riêng tư"),
+            initialIndex = 0,
+            selectedColor = Color.BLACK,
+            normalColor = Color.argb(150, 60, 60, 67),
+            trackFill = GradientDrawable().apply {
+                cornerRadius = dp(24).toFloat()
+                setColor(Color.argb(118, 255, 255, 255))
+            },
+            backdrop = backdrop,
+            textSizeSp = 15f
+        ) { index -> onModeChange(index == 1) }
+        countLabel = control.options[0]
+        return control.view
     }
 
     /** [origin] là nút Tab: bảng tab bung ra từ nút này và thu ngược về đúng nút khi đóng. */
@@ -274,12 +274,13 @@ class TabSwitcherController(
             setPadding(dp(6), dp(4), dp(6), dp(6))
         }
         val heading = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        heading.addView(TextView(activity).apply {
+        val titleView = TextView(activity).apply {
             text = "Tab đang mở"
             textSize = 19f
             setTypeface(null, android.graphics.Typeface.BOLD)
             setTextColor(Color.BLACK)
-        })
+        }
+        heading.addView(titleView)
         header.addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(header)
 
@@ -511,7 +512,10 @@ class TabSwitcherController(
             setMargins(dp(4), 0, dp(8), 0)
         })
 
-        val countPill = createGlassPill("${tabManager.count()} tab")
+        // Bước 1: mới chỉ đổi giao diện (tiêu đề); danh sách tab chưa tách riêng tư.
+        val countPill = createModePill { isPrivate ->
+            titleView.text = if (isPrivate) "Tab riêng tư" else "Tab đang mở"
+        }
         bottomBar.addView(countPill, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
             setMargins(dp(8), 0, dp(8), 0)
         })
