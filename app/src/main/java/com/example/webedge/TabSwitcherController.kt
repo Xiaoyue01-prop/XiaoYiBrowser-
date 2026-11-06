@@ -23,6 +23,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import eightbitlab.com.blurview.BlurTarget
+import eightbitlab.com.blurview.BlurView
 
 /** UI đa tab tách riêng khỏi Activity để MainActivity tập trung điều phối trình duyệt. */
 // Dùng chung overlay/tint mặc định của GlassSystem; không giảm alpha riêng cho MenuTabs.
