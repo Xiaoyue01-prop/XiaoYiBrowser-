@@ -264,7 +264,7 @@ class TabSwitcherController(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(
                     if (isNight()) Color.argb(88, 18, 19, 24) else Color.argb(TAB_TOP_FADE, 249, 243, 248),
-                    Color.argb(0, 249, 243, 248)
+                    if (isNight()) Color.argb(0, 18, 19, 24) else Color.argb(0, 249, 243, 248)
                 )
             )
             isClickable = false
@@ -582,7 +582,7 @@ class TabSwitcherController(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(
                     if (dark) Color.argb(88, 18, 19, 24) else Color.argb(TAB_TOP_FADE, 249, 243, 248),
-                    Color.argb(0, 249, 243, 248)
+                    if (dark) Color.argb(0, 18, 19, 24) else Color.argb(0, 249, 243, 248)
                 )
             )
             titleView.setTextColor(if (dark) Color.WHITE else Color.rgb(18, 18, 20))

@@ -173,6 +173,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         pageBackgrounds[owner] = PageBackgroundState(color)
         if (owner === web && !isActivityDestroyed) {
             GlassSystem.setPageBackground(color, window.decorView)
+            refreshTopFadePalette()
         }
     }
 
@@ -577,9 +578,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     /** Dải mờ dần dưới thanh trạng thái và trên thanh địa chỉ. */
     private fun createFades() {
         // Lớp mờ dần dưới thanh trạng thái (khi trang không có thanh menu cố định)
-        val fadeStart = Theme.fadeStart(isNight)
-        val fadeEnd = Theme.fadeEnd(isNight)
-        fadeDrawable = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(fadeStart, fadeEnd))
+        // Status-bar fade follows the active webpage tone, not Android's system theme.
+        val pageIsDark = GlassSystem.isDarkPage()
+        fadeDrawable = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Theme.fadeStart(pageIsDark), Theme.fadeEnd(pageIsDark))
+        )
         topFade = View(this)
         topFade.background = fadeDrawable
 
@@ -1210,6 +1214,13 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     // Dải thanh trạng thái: tràn viền thì dùng lớp mờ (hoặc màu thanh menu của trang nếu có),
     // không tràn viền thì luôn là màu đặc theo mép trên của trang
+    private fun refreshTopFadePalette() {
+        if (!::fadeDrawable.isInitialized) return
+        val dark = GlassSystem.isDarkPage()
+        fadeDrawable.colors = intArrayOf(Theme.fadeStart(dark), Theme.fadeEnd(dark))
+        if (::topFade.isInitialized) updateTopFade()
+    }
+
     private fun updateTopFade() {
         val lp = topFade.layoutParams as FrameLayout.LayoutParams
         val c = solidTop
@@ -1217,7 +1228,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (store.edgeMode && c == null) {
             topFade.background = fadeDrawable
             lp.height = insetTop + dp(16)
-            lightBar = !isNight
+            lightBar = !GlassSystem.isDarkPage()
         } else {
             val col = c ?: pageBg
             topFade.setBackgroundColor(col)
@@ -1600,6 +1611,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         // Apply the selected tab's page material independently from its status-bar/header color.
         GlassSystem.setPageBackground(pageBackgrounds[target]?.color, window.decorView)
+        refreshTopFadePalette()
         // Dải thanh trạng thái theo tab mới ngay lúc đổi, rồi nhờ script báo lại để chắc chắn (script
         // chỉ báo khi giá trị đổi, còn báo cáo lúc tab chạy nền đã bị bỏ qua).
         solidTop = topColors[target]?.color
