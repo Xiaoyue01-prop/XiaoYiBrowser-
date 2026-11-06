@@ -896,45 +896,6 @@ window.__edgePageBgRun = function(){ runPageBackground(); };
 // Đổi tab: native đã bỏ qua báo cáo màu lúc trang này chạy nền, nên xoá bộ nhớ 'last' để báo lại.
 window.__edgeForceTop = function(){ last = ''; run(); };
 window.__edgeLift = function(){ runLift(); };
-// Chẩn đoán bố cục: gom thông tin các khối fixed/sticky và chuỗi cha của video rồi chép vào clipboard.
-window.__edgeDump = function(){
-  var out = [], I = window.__edgeInset || 0;
-  function d(el){
-    var cs = getComputedStyle(el), r = el.getBoundingClientRect();
-    var cls = (typeof el.className === 'string' && el.className) ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
-    return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + cls + ' pos=' + cs.position + ' top=' + cs.top +
-      ' z=' + cs.zIndex + ' rect=' + Math.round(r.left) + ',' + Math.round(r.top) + ',' + Math.round(r.width) + 'x' + Math.round(r.height) +
-      (el.getAttribute('data-edge-shift') ? ' [shifted]' : '');
-  }
-  out.push('url=' + location.href + ' inset=' + I + ' mode=' + window.__edgeMode + ' scrollY=' + Math.round(window.scrollY) + ' inner=' + innerWidth + 'x' + innerHeight);
-  var hd = null;
-  try { hd = findHeader(I); } catch (e) {}
-  out.push('header=' + (hd ? d(hd.el) : 'none') + (hd ? ' hdflag=' + hd.el.getAttribute('data-edge-hd') : ''));
-  out.push('hdbg=' + (window.__edgeHdBg ? d(window.__edgeHdBg) : 'none'));
-  if (hd) {
-    var pp = hd.el.parentElement, lv = 0;
-    while (pp && pp !== document.body && lv < 3) {
-      out.push('header parent L' + lv + ': ' + d(pp));
-      for (var ci = 0; ci < pp.children.length && ci < 12; ci++) out.push('    child ' + d(pp.children[ci]));
-      pp = pp.parentElement; lv++;
-    }
-  }
-  var v = document.querySelector('video');
-  if (v) {
-    out.push('video chain:');
-    var n0 = 0;
-    for (var e = v; e && e !== document.documentElement && n0 < 12; e = e.parentElement, n0++) out.push('  ' + d(e));
-  }
-  var all = document.querySelectorAll('body *'), n = 0;
-  for (var i = 0; i < all.length && n < 30; i++) {
-    var cs2 = getComputedStyle(all[i]);
-    if ((cs2.position === 'fixed' || cs2.position === 'sticky') && cs2.display !== 'none') {
-      var r2 = all[i].getBoundingClientRect();
-      if (r2.width > 0 && r2.height > 0 && r2.top < innerHeight * 0.5) { out.push('FIX ' + d(all[i])); n++; }
-    }
-  }
-  try { EdgeBridge.copyDebug(out.join('\n')); } catch (e) {}
-};
 window.addEventListener('scroll', function(){
   sched();
   schedPageBackground();

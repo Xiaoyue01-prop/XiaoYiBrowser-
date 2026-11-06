@@ -873,9 +873,6 @@ class MenuController(
             host.web.reload()
             showSettings()
         }
-        addRow("Chẩn đoán bố cục trang", "Sao chép", fg) {
-            host.web.evaluateJavascript("window.__edgeDump&&window.__edgeDump()", null)
-        }
         addRow("Chặn quảng cáo", onOff(store.adBlockEnabled), fg) {
             store.adBlockEnabled = !store.adBlockEnabled
             host.web.reload()

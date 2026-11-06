@@ -77,18 +77,6 @@ internal class BrowserJavascriptBridge(
         dispatch { host, owner -> host.onBridgeLongPress(owner, safeLink, safeImage) }
     }
 
-    /** Chép thông tin chẩn đoán bố cục (do __edgeDump tạo) vào clipboard để gửi lại cho người phát triển. */
-    @JavascriptInterface
-    fun copyDebug(text: String?) {
-        val owner = ownerRef.get() ?: return
-        val value = text.orEmpty().take(8000)
-        owner.post {
-            val cm = owner.context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-            cm?.setPrimaryClip(android.content.ClipData.newPlainText("layout-debug", value))
-            android.widget.Toast.makeText(owner.context, "Đã chép thông tin bố cục", android.widget.Toast.LENGTH_SHORT).show()
-        }
-    }
-
     @JavascriptInterface
     fun clearTopColor() {
         dispatch { host, owner -> host.onBridgeTopColor(owner, null) }
