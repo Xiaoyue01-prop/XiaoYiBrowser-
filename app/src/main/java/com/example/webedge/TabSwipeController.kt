@@ -185,7 +185,7 @@ class TabSwipeController(
     private fun begin(dx: Float): Boolean {
         val web = webProvider() ?: return false
         if (current != null || web.parent !== host || web.width <= 0 || web.height <= 0) return false
-        val tabs = tabManager.getAll()
+        val tabs = tabManager.getCurrentTabs()
         val activeIndex = tabs.indexOfFirst { it.isActive }
         if (activeIndex < 0) return false
         val sgn = if (dx < 0f) -1f else 1f

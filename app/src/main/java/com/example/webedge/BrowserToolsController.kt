@@ -34,6 +34,9 @@ class BrowserToolsController(
     private val store: Store,
     private val webView: () -> WebView,
     private val currentUrl: () -> String,
+    private val cookieManager: () -> CookieManager,
+    private val webStorage: () -> WebStorage,
+    private val isPrivateMode: () -> Boolean,
     private val density: Float,
     private val isNight: Boolean,
     private val foreground: Int,
@@ -389,6 +392,7 @@ class BrowserToolsController(
         body.addView(filterCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
 
         addSectionTitle(body, "Quyền của website hiện tại")
+        val privateSession = isPrivateMode()
         val origin = originFrom(currentUrl())
         if (origin == null) {
             val noSite = card()
@@ -401,17 +405,24 @@ class BrowserToolsController(
                 text("Cài đặt bên dưới áp dụng cho origin hiện tại. Quyền hệ thống Android vẫn được kiểm tra riêng.", 11f, muted)
                     .apply { setPadding(0, dp(4), 0, dp(8)) }
             )
-            addPermissionControl(currentCard, "Camera và microphone", store.getMediaPermission(origin)) {
-                store.setMediaPermission(origin, it)
-            }
-            addPermissionControl(currentCard, "Vị trí", store.getGeoPermission(origin)) {
-                store.setGeoPermission(origin, it)
+            if (privateSession) {
+                currentCard.addView(
+                    text("Trong phiên riêng tư, quyền camera, microphone và vị trí luôn được hỏi lại; lựa chọn không được lưu.", 12f, muted)
+                        .apply { setPadding(0, dp(4), 0, dp(4)) }
+                )
+            } else {
+                addPermissionControl(currentCard, "Camera và microphone", store.getMediaPermission(origin)) {
+                    store.setMediaPermission(origin, it)
+                }
+                addPermissionControl(currentCard, "Vị trí", store.getGeoPermission(origin)) {
+                    store.setGeoPermission(origin, it)
+                }
             }
             body.addView(currentCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         }
 
         addSectionTitle(body, "Quyền đã lưu cho website khác")
-        val otherPermissions = store.sitePermissionEntries().filter { it.origin != origin }
+        val otherPermissions = if (privateSession) emptyList() else store.sitePermissionEntries().filter { it.origin != origin }
         if (otherPermissions.isEmpty()) {
             val empty = card()
             empty.addView(text("Chưa có quyền nào được lưu cho website khác.", 12f, muted))
@@ -461,7 +472,7 @@ class BrowserToolsController(
                     message = "Dữ liệu Web Storage của ${displayOrigin(site)} sẽ bị xóa. Cookie không bị xóa bởi thao tác này.",
                     positive = "Xóa"
                 ) {
-                    runCatching { WebStorage.getInstance().deleteOrigin(site) }
+                    runCatching { webStorage().deleteOrigin(site) }
                     toast("Đã xóa dữ liệu Web Storage của website")
                 }
             }
@@ -471,18 +482,19 @@ class BrowserToolsController(
         }
         dataCard.addView(divider, LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(12); bottomMargin = dp(10) })
         dataCard.addView(text("Cookie và cache", 13f, foreground, true))
-        dataCard.addView(text("Cookie và cache là dữ liệu dùng chung giữa các website trong WebView.", 11f, muted)
+        dataCard.addView(text("Cookie và dữ liệu lưu trữ đi theo profile đang dùng; phiên riêng tư không chia sẻ với tab thường.", 11f, muted)
             .apply { setPadding(0, dp(4), 0, dp(8)) })
         val globalActions = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         globalActions.addView(actionButton("Xóa cookie", Theme.DANGER_RED) {
             sheet.confirm(
                 title = "Xóa tất cả cookie?",
-                message = "Thao tác này đăng xuất các website và áp dụng cho mọi website trong Summit.",
+                message = if (isPrivateMode()) "Thao tác này xóa cookie của toàn bộ website trong phiên riêng tư hiện tại." else "Thao tác này đăng xuất các website trong profile thông thường của Summit.",
                 positive = "Xóa cookie"
             ) {
-                CookieManager.getInstance().removeAllCookies {
-                    CookieManager.getInstance().flush()
-                    toast("Đã xóa cookie của Summit")
+                val manager = cookieManager()
+                manager.removeAllCookies {
+                    manager.flush()
+                    toast(if (isPrivateMode()) "Đã xóa cookie của phiên riêng tư" else "Đã xóa cookie của Summit")
                 }
             }
         }, LinearLayout.LayoutParams(0, dp(38), 1f).apply { marginEnd = dp(8) })

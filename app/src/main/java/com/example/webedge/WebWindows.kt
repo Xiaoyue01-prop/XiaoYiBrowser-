@@ -135,11 +135,18 @@ class PopupWindowController(
     private val activity: Activity,
     private val dp: (Int) -> Int,
     private val mainWebView: () -> WebView,
-    private val chromeClient: () -> WebChromeClient,
+    private val chromeClient: (source: WebView) -> WebChromeClient,
     private val openExternal: (String, WebView) -> Boolean,
     private val toast: (String) -> Unit,
     /** Theo giao diện của app; null thì theo chế độ tối của hệ thống. */
-    private val isNight: (() -> Boolean)? = null
+    private val isNight: (() -> Boolean)? = null,
+    /** Applies the source tab's profile before the popup WebView is configured or navigated. */
+    private val configureWebViewForSource: (popup: WebView, source: WebView) -> Unit = { popup, _ ->
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+            setAcceptThirdPartyCookies(popup, true)
+        }
+    }
 ) {
     var webView: WebView? = null
         private set
@@ -151,22 +158,21 @@ class PopupWindowController(
     val isShowing: Boolean get() = dialog?.isShowing == true
 
     @SuppressLint("ClickableViewAccessibility")
-    fun create(resultMsg: Message?): Boolean {
+    fun create(resultMsg: Message?, sourceView: WebView? = null): Boolean {
         if (webView != null) return false
         val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+        val source = sourceView ?: mainWebView()
         val popup = WebView(activity)
-        val mainSettings = mainWebView().settings
+        // Profile must be selected before reading settings, attaching clients or navigating.
+        configureWebViewForSource(popup, source)
+        val mainSettings = source.settings
         popup.settings.applyBrowserDefaults()
         popup.settings.apply {
             userAgentString = mainSettings.userAgentString
             useWideViewPort = mainSettings.useWideViewPort
             loadWithOverviewMode = mainSettings.loadWithOverviewMode
         }
-        CookieManager.getInstance().apply {
-            setAcceptCookie(true)
-            setAcceptThirdPartyCookies(popup, true)
-        }
-        popup.webChromeClient = chromeClient()
+        popup.webChromeClient = chromeClient(source)
 
         // --- Màu theo giao diện ---
         val night = isNight?.invoke()

@@ -18,6 +18,7 @@ class WebPermissionController(
 ) {
     private var pendingRequest: PermissionRequest? = null
     private var pendingResources: Array<String> = emptyArray()
+    private var pendingMediaIsPrivate: Boolean = false
     private var pendingGeoOrigin: String? = null
     private var pendingGeoCallback: GeolocationPermissions.Callback? = null
 
@@ -35,7 +36,7 @@ class WebPermissionController(
     private fun originKey(origin: Uri): String =
         "${origin.scheme}://${origin.host}${if (origin.port != -1) ":${origin.port}" else ""}"
 
-    fun requestMedia(request: PermissionRequest) {
+    fun requestMedia(request: PermissionRequest, isPrivate: Boolean = false) {
         if (isActivityDestroyed()) { request.deny(); return }
         val supported = request.resources.filter {
             it == PermissionRequest.RESOURCE_VIDEO_CAPTURE || it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
@@ -45,10 +46,12 @@ class WebPermissionController(
         pendingRequest?.let { previous -> if (previous !== request) previous.deny() }
         pendingRequest = request
         pendingResources = supported
+        pendingMediaIsPrivate = isPrivate
         if (isPopupShowing()) { denyPending(); return }
 
         val origin = originKey(request.origin)
-        when (store.getMediaPermission(origin)) {
+        val savedPermission = if (pendingMediaIsPrivate) PermissionState.ASK else store.getMediaPermission(origin)
+        when (savedPermission) {
             PermissionState.ALLOW -> ensureRuntimeAndGrantMedia()
             PermissionState.DENY  -> denyPending()
             PermissionState.ASK   -> askMedia(origin)
@@ -71,10 +74,10 @@ class WebPermissionController(
             onNeutral = { ensureRuntimeAndGrantMedia() }
         ) { allowed, _ ->
             if (!allowed) {
-                store.setMediaPermission(origin, PermissionState.DENY)
+                if (!pendingMediaIsPrivate) store.setMediaPermission(origin, PermissionState.DENY)
                 denyPending()
             } else {
-                store.setMediaPermission(origin, PermissionState.ALLOW)
+                if (!pendingMediaIsPrivate) store.setMediaPermission(origin, PermissionState.ALLOW)
                 ensureRuntimeAndGrantMedia()
             }
         }
@@ -90,7 +93,7 @@ class WebPermissionController(
     private fun finishMediaRequest() {
         val request = pendingRequest ?: return
         val resources = pendingResources
-        pendingRequest = null; pendingResources = emptyArray()
+        pendingRequest = null; pendingResources = emptyArray(); pendingMediaIsPrivate = false
         val allowed = resources.filter {
             when (it) {
                 PermissionRequest.RESOURCE_VIDEO_CAPTURE -> hasRuntimePermission(Manifest.permission.CAMERA)
@@ -103,16 +106,17 @@ class WebPermissionController(
 
     private fun denyPending() {
         val request = pendingRequest ?: return
-        pendingRequest = null; pendingResources = emptyArray()
+        pendingRequest = null; pendingResources = emptyArray(); pendingMediaIsPrivate = false
         runCatching { request.deny() }
     }
 
-    fun requestGeolocation(origin: String, callback: GeolocationPermissions.Callback) {
+    fun requestGeolocation(origin: String, callback: GeolocationPermissions.Callback, isPrivate: Boolean = false) {
         if (isActivityDestroyed()) { callback.invoke(origin, false, false); return }
         if (isPopupShowing()) { callback.invoke(origin, false, false); return }
         val host = runCatching { Uri.parse(origin).host }.getOrNull() ?: origin
 
-        when (store.getGeoPermission(origin)) {
+        val savedPermission = if (isPrivate) PermissionState.ASK else store.getGeoPermission(origin)
+        when (savedPermission) {
             PermissionState.ALLOW -> {
                 pendingGeoOrigin = origin; pendingGeoCallback = callback; ensureRuntimeAndGrantGeo()
             }
@@ -128,10 +132,10 @@ class WebPermissionController(
                     }
                 ) { allowed, _ ->
                     if (!allowed) {
-                        store.setGeoPermission(origin, PermissionState.DENY)
+                        if (!isPrivate) store.setGeoPermission(origin, PermissionState.DENY)
                         callback.invoke(origin, false, false)
                     } else {
-                        store.setGeoPermission(origin, PermissionState.ALLOW)
+                        if (!isPrivate) store.setGeoPermission(origin, PermissionState.ALLOW)
                         pendingGeoOrigin = origin; pendingGeoCallback = callback; ensureRuntimeAndGrantGeo()
                     }
                 }

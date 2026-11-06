@@ -48,7 +48,8 @@ class TabSwitcherController(
     private val onCreateTab: () -> Unit,
     private val shortUrl: (String) -> String,
     private val onOverlayOpened: () -> Unit = {},
-    private val onOverlayClosed: () -> Unit = {}
+    private val onOverlayClosed: () -> Unit = {},
+    private val onModeChange: (Boolean) -> Boolean = { false }
 ) {
     // TextView hiển thị "N tab"; cập nhật khi đóng tab mà không dựng lại bảng.
     private var countLabel: TextView? = null
@@ -132,7 +133,7 @@ class TabSwitcherController(
      * viền và viên kính trượt do [GlassSystem.SegmentedControl] lo để giống mọi thanh phân đoạn khác.
      * [onModeChange] nhận true khi chọn "Riêng tư".
      */
-    private fun createModePill(onModeChange: (Boolean) -> Unit): FrameLayout {
+    private fun createModePill(onModeChange: (Boolean) -> Boolean): FrameLayout {
         val density = activity.resources.displayMetrics.density
         val backdrop = GlassSystem.createBlurView(
             activity, blurTarget, GlassSystem.Preset.TABS_BUTTON, density, false, rim = false
@@ -140,12 +141,13 @@ class TabSwitcherController(
             isClickable = false
             isFocusable = false
         }
-        val control = GlassSystem.SegmentedControl(
+        lateinit var control: GlassSystem.SegmentedControl
+        control = GlassSystem.SegmentedControl(
             context = activity,
             density = density,
             isNight = false,
             labels = listOf("${tabManager.count()} tab", "Riêng tư"),
-            initialIndex = 0,
+            initialIndex = if (tabManager.isPrivateMode) 1 else 0,
             selectedColor = Color.BLACK,
             normalColor = Color.argb(150, 60, 60, 67),
             trackFill = GradientDrawable().apply {
@@ -154,7 +156,12 @@ class TabSwitcherController(
             },
             backdrop = backdrop,
             textSizeSp = 15f
-        ) { index -> onModeChange(index == 1) }
+        ) { index ->
+            val requestedPrivate = index == 1
+            if (!onModeChange(requestedPrivate)) {
+                control.select(if (requestedPrivate) 0 else 1)
+            }
+        }
         countLabel = control.options[0]
         return control.view
     }
@@ -275,7 +282,7 @@ class TabSwitcherController(
         }
         val heading = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val titleView = TextView(activity).apply {
-            text = "Tab đang mở"
+            text = if (tabManager.isPrivateMode) "Tab riêng tư" else "Tab đang mở"
             textSize = 19f
             setTypeface(null, android.graphics.Typeface.BOLD)
             setTextColor(Color.BLACK)
@@ -311,9 +318,6 @@ class TabSwitcherController(
         }
         columns.addView(leftColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         columns.addView(rightColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        var leftHeight = 0
-        var rightHeight = 0
-        var cardIndex = 0
         // Chiều cao xem trước xoay vòng để lưới hai cột so le kiểu Safari (cỡ gọn như bản cũ).
         val previewHeights = intArrayOf(174, 214, 188, 156, 226, 180)
         val cardViews = HashMap<Long, LinearLayout>()
@@ -322,7 +326,7 @@ class TabSwitcherController(
 
         // Cập nhật viền tab đang chọn, nút × và số tab sau khi đóng một tab.
         fun refreshCards() {
-            for (t in tabManager.getAll()) {
+            for (t in tabManager.getCurrentTabs()) {
                 (cardViews[t.id]?.background as? GradientDrawable)?.setStroke(
                     dp(if (t.isActive) 2 else 1),
                     if (t.isActive) accentColor else Color.argb(145, 195, 195, 205)
@@ -336,9 +340,19 @@ class TabSwitcherController(
             val card = cardViews[tab.id] ?: return
             if (!closingIds.add(tab.id)) return
             if (tabManager.count() <= 1) {
-                // Giống Safari: đóng tab cuối cùng thì mở một tab mới rồi thoát bảng tab.
-                onCreateTab()
-                onCloseTab(tab)
+                if (tab.isPrivate) {
+                    // Đóng private tab cuối cùng sẽ kết thúc phiên và quay về nhóm tab thường.
+                    onCloseTab(tab)
+                    card.postDelayed({
+                        tab.thumbnail?.takeUnless { it.isRecycled }?.recycle()
+                        tab.thumbnail = null
+                        tab.thumbnailUrl = null
+                    }, 450L)
+                } else {
+                    // Giống Safari: tab thường cuối cùng được thay bằng một tab mới.
+                    onCreateTab()
+                    onCloseTab(tab)
+                }
                 dismissAnimated()
                 return
             }
@@ -361,129 +375,141 @@ class TabSwitcherController(
             }
         }
 
-        for (tab in tabManager.getAll()) {
-            val thisIndex = cardIndex++
-            val previewHeight = previewHeights[thisIndex % previewHeights.size]
-            val card = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(6), dp(6), dp(6), dp(9))
-                clipChildren = false
-                clipToPadding = false
-                elevation = dp(2).toFloat()
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = dp(22).toFloat()
-                    setColor(Color.argb(154, 255, 255, 255))
-                    setStroke(
-                        dp(if (tab.isActive) 2 else 1),
-                        if (tab.isActive) accentColor else Color.argb(145, 195, 195, 205)
+        lateinit var renderCards: () -> Unit
+        renderCards = {
+            cardViews.clear()
+            closeViews.clear()
+            closingIds.clear()
+            leftColumn.removeAllViews()
+            rightColumn.removeAllViews()
+            var leftHeight = 0
+            var rightHeight = 0
+            var cardIndex = 0
+            for (tab in tabManager.getCurrentTabs()) {
+                val thisIndex = cardIndex++
+                val previewHeight = previewHeights[thisIndex % previewHeights.size]
+                val card = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(6), dp(6), dp(6), dp(9))
+                    clipChildren = false
+                    clipToPadding = false
+                    elevation = dp(2).toFloat()
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(22).toFloat()
+                        setColor(Color.argb(154, 255, 255, 255))
+                        setStroke(
+                            dp(if (tab.isActive) 2 else 1),
+                            if (tab.isActive) accentColor else Color.argb(145, 195, 195, 205)
+                        )
+                    }
+                }
+
+                // The rounded thumbnail viewport clips only webpage pixels; Safari-style controls
+                // are siblings above it, so their press animation can expand without being cut off.
+                val preview = FrameLayout(activity).apply {
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(14).toFloat()
+                        setColor(Color.argb(28, 120, 120, 132))
+                    }
+                    clipChildren = false
+                    clipToPadding = false
+                }
+                val previewContent = FrameLayout(activity).apply {
+                    background = GradientDrawable(
+                        GradientDrawable.Orientation.TL_BR,
+                        intArrayOf(Color.rgb(250, 247, 250), Color.rgb(231, 227, 235))
+                    ).apply { cornerRadius = dp(14).toFloat() }
+                    clipToOutline = true
+                }
+                preview.addView(previewContent, FrameLayout.LayoutParams(-1, -1))
+
+                val thumbnail = tab.thumbnail
+                if (thumbnail != null && !thumbnail.isRecycled) {
+                    previewContent.addView(ImageView(activity).apply {
+                        setImageBitmap(thumbnail)
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        setBackgroundColor(Color.TRANSPARENT)
+                    }, FrameLayout.LayoutParams(-1, -1))
+                } else {
+                    val domain = runCatching { Uri.parse(tab.url).host?.removePrefix("www.") ?: "S" }.getOrDefault("S")
+                    val hue = (tab.url.hashCode() and 0xFF) % 360
+                    val saturation = if (isNight) 0.5f else 0.6f
+                    val luminance = if (isNight) 0.6f else 0.45f
+                    val markColor = Color.HSVToColor(floatArrayOf(hue.toFloat(), saturation, luminance))
+                    previewContent.addView(TextView(activity).apply {
+                        text = domain.take(1).uppercase()
+                        textSize = 42f
+                        setTypeface(null, android.graphics.Typeface.BOLD)
+                        setTextColor(markColor)
+                        gravity = Gravity.CENTER
+                    }, FrameLayout.LayoutParams(-1, -1))
+                }
+
+                // Nút đóng kiểu Safari: dấu × đơn giản, không nền tròn; có quầng trắng mờ để đọc được trên mọi ảnh.
+                val close = ImageView(activity).apply {
+                    setImageDrawable(
+                        StrokeGlyph(
+                            StrokeGlyph.Kind.CROSS, Color.rgb(72, 72, 78), dp(2).toFloat(),
+                            Color.argb(170, 255, 255, 255)
+                        )
                     )
+                    setPadding(dp(10), dp(10), dp(10), dp(10))
+                    contentDescription = "Đóng tab"
                 }
-            }
+                preview.addView(close, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.TOP or Gravity.END).apply {
+                    setMargins(0, dp(2), dp(2), 0)
+                })
+                AnimationSystem.attachGlassPress(close)
+                close.setOnClickListener { closeTabAnimated(tab) }
+                closeViews[tab.id] = close
 
-            // The rounded thumbnail viewport clips only webpage pixels; Safari-style controls
-            // are siblings above it, so their press animation can expand without being cut off.
-            val preview = FrameLayout(activity).apply {
-                background = GradientDrawable().apply {
-                    cornerRadius = dp(14).toFloat()
-                    setColor(Color.argb(28, 120, 120, 132))
-                }
-                clipChildren = false
-                clipToPadding = false
-            }
-            val previewContent = FrameLayout(activity).apply {
-                background = GradientDrawable(
-                    GradientDrawable.Orientation.TL_BR,
-                    intArrayOf(Color.rgb(250, 247, 250), Color.rgb(231, 227, 235))
-                ).apply { cornerRadius = dp(14).toFloat() }
-                clipToOutline = true
-            }
-            preview.addView(previewContent, FrameLayout.LayoutParams(-1, -1))
-
-            val thumbnail = tab.thumbnail
-            if (thumbnail != null && !thumbnail.isRecycled) {
-                previewContent.addView(ImageView(activity).apply {
-                    setImageBitmap(thumbnail)
-                    scaleType = ImageView.ScaleType.CENTER_CROP
-                    setBackgroundColor(Color.TRANSPARENT)
-                }, FrameLayout.LayoutParams(-1, -1))
-            } else {
-                val domain = runCatching { Uri.parse(tab.url).host?.removePrefix("www.") ?: "S" }.getOrDefault("S")
-                val hue = (tab.url.hashCode() and 0xFF) % 360
-                val saturation = if (isNight) 0.5f else 0.6f
-                val luminance = if (isNight) 0.6f else 0.45f
-                val markColor = Color.HSVToColor(floatArrayOf(hue.toFloat(), saturation, luminance))
-                previewContent.addView(TextView(activity).apply {
-                    text = domain.take(1).uppercase()
-                    textSize = 42f
+                card.addView(preview, LinearLayout.LayoutParams(-1, dp(previewHeight)))
+                card.addView(TextView(activity).apply {
+                    text = tab.title.ifBlank { tab.url.ifBlank { "Tab mới" } }
+                    textSize = 14f
                     setTypeface(null, android.graphics.Typeface.BOLD)
-                    setTextColor(markColor)
-                    gravity = Gravity.CENTER
-                }, FrameLayout.LayoutParams(-1, -1))
-            }
+                    setTextColor(Color.BLACK)
+                    maxLines = 1
+                    setSingleLine(true)
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(dp(3), dp(9), dp(3), 0)
+                })
+                card.addView(TextView(activity).apply {
+                    text = shortUrl(tab.url).ifBlank { store.homeUrl }
+                    textSize = 12f
+                    setTextColor(Color.rgb(82, 82, 88))
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    maxLines = 1
+                    setSingleLine(true)
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(dp(3), dp(3), dp(3), 0)
+                })
 
-            // Nút đóng kiểu Safari: dấu × đơn giản, không nền tròn; có quầng trắng mờ để đọc được trên mọi ảnh.
-            val close = ImageView(activity).apply {
-                setImageDrawable(
-                    StrokeGlyph(
-                        StrokeGlyph.Kind.CROSS, Color.rgb(72, 72, 78), dp(2).toFloat(),
-                        Color.argb(170, 255, 255, 255)
-                    )
-                )
-                setPadding(dp(10), dp(10), dp(10), dp(10))
-                contentDescription = "Đóng tab"
-            }
-            preview.addView(close, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.TOP or Gravity.END).apply {
-                setMargins(0, dp(2), dp(2), 0)
-            })
-            AnimationSystem.attachGlassPress(close)
-            close.setOnClickListener { closeTabAnimated(tab) }
-            closeViews[tab.id] = close
+                cardViews[tab.id] = card
+                card.setOnClickListener {
+                    if (tab.id in closingIds) return@setOnClickListener
+                    if (!tab.isActive) onActivateTab(tab)
+                    dismissAnimated()
+                }
+                AnimationSystem.press(card, Constants.PRESS_SCALE_CARD)
+                card.alpha = 0f
+                val delay = 35L + (thisIndex * 28L).coerceAtMost(240L)
+                card.postDelayed({ AnimationSystem.enter(card) }, delay)
 
-            card.addView(preview, LinearLayout.LayoutParams(-1, dp(previewHeight)))
-            card.addView(TextView(activity).apply {
-                text = tab.title.ifBlank { tab.url.ifBlank { "Tab mới" } }
-                textSize = 14f
-                setTypeface(null, android.graphics.Typeface.BOLD)
-                setTextColor(Color.BLACK)
-                maxLines = 1
-                setSingleLine(true)
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                setPadding(dp(3), dp(9), dp(3), 0)
-            })
-            card.addView(TextView(activity).apply {
-                text = shortUrl(tab.url).ifBlank { store.homeUrl }
-                textSize = 12f
-                setTextColor(Color.rgb(82, 82, 88))
-                setTypeface(null, android.graphics.Typeface.BOLD)
-                maxLines = 1
-                setSingleLine(true)
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                setPadding(dp(3), dp(3), dp(3), 0)
-            })
-
-            cardViews[tab.id] = card
-            card.setOnClickListener {
-                if (tab.id in closingIds) return@setOnClickListener
-                if (!tab.isActive) onActivateTab(tab)
-                dismissAnimated()
-            }
-            AnimationSystem.press(card, Constants.PRESS_SCALE_CARD)
-            card.alpha = 0f
-            val delay = 35L + (thisIndex * 28L).coerceAtMost(240L)
-            card.postDelayed({ AnimationSystem.enter(card) }, delay)
-
-            val params = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(dp(4), dp(4), dp(4), dp(7))
-            }
-            if (leftHeight <= rightHeight) {
-                leftColumn.addView(card, params)
-                leftHeight += previewHeight + 68
-            } else {
-                rightColumn.addView(card, params)
-                rightHeight += previewHeight + 68
+                val params = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(dp(4), dp(4), dp(4), dp(7))
+                }
+                if (leftHeight <= rightHeight) {
+                    leftColumn.addView(card, params)
+                    leftHeight += previewHeight + 68
+                } else {
+                    rightColumn.addView(card, params)
+                    rightHeight += previewHeight + 68
+                }
             }
         }
+        renderCards()
 
         scroll.addView(columns)
         cardsTarget.addView(scroll, FrameLayout.LayoutParams(-1, -1))
@@ -512,9 +538,15 @@ class TabSwitcherController(
             setMargins(dp(4), 0, dp(8), 0)
         })
 
-        // Bước 1: mới chỉ đổi giao diện (tiêu đề); danh sách tab chưa tách riêng tư.
+        // Đổi chế độ sẽ chuyển WebView sang nhóm tương ứng rồi dựng lại lưới từ danh sách độc lập.
         val countPill = createModePill { isPrivate ->
-            titleView.text = if (isPrivate) "Tab riêng tư" else "Tab đang mở"
+            val changed = onModeChange(isPrivate)
+            if (changed) {
+                titleView.text = if (isPrivate) "Tab riêng tư" else "Tab đang mở"
+                countLabel?.text = "${tabManager.count()} tab"
+                renderCards()
+            }
+            changed
         }
         bottomBar.addView(countPill, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
             setMargins(dp(8), 0, dp(8), 0)

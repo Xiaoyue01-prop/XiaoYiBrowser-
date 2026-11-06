@@ -9,16 +9,16 @@ import android.widget.FrameLayout
 
 /** Owns WebView creation, attachment, eviction and destruction for browser tabs. */
 class TabWebViewLifecycleController(
-    private val createWebView: () -> WebView,
-    private val configureWebView: (WebView) -> Unit,
+    private val createWebView: (TabManager.Tab) -> WebView,
+    private val configureWebView: (WebView, TabManager.Tab) -> Unit,
     private val beforeDestroy: (WebView) -> Unit = {}
 ) {
     /** Returns the live WebView, recreating an evicted tab on demand. */
     fun obtain(tab: TabManager.Tab): WebView {
         tab.webView?.let { return it }
-        return createWebView().also { view ->
-            configureWebView(view)
+        return createWebView(tab).also { view ->
             tab.webView = view
+            configureWebView(view, tab)
         }
     }
 

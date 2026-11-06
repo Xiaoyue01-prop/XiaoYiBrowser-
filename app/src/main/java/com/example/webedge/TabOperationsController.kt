@@ -9,7 +9,8 @@ class TabOperationsController(
     private val activateTab: (TabManager.Tab) -> Unit,
     private val destroyWebView: (WebView) -> Unit,
     private val currentWebView: () -> WebView?,
-    private val showMessage: (String) -> Unit
+    private val showMessage: (String) -> Unit,
+    private val onPrivateSessionEnded: () -> Unit = {}
 ) {
     fun createNewTab(): TabManager.Tab {
         val tab = tabManager.addNew(title = "Tab mới")
@@ -40,6 +41,9 @@ class TabOperationsController(
         if (wasActive) tabManager.getActive()?.let(activateTab)
         removed.webView?.let { view ->
             if (view !== currentWebView()) destroyWebView(view)
+        }
+        if (removed.isPrivate && tabManager.privateCount() == 0) {
+            onPrivateSessionEnded()
         }
         return true
     }

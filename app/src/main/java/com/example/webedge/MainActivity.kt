@@ -24,6 +24,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
+import android.webkit.WebStorage
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import android.webkit.JsPromptResult
@@ -82,6 +83,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private lateinit var reloadBtn: ImageView
     private lateinit var tabBtn: ImageView
     private lateinit var tabManager: TabManager
+    private lateinit var privateProfileManager: PrivateProfileManager
     private lateinit var tabWebViewLifecycle: TabWebViewLifecycleController
     private lateinit var tabPersistence: TabPersistenceController
     private lateinit var tabOperations: TabOperationsController
@@ -134,10 +136,16 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         activity = this,
         dp = ::dp,
         mainWebView = { web },
-        chromeClient = { chromeClient },
+        chromeClient = { sourceWebView ->
+            val sourceIsPrivate = privateProfileManager.isPrivateProfile(sourceWebView)
+            createChromeClient { sourceIsPrivate }
+        },
         openExternal = { url, view -> handleSpecialUrl(url, view) },
         toast = { toast(it) },
-        isNight = { isNight }
+        isNight = { isNight },
+        configureWebViewForSource = { popupWebView, sourceWebView ->
+            privateProfileManager.applyProfileFromSource(popupWebView, sourceWebView)
+        }
     )
 
     private val fileLauncher = registerForActivityResult(
@@ -265,7 +273,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
         override fun onPageFinished(view: WebView, url: String) {
             tabManager.updateForWebView(view, url, view.title ?: url)
-            store.addHistory(view.title ?: "", url)
+            // Private pages never enter the persisted browsing history.
+            if (tabManager.getForWebView(view)?.isPrivate != true) {
+                store.addHistory(view.title ?: "", url)
+            }
             if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
             view.evaluateJavascript(MEDIA_JS, null)
             if (view !== web) return
@@ -290,12 +301,13 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             (view.parent as? ViewGroup)?.removeView(view)
             runCatching { view.destroy() }
             // Android có thể thu hồi renderer của tab nền; tạo lại tab đó khi người dùng quay về.
-            if (!isActivityDestroyed && tab?.isActive == true) activateTab(tab)
+            if (!isActivityDestroyed && tab != null && tab === tabManager.getActive()) activateTab(tab)
             return true
         }
     }
 
-    private val chromeClient: WebChromeClient = object : WebChromeClient() {
+    /** Tạo ChromeClient gắn với profile của WebView nguồn, kể cả popup đăng nhập. */
+    private fun createChromeClient(isPrivateSource: () -> Boolean): WebChromeClient = object : WebChromeClient() {
         override fun onShowCustomView(view: View, callback: CustomViewCallback) {
             fullscreenVideoController?.show(view, callback) ?: callback.onCustomViewHidden()
         }
@@ -306,7 +318,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             exitFullscreenView()
         }
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
-            return popup.create(resultMsg)
+            return popup.create(resultMsg, view)
         }
         override fun onCloseWindow(window: WebView) {
             if (window === popup.webView) popup.close()
@@ -346,10 +358,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             return true
         }
         override fun onPermissionRequest(request: PermissionRequest) {
-            runOnUiThread { webPermissions.requestMedia(request) }
+            runOnUiThread { webPermissions.requestMedia(request, isPrivateSource()) }
         }
         override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
-            runOnUiThread { webPermissions.requestGeolocation(origin, callback) }
+            runOnUiThread { webPermissions.requestGeolocation(origin, callback, isPrivateSource()) }
         }
 
         override fun onProgressChanged(view: WebView, newProgress: Int) {
@@ -401,6 +413,23 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override val insetLeft: Int get() = this@MainActivity.insetLeft
         override val insetRight: Int get() = this@MainActivity.insetRight
         override val imeBottom: Int get() = this@MainActivity.imeBottom
+
+        override fun cookieManagerFor(view: WebView): CookieManager {
+            val isPrivate = tabManager.getForWebView(view)?.isPrivate == true
+            return privateProfileManager.cookieManagerFor(view, isPrivate)
+        }
+
+        override fun webStorageFor(view: WebView): WebStorage =
+            privateProfileManager.webStorageFor(view, tabManager.getForWebView(view)?.isPrivate == true)
+
+        override fun clearAllWebsiteData() {
+            // Normal data uses the default profile; private data is cleared through the
+            // temporary profile even if its WebViews have already been evicted.
+            CookieManager.getInstance().removeAllCookies(null)
+            CookieManager.getInstance().flush()
+            WebStorage.getInstance().deleteAllData()
+            privateProfileManager.clearSessionData()
+        }
 
         override fun toast(msg: String) = this@MainActivity.toast(msg)
         override fun load(input: String) = this@MainActivity.load(input)
@@ -482,6 +511,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         WebMediaHub.jsRunner = { js -> runOnUiThread { if (::web.isInitialized) web.evaluateJavascript(js, null) } }
 
         store = Store(this)
+        privateProfileManager = PrivateProfileManager()
+        // Dọn các profile riêng tư bị bỏ lại nếu Android kill process trước khi onDestroy chạy.
+        privateProfileManager.purgeOrphanedSessions()
         webPermissions = WebPermissionController(
             activity = this,
             store = store,
@@ -498,7 +530,16 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             updateTabBadge()
         }
         tabWebViewLifecycle = TabWebViewLifecycleController(
-            createWebView = { WebView(this) },
+            createWebView = { tab ->
+                WebView(this).also { view ->
+                    try {
+                        privateProfileManager.applyProfile(view, tab)
+                    } catch (error: Exception) {
+                        runCatching { view.destroy() }
+                        throw error
+                    }
+                }
+            },
             configureWebView = ::configureTabWebView,
             beforeDestroy = { view -> if (::pageTransition.isInitialized) pageTransition.forget(view) }
         )
@@ -508,7 +549,13 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             activateTab = ::activateTab,
             destroyWebView = tabWebViewLifecycle::destroy,
             currentWebView = { if (::web.isInitialized) web else null },
-            showMessage = ::toast
+            showMessage = ::toast,
+            onPrivateSessionEnded = {
+                // Popup đăng nhập cũng phải rời profile trước khi xóa profile riêng tư.
+                popup.close(immediate = true)
+                downloadPromptController?.dismissAll()
+                privateProfileManager.endSession()
+            }
         )
         d = resources.displayMetrics.density
         // Summit hiện chỉ phát hành giao diện sáng; không đổi màu theo Dark Mode của hệ thống.
@@ -978,7 +1025,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             },
             onDownloadImage = { imageUrl ->
                 runCatching {
-                    val request = downloads.buildRequest(imageUrl, web.settings.userAgentString, "image", "image/*")
+                    val currentTab = tabManager.getForWebView(web)
+                    val request = downloads.buildRequest(
+                        imageUrl, web.settings.userAgentString, "image", "image/*",
+                        privateProfileManager.cookieHeader(web, currentTab?.isPrivate == true, imageUrl),
+                        useCookieHeader = true
+                    )
                     downloads.enqueue(request)
                     toast("Đang tải hình ảnh")
                 }.onFailure { toast("Không thể tải hình ảnh này") }
@@ -1011,7 +1063,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             onCreateTab = ::createBrowserTab,
             shortUrl = UrlUtils::shortUrl,
             onOverlayOpened = { orbController?.setTemporarilyHidden(true) },
-            onOverlayClosed = { syncOrbMenuVisibility() }
+            onOverlayClosed = { syncOrbMenuVisibility() },
+            onModeChange = ::switchTabMode
         )
         menu.originView = menuBtn
         menu.coverView = urlPillFrame
@@ -1100,7 +1153,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             val linkFromOtherApp = incomingLink(intent)
             if (linkFromOtherApp != null) openLinkInNewTab(linkFromOtherApp) else web.loadUrl(startUrl)
         } else {
-            val restored = runCatching { web.restoreState(savedInstanceState) }.getOrNull()
+            // Never restore WebView history from an Activity bundle into a private session.
+            val isPrivateTab = tabManager.getForWebView(web)?.isPrivate == true
+            val restored = if (isPrivateTab) null else runCatching { web.restoreState(savedInstanceState) }.getOrNull()
             if (restored == null) {
                 val activeTab = tabManager.getActive()
                 val startUrl = activeTab?.url?.ifBlank { store.homeUrl } ?: store.homeUrl
@@ -1461,20 +1516,23 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
     }
 
-    /** Mỗi tab có cấu hình/client riêng nhưng vẫn dùng chung cache và cookie Chromium. */
+    /** Mỗi tab có cấu hình/client riêng; cookie và web storage đi theo profile của tab. */
     @SuppressLint("SetJavaScriptEnabled")
-    private fun configureTabWebView(view: WebView) {
+    private fun configureTabWebView(view: WebView, tab: TabManager.Tab) {
+        // Private WebViews must not participate in Android's automatic view-state snapshots
+        // or expose form values to the platform Autofill service.
+        view.isSaveEnabled = !tab.isPrivate
+        if (tab.isPrivate) {
+            view.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+        }
         view.setBackgroundColor(Color.WHITE)
         val settings = view.settings
         settings.applyBrowserDefaults()
         if (mobileUa.isBlank()) mobileUa = cleanMobileUserAgent(settings.userAgentString)
         applyDesktopMode(view)
-        CookieManager.getInstance().apply {
-            setAcceptCookie(true)
-            setAcceptThirdPartyCookies(view, true)
-        }
+        privateProfileManager.configureCookies(view, tab.isPrivate)
         view.webViewClient = client
-        view.webChromeClient = chromeClient
+        view.webChromeClient = createChromeClient { tab.isPrivate }
         // Chạy script media ở mọi khung (kể cả iframe chứa trình phát) ngay từ đầu tài liệu.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(view, MEDIA_JS, setOf("*"))
@@ -1486,7 +1544,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         view.setDownloadListener { dlUrl, userAgent, contentDisposition, mimetype, _ ->
             try {
-                val request = downloads.buildRequest(dlUrl, userAgent, contentDisposition, mimetype)
+                val request = downloads.buildRequest(
+                    dlUrl, userAgent, contentDisposition, mimetype,
+                    privateProfileManager.cookieHeader(view, tab.isPrivate, dlUrl),
+                    useCookieHeader = true
+                )
                 downloadPromptController?.show(request.fileName) {
                     downloads.enqueue(request)
                 } ?: toast("Summit chưa sẵn sàng để tải xuống")
@@ -1519,6 +1581,23 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             requestMediaState(target)
         }
         tabManager.switchTo(tab.id)
+        // Prevent address/find text from a private session entering Android's saved view hierarchy.
+        if (::urlBar.isInitialized) {
+            urlBar.isSaveEnabled = !tab.isPrivate
+            urlBar.importantForAutofill = if (tab.isPrivate) {
+                View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            } else {
+                View.IMPORTANT_FOR_AUTOFILL_AUTO
+            }
+        }
+        if (::findInput.isInitialized) {
+            findInput.isSaveEnabled = !tab.isPrivate
+            findInput.importantForAutofill = if (tab.isPrivate) {
+                View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            } else {
+                View.IMPORTANT_FOR_AUTOFILL_AUTO
+            }
+        }
         // Apply the selected tab's page material independently from its status-bar/header color.
         GlassSystem.setPageBackground(pageBackgrounds[target]?.color, window.decorView)
         // Dải thanh trạng thái theo tab mới ngay lúc đổi, rồi nhờ script báo lại để chắc chắn (script
@@ -1544,6 +1623,43 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     private fun createBrowserTab() {
         tabOperations.createNewTab()
+    }
+
+    /** Switches MenuTabs between independent tab groups without losing either group's selected tab. */
+    private fun switchTabMode(usePrivate: Boolean): Boolean {
+        if (usePrivate && !privateProfileManager.isSupported) {
+            toast("Android System WebView hiện tại chưa hỗ trợ Private Profile. Hãy cập nhật Android System WebView rồi thử lại.")
+            return false
+        }
+        val previousMode = tabManager.isPrivateMode
+        captureActiveTab()
+        // The address bar and find field are Activity views, not part of a tab profile.
+        // Clear any typed private query before switching back to a persistable normal mode.
+        if (urlBar.hasFocus()) leaveEdit()
+        if (findBarShown) closeFind()
+        hideSuggestions()
+        setUrlText("")
+        val target = tabManager.switchMode(usePrivate) ?: return false
+        return try {
+            activateTab(target)
+            true
+        } catch (error: Exception) {
+            // Fail closed: never leave the UI in a mode that could not obtain its isolated profile.
+            target.webView?.let { view ->
+                target.webView = null
+                tabWebViewLifecycle.destroy(view)
+            }
+            if (usePrivate) {
+                tabManager.close(target.id)
+                if (tabManager.privateCount() == 0) privateProfileManager.endSession()
+            }
+            val rollback = if (tabManager.isPrivateMode != previousMode) {
+                tabManager.switchMode(previousMode)
+            } else tabManager.getActive()
+            rollback?.let { runCatching { activateTab(it) } }
+            toast("Không thể mở chế độ riêng tư với Android System WebView hiện tại.")
+            false
+        }
     }
 
     /** Link http/https do app khác gửi tới (bấm link trong Telegram, Messages...). */
@@ -1641,7 +1757,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onSaveInstanceState(outState: Bundle) {
         if (::web.isInitialized) {
             tabPersistence.saveActiveTabNow(web)
-            web.saveState(outState)
+            if (tabManager.getForWebView(web)?.isPrivate != true) {
+                web.saveState(outState)
+            }
         }
         super.onSaveInstanceState(outState)
     }
@@ -1702,8 +1820,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         orbController = null
 
         // Destroy every tab WebView last, including views detached in the background.
-        // Persistent WebView cache/history is intentionally preserved.
+        // The normal profile remains persistent; the ephemeral private profile is deleted afterward.
         cleanupController.destroyTabWebViews(tabManager, tabWebViewLifecycle)
+        privateProfileManager.endSession()
 
         super.onDestroy()
     }

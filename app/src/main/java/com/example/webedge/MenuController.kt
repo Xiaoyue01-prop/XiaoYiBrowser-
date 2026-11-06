@@ -33,6 +33,10 @@ interface MenuHost {
     val insetRight: Int
     val imeBottom: Int
 
+    fun cookieManagerFor(view: WebView): CookieManager
+    fun webStorageFor(view: WebView): WebStorage
+    fun clearAllWebsiteData()
+
     fun toast(msg: String)
     fun load(input: String)
     fun openFind()
@@ -83,6 +87,9 @@ class MenuController(
             store = store,
             webView = { host.web },
             currentUrl = { host.currentUrl },
+            cookieManager = { host.cookieManagerFor(host.web) },
+            webStorage = { host.webStorageFor(host.web) },
+            isPrivateMode = { tabManager.getForWebView(host.web)?.isPrivate == true },
             density = d,
             isNight = isNight,
             foreground = fg,
@@ -961,8 +968,7 @@ class MenuController(
                     runCatching { tabWeb.clearHistory() }
                     runCatching { tabWeb.clearCache(true) }
                 }
-                CookieManager.getInstance().removeAllCookies(null)
-                WebStorage.getInstance().deleteAllData()
+                host.clearAllWebsiteData()
                 close()
                 host.toast("Đã xóa dữ liệu")
             }

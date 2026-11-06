@@ -474,11 +474,13 @@ class DownloadController(
         url: String,
         userAgent: String?,
         contentDisposition: String?,
-        mimeType: String?
+        mimeType: String?,
+        cookieHeader: String? = null,
+        useCookieHeader: Boolean = false
     ) = Request(
         url = url,
         userAgent = userAgent.orEmpty(),
-        cookie = CookieManager.getInstance().getCookie(url).orEmpty(),
+        cookie = if (useCookieHeader) cookieHeader.orEmpty() else CookieManager.getInstance().getCookie(url).orEmpty(),
         mimeType = mimeType.orEmpty(),
         fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
     )
