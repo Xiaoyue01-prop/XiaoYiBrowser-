@@ -60,11 +60,12 @@ class BrowserBottomSheet(
         if (activity.isFinishing || activity.isDestroyed) return
         dismiss(immediate = true)
 
-        val night = isNight()
+        // Native sheet surfaces follow the active webpage palette, not Android's system theme.
+        val night = GlassSystem.isDarkPage()
         val sheetColor = GlassSystem.pageSurfaceColor()
         val textColor = GlassSystem.pagePrimaryText()
-        val grabberColor = if (night) Color.argb(110, 255, 255, 255) else Color.argb(80, 0, 0, 0)
-        val buttonColor = if (night) Color.argb(40, 255, 255, 255) else Color.argb(20, 0, 0, 0)
+        val grabberColor = GlassSystem.pageSheetGrabberColor()
+        val buttonColor = GlassSystem.pageSheetButtonColor()
 
         // Cửa sổ của sheet: BlurTarget chứa lớp tối + sheet; hộp thoại kính nằm cạnh nó để blur lấy đúng nền.
         val windowRoot = FrameLayout(activity)
@@ -72,7 +73,7 @@ class BrowserBottomSheet(
         windowRoot.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
         val root: FrameLayout = blurTarget
         val scrim = View(activity).apply {
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(GlassSystem.pageScrimColor())
             alpha = 0f
             setOnClickListener { animateClose() }
         }
@@ -248,11 +249,9 @@ class BrowserBottomSheet(
             closeButton.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
             closeButton.background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(if (dark) Color.argb(40, 255, 255, 255) else Color.argb(20, 0, 0, 0))
+                setColor(GlassSystem.pageSheetButtonColor(color))
             }
-            (grabber.background as? GradientDrawable)?.setColor(
-                if (dark) Color.argb(110, 255, 255, 255) else Color.argb(80, 0, 0, 0)
-            )
+            (grabber.background as? GradientDrawable)?.setColor(GlassSystem.pageSheetGrabberColor(color))
             dlg.window?.let { BrowserSheetMotion.configureWindow(it, windowRoot, dark) }
             onPageToneChanged?.invoke(color)
             sheet.invalidate()

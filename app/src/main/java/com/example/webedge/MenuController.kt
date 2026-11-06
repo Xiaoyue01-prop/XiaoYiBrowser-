@@ -232,7 +232,7 @@ class MenuController(
         view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     }
 
-    private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(isNight())
+    private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(GlassSystem.isDarkPage())
 
     private fun onOff(b: Boolean): String = if (b) "Bật" else "Tắt"
 

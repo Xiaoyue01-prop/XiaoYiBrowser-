@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.Dialog
 import android.app.PictureInPictureParams
-import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Outline
@@ -175,17 +174,18 @@ class PopupWindowController(
         popup.webChromeClient = chromeClient(source)
 
         // --- Màu theo giao diện ---
-        val night = isNight?.invoke()
-            ?: ((activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
-        val sheetColor = if (night) Color.rgb(31, 31, 30) else Color.WHITE
-        val textColor = if (night) Color.WHITE else Color.BLACK
-        val grabberColor = if (night) Color.argb(110, 255, 255, 255) else Color.argb(80, 0, 0, 0)
-        val buttonColor = if (night) Color.argb(40, 255, 255, 255) else Color.argb(20, 0, 0, 0)
+        // Popup sheet is an opaque native surface; choose its palette from the active webpage,
+        // not from Android UI_MODE. GlassSystem will keep it synchronized while the popup is open.
+        val night = GlassSystem.isDarkPage()
+        val sheetColor = GlassSystem.pageSurfaceColor()
+        val textColor = GlassSystem.pagePrimaryText()
+        val grabberColor = GlassSystem.pageSheetGrabberColor()
+        val buttonColor = GlassSystem.pageSheetButtonColor()
 
         // --- Khung: lớp tối + sheet ---
         val root = FrameLayout(activity)
         val scrimView = View(activity).apply {
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(GlassSystem.pageScrimColor())
             alpha = 0f
             setOnClickListener { animateClose() }
         }
@@ -337,6 +337,7 @@ class PopupWindowController(
         dlg.setContentView(root)
         dlg.window?.let { BrowserSheetMotion.configureWindow(it, root, night) }
         dlg.setOnDismissListener {
+            GlassSystem.removePageToneObserver(root)
             if (webView === popup) {
                 popup.stopLoading()
                 (popup.parent as? ViewGroup)?.removeView(popup)
@@ -357,6 +358,20 @@ class PopupWindowController(
         closing = false
         dlg.show()
         GlassSystem.bindForegroundRoot(root)
+        GlassSystem.observePageTone(root) { color ->
+            val dark = GlassSystem.isDarkPage(color)
+            val foregroundColor = GlassSystem.pagePrimaryText(color)
+            sheetView.background = ColorDrawable(GlassSystem.pageSurfaceColor(color))
+            titleView.setTextColor(foregroundColor)
+            closeBtn.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
+            closeBtn.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(GlassSystem.pageSheetButtonColor(color))
+            }
+            (grabber.background as? GradientDrawable)?.setColor(GlassSystem.pageSheetGrabberColor(color))
+            dlg.window?.let { BrowserSheetMotion.configureWindow(it, root, dark) }
+            sheetView.invalidate()
+        }
         dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         // Dialog decor có thể phát insets sau show; đồng bộ cùng sheet công cụ.
         ViewCompat.requestApplyInsets(root)

@@ -359,7 +359,7 @@ class ContextMenuController(
                 setPadding(dp(14), 0, dp(14), 0)
                 minimumHeight = dp(44)
                 isClickable = true
-                background = activity.roundedPressBackground(isNight(), insetHDp = 0f, insetVDp = 0f)
+                background = activity.roundedPressBackground(GlassSystem.isDarkPage(), insetHDp = 0f, insetVDp = 0f)
                 setOnClickListener {
                     dismiss()
                     postAction(action.run)
@@ -381,7 +381,7 @@ class ContextMenuController(
             AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
             list.addView(row, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
             if (index != actions.lastIndex) {
-                val divider = View(activity).apply { setBackgroundColor(if (isNight()) 0x35FFFFFF else 0x26000000) }
+                val divider = View(activity).apply { setBackgroundColor(GlassSystem.pageDividerColor()) }
                 val lp = LinearLayout.LayoutParams(-1, dp(1))
                 lp.setMargins(dp(12), dp(1), dp(12), dp(1))
                 list.addView(divider, lp)

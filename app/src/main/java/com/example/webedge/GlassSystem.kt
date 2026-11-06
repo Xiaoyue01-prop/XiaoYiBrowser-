@@ -49,11 +49,15 @@ import eightbitlab.com.blurview.BlurView
 object GlassSystem {
     // One adaptive material system: consistent frost, edge and corner language on light or dark pages.
     private const val GLASS_BLUR_RADIUS_DP = 6f
-    private const val GLASS_TINT_ALPHA = 6
+    // Tint is deliberately stronger than the old 6/255 wash: it stabilizes contrast while
+    // preserving the live background and the existing Frost Glass blur.
+    private const val LIGHT_GLASS_TINT_ALPHA = 38
+    private const val DARK_GLASS_TINT_ALPHA = 46
 
     // Adaptive material: only the surface tint changes; blur and Liquid Glass rims stay fixed.
     private val blurSurfaces = java.util.WeakHashMap<BlurView, Unit>()
     private val fallbackSurfaces = java.util.WeakHashMap<GradientDrawable, Unit>()
+    private val rimSurfaces = java.util.WeakHashMap<GlassRimDrawable, Unit>()
 
     // Keep each native view's original palette so switching back to a light page restores it exactly.
     private data class ForegroundColorState(
@@ -67,7 +71,7 @@ object GlassSystem {
     private val foregroundObservers = java.util.WeakHashMap<View, ViewTreeObserver.OnGlobalLayoutListener>()
 
     private var pageBackgroundColor: Int? = null
-    private var currentOverlayColor: Int = Color.argb(GLASS_TINT_ALPHA, 255, 255, 255)
+    private var currentOverlayColor: Int = Color.argb(LIGHT_GLASS_TINT_ALPHA, 255, 255, 255)
     private val pageToneObservers = java.util.WeakHashMap<View, (Int?) -> Unit>()
 
     /** The webpage's reported canvas tone; null means use Summit's neutral light fallback. */
@@ -77,8 +81,37 @@ object GlassSystem {
     fun isDarkPage(color: Int? = pageBackgroundColor): Boolean =
         color != null && pageLuminance(color) < 0.42f
 
+    /** Opaque surface for native sheets/windows. This is intentionally NOT a BlurView surface. */
     fun pageSurfaceColor(color: Int? = pageBackgroundColor): Int =
         if (isDarkPage(color)) Color.rgb(30, 31, 36) else Color.WHITE
+
+    /** Palette helpers for opaque sheet chrome; all consumers use the same page-driven theme. */
+    fun pageSheetGrabberColor(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.argb(118, 255, 255, 255) else Color.argb(82, 0, 0, 0)
+
+    fun pageSheetButtonColor(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.argb(42, 255, 255, 255) else Color.argb(22, 0, 0, 0)
+
+    fun pageScrimColor(): Int = Color.BLACK
+
+    /** Full-screen TabSwitcher canvas and status-bar fade, kept in the shared material palette. */
+    fun tabSwitcherBackgroundColor(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.rgb(23, 24, 29) else Color.rgb(226, 225, 232)
+
+    fun tabStatusFadeStartColor(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.argb(88, 18, 19, 24) else Color.argb(40, 249, 243, 248)
+
+    fun tabStatusFadeEndColor(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.argb(0, 18, 19, 24) else Color.argb(0, 249, 243, 248)
+
+    fun tabCardStrokeColor(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.argb(100, 220, 222, 232) else Color.argb(145, 195, 195, 205)
+
+    fun tabAddButtonFillColor(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.argb(88, 58, 60, 68) else Color.argb(105, 255, 255, 255)
+
+    fun tabAddButtonStrokeColor(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.argb(115, 220, 220, 230) else Color.argb(135, 125, 125, 136)
 
     fun pageCardColor(color: Int? = pageBackgroundColor): Int =
         // Dark-page cards need enough tint density to keep white labels readable over bright
@@ -119,7 +152,7 @@ object GlassSystem {
             }
         }
 
-        if (currentOverlayColor != overlay) {
+        if (currentOverlayColor != overlay || pageToneChanged) {
             currentOverlayColor = overlay
             // Snapshot weak-key sets before updating views; a view may detach during a redraw.
             blurSurfaces.keys.toList().forEach { surface ->
@@ -130,6 +163,7 @@ object GlassSystem {
                 drawable.setColor(overlay)
                 drawable.invalidateSelf()
             }
+            rimSurfaces.keys.toList().forEach { drawable -> drawable.invalidateSelf() }
         }
 
         if (foregroundRoot != null) {
@@ -284,24 +318,17 @@ object GlassSystem {
         isNeutral(color) && pageLuminance(color) < 0.48f
 
     private fun overlayForPage(color: Int?): Int {
-        if (color == null) return Color.argb(GLASS_TINT_ALPHA, 255, 255, 255)
+        // A page with no reported canvas uses Summit's light fallback. Keep a visible neutral tint
+        // so bright and dark images underneath cannot make one menu alternate between white and black.
+        if (color == null) return Color.argb(LIGHT_GLASS_TINT_ALPHA, 255, 255, 255)
 
-        val r = Color.red(color) / 255f
-        val g = Color.green(color) / 255f
-        val b = Color.blue(color) / 255f
-        val luminance = 0.2126f * r + 0.7152f * g + 0.0722f * b
-        val maxChannel = maxOf(r, g, b)
-        val minChannel = minOf(r, g, b)
-        val saturation = if (maxChannel <= 0f) 0f else (maxChannel - minChannel) / maxChannel
-
-        return when {
-            // Dark pages need a subtle dark veil. A white veil here would make native white text
-            // unreadable against pale cards and would wash out dark webpage content.
-            luminance < 0.23f && saturation > 0.38f -> Color.argb(18, 0, 0, 0)
-            luminance < 0.29f -> Color.argb(26, 0, 0, 0)
-            luminance < 0.43f -> Color.argb(18, 0, 0, 0)
-            // Light pages retain the original ultra-transparent white material.
-            else -> Color.argb(GLASS_TINT_ALPHA, 255, 255, 255)
+        return if (isDarkPage(color)) {
+            // Darken bright thumbnails/video frames beneath native dark-glass surfaces without
+            // turning the material into an opaque panel.
+            Color.argb(DARK_GLASS_TINT_ALPHA, 0, 0, 0)
+        } else {
+            // Lift dark content beneath light-glass surfaces for a steadier black foreground.
+            Color.argb(LIGHT_GLASS_TINT_ALPHA, 255, 255, 255)
         }
     }
 
@@ -316,6 +343,9 @@ object GlassSystem {
         blurSurfaces[view] = Unit
         return view
     }
+
+    private fun registerRimSurface(drawable: GlassRimDrawable): GlassRimDrawable =
+        drawable.also { rimSurfaces[it] = Unit }
 
     // Viền kính kiểu liquid glass: một vòng ngoài xám lạnh (giữ nét trên nền trắng) và một vành sáng mảnh
     // bên trong, sáng nhất ở góc trên-trái và dưới-phải. Chỉnh độ đậm viền toàn app ở hai hằng số này.
@@ -364,7 +394,7 @@ object GlassSystem {
                 cornerRadius = 12f * density
                 setColor(Color.TRANSPARENT)
             }
-            foreground = GlassRimDrawable(12f * density, density)
+            foreground = registerRimSurface(GlassRimDrawable(12f * density, density))
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
             setupWith(target).setBlurRadius(GLASS_BLUR_RADIUS_DP * density)
@@ -374,7 +404,7 @@ object GlassSystem {
 
     /** Viền kính liquid glass vẽ đè lên nội dung (foreground của thẻ kính). */
     fun createBorder(radiusDp: Int, density: Float, isNight: Boolean): Drawable =
-        GlassRimDrawable(radiusDp * density, density)
+        registerRimSurface(GlassRimDrawable(radiusDp * density, density))
 
 
     /**
@@ -433,35 +463,59 @@ object GlassSystem {
             strokeWidth = hiW
         }
         private val rect = RectF()
+        private var lastDarkTone: Boolean? = null
 
-        override fun onBoundsChange(b: android.graphics.Rect) {
+        private fun updateShaders(b: android.graphics.Rect, dark: Boolean) {
+            if (b.width() <= 0 || b.height() <= 0) return
             val w = b.width().toFloat()
             val h = b.height().toFloat()
-            outerPaint.shader = LinearGradient(
-                b.left.toFloat(), b.top.toFloat(), b.left + w, b.top + h,
+            val outer = if (dark) {
+                intArrayOf(
+                    Color.argb(72, 178, 186, 204),
+                    Color.argb(112, 190, 198, 216),
+                    Color.argb(72, 178, 186, 204)
+                )
+            } else {
                 intArrayOf(
                     Color.argb(84, 80, 80, 98),
                     Color.argb(118, 80, 80, 98),
                     Color.argb(84, 80, 80, 98)
-                ),
-                floatArrayOf(0f, 0.5f, 1f),
-                Shader.TileMode.CLAMP
+                )
+            }
+            val highlight = if (dark) {
+                intArrayOf(
+                    Color.argb(150, 255, 255, 255),
+                    Color.argb(0, 255, 255, 255),
+                    Color.argb(0, 255, 255, 255),
+                    Color.argb(118, 230, 235, 248)
+                )
+            } else {
+                intArrayOf(
+                    Color.argb(220, 255, 255, 255),
+                    Color.argb(0, 255, 255, 255),
+                    Color.argb(0, 255, 255, 255),
+                    Color.argb(175, 255, 255, 255)
+                )
+            }
+            outerPaint.shader = LinearGradient(
+                b.left.toFloat(), b.top.toFloat(), b.left + w, b.top + h,
+                outer, floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
             )
             hiPaint.shader = LinearGradient(
                 b.left.toFloat(), b.top.toFloat(), b.left + w, b.top + h,
-                intArrayOf(
-                    Color.argb(245, 255, 255, 255),
-                    Color.argb(0, 255, 255, 255),
-                    Color.argb(0, 255, 255, 255),
-                    Color.argb(210, 255, 255, 255)
-                ),
-                floatArrayOf(0f, 0.38f, 0.62f, 1f),
-                Shader.TileMode.CLAMP
+                highlight, floatArrayOf(0f, 0.38f, 0.62f, 1f), Shader.TileMode.CLAMP
             )
+            lastDarkTone = dark
+        }
+
+        override fun onBoundsChange(b: android.graphics.Rect) {
+            updateShaders(b, GlassSystem.isDarkPage())
         }
 
         override fun draw(canvas: Canvas) {
             val b = bounds
+            val dark = GlassSystem.isDarkPage()
+            if (lastDarkTone != dark) updateShaders(b, dark)
             if (b.width() <= 0 || b.height() <= 0) return
             val o = outerW / 2f
             rect.set(b.left + o, b.top + o, b.right - o, b.bottom - o)
@@ -709,7 +763,7 @@ half4 main(float2 coord) {
         val view = BlurView(context).apply {
             background = shape
             if (rim && preset.radiusDp > 0) {
-                foreground = GlassRimDrawable(preset.radiusDp * density, density)
+                foreground = registerRimSurface(GlassRimDrawable(preset.radiusDp * density, density))
             }
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
@@ -766,7 +820,7 @@ half4 main(float2 coord) {
             view.clipToPadding = false
             backdrop?.let { view.addView(it, FrameLayout.LayoutParams(-1, -1)) }
             view.addView(
-                View(context).apply { foreground = GlassRimDrawable(radiusDp * density, density) },
+                View(context).apply { foreground = registerRimSurface(GlassRimDrawable(radiusDp * density, density)) },
                 FrameLayout.LayoutParams(-1, -1)
             )
 
@@ -894,7 +948,7 @@ half4 main(float2 coord) {
             glass.background = GlassSystem.registerFallbackSurface(GradientDrawable().apply {
                 cornerRadius = radius
             })
-            glass.foreground = GlassRimDrawable(radius, density)
+            glass.foreground = registerRimSurface(GlassRimDrawable(radius, density))
             glass.alpha = 0f
             view.addView(solid, FrameLayout.LayoutParams(-1, -1))
             view.addView(glass, FrameLayout.LayoutParams(-1, -1))

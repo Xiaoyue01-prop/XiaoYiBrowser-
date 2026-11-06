@@ -95,13 +95,13 @@ class GlassDialogController(
 
     private fun dp(v: Int): Int = (v * d).toInt()
 
-    private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(isNight())
+    private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(GlassSystem.isDarkPage())
 
     private fun showNext() {
         val req = queue.removeFirstOrNull() ?: return
         active = req
         finishing = false
-        val night = isNight()
+        val night = GlassSystem.isDarkPage()
 
         // Lớp phủ KHÔNG có padding để lớp tối phủ kín cả mép trên/dưới (thanh trạng thái, vùng cử chỉ).
         // Padding chừa chỗ cho thẻ nằm ở [holder] riêng.

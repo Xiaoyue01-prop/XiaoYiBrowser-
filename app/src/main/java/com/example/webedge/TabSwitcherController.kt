@@ -28,7 +28,6 @@ import eightbitlab.com.blurview.BlurView
 /** UI đa tab tách riêng khỏi Activity để MainActivity tập trung điều phối trình duyệt. */
 // Dùng chung overlay/tint mặc định của GlassSystem; không giảm alpha riêng cho MenuTabs.
 private const val TAB_BG_TINT = 0
-private const val TAB_TOP_FADE = 40   // dải mờ dần dưới thanh trạng thái (bản cũ: 112)
 
 // Mờ dần ở mép trên và mép dưới của lưới thẻ (kiểu Safari): thẻ trôi tới sát mép thì càng mờ,
 // không bị cắt cứng. Đơn vị dp / hệ số 0–1.
@@ -195,7 +194,7 @@ class TabSwitcherController(
             // Overlay phải nổi trên Orb/toolbar; Orb được tháo khỏi root trong thời gian này.
             elevation = dp(12).toFloat()
             // Nền dự phòng đặc: nếu BlurView chưa có frame đầu, trang web không xuyên qua.
-            setBackgroundColor(GlassSystem.pageSurfaceColor())
+            setBackgroundColor(GlassSystem.tabSwitcherBackgroundColor())
         }
         var closing = false
         lateinit var blurSync: GlassSystem.BlurSync
@@ -263,8 +262,8 @@ class TabSwitcherController(
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(
-                    if (isNight()) Color.argb(88, 18, 19, 24) else Color.argb(TAB_TOP_FADE, 249, 243, 248),
-                    if (isNight()) Color.argb(0, 18, 19, 24) else Color.argb(0, 249, 243, 248)
+                    GlassSystem.tabStatusFadeStartColor(),
+                    GlassSystem.tabStatusFadeEndColor()
                 )
             )
             isClickable = false
@@ -577,18 +576,18 @@ class TabSwitcherController(
             appliedDarkTone = dark
             WindowCompat.getInsetsController(activity.window, activity.window.decorView)
                 .isAppearanceLightStatusBars = !dark
-            container.setBackgroundColor(if (dark) Color.rgb(23, 24, 29) else Color.rgb(226, 225, 232))
+            container.setBackgroundColor(GlassSystem.tabSwitcherBackgroundColor(if (dark) Color.BLACK else Color.WHITE))
             statusFade.background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(
-                    if (dark) Color.argb(88, 18, 19, 24) else Color.argb(TAB_TOP_FADE, 249, 243, 248),
-                    if (dark) Color.argb(0, 18, 19, 24) else Color.argb(0, 249, 243, 248)
+                    GlassSystem.tabStatusFadeStartColor(if (dark) Color.BLACK else Color.WHITE),
+                    GlassSystem.tabStatusFadeEndColor(if (dark) Color.BLACK else Color.WHITE)
                 )
             )
-            titleView.setTextColor(if (dark) Color.WHITE else Color.rgb(18, 18, 20))
+            titleView.setTextColor(GlassSystem.pagePrimaryText(if (dark) Color.BLACK else Color.WHITE))
             modeControl?.applyPageTone(dark)
-            val addFill = if (dark) Color.argb(88, 58, 60, 68) else Color.argb(105, 255, 255, 255)
-            val addStroke = if (dark) Color.argb(115, 220, 220, 230) else Color.argb(135, 125, 125, 136)
+            val addFill = GlassSystem.tabAddButtonFillColor(if (dark) Color.BLACK else Color.WHITE)
+            val addStroke = GlassSystem.tabAddButtonStrokeColor(if (dark) Color.BLACK else Color.WHITE)
             (addButton.background as? GradientDrawable)?.apply {
                 setColor(addFill)
                 setStroke(dp(1), addStroke)
@@ -600,7 +599,7 @@ class TabSwitcherController(
             cardViews.values.forEach { card ->
                 (card.background as? GradientDrawable)?.setColor(GlassSystem.pageCardColor())
                 (card.background as? GradientDrawable)?.setStroke(
-                    dp(1), if (dark) Color.argb(100, 220, 222, 232) else Color.argb(145, 195, 195, 205)
+                    dp(1), GlassSystem.tabCardStrokeColor(if (dark) Color.BLACK else Color.WHITE)
                 )
                 for (i in 0 until card.childCount) {
                     val child = card.getChildAt(i)

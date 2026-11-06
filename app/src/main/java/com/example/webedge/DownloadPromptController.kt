@@ -67,7 +67,7 @@ class DownloadPromptController(
 
         active = prompt
         finishing = false
-        val night = isNight()
+        val night = GlassSystem.isDarkPage()
 
         // Same shared glass banner shell used by ordinary in-app notifications.
         val card = GlassSystem.createBannerCard(
@@ -108,13 +108,14 @@ class DownloadPromptController(
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         })
-        fileText.addView(TextView(activity).apply {
+        val subtitleView = TextView(activity).apply {
             text = "Trang web muốn tải file xuống"
             textSize = 12f
-            setTextColor(Color.DKGRAY)
+            setTextColor(GlassSystem.pageSecondaryText())
             setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
             maxLines = 1
-        })
+        }
+        fileText.addView(subtitleView)
         heading.addView(
             fileText,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -177,10 +178,11 @@ class DownloadPromptController(
         root.addView(card, params)
         activeView = card
         GlassSystem.observePageTone(card) { color ->
-            val dark = GlassSystem.isDarkPage(color)
-            cancelSurface?.setColor(
-                if (dark) Color.argb(42, 255, 255, 255) else Color.argb(24, 0, 0, 0)
-            )
+            val foreground = GlassSystem.pagePrimaryText(color)
+            fileText.getChildAt(0).let { (it as? TextView)?.setTextColor(foreground) }
+            subtitleView.setTextColor(GlassSystem.pageSecondaryText(color))
+            cancelSurface?.setColor(GlassSystem.pageSheetButtonColor(color))
+            cancelButton.setTextColor(foreground)
             cancelButton.invalidate()
         }
 
