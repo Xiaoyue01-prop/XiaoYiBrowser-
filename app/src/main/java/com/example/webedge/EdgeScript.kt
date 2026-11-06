@@ -886,7 +886,16 @@ window.__edgeDump = function(){
   out.push('url=' + location.href + ' inset=' + I + ' mode=' + window.__edgeMode + ' scrollY=' + Math.round(window.scrollY) + ' inner=' + innerWidth + 'x' + innerHeight);
   var hd = null;
   try { hd = findHeader(I); } catch (e) {}
-  out.push('header=' + (hd ? d(hd.el) : 'none'));
+  out.push('header=' + (hd ? d(hd.el) : 'none') + (hd ? ' hdflag=' + hd.el.getAttribute('data-edge-hd') : ''));
+  out.push('hdbg=' + (window.__edgeHdBg ? d(window.__edgeHdBg) : 'none'));
+  if (hd) {
+    var pp = hd.el.parentElement, lv = 0;
+    while (pp && pp !== document.body && lv < 3) {
+      out.push('header parent L' + lv + ': ' + d(pp));
+      for (var ci = 0; ci < pp.children.length && ci < 12; ci++) out.push('    child ' + d(pp.children[ci]));
+      pp = pp.parentElement; lv++;
+    }
+  }
   var v = document.querySelector('video');
   if (v) {
     out.push('video chain:');
