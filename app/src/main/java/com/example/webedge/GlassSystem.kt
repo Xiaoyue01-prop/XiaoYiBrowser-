@@ -677,6 +677,21 @@ half4 main(float2 coord) {
     }
 
     /**
+     * Thanh nền (track) của thanh chọn phân đoạn: một lớp phủ trong suốt xám trung tính (kiểu systemFill của iOS)
+     * nên màu nền phía sau (thẻ, sheet) thấu qua thay vì một mảng xám đặc. Không dùng BlurView vì track nằm trên
+     * thẻ đặc, không có gì phía sau để làm mờ. Viền mảnh giữ nét cho track ở cả nền sáng lẫn tối.
+     */
+    fun createSegmentedTrack(radiusDp: Int, density: Float, isNight: Boolean): Drawable =
+        GradientDrawable().apply {
+            cornerRadius = radiusDp * density
+            setColor(if (isNight) Color.argb(72, 120, 120, 128) else Color.argb(30, 118, 118, 128))
+            setStroke(
+                density.toInt().coerceAtLeast(1),
+                if (isNight) Color.argb(36, 255, 255, 255) else Color.argb(34, 60, 60, 67)
+            )
+        }
+
+    /**
      * Viên chọn của thanh chọn phân đoạn kiểu iOS 26 (tab bar trong video tham chiếu).
      * Lúc nghỉ là viên đặc nằm dưới nhãn; khi chạm giữ, viên đặc nhạt đi, hiện lớp kính trong,
      * phình to hơn thanh một chút và trượt theo ngón tay. Thả tay thì co lại và lăn về ô gần nhất.

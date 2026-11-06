@@ -540,11 +540,7 @@ class BrowserToolsController(
             setPadding(dp(4), dp(4), dp(4), dp(4))
             clipChildren = false
             clipToPadding = false
-            background = GradientDrawable().apply {
-                cornerRadius = dp(24).toFloat()
-                setColor(if (isNight) Color.rgb(35, 35, 37) else Color.rgb(235, 235, 239))
-                setStroke(dp(1), if (isNight) Color.rgb(65, 65, 69) else Color.rgb(222, 222, 227))
-            }
+            background = GlassSystem.createSegmentedTrack(24, density, isNight)
         }
         val thumb = GlassSystem.SegmentedGlassThumb(activity, density, isNight)
         val indicator = thumb.view
