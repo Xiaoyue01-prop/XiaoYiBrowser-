@@ -98,6 +98,7 @@ class OrbMenuController(
     }
 
     private val subBtns = mutableListOf<FrameLayout>()
+    private val SUB_ANGLES = listOf(-90.0, -45.0, 0.0)
 
     init {
         rootLayout.addView(
@@ -332,11 +333,10 @@ class OrbMenuController(
             }
             val active = buildList {
                 if (mainBtn.visibility == View.VISIBLE) add(mainBtn)
-                subBtns.filterTo(this) { it.visibility == View.VISIBLE }
+                subBtns.filterTo(this) { it.visibility == View.VISIBLE && isExpanded }
             }
-            if (compactBase.isEmpty()) {
-                active.forEach { compactBase[it] = it.translationX to it.translationY }
-            }
+            compactBase.clear()
+            active.forEach { compactBase[it] = restTranslation(it) }
             active.forEach { btn ->
                 btn.isClickable = false
                 btn.isEnabled = false
@@ -377,6 +377,20 @@ class OrbMenuController(
             }
         }
         applyAvailability()
+    }
+
+    /**
+     * Translation "nghỉ" của một nút Orb: nơi nó sẽ đứng khi mọi spring đã dừng.
+     * Không đọc từ translation hiện tại vì lúc đó có thể đang spring giữa chừng
+     * (vd. orb vừa nảy ra từ tâm viên thuốc sau khi menu đóng), lưu nhầm sẽ làm orb kẹt giữa Pill.
+     */
+    private fun restTranslation(btn: View): Pair<Float, Float> {
+        if (btn === mainBtn || !isExpanded) return 0f to 0f
+        val i = subBtns.indexOf(btn)
+        if (i < 0) return 0f to 0f
+        val angle = Math.toRadians(SUB_ANGLES[i])
+        val radius = dp(60).toFloat()
+        return (radius * kotlin.math.cos(angle)).toFloat() to (radius * kotlin.math.sin(angle)).toFloat()
     }
 
     /** Tính translation cần thiết để tâm một Orb view trùng tâm Pill, không phụ thuộc vị trí Orb đang spring. */
@@ -467,7 +481,7 @@ class OrbMenuController(
         AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 45f, AnimationSystem.SETTLE)
 
         val radius = dp(60).toFloat()
-        val angles = listOf(-90.0, -45.0, 0.0)
+        val angles = SUB_ANGLES
         for (i in subBtns.indices) {
             val angle = Math.toRadians(angles[i])
             val dx = (radius * kotlin.math.cos(angle)).toFloat()
