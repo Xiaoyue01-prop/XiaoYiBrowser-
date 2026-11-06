@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         },
         openExternal = { url, view -> handleSpecialUrl(url, view) },
         toast = { toast(it) },
-        isNight = { isNight },
+        isNight = { GlassSystem.isDarkPage() },
         configureWebViewForSource = { popupWebView, sourceWebView ->
             privateProfileManager.applyProfileFromSource(popupWebView, sourceWebView)
         }
@@ -558,7 +558,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             }
         )
         d = resources.displayMetrics.density
-        // Summit hiện chỉ phát hành giao diện sáng; không đổi màu theo Dark Mode của hệ thống.
+        // Giao diện ứng dụng giữ nền tảng sáng; các native overlay tự thích nghi theo màu nền thực của trang web.
         isNight = false
         fg = Color.rgb(18, 18, 20)
         sub = Color.rgb(82, 82, 88)
@@ -985,7 +985,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             root = root,
             blurTarget = blurTarget,
             density = d,
-            isNight = false,
+            isNight = { GlassSystem.isDarkPage() },
             foregroundColor = fg,
             accentColor = accent,
             topInset = { insetTop }
@@ -998,7 +998,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             tabManager = tabManager,
             host = menuHost,
             d = d,
-            isNight = isNight,
+            isNight = { GlassSystem.isDarkPage() },
             fg = fg,
             accent = accent,
             onVisibilityChanged = { syncOrbMenuVisibility() }
@@ -1008,7 +1008,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             root = root,
             blurTarget = blurTarget,
             density = d,
-            isNight = isNight,
+            isNight = { GlassSystem.isDarkPage() },
             foreground = fg,
             onOpenLink = ::openLinkInNewTab,
             onCopy = { value ->
@@ -1044,7 +1044,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             root = root,
             blurTarget = blurTarget,
             d = d,
-            isNight = isNight,
+            isNight = { GlassSystem.isDarkPage() },
             fg = fg,
             accent = accent
         )
@@ -1054,7 +1054,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             store = store,
             blurTarget = blurTarget,
             hostRoot = root,
-            isNight = isNight,
+            isNight = { GlassSystem.isDarkPage() },
             accentColor = accent,
             dp = ::dp,
             captureActiveTab = { captureActiveTab() },

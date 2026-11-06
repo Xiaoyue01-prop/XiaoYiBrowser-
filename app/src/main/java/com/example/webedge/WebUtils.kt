@@ -34,6 +34,12 @@ fun WebSettings.applyBrowserDefaults() {
     safeBrowsingEnabled = true
     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 
+    // Never algorithmically darken website content. Pages without their own dark stylesheet
+    // keep the author's default canvas (normally white); Summit adapts native overlays separately.
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+        runCatching { WebSettingsCompat.setAlgorithmicDarkeningAllowed(this, false) }
+    }
+
     // Summit renders its own glass context menu. Explicitly disable the WebView
     // provider's built-in hyperlink menu so it cannot appear underneath/replace it.
     if (WebViewFeature.isFeatureSupported(WebViewFeature.HYPERLINK_CONTEXT_MENU_ITEMS)) {

@@ -59,7 +59,7 @@ class ContextMenuController(
     private val root: FrameLayout,
     private val blurTarget: BlurTarget,
     private val density: Float,
-    private val isNight: Boolean,
+    private val isNight: () -> Boolean,
     private val foreground: Int,
     private val onOpenLink: (String) -> Unit,
     private val onCopy: (String) -> Unit,
@@ -336,15 +336,15 @@ class ContextMenuController(
             setOnClickListener { dismiss() }
         }
         val panel = FrameLayout(activity).apply {
-            background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, density, isNight)
-            foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, density, isNight)
+            background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, density, isNight())
+            foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, density, isNight())
             clipToOutline = true
             clipChildren = true
             clipToPadding = true
             isClickable = true
             isFocusable = true
         }
-        val blur = GlassSystem.createBlurView(activity, blurTarget, GlassSystem.Preset.MENU_CARD, density, isNight, rim = false)
+        val blur = GlassSystem.createBlurView(activity, blurTarget, GlassSystem.Preset.MENU_CARD, density, isNight(), rim = false)
         blur.isClickable = false
         panel.addView(blur, FrameLayout.LayoutParams(-1, -1))
 
@@ -359,7 +359,7 @@ class ContextMenuController(
                 setPadding(dp(14), 0, dp(14), 0)
                 minimumHeight = dp(44)
                 isClickable = true
-                background = activity.roundedPressBackground(isNight, insetHDp = 0f, insetVDp = 0f)
+                background = activity.roundedPressBackground(isNight(), insetHDp = 0f, insetVDp = 0f)
                 setOnClickListener {
                     dismiss()
                     postAction(action.run)
@@ -381,7 +381,7 @@ class ContextMenuController(
             AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
             list.addView(row, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
             if (index != actions.lastIndex) {
-                val divider = View(activity).apply { setBackgroundColor(if (isNight) 0x35FFFFFF else 0x26000000) }
+                val divider = View(activity).apply { setBackgroundColor(if (isNight()) 0x35FFFFFF else 0x26000000) }
                 val lp = LinearLayout.LayoutParams(-1, dp(1))
                 lp.setMargins(dp(12), dp(1), dp(12), dp(1))
                 list.addView(divider, lp)

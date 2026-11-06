@@ -28,7 +28,7 @@ class GlassDialogController(
     private val root: FrameLayout,
     private val blurTarget: BlurTarget,
     private val d: Float,
-    private val isNight: Boolean,
+    private val isNight: () -> Boolean,
     private val fg: Int,
     private val accent: Int
 ) {
@@ -82,7 +82,11 @@ class GlassDialogController(
         pending.addAll(queue)
         queue.clear()
         active = null
-        activeLayer?.let { runCatching { root.removeView(it) } }
+        val layer = activeLayer
+        layer?.let {
+            GlassSystem.removePageToneObserver(it)
+            runCatching { root.removeView(it) }
+        }
         activeLayer = null
         activeCard = null
         activeInput = null
@@ -91,12 +95,13 @@ class GlassDialogController(
 
     private fun dp(v: Int): Int = (v * d).toInt()
 
-    private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(isNight)
+    private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(isNight())
 
     private fun showNext() {
         val req = queue.removeFirstOrNull() ?: return
         active = req
         finishing = false
+        val night = isNight()
 
         // Lớp phủ KHÔNG có padding để lớp tối phủ kín cả mép trên/dưới (thanh trạng thái, vùng cử chỉ).
         // Padding chừa chỗ cho thẻ nằm ở [holder] riêng.
@@ -113,25 +118,30 @@ class GlassDialogController(
         }
 
         val scrim = View(activity).apply {
-            setBackgroundColor(Color.argb(if (isNight) 120 else 80, 0, 0, 0))
+            setBackgroundColor(Color.argb(if (night) 120 else 80, 0, 0, 0))
             alpha = 0f
             setOnClickListener { cancelCurrent() }
         }
         layer.addView(scrim, FrameLayout.LayoutParams(-1, -1))
         layer.addView(holder, FrameLayout.LayoutParams(-1, -1))
+        val gapViews = mutableListOf<View>()
+        fun gapView(): View = View(activity).apply {
+            setBackgroundColor(Theme.gapColor(night))
+            gapViews += this
+        }
 
         // Thẻ kính: nền dự phòng + BlurView + viền, giống thẻ menu ba chấm.
         val card = FrameLayout(activity).apply {
-            background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight)
+            background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, night)
             clipToOutline = true
             clipChildren = true
             clipToPadding = true
             isClickable = true
-            foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, d, isNight)
+            foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, d, night)
         }
         card.addView(
             GlassSystem.createBlurView(
-                activity, blurTarget, GlassSystem.Preset.MENU_CARD, d, isNight, rim = false
+                activity, blurTarget, GlassSystem.Preset.MENU_CARD, d, night, rim = false
             ).apply {
                 isClickable = false
                 isFocusable = false
@@ -146,7 +156,7 @@ class GlassDialogController(
                 text = req.title
                 textSize = 17f
                 setTypeface(null, Typeface.BOLD)
-                setTextColor(fg)
+                setTextColor(GlassSystem.pagePrimaryText())
                 gravity = Gravity.CENTER
                 setPadding(dp(22), dp(20), dp(22), 0)
             })
@@ -156,7 +166,7 @@ class GlassDialogController(
         val messageView = TextView(activity).apply {
             text = req.message
             textSize = 14f
-            setTextColor(Color.BLACK)
+            setTextColor(GlassSystem.pagePrimaryText())
             setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
             gravity = Gravity.CENTER
             val top = if (req.title != null) dp(8) else dp(22)
@@ -172,7 +182,7 @@ class GlassDialogController(
                 setSingleLine()
                 setText(req.defaultInput)
                 setSelectAllOnFocus(true)
-                setTextColor(Color.BLACK)
+                setTextColor(GlassSystem.pagePrimaryText())
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 textSize = 15f
                 setPadding(dp(14), 0, dp(14), 0)
@@ -181,7 +191,7 @@ class GlassDialogController(
             activeInput = input
             val inputGlass = FrameLayout(activity).apply {
                 clipToOutline = true
-                background = GlassSystem.createInputField(12, d, false)
+                background = GlassSystem.createInputField(12, d, night)
                 addView(GlassSystem.createInputBlurView(activity, blurTarget, d), FrameLayout.LayoutParams(-1, -1))
                 addView(input, FrameLayout.LayoutParams(-1, -1))
             }
@@ -193,8 +203,7 @@ class GlassDialogController(
             activeInput = null
         }
 
-        val gap = Theme.gapColor(isNight)
-        content.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(-1, 1))
+        content.addView(gapView(), LinearLayout.LayoutParams(-1, 1))
 
         fun button(label: String, bold: Boolean, onClick: () -> Unit): TextView {
             val b = TextView(activity)
@@ -213,10 +222,10 @@ class GlassDialogController(
             // Ba lựa chọn xếp dọc (như alert iOS): khẳng định, chỉ lần này, từ chối.
             val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
             column.addView(button(req.positive, true) { finish(true) }, LinearLayout.LayoutParams(-1, dp(50)))
-            column.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(-1, 1))
+            column.addView(gapView(), LinearLayout.LayoutParams(-1, 1))
             column.addView(button(req.neutral, false) { finish(false, neutral = true) }, LinearLayout.LayoutParams(-1, dp(50)))
             if (req.negative != null) {
-                column.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(-1, 1))
+                column.addView(gapView(), LinearLayout.LayoutParams(-1, 1))
                 column.addView(button(req.negative, false) { finish(false) }, LinearLayout.LayoutParams(-1, dp(50)))
             }
             content.addView(column, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -224,7 +233,7 @@ class GlassDialogController(
             val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
             if (req.negative != null) {
                 row.addView(button(req.negative, false) { finish(false) }, LinearLayout.LayoutParams(0, dp(50), 1f))
-                row.addView(View(activity).apply { setBackgroundColor(gap) }, LinearLayout.LayoutParams(1, dp(50)))
+                row.addView(gapView(), LinearLayout.LayoutParams(1, dp(50)))
             }
             row.addView(button(req.positive, true) { finish(true) }, LinearLayout.LayoutParams(0, dp(50), 1f))
             content.addView(row, LinearLayout.LayoutParams(-1, dp(50)))
@@ -236,6 +245,12 @@ class GlassDialogController(
         holder.addView(card, FrameLayout.LayoutParams(width, -2, Gravity.CENTER))
         root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         activeLayer = layer
+        GlassSystem.observePageTone(layer) { color ->
+            val dark = GlassSystem.isDarkPage(color)
+            scrim.setBackgroundColor(Color.argb(if (dark) 120 else 80, 0, 0, 0))
+            val divider = Theme.gapColor(dark)
+            gapViews.forEach { it.setBackgroundColor(divider) }
+        }
         activeCard = card
         ViewCompat.requestApplyInsets(layer)
 
@@ -274,6 +289,7 @@ class GlassDialogController(
         fun complete() {
             if (done) return
             done = true
+            GlassSystem.removePageToneObserver(layer)
             runCatching { root.removeView(layer) }
             if (active === req) {
                 active = null

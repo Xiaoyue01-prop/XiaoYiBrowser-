@@ -60,7 +60,7 @@ class MenuController(
     private val tabManager: TabManager,
     private val host: MenuHost,
     private val d: Float,
-    private val isNight: Boolean,
+    private val isNight: () -> Boolean,
     private val fg: Int,
     private val accent: Int,
     private val onVisibilityChanged: () -> Unit = {}
@@ -232,7 +232,7 @@ class MenuController(
         view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     }
 
-    private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(isNight)
+    private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(isNight())
 
     private fun onOff(b: Boolean): String = if (b) "Bật" else "Tắt"
 
@@ -249,13 +249,13 @@ class MenuController(
             maxHeightPx = (activity.resources.displayMetrics.heightPixels * Constants.MENU_MAX_HEIGHT_FRACTION).toInt()
             // Nền kính dự phòng + outline bo góc để menu không thành trong suốt
             // nếu BlurView chưa render kịp trong lần layout đầu tiên.
-            background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight)
+            background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight())
             clipToOutline = true
             clipChildren = true
             clipToPadding = true
             isClickable = true
             // Lớp kính lớn hơn khung và bị cắt bo góc, nên viền kính vẽ đè lên trên.
-            foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, d, isNight)
+            foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, d, isNight())
         }
 
         val glass = GlassSystem.createBlurView(
@@ -548,7 +548,7 @@ class MenuController(
     private fun syncBlurFor(durationMs: Long) = blurSync.hold(durationMs)
 
     private fun showMainPage(animate: Boolean = true) {
-        val gapColor = Theme.gapColor(isNight)
+        val gapColor = Theme.gapColor(isNight())
 
         val box = LinearLayout(activity)
         box.orientation = LinearLayout.VERTICAL
@@ -672,7 +672,7 @@ class MenuController(
         head.setPadding(if (onBack != null) dp(14) else dp(22), dp(12), dp(22), dp(2))
         if (onBack != null) {
             val back = GlassSystem.createGlassIconButton(
-                activity, blurTarget, PathIcon(Icons.ARROW_BACK, fg), d, isNight, "Quay lại"
+                activity, blurTarget, PathIcon(Icons.ARROW_BACK, GlassSystem.pagePrimaryText()), d, isNight(), "Quay lại"
             )
             back.setOnClickListener { onBack() }
             AnimationSystem.press(back, Constants.PRESS_SCALE_PILL)
@@ -726,7 +726,7 @@ class MenuController(
 
     // Mỗi nút là một viên kính mờ riêng (bo tròn, có viền), không còn là chữ trần trên nền menu.
     private fun panelButton(text: String, color: Int, onClick: () -> Unit): View {
-        val b = GlassSystem.createGlassButton(activity, blurTarget, text, color, d, isNight)
+        val b = GlassSystem.createGlassButton(activity, blurTarget, text, color, d, isNight())
         b.setOnClickListener { onClick() }
         AnimationSystem.press(b, Constants.PRESS_SCALE_PILL)
         return b

@@ -26,10 +26,17 @@ AGP 9.3.1 supports API 37 and Kotlin Gradle Plugin 2.4.21 documents full compati
 
 The app compiles against API 37 but deliberately keeps `targetSdk = 36` for this update. Android 17's `ACCESS_LOCAL_NETWORK` runtime permission is mandatory only for apps targeting API 37+. Summit is a general-purpose browser, so target 37 must not be enabled until the browser has a tested permission flow that requests LAN access contextually and handles private IPv4, localhost, `.local` hosts, DNS-resolved private hosts, redirects, WebView subresources, and permission denial/revocation. Declaring/requesting this permission prematurely would either cause unnecessary prompts or break LAN browsing.
 
+## Adaptive native overlays (2026-11-06)
+
+- The webpage remains authoritative for its own color scheme. Summit does not inject dark-mode CSS or invert page colors; `WebUtils.applyBrowserDefaults()` explicitly disallows WebView algorithmic darkening when the provider supports that feature.
+- `EdgeScript.pageCanvasColor()` reports the rendered page canvas tone. `GlassSystem` uses that signal only for Summit-owned native surfaces and native foreground contrast; a missing/unknown page tone falls back to the light palette.
+- MenuTabs, BrowserBottomSheet, Privacy Dashboard cards/controls, and GlassDialog alerts observe page-tone changes while visible. Remove each observer when its overlay is dismissed.
+- Keep webpage pixels and tab thumbnails untouched. When testing, include a light-only website, a dark website, and a page that changes its background while a native overlay remains open.
+
 ## WebView security and feature migration backlog
 
 - `addJavascriptInterface` remains in use because the current injected scripts (`EdgeScript`, media monitoring and long-press handling) directly call `window.EdgeBridge`. Migrating to `WebViewCompat.addWebMessageListener` needs a coordinated protocol rewrite and origin/frame policy; do not replace only the Kotlin bridge or the existing scripts will silently stop working.
-- WebView profile isolation / Private Browsing is not enabled yet. It requires profile ownership to be integrated with tab creation, popup windows, cookies, WebStorage, service workers, downloads, tab persistence and clear-data flows. Do not present an incognito mode as isolated until all these stores are verified.
+- Private Tab now uses a dedicated WebKit profile shared only by tabs in the active private session. Keep profile ownership integrated with tab creation, popup windows, cookies, WebStorage, permissions, tab persistence and clear-data flows. Verify service-worker/cache behavior and Android DownloadManager separately on-device; do not claim downloaded files are erased when a private session ends.
 - Mixed-content compatibility and third-party cookies are intentionally unchanged in this dependency/toolchain pass to avoid breaking legacy sites and sign-in flows. Revisit with per-site controls and regression tests.
 - Existing Media3 and BlurView dependencies were already at their stable baseline versions and remain unchanged.
 

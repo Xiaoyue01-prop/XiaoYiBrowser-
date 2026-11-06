@@ -38,16 +38,27 @@ class BrowserToolsController(
     private val webStorage: () -> WebStorage,
     private val isPrivateMode: () -> Boolean,
     private val density: Float,
-    private val isNight: Boolean,
+    private val isNight: () -> Boolean,
     private val foreground: Int,
     private val accent: Int,
     private val toast: (String) -> Unit
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private fun dp(value: Int): Int = (value * density).toInt()
-    private val muted: Int get() = if (isNight) Color.rgb(174, 174, 180) else Color.rgb(105, 105, 112)
-    private val cardColor: Int get() = if (isNight) Color.rgb(43, 43, 43) else Color.rgb(247, 247, 249)
+    private val muted: Int get() = if (isNight()) Color.rgb(190, 192, 200) else Color.rgb(105, 105, 112)
+    private val cardColor: Int get() = if (isNight()) Color.rgb(43, 45, 52) else Color.rgb(247, 247, 249)
     private val sheet = BrowserBottomSheet(activity, density, isNight, foreground, accent)
+    // Keep explicit surface callbacks only for the currently open in-app sheet.
+    private val activeToneUpdates = mutableListOf<(Boolean) -> Unit>()
+
+    private fun applyActivePageTone(color: Int?) {
+        val dark = GlassSystem.isDarkPage(color)
+        activeToneUpdates.toList().forEach { update -> runCatching { update(dark) } }
+    }
+
+    private fun clearActiveToneUpdates() {
+        activeToneUpdates.clear()
+    }
 
     private data class DownloadItem(
         val id: Long,
@@ -75,6 +86,7 @@ class BrowserToolsController(
     private var downloadEmptyView: View? = null
 
     fun showDownloads() {
+        clearActiveToneUpdates()
         val page = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(10), dp(16), dp(18))
@@ -117,11 +129,16 @@ class BrowserToolsController(
             }
         }
 
-        sheet.show("Tải xuống", page) {
-            handler.removeCallbacks(refresh)
-            downloadRows.clear()
-            downloadEmptyView = null
-        }
+        sheet.show(
+            "Tải xuống", page,
+            onDismiss = {
+                handler.removeCallbacks(refresh)
+                downloadRows.clear()
+                downloadEmptyView = null
+                clearActiveToneUpdates()
+            },
+            onPageToneChanged = { applyActivePageTone(it) }
+        )
         handler.post(refresh)
     }
 
@@ -203,7 +220,12 @@ class BrowserToolsController(
             max = 100
             progressTintList = android.content.res.ColorStateList.valueOf(accent)
             progressBackgroundTintList = android.content.res.ColorStateList.valueOf(
-                if (isNight) Color.rgb(74, 74, 78) else Color.rgb(225, 225, 230)
+                if (isNight()) Color.rgb(74, 74, 80) else Color.rgb(225, 225, 230)
+            )
+        }
+        activeToneUpdates += { dark ->
+            progress.progressBackgroundTintList = android.content.res.ColorStateList.valueOf(
+                if (dark) Color.rgb(74, 74, 80) else Color.rgb(225, 225, 230)
             )
         }
         itemCard.addView(progress, LinearLayout.LayoutParams(-1, dp(5)).apply { topMargin = dp(10) })
@@ -326,6 +348,7 @@ class BrowserToolsController(
     }
 
     fun showPrivacy() {
+        clearActiveToneUpdates()
         val page = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(10), dp(16), dp(22))
@@ -344,13 +367,22 @@ class BrowserToolsController(
                 handler.postDelayed(this, PRIVACY_REFRESH_MS)
             }
         }
-        sheet.show("Privacy Dashboard", page) { handler.removeCallbacks(refreshStats); blockedSummary = null }
+        sheet.show(
+            "Privacy Dashboard", page,
+            onDismiss = {
+                handler.removeCallbacks(refreshStats)
+                blockedSummary = null
+                clearActiveToneUpdates()
+            },
+            onPageToneChanged = { applyActivePageTone(it) }
+        )
         handler.post(refreshStats)
     }
 
     private var blockedSummary: TextView? = null
 
     private fun renderPrivacy(body: LinearLayout) {
+        activeToneUpdates.clear()
         body.removeAllViews()
         val stats = AdBlocker.stats()
         val statsCard = card()
@@ -477,9 +509,12 @@ class BrowserToolsController(
                 }
             }
         }, LinearLayout.LayoutParams(-2, dp(38)))
-        val divider = View(activity).apply {
-            setBackgroundColor(if (isNight) Color.rgb(70, 70, 70) else Color.rgb(225, 225, 230))
+        val divider = View(activity)
+        fun updateDividerTone(dark: Boolean) {
+            divider.setBackgroundColor(if (dark) Color.rgb(70, 70, 76) else Color.rgb(225, 225, 230))
         }
+        updateDividerTone(isNight())
+        activeToneUpdates += ::updateDividerTone
         dataCard.addView(divider, LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(12); bottomMargin = dp(10) })
         dataCard.addView(text("Cookie và cache", 13f, foreground, true))
         dataCard.addView(text("Cookie và dữ liệu lưu trữ đi theo profile đang dùng; phiên riêng tư không chia sẻ với tab thường.", 11f, muted)
@@ -515,6 +550,7 @@ class BrowserToolsController(
             text("Thống kê chặn chỉ phản ánh các request mà danh sách domain hiện tại nhận diện được; Summit chưa phân loại riêng toàn bộ tracker.", 11f, muted)
                 .apply { setPadding(dp(4), dp(2), dp(4), dp(8)) }
         )
+        applyActivePageTone(GlassSystem.currentPageBackground())
     }
 
     private fun addPermissionControl(
@@ -546,17 +582,24 @@ class BrowserToolsController(
         val control = GlassSystem.SegmentedControl(
             context = activity,
             density = density,
-            isNight = isNight,
+            isNight = isNight(),
             labels = choices.map { it.first },
             initialIndex = choices.indexOfFirst { it.second == initialState },
             selectedColor = accent,
             normalColor = muted,
-            trackFill = GlassSystem.createSegmentedTrack(24, density, isNight)
+            trackFill = GlassSystem.createSegmentedTrack(24, density, isNight())
         ) { index ->
             val state = choices[index].second
             onChange(state)
             stateText.text = permissionLabel(state)
             toast("Đã cập nhật quyền: $label")
+        }
+        activeToneUpdates += { dark ->
+            control.applyPageTone(
+                dark,
+                selectedTextColor = accent,
+                normalTextColor = if (dark) Color.rgb(202, 204, 212) else Color.rgb(82, 82, 88)
+            )
         }
         group.addView(control.view, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
         group.clipChildren = false
@@ -588,15 +631,23 @@ class BrowserToolsController(
         })
     }
 
-    private fun card(): LinearLayout = LinearLayout(activity).apply {
-        orientation = LinearLayout.VERTICAL
-        clipChildren = false
-        clipToPadding = false
-        setPadding(dp(14), dp(13), dp(14), dp(13))
-        background = GradientDrawable().apply {
+    private fun card(): LinearLayout {
+        val card = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(14), dp(13), dp(14), dp(13))
+        }
+        val surface = GradientDrawable().apply {
             cornerRadius = dp(18).toFloat()
             setColor(cardColor)
         }
+        card.background = surface
+        activeToneUpdates += { dark ->
+            surface.setColor(if (dark) Color.rgb(43, 45, 52) else Color.rgb(247, 247, 249))
+            card.invalidate()
+        }
+        return card
     }
 
     private fun text(value: String, size: Float, color: Int, bold: Boolean = false): TextView =
@@ -607,24 +658,35 @@ class BrowserToolsController(
             if (bold) typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
 
-    private fun actionButton(label: String, color: Int, onClick: () -> Unit): TextView =
-        TextView(activity).apply {
+    private fun actionButton(label: String, color: Int, onClick: () -> Unit): TextView {
+        val button = TextView(activity).apply {
             text = label
             textSize = 12f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(if (color == muted) this@BrowserToolsController.foreground else color)
             gravity = Gravity.CENTER
             setPadding(dp(12), 0, dp(12), 0)
-            background = GradientDrawable().apply {
-                cornerRadius = dp(12).toFloat()
-                setColor(if (isNight) Color.rgb(58, 58, 60) else Color.rgb(238, 238, 242))
-                setStroke(dp(1), if (color == muted) {
-                    if (isNight) Color.rgb(82, 82, 86) else Color.rgb(218, 218, 224)
-                } else color)
-            }
-            setOnClickListener { onClick() }
-            AnimationSystem.press(this, Constants.PRESS_SCALE_PILL)
         }
+        val usesMutedColor = color == muted
+        button.setTextColor(if (usesMutedColor) foreground else color)
+        val buttonSurface = GradientDrawable().apply {
+            cornerRadius = dp(12).toFloat()
+            setColor(if (isNight()) Color.rgb(58, 58, 64) else Color.rgb(238, 238, 242))
+            setStroke(dp(1), if (usesMutedColor) {
+                if (isNight()) Color.rgb(82, 82, 88) else Color.rgb(218, 218, 224)
+            } else color)
+        }
+        button.background = buttonSurface
+        activeToneUpdates += { dark ->
+            buttonSurface.setColor(if (dark) Color.rgb(58, 58, 64) else Color.rgb(238, 238, 242))
+            buttonSurface.setStroke(dp(1), if (usesMutedColor) {
+                if (dark) Color.rgb(82, 82, 88) else Color.rgb(218, 218, 224)
+            } else color)
+            button.invalidate()
+        }
+        button.setOnClickListener { onClick() }
+        AnimationSystem.press(button, Constants.PRESS_SCALE_PILL)
+        return button
+    }
 
     private fun formatBytes(value: Long): String {
         if (value < 0L) return "Không rõ dung lượng"

@@ -22,7 +22,7 @@ import eightbitlab.com.blurview.BlurTarget
 class BrowserBottomSheet(
     private val activity: Activity,
     private val density: Float,
-    private val isNight: Boolean,
+    private val isNight: () -> Boolean,
     private val foreground: Int,
     private val accent: Int
 ) {
@@ -51,14 +51,20 @@ class BrowserBottomSheet(
     }
 
     @Suppress("ClickableViewAccessibility")
-    fun show(title: String, content: View, onDismiss: () -> Unit = {}) {
+    fun show(
+        title: String,
+        content: View,
+        onDismiss: () -> Unit = {},
+        onPageToneChanged: ((Int?) -> Unit)? = null
+    ) {
         if (activity.isFinishing || activity.isDestroyed) return
         dismiss(immediate = true)
 
-        val sheetColor = if (isNight) Color.rgb(31, 31, 30) else Color.WHITE
-        val textColor = if (isNight) Color.WHITE else Color.BLACK
-        val grabberColor = if (isNight) Color.argb(110, 255, 255, 255) else Color.argb(80, 0, 0, 0)
-        val buttonColor = if (isNight) Color.argb(40, 255, 255, 255) else Color.argb(20, 0, 0, 0)
+        val night = isNight()
+        val sheetColor = GlassSystem.pageSurfaceColor()
+        val textColor = GlassSystem.pagePrimaryText()
+        val grabberColor = if (night) Color.argb(110, 255, 255, 255) else Color.argb(80, 0, 0, 0)
+        val buttonColor = if (night) Color.argb(40, 255, 255, 255) else Color.argb(20, 0, 0, 0)
 
         // Cửa sổ của sheet: BlurTarget chứa lớp tối + sheet; hộp thoại kính nằm cạnh nó để blur lấy đúng nền.
         val windowRoot = FrameLayout(activity)
@@ -156,7 +162,7 @@ class BrowserBottomSheet(
             }
             scroll.clipToPadding = false
             GlassSystem.installEdgeBlur(
-                scroll, headerPx + dp(EDGE_EXTRA_DP), 0, dp(EDGE_BLUR_RADIUS_DP).toFloat(), if (isNight) 0f else EDGE_VEIL, 0f
+                scroll, headerPx + dp(EDGE_EXTRA_DP), 0, dp(EDGE_BLUR_RADIUS_DP).toFloat(), if (night) 0f else EDGE_VEIL, 0f
             )
         }
 
@@ -205,8 +211,9 @@ class BrowserBottomSheet(
             }
         }
         dlg.setContentView(windowRoot)
-        dlg.window?.let { BrowserSheetMotion.configureWindow(it, windowRoot, isNight) }
+        dlg.window?.let { BrowserSheetMotion.configureWindow(it, windowRoot, night) }
         dlg.setOnDismissListener {
+            GlassSystem.removePageToneObserver(windowRoot)
             glassDialog?.cancelAll()
             if (dialog === dlg) {
                 glassDialog = null
@@ -233,6 +240,23 @@ class BrowserBottomSheet(
         closing = false
         dlg.show()
         GlassSystem.bindForegroundRoot(windowRoot)
+        GlassSystem.observePageTone(windowRoot) { color ->
+            val dark = GlassSystem.isDarkPage(color)
+            val foregroundColor = GlassSystem.pagePrimaryText(color)
+            sheet.background = ColorDrawable(GlassSystem.pageSurfaceColor(color))
+            titleView.setTextColor(foregroundColor)
+            closeButton.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
+            closeButton.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(if (dark) Color.argb(40, 255, 255, 255) else Color.argb(20, 0, 0, 0))
+            }
+            (grabber.background as? GradientDrawable)?.setColor(
+                if (dark) Color.argb(110, 255, 255, 255) else Color.argb(80, 0, 0, 0)
+            )
+            dlg.window?.let { BrowserSheetMotion.configureWindow(it, windowRoot, dark) }
+            onPageToneChanged?.invoke(color)
+            sheet.invalidate()
+        }
         dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         // Dialog decor đôi khi chỉ phát insets sau show(); yêu cầu dispatch lại để
         // sheet nhận đúng vùng status/navigation bar và bàn phím trên mọi phiên bản Android.

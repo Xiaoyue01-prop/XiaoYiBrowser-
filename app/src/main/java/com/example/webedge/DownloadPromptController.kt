@@ -21,7 +21,7 @@ class DownloadPromptController(
     private val root: FrameLayout,
     private val blurTarget: BlurTarget,
     private val density: Float,
-    private val isNight: Boolean,
+    private val isNight: () -> Boolean,
     private val foregroundColor: Int,
     private val accentColor: Int,
     private val topInset: () -> Int
@@ -51,6 +51,7 @@ class DownloadPromptController(
         activeView = null
         finishing = false
         if (view != null) {
+            GlassSystem.removePageToneObserver(view)
             AnimationSystem.cancel(view)
             root.removeView(view)
         }
@@ -66,13 +67,14 @@ class DownloadPromptController(
 
         active = prompt
         finishing = false
+        val night = isNight()
 
         // Same shared glass banner shell used by ordinary in-app notifications.
         val card = GlassSystem.createBannerCard(
             activity,
             blurTarget,
             density,
-            isNight
+            night
         )
 
         val content = LinearLayout(activity).apply {
@@ -135,7 +137,7 @@ class DownloadPromptController(
                     cornerRadius = dp(14).toFloat()
                     setColor(
                         if (primary) accentColor
-                        else if (isNight) Color.argb(42, 255, 255, 255)
+                        else if (night) Color.argb(42, 255, 255, 255)
                         else Color.argb(24, 0, 0, 0)
                     )
                 }
@@ -148,6 +150,7 @@ class DownloadPromptController(
         }
 
         val cancelButton = button("Hủy", false) { finish(false) }
+        val cancelSurface = cancelButton.background as? GradientDrawable
         val confirmButton = button("Tải xuống", true) { finish(true) }
         buttons.addView(cancelButton, LinearLayout.LayoutParams(0, dp(42), 1f))
         buttons.addView(View(activity), LinearLayout.LayoutParams(dp(10), 1))
@@ -173,6 +176,13 @@ class DownloadPromptController(
         }
         root.addView(card, params)
         activeView = card
+        GlassSystem.observePageTone(card) { color ->
+            val dark = GlassSystem.isDarkPage(color)
+            cancelSurface?.setColor(
+                if (dark) Color.argb(42, 255, 255, 255) else Color.argb(24, 0, 0, 0)
+            )
+            cancelButton.invalidate()
+        }
 
         AnimationSystem.enter(card, offsetY = -dp(150).toFloat(), fromScale = 1f)
     }
@@ -191,10 +201,16 @@ class DownloadPromptController(
                 active = null
                 activeView = null
                 finishing = false
-                if (view != null) root.removeView(view)
+                if (view != null) {
+                    GlassSystem.removePageToneObserver(view)
+                    root.removeView(view)
+                }
                 showNext()
             } else {
-                if (view != null) root.removeView(view)
+                if (view != null) {
+                    GlassSystem.removePageToneObserver(view)
+                    root.removeView(view)
+                }
             }
         }
 

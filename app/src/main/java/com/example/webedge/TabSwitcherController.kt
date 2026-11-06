@@ -39,7 +39,7 @@ class TabSwitcherController(
     private val store: Store,
     private val blurTarget: BlurTarget,
     private val hostRoot: FrameLayout,
-    private val isNight: Boolean,
+    private val isNight: () -> Boolean,
     private val accentColor: Int,
     private val dp: (Int) -> Int,
     private val captureActiveTab: () -> Unit,
@@ -56,6 +56,7 @@ class TabSwitcherController(
     private var activeContainer: FrameLayout? = null
     private var activeClose: (() -> Unit)? = null
     private var previousLightStatusBars: Boolean? = null
+    private var modeControl: GlassSystem.SegmentedControl? = null
 
     val isShowing: Boolean get() = activeContainer?.isAttachedToWindow == true
 
@@ -106,7 +107,7 @@ class TabSwitcherController(
         // parent remain unclipped so the press animation can expand smoothly.
         button.addView(GlassSystem.createBlurView(
             activity, blurTarget, GlassSystem.Preset.TABS_BUTTON,
-            activity.resources.displayMetrics.density, false, rim = false
+            activity.resources.displayMetrics.density, isNight(), rim = false
         ).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -135,8 +136,9 @@ class TabSwitcherController(
      */
     private fun createModePill(onModeChange: (Boolean) -> Boolean): FrameLayout {
         val density = activity.resources.displayMetrics.density
+        val dark = isNight()
         val backdrop = GlassSystem.createBlurView(
-            activity, blurTarget, GlassSystem.Preset.TABS_BUTTON, density, false, rim = false
+            activity, blurTarget, GlassSystem.Preset.TABS_BUTTON, density, dark, rim = false
         ).apply {
             isClickable = false
             isFocusable = false
@@ -145,14 +147,14 @@ class TabSwitcherController(
         control = GlassSystem.SegmentedControl(
             context = activity,
             density = density,
-            isNight = false,
+            isNight = dark,
             labels = listOf("${tabManager.count()} tab", "Riêng tư"),
             initialIndex = if (tabManager.isPrivateMode) 1 else 0,
-            selectedColor = Color.BLACK,
-            normalColor = Color.argb(150, 60, 60, 67),
+            selectedColor = if (dark) Color.WHITE else Color.BLACK,
+            normalColor = if (dark) Color.argb(190, 236, 237, 242) else Color.argb(150, 60, 60, 67),
             trackFill = GradientDrawable().apply {
                 cornerRadius = dp(24).toFloat()
-                setColor(Color.argb(118, 255, 255, 255))
+                setColor(if (dark) Color.argb(94, 36, 38, 44) else Color.argb(118, 255, 255, 255))
             },
             backdrop = backdrop,
             textSizeSp = 15f
@@ -163,6 +165,7 @@ class TabSwitcherController(
             }
         }
         countLabel = control.options[0]
+        modeControl = control
         return control.view
     }
 
@@ -191,16 +194,18 @@ class TabSwitcherController(
             // Overlay phải nổi trên Orb/toolbar; Orb được tháo khỏi root trong thời gian này.
             elevation = dp(12).toFloat()
             // Nền dự phòng đặc: nếu BlurView chưa có frame đầu, trang web không xuyên qua.
-            setBackgroundColor(Color.rgb(226, 225, 232))
+            setBackgroundColor(GlassSystem.pageSurfaceColor())
         }
         var closing = false
         lateinit var blurSync: GlassSystem.BlurSync
 
         fun finishDismiss() {
             OriginTransitionController.cancel(container)
+            GlassSystem.removePageToneObserver(container)
             if (container.parent === hostRoot) hostRoot.removeView(container)
             activeContainer = null
             activeClose = null
+            modeControl = null
             previousLightStatusBars?.let { wasLight ->
                 WindowCompat.getInsetsController(activity.window, activity.window.decorView)
                     .isAppearanceLightStatusBars = wasLight
@@ -224,7 +229,7 @@ class TabSwitcherController(
 
         val dialogBlur = GlassSystem.createBlurView(
             activity, blurTarget, GlassSystem.Preset.TABS_DIALOG,
-            activity.resources.displayMetrics.density, false,
+            activity.resources.displayMetrics.density, isNight(),
             // Dùng cùng lớp phủ mặc định của GlassSystem như menu chính và các bề mặt kính khác.
             rim = false
         ).apply {
@@ -256,7 +261,10 @@ class TabSwitcherController(
         val statusFade = View(activity).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.argb(TAB_TOP_FADE, 249, 243, 248), Color.argb(0, 249, 243, 248))
+                intArrayOf(
+                    if (isNight()) Color.argb(88, 18, 19, 24) else Color.argb(TAB_TOP_FADE, 249, 243, 248),
+                    Color.argb(0, 249, 243, 248)
+                )
             )
             isClickable = false
             isFocusable = false
@@ -285,7 +293,7 @@ class TabSwitcherController(
             text = if (tabManager.isPrivateMode) "Tab riêng tư" else "Tab đang mở"
             textSize = 19f
             setTypeface(null, android.graphics.Typeface.BOLD)
-            setTextColor(Color.BLACK)
+            setTextColor(GlassSystem.pagePrimaryText())
         }
         heading.addView(titleView)
         header.addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -329,7 +337,7 @@ class TabSwitcherController(
             for (t in tabManager.getCurrentTabs()) {
                 (cardViews[t.id]?.background as? GradientDrawable)?.setStroke(
                     dp(if (t.isActive) 2 else 1),
-                    if (t.isActive) accentColor else Color.argb(145, 195, 195, 205)
+                    if (t.isActive) accentColor else GlassSystem.pageDividerColor()
                 )
             }
             countLabel?.text = "${tabManager.count()} tab"
@@ -397,10 +405,10 @@ class TabSwitcherController(
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.RECTANGLE
                         cornerRadius = dp(22).toFloat()
-                        setColor(Color.argb(154, 255, 255, 255))
+                        setColor(GlassSystem.pageCardColor())
                         setStroke(
                             dp(if (tab.isActive) 2 else 1),
-                            if (tab.isActive) accentColor else Color.argb(145, 195, 195, 205)
+                            if (tab.isActive) accentColor else GlassSystem.pageDividerColor()
                         )
                     }
                 }
@@ -418,7 +426,8 @@ class TabSwitcherController(
                 val previewContent = FrameLayout(activity).apply {
                     background = GradientDrawable(
                         GradientDrawable.Orientation.TL_BR,
-                        intArrayOf(Color.rgb(250, 247, 250), Color.rgb(231, 227, 235))
+                        if (isNight()) intArrayOf(Color.rgb(45, 47, 54), Color.rgb(29, 31, 37))
+                        else intArrayOf(Color.rgb(250, 247, 250), Color.rgb(231, 227, 235))
                     ).apply { cornerRadius = dp(14).toFloat() }
                     clipToOutline = true
                 }
@@ -434,8 +443,9 @@ class TabSwitcherController(
                 } else {
                     val domain = runCatching { Uri.parse(tab.url).host?.removePrefix("www.") ?: "S" }.getOrDefault("S")
                     val hue = (tab.url.hashCode() and 0xFF) % 360
-                    val saturation = if (isNight) 0.5f else 0.6f
-                    val luminance = if (isNight) 0.6f else 0.45f
+                    val dark = isNight()
+                    val saturation = if (dark) 0.5f else 0.6f
+                    val luminance = if (dark) 0.6f else 0.45f
                     val markColor = Color.HSVToColor(floatArrayOf(hue.toFloat(), saturation, luminance))
                     previewContent.addView(TextView(activity).apply {
                         text = domain.take(1).uppercase()
@@ -469,7 +479,7 @@ class TabSwitcherController(
                     text = tab.title.ifBlank { tab.url.ifBlank { "Tab mới" } }
                     textSize = 14f
                     setTypeface(null, android.graphics.Typeface.BOLD)
-                    setTextColor(Color.BLACK)
+                    setTextColor(GlassSystem.pagePrimaryText())
                     maxLines = 1
                     setSingleLine(true)
                     ellipsize = android.text.TextUtils.TruncateAt.END
@@ -478,7 +488,7 @@ class TabSwitcherController(
                 card.addView(TextView(activity).apply {
                     text = shortUrl(tab.url).ifBlank { store.homeUrl }
                     textSize = 12f
-                    setTextColor(Color.rgb(82, 82, 88))
+                    setTextColor(GlassSystem.pageSecondaryText())
                     setTypeface(null, android.graphics.Typeface.BOLD)
                     maxLines = 1
                     setSingleLine(true)
@@ -526,9 +536,9 @@ class TabSwitcherController(
         }
         val addButton = createCircleIconButton(
             symbol = "+",
-            iconColor = Theme.safariButtonBlue(false),
-            fillColor = Color.argb(105, 255, 255, 255),
-            strokeColor = Color.argb(135, 125, 125, 136),
+            iconColor = Theme.safariButtonBlue(isNight()),
+            fillColor = if (isNight()) Color.argb(88, 68, 70, 78) else Color.argb(105, 255, 255, 255),
+            strokeColor = if (isNight()) Color.argb(115, 220, 220, 230) else Color.argb(135, 125, 125, 136),
             iconTextSize = 27f
         ) {
             onCreateTab()
@@ -557,6 +567,58 @@ class TabSwitcherController(
             setMargins(dp(8), 0, dp(4), 0)
         })
         root.addView(bottomBar)
+
+        val statusController = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        previousLightStatusBars = statusController.isAppearanceLightStatusBars
+
+        var appliedDarkTone = isNight()
+        fun applyPageTone(dark: Boolean) {
+            appliedDarkTone = dark
+            WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+                .isAppearanceLightStatusBars = !dark
+            container.setBackgroundColor(if (dark) Color.rgb(23, 24, 29) else Color.rgb(226, 225, 232))
+            statusFade.background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(
+                    if (dark) Color.argb(88, 18, 19, 24) else Color.argb(TAB_TOP_FADE, 249, 243, 248),
+                    Color.argb(0, 249, 243, 248)
+                )
+            )
+            titleView.setTextColor(if (dark) Color.WHITE else Color.rgb(18, 18, 20))
+            modeControl?.applyPageTone(dark)
+            val addFill = if (dark) Color.argb(88, 58, 60, 68) else Color.argb(105, 255, 255, 255)
+            val addStroke = if (dark) Color.argb(115, 220, 220, 230) else Color.argb(135, 125, 125, 136)
+            (addButton.background as? GradientDrawable)?.apply {
+                setColor(addFill)
+                setStroke(dp(1), addStroke)
+            }
+            (addButton.getChildAt(0) as? BlurView)?.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(addFill)
+            }
+            cardViews.values.forEach { card ->
+                (card.background as? GradientDrawable)?.setColor(GlassSystem.pageCardColor())
+                (card.background as? GradientDrawable)?.setStroke(
+                    dp(1), if (dark) Color.argb(100, 220, 222, 232) else Color.argb(145, 195, 195, 205)
+                )
+                for (i in 0 until card.childCount) {
+                    val child = card.getChildAt(i)
+                    if (child is TextView) {
+                        child.setTextColor(if (i == 1) GlassSystem.pagePrimaryText() else GlassSystem.pageSecondaryText())
+                    }
+                }
+            }
+            statusFade.invalidate()
+        }
+        applyPageTone(isNight())
+        GlassSystem.observePageTone(container) { color ->
+            val dark = GlassSystem.isDarkPage(color)
+            if (dark != appliedDarkTone) {
+                applyPageTone(dark)
+                // Cards may have been created in the opposite tone before the page finished reporting.
+                if (cardViews.isNotEmpty()) renderCards()
+            }
+        }
 
         // Vùng mờ dần: từ mép trên tới quá header một chút, và từ thanh đáy xuống mép dưới.
         var edgeTopPx = 0
@@ -609,9 +671,7 @@ class TabSwitcherController(
         root.clipToPadding = false
         hostRoot.addView(container, FrameLayout.LayoutParams(-1, -1))
 
-        val statusController = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
-        previousLightStatusBars = statusController.isAppearanceLightStatusBars
-        statusController.isAppearanceLightStatusBars = true
+        statusController.isAppearanceLightStatusBars = !isNight()
         ViewCompat.setOnApplyWindowInsetsListener(container) { _, insets ->
             val topInset = insets.getInsets(
                 WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout()

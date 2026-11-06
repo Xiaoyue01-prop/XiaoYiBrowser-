@@ -47,7 +47,7 @@ import eightbitlab.com.blurview.BlurView
  * Drawable helpers are the first-frame/fallback layer; BlurView is the primary renderer.
  */
 object GlassSystem {
-    // One light-mode material system: consistent frost, edge and corner language.
+    // One adaptive material system: consistent frost, edge and corner language on light or dark pages.
     private const val GLASS_BLUR_RADIUS_DP = 6f
     private const val GLASS_TINT_ALPHA = 6
 
@@ -68,6 +68,41 @@ object GlassSystem {
 
     private var pageBackgroundColor: Int? = null
     private var currentOverlayColor: Int = Color.argb(GLASS_TINT_ALPHA, 255, 255, 255)
+    private val pageToneObservers = java.util.WeakHashMap<View, (Int?) -> Unit>()
+
+    /** The webpage's reported canvas tone; null means use Summit's neutral light fallback. */
+    fun currentPageBackground(): Int? = pageBackgroundColor
+
+    /** Page tone is independent from Android/system dark mode and never modifies webpage CSS. */
+    fun isDarkPage(color: Int? = pageBackgroundColor): Boolean =
+        color != null && pageLuminance(color) < 0.42f
+
+    fun pageSurfaceColor(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.rgb(30, 31, 36) else Color.WHITE
+
+    fun pageCardColor(color: Int? = pageBackgroundColor): Int =
+        // Dark-page cards need enough tint density to keep white labels readable over bright
+        // blurred regions (for example a white ad/image inside an otherwise dark page).
+        if (isDarkPage(color)) Color.argb(190, 37, 39, 46) else Color.argb(154, 255, 255, 255)
+
+    fun pagePrimaryText(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.WHITE else Color.rgb(18, 18, 20)
+
+    fun pageSecondaryText(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.rgb(202, 204, 212) else Color.rgb(82, 82, 88)
+
+    fun pageDividerColor(color: Int? = pageBackgroundColor): Int =
+        if (isDarkPage(color)) Color.argb(58, 255, 255, 255) else Color.argb(35, 0, 0, 0)
+
+    /** Observe page-tone changes while a native overlay is open; remove it when the overlay closes. */
+    fun observePageTone(owner: View, observer: (Int?) -> Unit) {
+        pageToneObservers[owner] = observer
+        observer(pageBackgroundColor)
+    }
+
+    fun removePageToneObserver(owner: View) {
+        pageToneObservers.remove(owner)
+    }
 
     /**
      * Update the shared glass material and the native foreground palette from the active webpage.
@@ -75,7 +110,14 @@ object GlassSystem {
      */
     fun setPageBackground(color: Int?, foregroundRoot: View? = null) {
         val overlay = overlayForPage(color)
+        val pageToneChanged = pageBackgroundColor != color
         pageBackgroundColor = color
+
+        if (pageToneChanged) {
+            pageToneObservers.values.toList().forEach { observer ->
+                runCatching { observer(color) }
+            }
+        }
 
         if (currentOverlayColor != overlay) {
             currentOverlayColor = overlay
@@ -124,7 +166,7 @@ object GlassSystem {
 
     /** Recolors neutral dark app labels, editable text, hints and monochrome icons. */
     fun applyForegroundContrast(root: View, pageColor: Int?) {
-        val useLightForeground = pageColor != null && pageLuminance(pageColor) < 0.40f
+        val useLightForeground = isDarkPage(pageColor)
 
         fun updateTextColor(view: TextView) {
             val current = view.textColors
@@ -253,13 +295,12 @@ object GlassSystem {
         val saturation = if (maxChannel <= 0f) 0f else (maxChannel - minChannel) / maxChannel
 
         return when {
-            // A very dark, strongly colored page gets a restrained neutral veil to preserve its hue.
-            luminance < 0.23f && saturation > 0.38f -> Color.argb(16, 202, 206, 216)
-            // Dark neutral pages need a little more lift so the glass remains visible.
-            luminance < 0.29f -> Color.argb(24, 202, 206, 216)
-            // Mid-dark backgrounds use a lighter but still restrained neutral overlay.
-            luminance < 0.43f -> Color.argb(17, 198, 202, 212)
-            // Light and colorful pages retain the original ultra-transparent white material.
+            // Dark pages need a subtle dark veil. A white veil here would make native white text
+            // unreadable against pale cards and would wash out dark webpage content.
+            luminance < 0.23f && saturation > 0.38f -> Color.argb(18, 0, 0, 0)
+            luminance < 0.29f -> Color.argb(26, 0, 0, 0)
+            luminance < 0.43f -> Color.argb(18, 0, 0, 0)
+            // Light pages retain the original ultra-transparent white material.
             else -> Color.argb(GLASS_TINT_ALPHA, 255, 255, 255)
         }
     }
@@ -699,8 +740,8 @@ half4 main(float2 coord) {
         isNight: Boolean,
         labels: List<String>,
         initialIndex: Int,
-        private val selectedColor: Int,
-        private val normalColor: Int,
+        private var selectedColor: Int,
+        private var normalColor: Int,
         trackFill: Drawable,
         backdrop: View? = null,
         radiusDp: Int = 24,
@@ -781,6 +822,21 @@ half4 main(float2 coord) {
             updateIndicator(animate)
         }
 
+        /** Updates the control when the webpage beneath an open native overlay changes tone. */
+        fun applyPageTone(
+            dark: Boolean,
+            selectedTextColor: Int? = null,
+            normalTextColor: Int? = null
+        ) {
+            selectedColor = selectedTextColor ?: if (dark) Color.WHITE else Color.BLACK
+            normalColor = normalTextColor ?: if (dark) Color.argb(190, 236, 237, 242) else Color.argb(150, 60, 60, 67)
+            (view.background as? GradientDrawable)?.setColor(
+                if (dark) Color.argb(94, 36, 38, 44) else Color.argb(30, 118, 118, 128)
+            )
+            thumb.setTheme(dark)
+            refreshOptions()
+        }
+
         private fun refreshOptions(hover: Int = -1) {
             options.forEachIndexed { index, option ->
                 val active = if (hover >= 0) index == hover else index == selectedIndex
@@ -820,7 +876,7 @@ half4 main(float2 coord) {
      * phình to hơn thanh một chút và trượt theo ngón tay. Thả tay thì co lại và lăn về ô gần nhất.
      * Mọi hành vi kính của thanh này nằm ở đây; người gọi chỉ cấp callback.
      */
-    class SegmentedGlassThumb(context: Context, private val density: Float, isNight: Boolean) {
+    class SegmentedGlassThumb(context: Context, private val density: Float, private var isNight: Boolean) {
         val view = FrameLayout(context)
         private val solid = View(context)
         private val glass = View(context)
@@ -843,6 +899,18 @@ half4 main(float2 coord) {
             view.addView(solid, FrameLayout.LayoutParams(-1, -1))
             view.addView(glass, FrameLayout.LayoutParams(-1, -1))
             view.elevation = 2f * density
+        }
+
+        fun setTheme(dark: Boolean) {
+            if (isNight == dark) return
+            isNight = dark
+            (solid.background as? GradientDrawable)?.apply {
+                setColor(if (dark) Color.rgb(76, 76, 81) else Color.WHITE)
+                setStroke(
+                    density.toInt().coerceAtLeast(1),
+                    if (dark) Color.rgb(92, 92, 98) else Color.rgb(220, 220, 226)
+                )
+            }
         }
 
         /** Cao viên kính lúc nổi = chiều cao thanh x LIFT_OVER_TRACK, để thấy rõ viền trên và dưới của cả dải. */
