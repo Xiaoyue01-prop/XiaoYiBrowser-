@@ -328,6 +328,41 @@ function findHeader(I){
   return best;
 }
 
+// Các phần tử fixed/sticky nằm ngay dưới header (vd. player YouTube) cũng phải hạ theo header,
+// nếu không header đã hạ xuống dưới thanh trạng thái sẽ đè lên chúng. Chỉ đụng tới phần tử bắt đầu
+// trong dải header mới (từ đáy header cũ tới đáy header mới); lớp phủ bắt đầu từ mép trên thì bỏ qua.
+function shiftCompanions(hd, I){
+  try {
+    var w = window.innerWidth;
+    var hH = hd.el.getBoundingClientRect().height;
+    var probeY = I + hH - 6;
+    if (hH < 8 || probeY <= 0 || probeY >= window.innerHeight) return;
+    var xs = [0.5, 0.2, 0.8];
+    for (var q = 0; q < xs.length; q++) {
+      var st = document.elementsFromPoint(w * xs[q], probeY);
+      for (var j = 0; j < st.length; j++) {
+        var el = st[j];
+        while (el && el !== document.documentElement && el !== document.body) {
+          if (el === hd.el || hd.el.contains(el) || el.contains(hd.el)) break;
+          var cs = getComputedStyle(el);
+          if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none') {
+            if (!el.hasAttribute('data-edge-shift')) {
+              var r = el.getBoundingClientRect();
+              var top = parseFloat(cs.top);
+              if (!isNaN(top) && r.width > w * 0.6 && r.height > 20 && r.top >= hH - 4 && r.top < probeY) {
+                el.setAttribute('data-edge-shift', '1');
+                el.style.setProperty('top', (top + I) + 'px', 'important');
+              }
+            }
+            break;
+          }
+          el = el.parentElement;
+        }
+      }
+    }
+  } catch (e) {}
+}
+
 function runEdge(){
   var I = window.__edgeInset || 0;
   if (!I || !document.elementsFromPoint) return;
@@ -336,6 +371,7 @@ function runEdge(){
     if (hd) {
       var topNow = parseFloat(hd.cs.top);
       if (isNaN(topNow) || topNow < I - 0.5) hd.el.style.setProperty('top', I + 'px', 'important');
+      shiftCompanions(hd, I);
       var hc = headerColor(hd.el, I);
       report(hc ? (hc[0] + ',' + hc[1] + ',' + hc[2]) : 'none');
       return;
