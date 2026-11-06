@@ -332,6 +332,30 @@ function findHeader(I){
   return best;
 }
 
+// Các phần tử đã hạ xuống: YouTube có thể ghi đè lại style.top của chúng (vd. player về 48px), nên mỗi lần chạy
+// kiểm tra lại giá trị thực tế và áp lại phần đã cộng thêm.
+var edgeShiftList = [];
+function edgeShiftTop(el, baseTop, delta){
+  el.setAttribute('data-edge-shift', '1');
+  el.__edgeDelta = delta;
+  el.__edgeWant = baseTop + delta;
+  el.style.setProperty('top', el.__edgeWant + 'px', 'important');
+  edgeShiftList.push(el);
+}
+function edgeReassert(){
+  try {
+    for (var i = edgeShiftList.length - 1; i >= 0; i--) {
+      var el = edgeShiftList[i];
+      if (!el.isConnected) { edgeShiftList.splice(i, 1); continue; }
+      var t = parseFloat(getComputedStyle(el).top);
+      if (!isNaN(t) && Math.abs(t - el.__edgeWant) > 0.5) {
+        el.__edgeWant = t + el.__edgeDelta;
+        el.style.setProperty('top', el.__edgeWant + 'px', 'important');
+      }
+    }
+  } catch (e) {}
+}
+
 // Các phần tử fixed/sticky nằm ngay dưới header (vd. player YouTube) cũng phải hạ theo header,
 // nếu không header đã hạ xuống dưới thanh trạng thái sẽ đè lên chúng. Chỉ đụng tới phần tử bắt đầu
 // trong dải header mới (từ đáy header cũ tới đáy header mới); lớp phủ bắt đầu từ mép trên thì bỏ qua.
@@ -354,8 +378,7 @@ function shiftCompanions(hd, I){
               var r = el.getBoundingClientRect();
               var top = parseFloat(cs.top);
               if (!isNaN(top) && r.width > w * 0.6 && r.height > 20 && r.top >= hH - 4 && r.top < probeY) {
-                el.setAttribute('data-edge-shift', '1');
-                el.style.setProperty('top', (top + I) + 'px', 'important');
+                edgeShiftTop(el, top, I);
               }
             }
             break;
@@ -391,8 +414,7 @@ function shiftVideoHost(hd, I){
     var rt = host.getBoundingClientRect().top;
     var delta = hb - rt;
     if (isNaN(top) || delta < 4 || rt < I - 4) return;
-    host.setAttribute('data-edge-shift', '1');
-    host.style.setProperty('top', (top + delta) + 'px', 'important');
+    edgeShiftTop(host, top, delta);
   } catch (e) {}
 }
 
@@ -419,7 +441,7 @@ function shiftHeaderBackground(hd, I){
       var r = el.getBoundingClientRect(), top = parseFloat(cs.top);
       if (!isNaN(top) && r.width > w * 0.6 && Math.abs(r.top - oldTop) <= 2 && Math.abs(r.height - hH) <= 4) {
         el.setAttribute('data-edge-hdbg', '1');
-        el.style.setProperty('top', (top + I) + 'px', 'important');
+        edgeShiftTop(el, top, I);
         window.__edgeHdBg = el;
       }
     }
@@ -438,6 +460,7 @@ function runEdge(){
         hd.el.setAttribute('data-edge-hd', '1');
       }
       if (hd.el.getAttribute('data-edge-hd')) shiftHeaderBackground(hd, I);
+      edgeReassert();
       shiftCompanions(hd, I);
       shiftVideoHost(hd, I);
       var hc = headerColor(hd.el, I);
