@@ -33,6 +33,7 @@ class BrowserToolsController(
     private val activity: Activity,
     private val store: Store,
     private val webView: () -> WebView,
+    private val allWebViews: () -> List<WebView>,
     private val currentUrl: () -> String,
     private val cookieManager: () -> CookieManager,
     private val webStorage: () -> WebStorage,
@@ -364,6 +365,8 @@ class BrowserToolsController(
                 if (!sheet.isShowing) return
                 val stats = AdBlocker.stats()
                 blockedSummary?.text = "${stats.blockedRequests} yêu cầu bị chặn · ${stats.uniqueHosts} máy chủ"
+                val youtubeStats = YouTubeAdBlocker.stats()
+                youtubeBlockedSummary?.text = "${youtubeStats.blockedRequests} yêu cầu quảng cáo YouTube bị chặn · ${youtubeStats.uniqueHosts} máy chủ"
                 handler.postDelayed(this, PRIVACY_REFRESH_MS)
             }
         }
@@ -372,6 +375,7 @@ class BrowserToolsController(
             onDismiss = {
                 handler.removeCallbacks(refreshStats)
                 blockedSummary = null
+                youtubeBlockedSummary = null
                 clearActiveToneUpdates()
             },
             onPageToneChanged = { applyActivePageTone(it) }
@@ -380,6 +384,7 @@ class BrowserToolsController(
     }
 
     private var blockedSummary: TextView? = null
+    private var youtubeBlockedSummary: TextView? = null
 
     private fun renderPrivacy(body: LinearLayout) {
         activeToneUpdates.clear()
@@ -394,7 +399,9 @@ class BrowserToolsController(
         statsCard.addView(blockedSummary)
         val resetStats = actionButton("Đặt lại thống kê", muted) {
             AdBlocker.resetStats()
+            YouTubeAdBlocker.resetStats()
             blockedSummary?.text = "0 yêu cầu bị chặn · 0 máy chủ"
+            youtubeBlockedSummary?.text = "0 yêu cầu quảng cáo YouTube bị chặn · 0 máy chủ"
         }
         statsCard.addView(resetStats, LinearLayout.LayoutParams(-2, dp(36)).apply { topMargin = dp(10) })
         body.addView(statsCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
@@ -421,7 +428,38 @@ class BrowserToolsController(
         }
         filterRow.addView(enabled)
         filterCard.addView(filterRow)
-        body.addView(filterCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
+        body.addView(filterCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+
+        val youtubeCard = card()
+        val youtubeRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val youtubeTexts = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        youtubeTexts.addView(text("YouTube AdBlock", 14f, foreground, true))
+        youtubeTexts.addView(
+            text("Ẩn vị trí quảng cáo rõ ràng và lọc một số máy chủ quảng cáo khi trang cha là YouTube. Không can thiệp luồng video.", 11f, muted)
+                .apply { setPadding(0, dp(3), 0, 0) }
+        )
+        youtubeTexts.addView(
+            text("0 yêu cầu quảng cáo YouTube bị chặn · 0 máy chủ", 11f, muted)
+                .apply { setPadding(0, dp(5), 0, 0) }
+                .also { youtubeBlockedSummary = it }
+        )
+        youtubeRow.addView(youtubeTexts, LinearLayout.LayoutParams(0, -2, 1f))
+        val youtubeEnabled = Switch(activity).apply {
+            isChecked = store.youtubeAdBlockEnabled
+            setOnCheckedChangeListener { _: CompoundButton, checked: Boolean ->
+                store.youtubeAdBlockEnabled = checked
+                allWebViews().forEach { page ->
+                    YouTubeAdBlocker.sync(page, page.url, checked)
+                }
+                toast(if (checked) "Đã bật YouTube AdBlock" else "Đã tắt YouTube AdBlock")
+            }
+        }
+        youtubeRow.addView(youtubeEnabled)
+        youtubeCard.addView(youtubeRow)
+        body.addView(youtubeCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
 
         addSectionTitle(body, "Quyền của website hiện tại")
         val privateSession = isPrivateMode()

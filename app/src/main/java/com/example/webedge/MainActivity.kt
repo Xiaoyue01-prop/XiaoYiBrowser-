@@ -227,6 +227,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             }
         }
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+            YouTubeAdBlocker.onMainFrameNavigation(view, url)
             tabManager.updateForWebView(view, url, view.title ?: url)
             // A navigation must not reuse the previous document's background tone.
             pageBackgrounds.remove(view)
@@ -244,6 +245,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+            YouTubeAdBlocker.onMainFrameNavigation(view, url)
             tabManager.updateForWebView(view, url, view.title ?: url)
             if (view !== web) return
             pageTransition.onHistoryChanged()
@@ -254,6 +256,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
         override fun onPageCommitVisible(view: WebView, url: String) {
             if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
+            YouTubeAdBlocker.sync(view, url, store.youtubeAdBlockEnabled)
             view.evaluateJavascript(MEDIA_JS, null)
             if (view !== web) return
             injectInsets()
@@ -267,6 +270,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             request: WebResourceRequest
         ): WebResourceResponse? {
             if (store.adBlockEnabled && AdBlocker.shouldBlock(request)) {
+                YouTubeAdBlocker.recordGlobalBlockIfRelevant(request, view)
+                return AdBlocker.createEmptyResponse()
+            }
+            if (store.youtubeAdBlockEnabled && YouTubeAdBlocker.shouldBlock(request, view)) {
                 return AdBlocker.createEmptyResponse()
             }
             return super.shouldInterceptRequest(view, request)
@@ -279,6 +286,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 store.addHistory(view.title ?: "", url)
             }
             if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
+            YouTubeAdBlocker.sync(view, url, store.youtubeAdBlockEnabled)
             view.evaluateJavascript(MEDIA_JS, null)
             if (view !== web) return
             pullRefresh?.finish()
@@ -291,6 +299,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            YouTubeAdBlocker.forget(view)
             pageBackgrounds.remove(view)
             if (view === web) GlassSystem.setPageBackground(null, window.decorView)
             val tab = tabManager.getForWebView(view)
@@ -1631,6 +1640,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             if (web === target) target.evaluateJavascript("window.__edgeForceTop&&window.__edgeForceTop()", null)
         }
         currentUrl = target.url ?: tab.url
+        target.post { YouTubeAdBlocker.sync(target, target.url ?: tab.url, store.youtubeAdBlockEnabled) }
         target.alpha = 1f
         pillProgress.progress = 0f
         applyInsets()

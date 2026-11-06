@@ -45,3 +45,13 @@ The app compiles against API 37 but deliberately keeps `targetSdk = 36` for this
 GitHub Actions installs Android SDK Platform 37 / Build Tools 36.0.0 and uses Gradle 9.7.0. CI now builds both Debug and minified Release APKs and uploads both artifacts. A full Android Gradle build was not run in the editing environment because it has no network access or Android SDK installation; the first CI run remains the authoritative compile verification.
 
 Gradle Wrapper files are not included in this ZIP because an authentic wrapper JAR could not be retrieved in the isolated editing environment. CI pins Gradle 9.7.0 through gradle/actions/setup-gradle. Generate and commit the wrapper from a trusted Gradle 9.7.0 installation before making local builds independent of a separately installed Gradle executable.
+
+## YouTube-only AdBlock MVP (2026-11-06)
+
+- `YouTubeAdBlocker.kt` is a separate filter layer; it does not change the generic `AdBlocker.kt` domain list or its global toggle.
+- `Store.youtubeAdBlockEnabled` is an independent preference, surfaced in Privacy Dashboard. Toggle changes are synchronized to all live tab WebViews; tab activation also reapplies the current state.
+- The module tracks the top-level URL per WebView with a synchronized `WeakHashMap`. Network rules are scoped to YouTube top-level pages and only match a short allowlisted set of known Google advertising hosts (`doubleclick.net`, `googlesyndication.com`, `googleadservices.com`, `adservice.google.com`, `ads.google.com`).
+- Cosmetic rules hide only explicit YouTube ad renderers/placements and player overlay ad surfaces. They do not manipulate playback controls, timers, manifests, media segments, or video sources.
+- Never add `googlevideo.com`, `ytimg.com`, or broad YouTube first-party hosts to the network block list. These deliver video, thumbnails, scripts, or other required site resources.
+- This MVP does not claim to remove all in-stream pre-roll/mid-roll ads. YouTube may deliver ads through the same media infrastructure as normal video, while `WebViewClient.shouldInterceptRequest` does not see `blob:`/`javascript:` URLs and only sees the initial URL in a redirect chain. Service Worker interception is a separate API and is not enabled by this module.
+- Validate on-device with Home, Search, Watch, Shorts, account sign-in, comments, live streams, fullscreen and PiP. For each case test the YouTube switch both on and off, with the global AdBlock switch independently on and off. If a rule breaks playback or navigation, remove that rule rather than broadening interception.

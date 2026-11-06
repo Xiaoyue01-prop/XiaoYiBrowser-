@@ -87,6 +87,7 @@ class MenuController(
             activity = activity,
             store = store,
             webView = { host.web },
+            allWebViews = { tabManager.getAll().mapNotNull { it.webView } },
             currentUrl = { host.currentUrl },
             cookieManager = { host.cookieManagerFor(host.web) },
             webStorage = { host.webStorageFor(host.web) },

@@ -110,6 +110,12 @@ class Store(context: Context) {
     get() = adBlockCache
     set(v) { adBlockCache = v; sp.edit().putBoolean("adblock", v).apply() }
 
+    // YouTube-specific filtering is independent from the global ad-block switch.
+    @Volatile private var youtubeAdBlockCache: Boolean = sp.getBoolean("youtube_adblock", true)
+    var youtubeAdBlockEnabled: Boolean
+        get() = youtubeAdBlockCache
+        set(v) { youtubeAdBlockCache = v; sp.edit().putBoolean("youtube_adblock", v).apply() }
+
     var autoHideBar: Boolean
     get() = sp.getBoolean("autohide", true)
     set(v) { sp.edit().putBoolean("autohide", v).apply() }
