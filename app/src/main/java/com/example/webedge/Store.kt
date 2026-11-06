@@ -21,7 +21,8 @@ data class PersistedTab(
     val isActive: Boolean,
     val thumbnail: Bitmap? = null,
     val thumbnailUrl: String = "",
-    val thumbnailVersion: Long = 0L
+    val thumbnailVersion: Long = 0L,
+    val desktop: Boolean = false
 )
 class Store(context: Context) {
     companion object {
@@ -101,9 +102,6 @@ class Store(context: Context) {
     var searchEngine: Int
     get() = sp.getInt("engine", 0)
     set(v) { sp.edit().putInt("engine", v).apply() }
-    var desktopMode: Boolean
-    get() = sp.getBoolean("desktop", false)
-    set(v) { sp.edit().putBoolean("desktop", v).apply() }
     var edgeMode: Boolean
     get() = sp.getBoolean("edge", true)
     set(v) { sp.edit().putBoolean("edge", v).apply() }
@@ -152,6 +150,7 @@ class Store(context: Context) {
                     .put("active", tab.isActive)
                     .put("thumbnailUrl", tab.thumbnailUrl)
                     .put("thumbnailVersion", savedVersions[tab.id] ?: 0L)
+                    .put("desktop", tab.desktop)
             )
         }
         sp.edit().putString("saved_tabs", arr.toString()).apply()
@@ -180,7 +179,8 @@ class Store(context: Context) {
                     isActive = obj.optBoolean("active", false),
                     thumbnail = obj.optLong("id", 0L).takeIf { it > 0L }?.let(::loadThumbnail),
                     thumbnailUrl = obj.optString("thumbnailUrl", ""),
-                    thumbnailVersion = obj.optLong("thumbnailVersion", 0L)
+                    thumbnailVersion = obj.optLong("thumbnailVersion", 0L),
+                    desktop = obj.optBoolean("desktop", false)
                 )
             )
         }

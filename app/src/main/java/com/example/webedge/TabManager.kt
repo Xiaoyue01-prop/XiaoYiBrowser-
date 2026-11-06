@@ -26,7 +26,9 @@ class TabManager {
         /** Tab riêng tư không được đưa vào snapshot lưu trữ. */
         val isPrivate: Boolean = false,
         /** Lần cuối người dùng rời/dùng tab (nanoTime), để biết tab nền nào lâu không dùng nhất. */
-        var lastActiveAt: Long = 0L
+        var lastActiveAt: Long = 0L,
+        /** Trang web máy tính theo từng tab (không dùng cờ toàn cục): tab bị thu hồi rồi tạo lại vẫn giữ đúng UA. */
+        var desktop: Boolean = false
     )
 
     private val normalTabs = mutableListOf<Tab>()
@@ -94,7 +96,8 @@ class TabManager {
             isActive = it.isActive,
             thumbnail = it.thumbnail?.takeUnless { bitmap -> bitmap.isRecycled },
             thumbnailUrl = it.thumbnailUrl.orEmpty(),
-            thumbnailVersion = it.thumbnailVersion
+            thumbnailVersion = it.thumbnailVersion,
+            desktop = it.desktop
         )
     }
 
@@ -124,7 +127,8 @@ class TabManager {
                     isActive = item.isActive,
                     thumbnail = item.thumbnail,
                     thumbnailUrl = item.thumbnailUrl.takeIf { it.isNotBlank() },
-                    thumbnailVersion = item.thumbnailVersion
+                    thumbnailVersion = item.thumbnailVersion,
+                    desktop = item.desktop
                 )
             )
         }

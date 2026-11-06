@@ -40,7 +40,8 @@ interface MenuHost {
     fun toast(msg: String)
     fun load(input: String)
     fun openFind()
-    fun applyDesktopMode()
+    fun isDesktopMode(): Boolean
+    fun toggleDesktopMode()
     fun applyInsets()
     fun setBarHidden(hide: Boolean)
 }
@@ -630,10 +631,8 @@ class MenuController(
 
         gap()
         item("Tìm trong trang", Icons.SEARCH, true) { host.openFind() }
-        item("Trang web máy tính", if (store.desktopMode) Icons.CHECK else null, true) {
-            store.desktopMode = !store.desktopMode
-            host.applyDesktopMode()
-            host.web.reload()
+        item("Trang web máy tính", if (host.isDesktopMode()) Icons.CHECK else null, true) {
+            host.toggleDesktopMode()
         }
 
         gap()

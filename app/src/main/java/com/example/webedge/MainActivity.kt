@@ -435,7 +435,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun toast(msg: String) = this@MainActivity.toast(msg)
         override fun load(input: String) = this@MainActivity.load(input)
         override fun openFind() = this@MainActivity.openFind()
-        override fun applyDesktopMode() = this@MainActivity.applyDesktopMode()
+        override fun isDesktopMode() = this@MainActivity.isDesktopMode()
+        override fun toggleDesktopMode() = this@MainActivity.toggleDesktopMode()
         override fun applyInsets() = this@MainActivity.applyInsets()
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
     }
@@ -1512,9 +1513,20 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         web.loadUrl(toUrl(input))
     }
 
-    private fun applyDesktopMode(target: WebView = web) {
+    private fun isDesktopMode(): Boolean =
+        (tabManager.getForWebView(web) ?: tabManager.getActive())?.desktop == true
+
+    /** Đổi UA cho đúng tab đang xem rồi tải lại; các tab khác giữ nguyên chế độ của chúng. */
+    private fun toggleDesktopMode() {
+        val tab = tabManager.getForWebView(web) ?: tabManager.getActive() ?: return
+        tab.desktop = !tab.desktop
+        applyDesktopMode(web, tab.desktop)
+        web.reload()
+    }
+
+    private fun applyDesktopMode(target: WebView, desktop: Boolean) {
         val settings = target.settings
-        if (store.desktopMode) {
+        if (desktop) {
             settings.userAgentString = desktopUserAgent(mobileUa)
             settings.useWideViewPort = true
             settings.loadWithOverviewMode = true
@@ -1540,7 +1552,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         val settings = view.settings
         settings.applyBrowserDefaults()
         if (mobileUa.isBlank()) mobileUa = cleanMobileUserAgent(settings.userAgentString)
-        applyDesktopMode(view)
+        applyDesktopMode(view, tab.desktop)
         privateProfileManager.configureCookies(view, tab.isPrivate)
         view.webViewClient = client
         view.webChromeClient = createChromeClient { tab.isPrivate }
