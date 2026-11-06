@@ -363,6 +363,35 @@ function shiftCompanions(hd, I){
   } catch (e) {}
 }
 
+// Trình phát video nằm trong khối fixed/sticky (YouTube...) mà header đã hạ vừa đè lên: hạ khối đó xuống
+// đúng bằng phần bị đè, bất kể giá trị top ban đầu là bao nhiêu.
+function shiftVideoHost(hd, I){
+  try {
+    var vids = document.getElementsByTagName('video');
+    var best = null, bestArea = 0;
+    for (var i = 0; i < vids.length; i++) {
+      var vr = vids[i].getBoundingClientRect();
+      if (vr.width * vr.height > bestArea) { bestArea = vr.width * vr.height; best = vids[i]; }
+    }
+    if (!best || bestArea < 20000) return;
+    var host = null;
+    for (var el = best.parentElement; el && el !== document.documentElement && el !== document.body; el = el.parentElement) {
+      var cs = getComputedStyle(el);
+      if (cs.position === 'fixed' || cs.position === 'sticky') host = el;
+    }
+    if (!host || host === hd.el || hd.el.contains(host) || host.contains(hd.el)) return;
+    if (host.hasAttribute('data-edge-shift')) return;
+    var hs = getComputedStyle(host);
+    var top = parseFloat(hs.top);
+    var hb = hd.el.getBoundingClientRect().bottom;
+    var rt = host.getBoundingClientRect().top;
+    var delta = hb - rt;
+    if (isNaN(top) || delta < 4 || rt < I - 4) return;
+    host.setAttribute('data-edge-shift', '1');
+    host.style.setProperty('top', (top + delta) + 'px', 'important');
+  } catch (e) {}
+}
+
 function runEdge(){
   var I = window.__edgeInset || 0;
   if (!I || !document.elementsFromPoint) return;
@@ -372,6 +401,7 @@ function runEdge(){
       var topNow = parseFloat(hd.cs.top);
       if (isNaN(topNow) || topNow < I - 0.5) hd.el.style.setProperty('top', I + 'px', 'important');
       shiftCompanions(hd, I);
+      shiftVideoHost(hd, I);
       var hc = headerColor(hd.el, I);
       report(hc ? (hc[0] + ',' + hc[1] + ',' + hc[2]) : 'none');
       return;
@@ -805,6 +835,36 @@ window.__edgePageBgRun = function(){ runPageBackground(); };
 // Đổi tab: native đã bỏ qua báo cáo màu lúc trang này chạy nền, nên xoá bộ nhớ 'last' để báo lại.
 window.__edgeForceTop = function(){ last = ''; run(); };
 window.__edgeLift = function(){ runLift(); };
+// Chẩn đoán bố cục: gom thông tin các khối fixed/sticky và chuỗi cha của video rồi chép vào clipboard.
+window.__edgeDump = function(){
+  var out = [], I = window.__edgeInset || 0;
+  function d(el){
+    var cs = getComputedStyle(el), r = el.getBoundingClientRect();
+    var cls = (typeof el.className === 'string' && el.className) ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+    return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + cls + ' pos=' + cs.position + ' top=' + cs.top +
+      ' z=' + cs.zIndex + ' rect=' + Math.round(r.left) + ',' + Math.round(r.top) + ',' + Math.round(r.width) + 'x' + Math.round(r.height) +
+      (el.getAttribute('data-edge-shift') ? ' [shifted]' : '');
+  }
+  out.push('url=' + location.href + ' inset=' + I + ' mode=' + window.__edgeMode + ' scrollY=' + Math.round(window.scrollY) + ' inner=' + innerWidth + 'x' + innerHeight);
+  var hd = null;
+  try { hd = findHeader(I); } catch (e) {}
+  out.push('header=' + (hd ? d(hd.el) : 'none'));
+  var v = document.querySelector('video');
+  if (v) {
+    out.push('video chain:');
+    var n0 = 0;
+    for (var e = v; e && e !== document.documentElement && n0 < 12; e = e.parentElement, n0++) out.push('  ' + d(e));
+  }
+  var all = document.querySelectorAll('body *'), n = 0;
+  for (var i = 0; i < all.length && n < 30; i++) {
+    var cs2 = getComputedStyle(all[i]);
+    if ((cs2.position === 'fixed' || cs2.position === 'sticky') && cs2.display !== 'none') {
+      var r2 = all[i].getBoundingClientRect();
+      if (r2.width > 0 && r2.height > 0 && r2.top < innerHeight * 0.5) { out.push('FIX ' + d(all[i])); n++; }
+    }
+  }
+  try { EdgeBridge.copyDebug(out.join('\n')); } catch (e) {}
+};
 window.addEventListener('scroll', function(){
   sched();
   schedPageBackground();
