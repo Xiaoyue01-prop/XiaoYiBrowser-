@@ -280,6 +280,10 @@ function runTop(){
 // Màu nền thật của header (nền có thể nằm ở phần tử con): lấy mẫu chỗ thấy được rồi mới leo lên cha
 function headerColor(hdEl, I){
   try {
+    var hb = window.__edgeHdBg;
+    if (hb && hb.isConnected) { var c0 = climb(hb); if (c0) return c0; }
+  } catch (e) {}
+  try {
     var w = window.innerWidth, y = I + 4, xs = [0.03, 0.97, 0.5];
     for (var i = 0; i < xs.length; i++) {
       var st = document.elementsFromPoint(w * xs[i], y);
@@ -392,6 +396,36 @@ function shiftVideoHost(hd, I){
   } catch (e) {}
 }
 
+// Nền của header đôi khi là một khối fixed riêng (YouTube: mobile-topbar-header-background, z-index -1)
+// nằm cùng vị trí và cao bằng header. Header đã hạ mà nền ở lại chỗ cũ thì chữ/icon trắng nằm trên nền trắng.
+function shiftHeaderBackground(hd, I){
+  try {
+    var w = window.innerWidth;
+    var hr = hd.el.getBoundingClientRect();
+    var hH = hr.height, oldTop = hr.top - I;
+    if (hH < 8) return;
+    var cands = [], par = hd.el.parentElement, i, j;
+    for (var lvl = 0; par && lvl < 2; lvl++, par = par.parentElement) {
+      for (i = 0; i < par.children.length && i < 30; i++) cands.push(par.children[i]);
+    }
+    var st = document.elementsFromPoint(w * 0.5, Math.max(1, oldTop + hH - 4));
+    for (j = 0; j < st.length; j++) cands.push(st[j]);
+    for (i = 0; i < cands.length; i++) {
+      var el = cands[i];
+      if (el === hd.el || hd.el.contains(el) || el.contains(hd.el)) continue;
+      if (el.hasAttribute('data-edge-shift') || el.hasAttribute('data-edge-hdbg')) continue;
+      var cs = getComputedStyle(el);
+      if ((cs.position !== 'fixed' && cs.position !== 'sticky') || cs.display === 'none') continue;
+      var r = el.getBoundingClientRect(), top = parseFloat(cs.top);
+      if (!isNaN(top) && r.width > w * 0.6 && Math.abs(r.top - oldTop) <= 2 && Math.abs(r.height - hH) <= 4) {
+        el.setAttribute('data-edge-hdbg', '1');
+        el.style.setProperty('top', (top + I) + 'px', 'important');
+        window.__edgeHdBg = el;
+      }
+    }
+  } catch (e) {}
+}
+
 function runEdge(){
   var I = window.__edgeInset || 0;
   if (!I || !document.elementsFromPoint) return;
@@ -399,7 +433,11 @@ function runEdge(){
     var hd = findHeader(I);
     if (hd) {
       var topNow = parseFloat(hd.cs.top);
-      if (isNaN(topNow) || topNow < I - 0.5) hd.el.style.setProperty('top', I + 'px', 'important');
+      if (isNaN(topNow) || topNow < I - 0.5) {
+        hd.el.style.setProperty('top', I + 'px', 'important');
+        hd.el.setAttribute('data-edge-hd', '1');
+      }
+      if (hd.el.getAttribute('data-edge-hd')) shiftHeaderBackground(hd, I);
       shiftCompanions(hd, I);
       shiftVideoHost(hd, I);
       var hc = headerColor(hd.el, I);
