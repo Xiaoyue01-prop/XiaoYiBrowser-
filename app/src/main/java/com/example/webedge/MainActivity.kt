@@ -88,9 +88,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private lateinit var tabOperations: TabOperationsController
     private lateinit var urlPill: LinearLayout
     private lateinit var pillProgress: PillProgress
-    private lateinit var topFade: View
     private lateinit var bottomFade: View
-    private lateinit var fadeDrawable: GradientDrawable
     private lateinit var suggestBox: LinearLayout
     private lateinit var suggestBlurView: BlurView
 
@@ -111,7 +109,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private var pageBg = Color.WHITE
     private var currentUrl = ""
     private var mobileUa = ""
-    private var solidTop: Int? = null
 
     // Màu dải thanh trạng thái và màu nền trang được lưu độc lập theo từng WebView.
     private class TopState(val color: Int?)
@@ -160,14 +157,14 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     override fun onBridgeTopColor(owner: WebView, color: Int?) {
         topColors[owner] = TopState(color)
-        if (owner === web) applyTopColor(color)
+        if (owner === web) topFadeController.applyColor(color)
     }
 
     override fun onBridgePageBackground(owner: WebView, color: Int?) {
         pageBackgrounds[owner] = PageBackgroundState(color)
         if (owner === web && !isActivityDestroyed) {
             GlassSystem.setPageBackground(color, window.decorView)
-            refreshTopFadePalette()
+            topFadeController.refreshPalette()
         }
     }
 
@@ -253,7 +250,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             YouTubeAdBlocker.sync(view, url, store.youtubeAdBlockEnabled)
             view.evaluateJavascript(MEDIA_JS, null)
             if (view !== web) return
-            injectInsets()
+            pageEdge.injectInsets()
             AnimationSystem.fade(view, 1f, AnimationSystem.SETTLE)
             pageTransition.onPageReady()
             tabSwipe.onPageReady()
@@ -284,7 +281,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             view.evaluateJavascript(MEDIA_JS, null)
             if (view !== web) return
             pullRefresh?.finish()
-            injectInsets()
+            pageEdge.injectInsets()
             AnimationSystem.fade(view, 1f, AnimationSystem.SETTLE)
             pageTransition.onPageReady()
             tabSwipe.onPageReady()
@@ -467,6 +464,35 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         onVisibilityChanged = { updateBarVisibility() }
     )
 
+    private val topFadeController = TopFadeController(
+        activity = this,
+        root = { root },
+        isEdgeMode = { store.edgeMode },
+        insetTop = { insetTop },
+        pageBackground = { pageBg }
+    )
+
+    private val pageEdge = PageEdgeController(
+        context = this,
+        host = object : PageEdgeHost {
+            override val density: Float get() = d
+            override val insetTop: Int get() = this@MainActivity.insetTop
+            override val insetBottom: Int get() = this@MainActivity.insetBottom
+            override val imeBottom: Int get() = this@MainActivity.imeBottom
+            override val barHidden: Boolean get() = this@MainActivity.barHidden
+            override val barPresent: Boolean get() = this@MainActivity.barPresent
+            override val isEdgeMode: Boolean get() = store.edgeMode
+            override val isDestroyed: Boolean get() = isActivityDestroyed
+            override val isFullscreenVideoShowing: Boolean get() = this@MainActivity.isFullscreenVideoShowing()
+            override val hasBar: Boolean get() = this@MainActivity::bar.isInitialized
+            override val web: WebView?
+                get() = if (this@MainActivity::web.isInitialized) this@MainActivity.web else null
+            override val pillFrame: View?
+                get() = if (this@MainActivity::urlPillFrame.isInitialized) urlPillFrame else null
+        },
+        bottomBarHeightDp = BOTTOM_BAR_HEIGHT_DP
+    )
+
     // ---------------- onCreate ----------------
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -565,13 +591,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private fun createFades() {
         // Lớp mờ dần dưới thanh trạng thái (khi trang không có thanh menu cố định)
         // Status-bar fade follows the active webpage tone, not Android's system theme.
-        val pageIsDark = GlassSystem.isDarkPage()
-        fadeDrawable = GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(Theme.fadeStart(pageIsDark), Theme.fadeEnd(pageIsDark))
-        )
-        topFade = View(this)
-        topFade.background = fadeDrawable
+        topFadeController.create()
 
         val botStart = Color.argb(if (isNight) 90 else 40, 0, 0, 0)
         val botEnd = Color.argb(0, 0, 0, 0)
@@ -770,7 +790,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 override val fadePx: Int get() = insetTop + dp(16)
 
                 override fun colorFor(tab: TabManager.Tab?, current: Boolean): Int? {
-                    if (current) return solidTop
+                    if (current) return topFadeController.solidTop
                     if (tab == null) return pageBg
                     val wv = tab.webView
                     val reported = if (wv != null) topColors[wv] else null
@@ -781,7 +801,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 }
 
                 override fun newFade(): android.graphics.drawable.Drawable =
-                    fadeDrawable.constantState?.newDrawable()?.mutate() ?: ColorDrawable(Color.TRANSPARENT)
+                    topFadeController.fadeDrawable.constantState?.newDrawable()?.mutate() ?: ColorDrawable(Color.TRANSPARENT)
 
                 override fun isLightBar(color: Int?): Boolean =
                     if (color == null) !isNight else ColorUtils.calculateLuminance(color) > 0.5
@@ -791,8 +811,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 }
 
                 override fun setHidden(hidden: Boolean) {
-                    topFade.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
-                    if (!hidden) updateTopFade()
+                    topFadeController.view.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
+                    if (!hidden) topFadeController.update()
                 }
             },
             onSwitch = { tab ->
@@ -828,7 +848,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             this, blurTarget, GlassSystem.Preset.ADDRESS_BAR, d, isNight
         )
         urlPillFrame.addView(urlPillBlur, 0, FrameLayout.LayoutParams(-1, -1))
-        root.addView(topFade, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
+        root.addView(topFadeController.view, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
         root.addView(bottomFade, FrameLayout.LayoutParams(-1, 0, Gravity.BOTTOM))
         suggestBlurView = GlassSystem.createBlurView(
             this, blurTarget, GlassSystem.Preset.SUGGESTIONS, d, isNight
@@ -870,7 +890,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             container = fullscreenContainer,
             root = root,
             pipController = pipController,
-            onBottomReserveChanged = ::pushBottomReserve,
+            onBottomReserveChanged = pageEdge::pushBottomReserve,
             onOrbTemporarilyHidden = { hidden -> orbController?.setTemporarilyHidden(hidden) },
             onOrbVisibilitySync = ::syncOrbMenuVisibility,
             isHostDestroyed = { isActivityDestroyed }
@@ -1106,125 +1126,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         webLp.bottomMargin = imeBottom
         web.layoutParams = webLp
 
-        updateTopFade()
+        topFadeController.update()
         updateBarVisibility()
         if (::menu.isInitialized) menu.relayout()
         root.requestLayout()
-        injectInsets()
-    }
-
-    // Dải thanh trạng thái: tràn viền thì dùng lớp mờ (hoặc màu thanh menu của trang nếu có),
-    // không tràn viền thì luôn là màu đặc theo mép trên của trang
-    private fun refreshTopFadePalette() {
-        if (!::fadeDrawable.isInitialized) return
-        val dark = GlassSystem.isDarkPage()
-        fadeDrawable.colors = intArrayOf(Theme.fadeStart(dark), Theme.fadeEnd(dark))
-        if (::topFade.isInitialized) updateTopFade()
-    }
-
-    private fun updateTopFade() {
-        val lp = topFade.layoutParams as FrameLayout.LayoutParams
-        val c = solidTop
-        val lightBar: Boolean
-        if (store.edgeMode && c == null) {
-            topFade.background = fadeDrawable
-            lp.height = insetTop + dp(16)
-            lightBar = !GlassSystem.isDarkPage()
-        } else {
-            val col = c ?: pageBg
-            topFade.setBackgroundColor(col)
-            lp.height = insetTop
-            lightBar = ColorUtils.calculateLuminance(col) > 0.5
-        }
-        topFade.requestLayout()
-        WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = lightBar
-    }
-
-    // Tô dải thanh trạng thái theo màu thanh menu của trang; null = dùng lớp mờ mặc định
-    private fun applyTopColor(c: Int?) {
-        if (c == solidTop) return
-        solidTop = c
-        updateTopFade()
-    }
-
-    // Chừa chỗ đầu/cuối trang cho các thanh và chạy script xử lý thanh menu cố định
-    private fun injectInsets() {
-        val target = web
-        val edge = store.edgeMode
-        val insetCss = (insetTop / d).toInt()
-        val topCss = if (edge) insetCss else 0
-        val bottomCss = (insetBottom / d).toInt() + 64
-        val rule = (if (edge) "padding-top:" + topCss + "px!important;" else "") +
-            "padding-bottom:" + bottomCss + "px!important;box-sizing:border-box!important"
-        val js = "(function(){var s=document.getElementById('__edge');" +
-            "if(!s){s=document.createElement('style');s.id='__edge';" +
-            "(document.head||document.documentElement).appendChild(s);}" +
-            "s.textContent='html{" + rule + "}';})();"
-        target.evaluateJavascript(js, null)
-        val mode = if (edge) "1" else "0"
-        val bottom = bottomReserveCss()
-        // Trang đã nạp script rồi thì chỉ cập nhật vài con số; chỉ gửi cả đoạn script dài khi trang chưa có.
-        target.evaluateJavascript(
-            "(function(){if(!window.__edgeStarted)return 0;window.__edgeInset=" + insetCss +
-                ";window.__edgeMode=" + mode + ";window.__edgeBottom=" + bottom +
-                ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() + ";" + compactPillMetricsJs() +
-                "if(window.__edgeRun)window.__edgeRun();return 1})()"
-        ) { result ->
-            if (result != "1" && !isActivityDestroyed) {
-                target.evaluateJavascript(
-                    EdgeScript.template(this).replace("%INSET%", insetCss.toString())
-                        .replace("%MODE%", mode)
-                        .replace("%BOTTOM%", bottom.toString())
-                        .replace("%COMPACT%", shouldHideWebsiteBottomNav().toString())
-                        .replace("%PILL_METRICS%", compactPillMetricsJs()),
-                    null
-                )
-            }
-        }
-    }
-
-    // Chỉ ẩn thanh điều hướng của website khi viên thuốc thực sự ở trạng thái thu gọn.
-    // Khi bàn phím, FindBar hoặc video toàn màn hình chiếm UI thì không giữ trạng thái compact cũ.
-    private fun shouldHideWebsiteBottomNav(): Boolean = barHidden && barPresent && !isFullscreenVideoShowing()
-
-    // Khoảng (px CSS) từ mép dưới WebView lên tới đỉnh thanh địa chỉ nổi. Các thanh cố định ở đáy trang
-    // được nâng lên đúng khoảng này để không bị thanh địa chỉ đè lên, giống Safari.
-    private fun bottomReserveCss(): Int {
-        if (!::bar.isInitialized || !barPresent || isFullscreenVideoShowing()) return 0
-        val half = dp(BOTTOM_BAR_HEIGHT_DP) / 2f
-        val barTop = maxOf(insetBottom, imeBottom) + dp(10) + half + half * (if (barHidden) 0.62f else 1f) + dp(6)
-        return (maxOf(0f, barTop - imeBottom) / d).toInt()
-    }
-
-    // Tọa độ và kích thước đích của viên thuốc ở trạng thái thu gọn, tính trong hệ tọa độ CSS của WebView.
-    // Dùng cùng một đích cho cả hai chiều để thanh website co đúng vào pill rồi bung ra từ chính vị trí đó.
-    private fun compactPillMetricsJs(): String {
-        if (!::web.isInitialized || !::urlPillFrame.isInitialized ||
-            web.width <= 0 || web.height <= 0 || urlPillFrame.width <= 0 || urlPillFrame.height <= 0 || d <= 0f
-        ) {
-            return "window.__edgePillX=(window.innerWidth||0)/2;window.__edgePillY=(window.innerHeight||0)-34;" +
-                "window.__edgePillW=(window.innerWidth||0)*0.40;window.__edgePillH=25;"
-        }
-        val webPos = IntArray(2)
-        val pillPos = IntArray(2)
-        web.getLocationOnScreen(webPos)
-        urlPillFrame.getLocationOnScreen(pillPos)
-        val x = (pillPos[0] + urlPillFrame.width / 2f - webPos[0]) / d
-        val y = (pillPos[1] + urlPillFrame.height / 2f - webPos[1]) / d
-        val width = urlPillFrame.width * 0.58f / d
-        val height = urlPillFrame.height * 0.62f / d
-        return "window.__edgePillX=$x;window.__edgePillY=$y;" +
-            "window.__edgePillW=$width;window.__edgePillH=$height;"
-    }
-
-    private fun pushBottomReserve() {
-        if (!::web.isInitialized) return
-        web.evaluateJavascript(
-            "window.__edgeBottom=" + bottomReserveCss() +
-                ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() + ";" + compactPillMetricsJs() +
-                "window.__edgeLift&&window.__edgeLift();",
-            null
-        )
+        pageEdge.injectInsets()
     }
 
     // "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi; chạm hoặc vuốt lên để mở lại
@@ -1248,7 +1154,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         AnimationSystem.fade(reloadBtn, if (hide) 0f else 1f, AnimationSystem.SETTLE)
         AnimationSystem.fade(tabBtn, if (hide) 0f else 1f, AnimationSystem.SETTLE)
         AnimationSystem.fade(bottomFade, if (hide) 0.35f else 1f, AnimationSystem.SETTLE)
-        pushBottomReserve()
+        pageEdge.pushBottomReserve()
     }
 
     // OrbMenu có trạng thái riêng, không suy diễn từ alpha của nút quay lại:
@@ -1336,7 +1242,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             else AnimationSystem.disappear(bottomFade, toScale = 1f)
         }
         syncOrbMenuVisibility()
-        pushBottomReserve()
+        pageEdge.pushBottomReserve()
     }
 
     /** Trạng thái đích của thanh dưới/vệt mờ: khác visibility vì lúc đang ẩn dần view vẫn VISIBLE. */
@@ -1505,10 +1411,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         // Apply the selected tab's page material independently from its status-bar/header color.
         GlassSystem.setPageBackground(pageBackgrounds[target]?.color, window.decorView)
-        refreshTopFadePalette()
+        topFadeController.refreshPalette()
         // Dải thanh trạng thái theo tab mới ngay lúc đổi, rồi nhờ script báo lại để chắc chắn (script
         // chỉ báo khi giá trị đổi, còn báo cáo lúc tab chạy nền đã bị bỏ qua).
-        solidTop = topColors[target]?.color
+        topFadeController.solidTop = topColors[target]?.color
         target.post {
             if (web === target) target.evaluateJavascript("window.__edgeForceTop&&window.__edgeForceTop()", null)
         }
@@ -1520,7 +1426,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (target.url.isNullOrBlank()) {
             load(tab.url.ifBlank { store.homeUrl })
         } else {
-            if (target.progress >= 100) target.post { if (web === target) injectInsets() }
+            if (target.progress >= 100) target.post { if (web === target) pageEdge.injectInsets() }
             if (!urlBar.hasFocus()) showDomain()
             updateNav()
         }

@@ -62,6 +62,6 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - The page script is `assets/edge_script.js`, loaded by `EdgeScript.template(context)`; placeholders are `%INSET%`, `%MODE%`, `%BOTTOM%`, `%COMPACT%`, `%PILL_METRICS%`.
 - WebView callback detaching and teardown live only in `TabWebViewLifecycleController` (`detachCallbacks`, `destroy`, `destroyAll`).
 - MainActivity split plan (one extraction per commit, move code verbatim, build + smoke test each):
-  1. `ToastController` (done), 2. `FindBarController` (done), 3. `PageInsetsController` (insets, fades, injectInsets, bottom reserve),
+  1. `ToastController` (done), 2. `FindBarController` (done), 3. `TopFadeController` + `PageEdgeController` (done; `applyInsets` stays in MainActivity because it lays out most views),
   4. `BrowserChromeClient`, 5. `BrowserWebViewClient`, 6. `ToolbarController`, 7. tab logic into `TabOperationsController`.
   Controllers take a small `XHost` interface or lambdas (see `BrowserJavascriptBridgeHost`); keep `onCreate` init order unchanged.
