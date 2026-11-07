@@ -5,6 +5,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.WindowInsetsCompat
 
@@ -12,7 +13,6 @@ import androidx.core.view.WindowInsetsCompat
 internal class BrowserFullscreenController(
     private val activity: ComponentActivity,
     private val container: FrameLayout,
-    private val root: View,
     private val pipController: PictureInPictureController,
     private val onBottomReserveChanged: () -> Unit,
     private val onOrbTemporarilyHidden: (Boolean) -> Unit,
@@ -65,7 +65,7 @@ internal class BrowserFullscreenController(
             view.post { pipController.enterNow() }
         }
         onOrbTemporarilyHidden(true)
-        WindowInsetsControllerCompat(activity.window, root).hide(WindowInsetsCompat.Type.systemBars())
+        applyImmersiveSystemBars()
     }
 
     fun hide() {
@@ -82,10 +82,47 @@ internal class BrowserFullscreenController(
         previousRequestedOrientation = null
 
         if (!isHostDestroyed() && !activity.isFinishing && !activity.isDestroyed) {
-            WindowInsetsControllerCompat(activity.window, root).show(WindowInsetsCompat.Type.systemBars())
+            restoreSystemBars()
         }
         onOrbVisibilitySync()
         callback?.onCustomViewHidden()
+    }
+
+    /** Gọi lại sau khi Activity resume/đổi cấu hình vì một số ROM hiện lại system bars khi xoay màn hình. */
+    fun reapplyImmersiveIfShowing() {
+        if (customView != null && !isHostDestroyed() && !activity.isFinishing && !activity.isDestroyed) {
+            applyImmersiveSystemBars()
+        }
+    }
+
+    /** Ẩn cả status bar và navigation bar; vuốt cạnh chỉ hiện tạm thời rồi tự ẩn. */
+    private fun applyImmersiveSystemBars() {
+        if (customView == null || isHostDestroyed() || activity.isFinishing || activity.isDestroyed) return
+
+        val decorView = activity.window.decorView
+        val controller = WindowCompat.getInsetsController(activity.window, decorView)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+
+        // Re-apply after the current layout/configuration pass. The guard prevents a queued
+        // callback from hiding system bars after the user has already exited fullscreen.
+        decorView.post {
+            if (customView != null && !isHostDestroyed() && !activity.isFinishing && !activity.isDestroyed) {
+                val current = WindowCompat.getInsetsController(activity.window, decorView)
+                current.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                current.hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    /** Khôi phục system bars sau khi đóng video fullscreen. */
+    private fun restoreSystemBars() {
+        val decorView = activity.window.decorView
+        val controller = WindowCompat.getInsetsController(activity.window, decorView)
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+        controller.show(WindowInsetsCompat.Type.systemBars())
     }
 
     fun destroy() {

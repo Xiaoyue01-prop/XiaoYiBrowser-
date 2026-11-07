@@ -56,13 +56,6 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - This MVP does not claim to remove all in-stream pre-roll/mid-roll ads. YouTube may deliver ads through the same media infrastructure as normal video, while `WebViewClient.shouldInterceptRequest` does not see `blob:`/`javascript:` URLs and only sees the initial URL in a redirect chain. Service Worker interception is a separate API and is not enabled by this module.
 - Validate on-device with Home, Search, Watch, Shorts, account sign-in, comments, live streams, fullscreen and PiP. For each case test the YouTube switch both on and off, with the global AdBlock switch independently on and off. If a rule breaks playback or navigation, remove that rule rather than broadening interception.
 
-## Scroll-time helper scheduling (2026-11-07)
-
-- `assets/edge_script.js` throttles Summit's adaptive header/fixed-bar DOM scan to at most about 30 runs per second (`SCAN_INTERVAL_MS = 32`). Chromium/WebView page scrolling and rendering are not throttled; only Summit's auxiliary DOM hit-testing and style inspection are rate-limited.
-- Explicit native requests (`window.__edgeRun` / `window.__edgeForceTop`) remain immediate so tab activation and inset/edge-mode changes do not wait for the scheduler.
-- The pending timer and animation-frame callback are cancelled during `beforeunload`.
-- This reduces helper-script work on 60/90/120 Hz displays, especially on pages with frequent DOM mutations. It is a code-path optimization, not a measured FPS claim; validate adaptive headers, sticky bars, YouTube and long SPA pages on-device.
-
 ## Code cleanup (2026-11-07)
 
 - `dp()`, `ovalDrawable()` and `roundedDrawable()` live in `UiKit.kt`; do not re-add per-class `dp` helpers or `dp: (Int) -> Int` constructor params. `dp()` uses `Resources.getSystem()` density.

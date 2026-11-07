@@ -372,6 +372,17 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onResume() {
         super.onResume()
         requestHighRefreshRate()
+        fullscreenVideoController?.reapplyImmersiveIfShowing()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) fullscreenVideoController?.reapplyImmersiveIfShowing()
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        fullscreenVideoController?.reapplyImmersiveIfShowing()
     }
 
     /** Xin chế độ màn hình có tần số quét cao nhất (cùng độ phân giải) để animation chạy 120Hz thay vì 60Hz. */
@@ -391,8 +402,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         pipController = PictureInPictureController(this)
         WebMediaHub.jsRunner = { js -> runOnUiThread { if (::web.isInitialized) web.evaluateJavascript(js, null) } }
 
@@ -588,7 +599,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         fullscreenVideoController = BrowserFullscreenController(
             activity = this,
             container = fullscreenContainer,
-            root = root,
             pipController = pipController,
             onBottomReserveChanged = pageEdge::pushBottomReserve,
             onOrbTemporarilyHidden = { hidden -> orbController?.setTemporarilyHidden(hidden) },
