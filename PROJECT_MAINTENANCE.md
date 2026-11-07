@@ -61,4 +61,7 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - `dp()`, `ovalDrawable()` and `roundedDrawable()` live in `UiKit.kt`; do not re-add per-class `dp` helpers or `dp: (Int) -> Int` constructor params. `dp()` uses `Resources.getSystem()` density.
 - The page script is `assets/edge_script.js`, loaded by `EdgeScript.template(context)`; placeholders are `%INSET%`, `%MODE%`, `%BOTTOM%`, `%COMPACT%`, `%PILL_METRICS%`.
 - WebView callback detaching and teardown live only in `TabWebViewLifecycleController` (`detachCallbacks`, `destroy`, `destroyAll`).
-- Not yet split: `MainActivity.kt` (WebViewClient/ChromeClient, toolbar/find bar, insets) because it touches most Activity state; do it with a compile check.
+- MainActivity split plan (one extraction per commit, move code verbatim, build + smoke test each):
+  1. `ToastController` (done), 2. `FindBarController` (done), 3. `PageInsetsController` (insets, fades, injectInsets, bottom reserve),
+  4. `BrowserChromeClient`, 5. `BrowserWebViewClient`, 6. `ToolbarController`, 7. tab logic into `TabOperationsController`.
+  Controllers take a small `XHost` interface or lambdas (see `BrowserJavascriptBridgeHost`); keep `onCreate` init order unchanged.

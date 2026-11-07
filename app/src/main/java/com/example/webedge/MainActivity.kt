@@ -43,7 +43,6 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.activity.BackEventCompat
@@ -94,10 +93,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private lateinit var fadeDrawable: GradientDrawable
     private lateinit var suggestBox: LinearLayout
     private lateinit var suggestBlurView: BlurView
-    private lateinit var findBar: LinearLayout
-    private lateinit var findBarContainer: FrameLayout
-    private lateinit var findInput: EditText
-    private lateinit var findCount: TextView
 
     private var d = 1f
     private var isNight = false
@@ -448,46 +443,29 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
     }
 
-    private var toastView: View? = null
+    private val toaster = ToastController(
+        context = this,
+        root = { root },
+        blurTarget = { blurTarget },
+        foreground = { fg },
+        density = { d },
+        isNight = { isNight },
+        bottomInset = { maxOf(insetBottom, imeBottom) },
+        bottomBarHeightDp = BOTTOM_BAR_HEIGHT_DP
+    )
 
-    // Thông báo trong app dùng chung vỏ banner kính với hộp hỏi xác nhận tải xuống.
-    private fun toast(msg: String) {
-        toastView?.let { root.removeView(it) }
-        val label = TextView(this).apply {
-            text = msg
-            textSize = 14f
-            setTextColor(fg)
-            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-            gravity = Gravity.CENTER
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-        }
-        val t = GlassSystem.createBannerCard(this, blurTarget, d, isNight)
-        t.addView(
-            label,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-        val lp = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-        ).apply {
-            leftMargin = dp(14)
-            rightMargin = dp(14)
-            bottomMargin = maxOf(insetBottom, imeBottom) + dp(10) + dp(BOTTOM_BAR_HEIGHT_DP) + dp(14)
-        }
-        root.addView(t, lp)
-        toastView = t
-        AnimationSystem.enter(t, offsetY = dp(24).toFloat(), fromScale = 1f)
-        t.postDelayed({
-            AnimationSystem.exit(t, offsetY = dp(16).toFloat(), toScale = 1f) {
-                root.removeView(t)
-                if (toastView === t) toastView = null
-            }
-        }, Constants.TOAST_DURATION_MS)
-    }
+    private fun toast(msg: String) = toaster.show(msg)
+
+    private val findBarController = FindBarController(
+        activity = this,
+        web = { web },
+        root = { root },
+        foreground = { fg },
+        muted = { sub },
+        accent = accent,
+        hideOrbTemporarily = { orbController?.setTemporarilyHidden(true) },
+        onVisibilityChanged = { updateBarVisibility() }
+    )
 
     // ---------------- onCreate ----------------
 
@@ -576,7 +554,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         createFades()
         createToolbar()
         createSuggestBox()
-        createFindBar()
+        findBarController.createBar()
         createRootAndGlass()
         createControllers()
         installWindowHandlers()
@@ -759,76 +737,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         suggestBox.visibility = View.GONE
     }
 
-    /** Thanh tìm trong trang (thay thế thanh địa chỉ khi đang tìm). */
-    private fun createFindBar() {
-        findInput = EditText(this)
-        findInput.setSingleLine()
-        findInput.hint = "Tìm trong trang"
-        findInput.setTextColor(fg)
-        findInput.setHintTextColor(Color.GRAY)
-        findInput.textSize = 14f
-        findInput.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-        findInput.minHeight = 0
-        findInput.minimumHeight = 0
-        findInput.setPadding(0, 0, 0, 0)
-        findInput.setBackgroundColor(Color.TRANSPARENT)
-        findInput.imeOptions = EditorInfo.IME_ACTION_SEARCH
-        findInput.setOnEditorActionListener { _, _, _ ->
-            web.findNext(true)
-            true
-        }
-        findInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                val q = s?.toString() ?: ""
-                if (q.isEmpty()) {
-                    web.clearMatches()
-                    findCount.text = ""
-                } else {
-                    web.findAllAsync(q)
-                }
-            }
-        })
-
-        findCount = TextView(this)
-        findCount.textSize = 12f
-        findCount.setTextColor(sub)
-        findCount.setPadding(dp(8), 0, dp(4), 0)
-
-        val upBtn = ImageView(this)
-        upBtn.setImageDrawable(PathIcon(Icons.ARROW_UP, fg))
-        upBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
-        upBtn.setOnClickListener { web.findNext(false) }
-        press(upBtn, Constants.PRESS_SCALE_SMALL)
-        val downBtn = ImageView(this)
-        downBtn.setImageDrawable(PathIcon(Icons.ARROW_DOWN, fg))
-        downBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
-        downBtn.setOnClickListener { web.findNext(true) }
-        press(downBtn, Constants.PRESS_SCALE_SMALL)
-
-        val doneBtn = TextView(this)
-        doneBtn.text = "Xong"
-        doneBtn.textSize = 14f
-        doneBtn.setTypeface(null, Typeface.BOLD)
-        doneBtn.setTextColor(accent)
-        doneBtn.gravity = Gravity.CENTER
-        doneBtn.setPadding(dp(10), 0, dp(6), 0)
-        doneBtn.setOnClickListener { closeFind() }
-        press(doneBtn, Constants.PRESS_SCALE_PILL)
-
-        findBar = LinearLayout(this)
-        findBar.orientation = LinearLayout.HORIZONTAL
-        findBar.gravity = Gravity.CENTER_VERTICAL
-        findBar.background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
-        findBar.setPadding(dp(18), 0, dp(10), 0)
-        findBar.addView(findInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        findBar.addView(findCount, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        findBar.addView(upBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
-        findBar.addView(downBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
-        findBar.addView(doneBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
-    }
-
     /** Gốc giao diện: WebView của tab đầu, BlurTarget và các lớp kính nằm trên nó. */
     private fun createRootAndGlass() {
         // --- WebView của tab đầu tiên; các tab mới có WebView riêng ---
@@ -948,18 +856,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             isClickable = true
         }
         root.addView(fullscreenContainer, FrameLayout.LayoutParams(-1, -1))
-        findBarContainer = FrameLayout(this)
-        findBarContainer.visibility = View.GONE
-        val findGlass = GlassSystem.createBlurView(
-            this, blurTarget, GlassSystem.Preset.FIND_BAR, d, isNight
-        ).apply {
-            isClickable = false
-            isFocusable = false
-        }
-        findBarContainer.addView(findGlass, FrameLayout.LayoutParams(-1, -1))
-        findBarContainer.addView(findBar, FrameLayout.LayoutParams(-1, -1))
         root.addView(
-            findBarContainer,
+            findBarController.createContainer(blurTarget, d, isNight),
             FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
         )
         setContentView(root)
@@ -1117,7 +1015,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 else if (popup.isShowing) popup.close()
                 else if (contextMenuController?.isShowing == true) contextMenuController?.dismiss()
                 else if (menu.isOpen) menu.handleBack()
-                else if (findBarShown) closeFind()
+                else if (findBarController.isShown) closeFind()
                 else if (urlBar.hasFocus()) leaveEdit()
                 else if (web.canGoBack()) goBackAnimated()
                 else finish()
@@ -1138,7 +1036,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private fun overlaysIdle(): Boolean =
         !isFullscreenVideoShowing() && !isInPictureInPictureMode &&
             !(::glassDialog.isInitialized && glassDialog.isShowing) && !popup.isShowing &&
-            !(::menu.isInitialized && menu.isOpen) && !findBarShown && !urlBar.hasFocus() &&
+            !(::menu.isInitialized && menu.isOpen) && !findBarController.isShown && !urlBar.hasFocus() &&
             !(::tabSwitcherController.isInitialized && tabSwitcherController.isShowing)
 
     private fun goBackAnimated() {
@@ -1185,7 +1083,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         barLp.rightMargin = insetRight + dp(14)
         barLp.bottomMargin = bottom
 
-        val findLp = findBarContainer.layoutParams as FrameLayout.LayoutParams
+        val findLp = findBarController.container.layoutParams as FrameLayout.LayoutParams
         findLp.leftMargin = insetLeft + dp(16)
         findLp.rightMargin = insetRight + dp(16)
         findLp.bottomMargin = bottom
@@ -1356,8 +1254,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     // OrbMenu có trạng thái riêng, không suy diễn từ alpha của nút quay lại:
     // nút quay lại có thể mờ vì không còn lịch sử nhưng OrbMenu vẫn cần dùng được.
     private fun syncOrbMenuVisibility() {
-        if (!::findBarContainer.isInitialized || !::bar.isInitialized || !::urlBar.isInitialized) return
-        val findOn = findBarShown
+        if (!findBarController.hasContainer || !::bar.isInitialized || !::urlBar.isInitialized) return
+        val findOn = findBarController.isShown
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
         val inFullscreen = isFullscreenVideoShowing()
         // Auto-hide là trạng thái compact, không phải toolbar bị gỡ khỏi giao diện.
@@ -1422,7 +1320,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     // Ẩn thanh địa chỉ khi đang gõ trong ô nhập của trang (tránh che nội dung), hoặc khi đang tìm trong trang.
     private fun updateBarVisibility() {
-        val findOn = findBarShown
+        val findOn = findBarController.isShown
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
         val showBar = !(findOn || pageTyping)
         val showFade = !pageTyping
@@ -1444,7 +1342,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     /** Trạng thái đích của thanh dưới/vệt mờ: khác visibility vì lúc đang ẩn dần view vẫn VISIBLE. */
     private var barPresent = true
     private var bottomFadePresent = true
-    private var findBarShown = false
 
     private fun backAlpha(): Float = if (web.canGoBack()) 1f else 0.3f
 
@@ -1485,26 +1382,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     // ---------------- Tìm trong trang ----------------
 
-    private fun openFind() {
-        // Hide OrbMenu before requesting the keyboard so neither its ring nor its sub-buttons
-        // can remain visible/touchable over FindBar during the IME animation.
-        findBarShown = true
-        AnimationSystem.appear(findBarContainer, dp(16).toFloat())
-        orbController?.setTemporarilyHidden(true)
-        updateBarVisibility()
-        findInput.requestFocus()
-        WindowCompat.getInsetsController(window, findInput).show(WindowInsetsCompat.Type.ime())
-    }
+    private fun openFind() = findBarController.open()
 
-    private fun closeFind() {
-        web.clearMatches()
-        findInput.setText("")
-        findBarShown = false
-        AnimationSystem.disappear(findBarContainer, dp(16).toFloat())
-        updateBarVisibility()
-        root.requestFocus()
-        WindowCompat.getInsetsController(window, findInput).hide(WindowInsetsCompat.Type.ime())
-    }
+    private fun closeFind() = findBarController.close()
 
     // ---------------- Tải trang ----------------
 
@@ -1565,7 +1445,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         view.addJavascriptInterface(BrowserJavascriptBridge(view, this), "EdgeBridge")
         view.setFindListener { active, total, _ ->
-            if (view === web) findCount.text = if (total == 0) "0" else "${active + 1}/$total"
+            if (view === web) findBarController.setCount(if (total == 0) "0" else "${active + 1}/$total")
         }
         view.setDownloadListener { dlUrl, userAgent, contentDisposition, mimetype, _ ->
             try {
@@ -1615,9 +1495,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 View.IMPORTANT_FOR_AUTOFILL_AUTO
             }
         }
-        if (::findInput.isInitialized) {
-            findInput.isSaveEnabled = !tab.isPrivate
-            findInput.importantForAutofill = if (tab.isPrivate) {
+        if (findBarController.hasInput) {
+            findBarController.input.isSaveEnabled = !tab.isPrivate
+            findBarController.input.importantForAutofill = if (tab.isPrivate) {
                 View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
             } else {
                 View.IMPORTANT_FOR_AUTOFILL_AUTO
@@ -1663,7 +1543,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         // The address bar and find field are Activity views, not part of a tab profile.
         // Clear any typed private query before switching back to a persistable normal mode.
         if (urlBar.hasFocus()) leaveEdit()
-        if (findBarShown) closeFind()
+        if (findBarController.isShown) closeFind()
         hideSuggestions()
         setUrlText("")
         val target = tabManager.switchMode(usePrivate) ?: return false
