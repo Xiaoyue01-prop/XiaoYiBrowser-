@@ -64,5 +64,6 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - MainActivity split plan (one extraction per commit, move code verbatim, build + smoke test each):
   1. `ToastController` (done), 2. `FindBarController` (done), 3. `TopFadeController` + `PageEdgeController` (done; `applyInsets` stays in MainActivity because it lays out most views),
   4. `BrowserChromeClient` (done), 5. `BrowserWebViewClient` (done; both talk to the Activity through internal `Browser*Host` interfaces),
-  6. `ToolbarController`, 7. tab logic into `TabOperationsController`.
+  6. `ToolbarController` (done; owns the bottom bar views and bar state, MainActivity keeps thin getters/wrappers),
+  7. tab logic (todo): `configureTabWebView` + desktop mode -> `TabWebViewConfigurator`, then `activateTab`/`switchTabMode`/`closeBrowserTab` into `TabOperationsController`. Do this last: it reassigns `web`.
   Controllers take a small `XHost` interface or lambdas (see `BrowserJavascriptBridgeHost`); keep `onCreate` init order unchanged.

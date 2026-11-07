@@ -6,21 +6,14 @@ import android.content.Intent
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.graphics.Color
-import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.Editable
-import android.text.InputType
-import android.text.TextUtils
-import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
 import android.webkit.WebStorage
 import androidx.webkit.WebViewCompat
@@ -34,7 +27,6 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import androidx.activity.ComponentActivity
-import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
@@ -63,21 +55,21 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private var fullscreenVideoController: BrowserFullscreenController? = null
     private lateinit var webPermissions: WebPermissionController
     private lateinit var blurTarget: BlurTarget
-    private lateinit var urlPillFrame: FrameLayout
+    private val urlPillFrame: FrameLayout get() = toolbar.urlPillFrame
     private lateinit var urlPillBlur: BlurView
-    private lateinit var urlBar: EditText
-    private lateinit var bar: LinearLayout
-    private lateinit var backBtn: FrameLayout
-    private lateinit var menuBtn: FrameLayout
-    private lateinit var reloadBtn: ImageView
-    private lateinit var tabBtn: ImageView
+    private val urlBar: EditText get() = toolbar.urlBar
+    private val bar: LinearLayout get() = toolbar.bar
+    private val backBtn: FrameLayout get() = toolbar.backBtn
+    private val menuBtn: FrameLayout get() = toolbar.menuBtn
+    private val reloadBtn: ImageView get() = toolbar.reloadBtn
+    private val tabBtn: ImageView get() = toolbar.tabBtn
     private lateinit var tabManager: TabManager
     private lateinit var privateProfileManager: PrivateProfileManager
     private lateinit var tabWebViewLifecycle: TabWebViewLifecycleController
     private lateinit var tabPersistence: TabPersistenceController
     private lateinit var tabOperations: TabOperationsController
-    private lateinit var urlPill: LinearLayout
-    private lateinit var pillProgress: PillProgress
+    private val urlPill: LinearLayout get() = toolbar.urlPill
+    private val pillProgress: PillProgress get() = toolbar.pillProgress
     private lateinit var bottomFade: View
     private lateinit var suggestBox: LinearLayout
     private lateinit var suggestBlurView: BlurView
@@ -95,7 +87,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private var insetRight = 0
     private var imeBottom = 0
 
-    private var barHidden = false
+    private val barHidden: Boolean get() = toolbar.barHidden
+    private val barPresent: Boolean get() = toolbar.barPresent
     private var pageBg = Color.WHITE
     private var currentUrl = ""
     private var mobileUa = ""
@@ -106,7 +99,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private class PageBackgroundState(val color: Int?)
     private val pageBackgrounds = java.util.WeakHashMap<WebView, PageBackgroundState>()
     private var orbController: OrbMenuController? = null
-    private var programmatic = false
     private lateinit var suggestionController: SuggestionController
     private var isActivityDestroyed = false
     private val handler = Handler(Looper.getMainLooper())
@@ -337,14 +329,51 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             override val isEdgeMode: Boolean get() = store.edgeMode
             override val isDestroyed: Boolean get() = isActivityDestroyed
             override val isFullscreenVideoShowing: Boolean get() = this@MainActivity.isFullscreenVideoShowing()
-            override val hasBar: Boolean get() = this@MainActivity::bar.isInitialized
+            override val hasBar: Boolean get() = toolbar.isCreated
             override val web: WebView?
                 get() = if (this@MainActivity::web.isInitialized) this@MainActivity.web else null
             override val pillFrame: View?
-                get() = if (this@MainActivity::urlPillFrame.isInitialized) urlPillFrame else null
+                get() = if (toolbar.isCreated) urlPillFrame else null
         },
         bottomBarHeightDp = BOTTOM_BAR_HEIGHT_DP
     )
+
+    private val toolbarHost = object : ToolbarHost {
+        override val web: WebView get() = this@MainActivity.web
+        override val store: Store get() = this@MainActivity.store
+        override val isNight: Boolean get() = this@MainActivity.isNight
+        override val density: Float get() = d
+        override val foreground: Int get() = fg
+        override val imeBottom: Int get() = this@MainActivity.imeBottom
+        override val currentUrl: String get() = this@MainActivity.currentUrl
+        override val blurTarget: BlurTarget get() = this@MainActivity.blurTarget
+        override val rootView: View get() = root
+        override val bottomFade: View get() = this@MainActivity.bottomFade
+        override val isMenuOpen: Boolean get() = ::menu.isInitialized && menu.isOpen
+        override val isFindBarShown: Boolean get() = findBarController.isShown
+        override fun goBack() = goBackAnimated()
+        override fun toggleMenu() = menu.toggle()
+        override fun openTabSwitcher() = this@MainActivity.openTabSwitcher()
+        override fun load(input: String) = this@MainActivity.load(input)
+        override fun scheduleSuggest(query: String) = this@MainActivity.scheduleSuggest(query)
+        override fun hideSuggestions() = this@MainActivity.hideSuggestions()
+        override fun syncOrbMenuVisibility() = this@MainActivity.syncOrbMenuVisibility()
+        override fun pushBottomReserve() = pageEdge.pushBottomReserve()
+    }
+
+    private val toolbar = ToolbarController(
+        activity = this,
+        host = toolbarHost,
+        bottomBarHeightDp = BOTTOM_BAR_HEIGHT_DP,
+        accent = accent
+    )
+
+    private fun setBarHidden(hide: Boolean) = toolbar.setBarHidden(hide)
+    private fun updateBarVisibility() = toolbar.updateBarVisibility()
+    private fun updateNav() = toolbar.updateNav()
+    private fun showDomain() = toolbar.showDomain()
+    private fun leaveEdit() = toolbar.leaveEdit()
+    private fun setUrlText(text: String) = toolbar.setUrlText(text)
 
     // ---------------- onCreate ----------------
 
@@ -431,7 +460,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         pageBg = Color.WHITE
 
         createFades()
-        createToolbar()
+        toolbar.createToolbar()
         createSuggestBox()
         findBarController.createBar()
         createRootAndGlass()
@@ -451,153 +480,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         bottomFade = View(this)
         bottomFade.background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(botStart, botEnd))
 
-        pillProgress = PillProgress(accent, 2.5f * d)
     }
 
-    /** Thanh địa chỉ gọn: [‹]  tên miền  [⋯]. */
-    private fun createToolbar() {
-        // Cùng kiểu với nút ba chấm: khung bo góc + BlurView gắn sau khi blurTarget được khởi tạo.
-        backBtn = glassToolbarButton(
-            GlassSystem.Preset.TOOLBAR_BUTTON, Icons.ARROW_BACK, 11, "Quay lại"
-        )
-        backBtn.alpha = 0.3f
-        backBtn.setOnClickListener { goBackAnimated() }
-        press(backBtn, Constants.PRESS_SCALE_BTN)
 
-        // Nút ba chấm dùng cùng bộ render kính blur thật với OrbMenu.
-        // BlurView được gắn sau khi blurTarget được khởi tạo bên dưới.
-        menuBtn = glassToolbarButton(
-            GlassSystem.Preset.ORB_BUTTON, Icons.MORE_HORIZ, 10, "Mở menu"
-        )
-        menuBtn.setOnClickListener { menu.toggle() }
-        press(menuBtn, Constants.PRESS_SCALE_BTN)
 
-        reloadBtn = ImageView(this)
-        reloadBtn.setImageDrawable(PathIcon(Icons.REFRESH, fg))
-        reloadBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
-        reloadBtn.setOnClickListener { web.reload() }
-        press(reloadBtn, Constants.PRESS_SCALE_SMALL)
-        // === Nút Multi-tab (đối xứng với reloadBtn) ===
-        tabBtn = ImageView(this)
-        tabBtn.setImageDrawable(PathIcon(Icons.TABS, fg))
-        tabBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
-        tabBtn.setOnClickListener { openTabSwitcher() }
-        press(tabBtn, Constants.PRESS_SCALE_SMALL)
-
-        urlBar = EditText(this)
-        urlBar.setSingleLine()
-        urlBar.ellipsize = TextUtils.TruncateAt.END
-        urlBar.hint = "Tìm kiếm hoặc nhập địa chỉ"
-        urlBar.setTextColor(fg)
-        urlBar.setHintTextColor(Color.GRAY)
-        urlBar.textSize = 13.5f
-        urlBar.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-        urlBar.gravity = Gravity.CENTER
-        urlBar.minHeight = 0
-        urlBar.minimumHeight = 0
-        urlBar.setPadding(0, 0, 0, 0)
-        urlBar.inputType = InputType.TYPE_TEXT_VARIATION_URI
-        urlBar.imeOptions = EditorInfo.IME_ACTION_GO
-        urlBar.setBackgroundColor(Color.TRANSPARENT)
-        urlBar.setOnFocusChangeListener { _, hasFocus ->
-            if (hasFocus) {
-                setBarHidden(false)
-                urlBar.gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                setUrlText(currentUrl)
-                urlBar.post { urlBar.selectAll() }
-                updateBarVisibility()
-            } else {
-                urlBar.gravity = Gravity.CENTER
-                hideSuggestions()
-                showDomain()
-                updateBarVisibility()
-            }
-        }
-        urlBar.setOnEditorActionListener { v, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_GO) {
-                load(v.text.toString())
-                leaveEdit()
-                true
-            } else false
-        }
-        urlBar.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                if (programmatic || !urlBar.hasFocus()) return
-                scheduleSuggest(s?.toString() ?: "")
-            }
-        })
-
-        // The content stays in a LinearLayout; a BlurView sits behind it in a wrapper.
-        // This is the first migrated surface. Other glass surfaces remain on the old
-        // drawable helper until they can be converted and visually checked one by one.
-        urlPillFrame = FrameLayout(this)
-        urlPill = LinearLayout(this)
-        urlPill.orientation = LinearLayout.HORIZONTAL
-        urlPill.gravity = Gravity.CENTER_VERTICAL
-        urlPill.background = ColorDrawable(Color.TRANSPARENT)
-        urlPill.setPadding(dp(8), 0, dp(8), 0)
-        urlPill.overlay.add(pillProgress)
-        urlPill.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
-            v.pivotX = (r - l) / 2f
-            v.pivotY = (b - t).toFloat()
-            pillProgress.setBounds(0, 0, r - l, b - t)
-        }
-        urlPill.setOnClickListener { setBarHidden(false) }
-        urlPill.addView(tabBtn, LinearLayout.LayoutParams(dp(32), dp(32)))
-        urlPill.addView(urlBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        urlPill.addView(reloadBtn, LinearLayout.LayoutParams(dp(32), dp(32)))
-
-        // Thanh dưới gồm 3 phần rời nhau: nút quay lại tròn, ô địa chỉ, nút ba chấm tròn
-        bar = LinearLayout(this)
-        bar.orientation = LinearLayout.HORIZONTAL
-        bar.gravity = Gravity.CENTER_VERTICAL
-        bar.clipChildren = false
-        bar.addView(backBtn, LinearLayout.LayoutParams(dp(BOTTOM_BAR_HEIGHT_DP), dp(BOTTOM_BAR_HEIGHT_DP)))
-        val pillLp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-        pillLp.setMargins(dp(8), 0, dp(8), 0)
-        urlPillFrame.addView(urlPill, FrameLayout.LayoutParams(-1, -1))
-        bar.addView(urlPillFrame, pillLp)
-        bar.addView(menuBtn, LinearLayout.LayoutParams(dp(BOTTOM_BAR_HEIGHT_DP), dp(BOTTOM_BAR_HEIGHT_DP)))
-    }
-
-    /** Nút tròn của thanh dưới: khung bo góc trong suốt + icon; lớp kính gắn sau bằng [addGlassLayer]. */
-    private fun glassToolbarButton(
-        preset: GlassSystem.Preset,
-        iconPath: String,
-        iconPaddingDp: Int,
-        description: String
-    ): FrameLayout = FrameLayout(this).apply {
-        isClickable = true
-        isFocusable = true
-        clipChildren = true
-        clipToPadding = true
-        background = roundedDrawable(preset.radiusDp * d, Color.TRANSPARENT)
-        clipToOutline = true
-        contentDescription = description
-        addView(
-            ImageView(context).apply {
-                setImageDrawable(PathIcon(iconPath, fg))
-                setPadding(dp(iconPaddingDp), dp(iconPaddingDp), dp(iconPaddingDp), dp(iconPaddingDp))
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            },
-            FrameLayout.LayoutParams(-1, -1)
-        )
-    }
-
-    /** Đặt lớp kính mờ (BlurView) xuống dưới cùng của một nút; chỉ gọi được sau khi blurTarget đã tạo. */
-    private fun addGlassLayer(button: FrameLayout, preset: GlassSystem.Preset) {
-        button.addView(
-            GlassSystem.createBlurView(this, blurTarget, preset, d, isNight).apply {
-                isClickable = false
-                isFocusable = false
-            },
-            0,
-            FrameLayout.LayoutParams(-1, -1)
-        )
-    }
 
     /** Danh sách gợi ý tìm kiếm (hiện phía trên thanh địa chỉ). */
     private fun createSuggestBox() {
@@ -694,8 +580,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         )
 
         // Nền kính của hai nút tròn lấy blur từ cùng BlurTarget như thanh địa chỉ/Orb.
-        addGlassLayer(menuBtn, GlassSystem.Preset.ORB_BUTTON)
-        addGlassLayer(backBtn, GlassSystem.Preset.TOOLBAR_BUTTON)
+        toolbar.addGlassLayer(menuBtn, GlassSystem.Preset.ORB_BUTTON)
+        toolbar.addGlassLayer(backBtn, GlassSystem.Preset.TOOLBAR_BUTTON)
 
         urlPillBlur = GlassSystem.createBlurView(
             this, blurTarget, GlassSystem.Preset.ADDRESS_BAR, d, isNight
@@ -986,34 +872,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         pageEdge.injectInsets()
     }
 
-    // "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi; chạm hoặc vuốt lên để mở lại
-    private fun setBarHidden(hide: Boolean) {
-        if (hide && !store.autoHideBar) return
-        if (hide == barHidden) return
-        barHidden = hide
-        AnimationSystem.scaleTo(
-            urlPillFrame, if (hide) 0.58f else 1f, if (hide) 0.62f else 1f
-        )
-        AnimationSystem.scaleTo(urlBar, if (hide) 1.2f else 1f)
-        backBtn.isClickable = !hide
-        menuBtn.isClickable = !hide
-        reloadBtn.isClickable = !hide
-        tabBtn.isClickable = !hide
-        AnimationSystem.fade(backBtn, if (hide) 0f else backAlpha(), AnimationSystem.SETTLE)
-        AnimationSystem.scaleTo(backBtn, if (hide) 0.5f else 1f)
-        syncOrbMenuVisibility()
-        // Menu trigger cũng co về Pill; nếu bảng menu đang mở thì chính MenuController morph cả thẻ.
-        if (!::menu.isInitialized || !menu.isOpen) animateMenuButtonCompact(hide)
-        AnimationSystem.fade(reloadBtn, if (hide) 0f else 1f, AnimationSystem.SETTLE)
-        AnimationSystem.fade(tabBtn, if (hide) 0f else 1f, AnimationSystem.SETTLE)
-        AnimationSystem.fade(bottomFade, if (hide) 0.35f else 1f, AnimationSystem.SETTLE)
-        pageEdge.pushBottomReserve()
-    }
 
     // OrbMenu có trạng thái riêng, không suy diễn từ alpha của nút quay lại:
     // nút quay lại có thể mờ vì không còn lịch sử nhưng OrbMenu vẫn cần dùng được.
     private fun syncOrbMenuVisibility() {
-        if (!findBarController.hasContainer || !::bar.isInitialized || !::urlBar.isInitialized) return
+        if (!findBarController.hasContainer || !toolbar.isCreated) return
         val findOn = findBarController.isShown
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
         val inFullscreen = isFullscreenVideoShowing()
@@ -1025,110 +888,21 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
         orbController?.setToolbarAvailable(toolbarAvailable)
         orbController?.setTemporarilyHidden(temporarilyHidden)
-        if (::urlPillFrame.isInitialized) {
+        if (toolbar.isCreated) {
             orbController?.setToolbarCompact(compact, urlPillFrame)
             if (::menu.isInitialized) menu.setToolbarCompact(compact, urlPillFrame)
         }
     }
 
-    /** Co nút ba chấm vào tâm Pill bằng đúng spring preset dùng cho morph của menu. */
-    private fun animateMenuButtonCompact(compact: Boolean) {
-        if (!::menuBtn.isInitialized || !::urlPillFrame.isInitialized) return
-        if (compact) {
-            val buttonLoc = IntArray(2)
-            val pillLoc = IntArray(2)
-            val buttonTx = menuBtn.translationX
-            val buttonTy = menuBtn.translationY
-            val buttonSx = menuBtn.scaleX
-            val buttonSy = menuBtn.scaleY
-            val pillTx = urlPillFrame.translationX
-            val pillTy = urlPillFrame.translationY
-            val pillSx = urlPillFrame.scaleX
-            val pillSy = urlPillFrame.scaleY
-            menuBtn.translationX = 0f
-            menuBtn.translationY = 0f
-            menuBtn.scaleX = 1f
-            menuBtn.scaleY = 1f
-            urlPillFrame.translationX = 0f
-            urlPillFrame.translationY = 0f
-            urlPillFrame.scaleX = 1f
-            urlPillFrame.scaleY = 1f
-            menuBtn.getLocationInWindow(buttonLoc)
-            urlPillFrame.getLocationInWindow(pillLoc)
-            menuBtn.translationX = buttonTx
-            menuBtn.translationY = buttonTy
-            menuBtn.scaleX = buttonSx
-            menuBtn.scaleY = buttonSy
-            urlPillFrame.translationX = pillTx
-            urlPillFrame.translationY = pillTy
-            urlPillFrame.scaleX = pillSx
-            urlPillFrame.scaleY = pillSy
-            val targetX = pillLoc[0] + urlPillFrame.width / 2f - buttonLoc[0] - menuBtn.width / 2f
-            val targetY = pillLoc[1] + urlPillFrame.height / 2f - buttonLoc[1] - menuBtn.height / 2f
-            AnimationSystem.spring(menuBtn, DynamicAnimation.TRANSLATION_X, targetX, AnimationSystem.MENU_MORPH_CLOSE)
-            AnimationSystem.spring(menuBtn, DynamicAnimation.TRANSLATION_Y, targetY, AnimationSystem.MENU_MORPH_CLOSE)
-            AnimationSystem.scaleTo(menuBtn, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
-            AnimationSystem.fade(menuBtn, 0f, AnimationSystem.MENU_MORPH_CLOSE)
-        } else {
-            AnimationSystem.spring(menuBtn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
-            AnimationSystem.spring(menuBtn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
-            AnimationSystem.scaleTo(menuBtn, 1f, 1f, AnimationSystem.MENU_MORPH)
-            AnimationSystem.fade(menuBtn, 1f, AnimationSystem.QUICK)
-        }
-    }
 
-    // Ẩn thanh địa chỉ khi đang gõ trong ô nhập của trang (tránh che nội dung), hoặc khi đang tìm trong trang.
-    private fun updateBarVisibility() {
-        val findOn = findBarController.isShown
-        val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
-        val showBar = !(findOn || pageTyping)
-        val showFade = !pageTyping
-        // Chỉ chạy animation khi trạng thái thật sự đổi (hàm này được gọi lại mỗi lần insets thay đổi).
-        if (showBar != barPresent) {
-            barPresent = showBar
-            if (showBar) AnimationSystem.appear(bar, dp(16).toFloat())
-            else AnimationSystem.disappear(bar, dp(16).toFloat())
-        }
-        if (showFade != bottomFadePresent) {
-            bottomFadePresent = showFade
-            if (showFade) AnimationSystem.appear(bottomFade, fromScale = 1f, toAlpha = if (barHidden) 0.35f else 1f)
-            else AnimationSystem.disappear(bottomFade, toScale = 1f)
-        }
-        syncOrbMenuVisibility()
-        pageEdge.pushBottomReserve()
-    }
 
-    /** Trạng thái đích của thanh dưới/vệt mờ: khác visibility vì lúc đang ẩn dần view vẫn VISIBLE. */
-    private var barPresent = true
-    private var bottomFadePresent = true
 
-    private fun backAlpha(): Float = if (web.canGoBack()) 1f else 0.3f
 
-    private fun updateNav() {
-        backBtn.alpha = if (barHidden) 0f else backAlpha()
-    }
 
     // ---------------- Thanh địa chỉ ----------------
 
-    private fun setUrlText(text: String) {
-        programmatic = true
-        urlBar.setText(text)
-        programmatic = false
-    }
 
-    private fun showDomain() {
-        val host = try {
-            Uri.parse(currentUrl).host
-        } catch (e: Exception) {
-            null
-        }
-        setUrlText(host?.removePrefix("www.") ?: "")
-    }
 
-    private fun leaveEdit() {
-        root.requestFocus()
-        WindowCompat.getInsetsController(window, urlBar).hide(WindowInsetsCompat.Type.ime())
-    }
 
     // ---------------- Gợi ý tìm kiếm ----------------
     private fun scheduleSuggest(q: String) {
@@ -1246,7 +1020,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         tabManager.switchTo(tab.id)
         // Prevent address/find text from a private session entering Android's saved view hierarchy.
-        if (::urlBar.isInitialized) {
+        if (toolbar.isCreated) {
             urlBar.isSaveEnabled = !tab.isPrivate
             urlBar.importantForAutofill = if (tab.isPrivate) {
                 View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
@@ -1444,7 +1218,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         orbController?.alignWith(backBtn)
         // Menu ba chấm mở: orb thu vào viên thuốc trước, rồi viên thuốc mới bị menu hút vào.
         orbController?.absorbTarget = {
-            if (::menu.isInitialized && menu.isOpen && ::urlPillFrame.isInitialized) {
+            if (::menu.isInitialized && menu.isOpen && toolbar.isCreated) {
                 OriginTransitionController.boundsOnScreen(urlPillFrame)?.let { android.graphics.PointF(it.centerX(), it.centerY()) }
             } else null
         }
