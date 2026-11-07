@@ -180,7 +180,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
 
-    private val webClientHost = object : BrowserWebViewHost {
+    private val webClientHost: BrowserWebViewHost = object : BrowserWebViewHost {
         override val web: WebView get() = this@MainActivity.web
         override val store: Store get() = this@MainActivity.store
         override val tabManager: TabManager get() = this@MainActivity.tabManager
@@ -206,7 +206,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun activateTab(tab: TabManager.Tab) = this@MainActivity.activateTab(tab)
     }
 
-    private val chromeHost = object : BrowserChromeHost {
+    private val chromeHost: BrowserChromeHost = object : BrowserChromeHost {
         override val web: WebView get() = this@MainActivity.web
         override val popup: PopupWindowController get() = this@MainActivity.popup
         override val glassDialog: GlassDialogController get() = this@MainActivity.glassDialog
@@ -285,7 +285,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
     }
 
-    private val toaster = ToastController(
+    private val toaster: ToastController = ToastController(
         context = this,
         root = { root },
         blurTarget = { blurTarget },
@@ -298,7 +298,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     private fun toast(msg: String) = toaster.show(msg)
 
-    private val findBarController = FindBarController(
+    private val findBarController: FindBarController = FindBarController(
         activity = this,
         web = { web },
         root = { root },
@@ -309,7 +309,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         onVisibilityChanged = { updateBarVisibility() }
     )
 
-    private val topFadeController = TopFadeController(
+    private val topFadeController: TopFadeController = TopFadeController(
         activity = this,
         root = { root },
         isEdgeMode = { store.edgeMode },
@@ -317,7 +317,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         pageBackground = { pageBg }
     )
 
-    private val pageEdge = PageEdgeController(
+    private val pageEdge: PageEdgeController = PageEdgeController(
         context = this,
         host = object : PageEdgeHost {
             override val density: Float get() = d
@@ -338,7 +338,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         bottomBarHeightDp = BOTTOM_BAR_HEIGHT_DP
     )
 
-    private val toolbarHost = object : ToolbarHost {
+    private val toolbarHost: ToolbarHost = object : ToolbarHost {
         override val web: WebView get() = this@MainActivity.web
         override val store: Store get() = this@MainActivity.store
         override val isNight: Boolean get() = this@MainActivity.isNight
@@ -349,7 +349,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override val blurTarget: BlurTarget get() = this@MainActivity.blurTarget
         override val rootView: View get() = root
         override val bottomFade: View get() = this@MainActivity.bottomFade
-        override val isMenuOpen: Boolean get() = ::menu.isInitialized && menu.isOpen
+        override val isMenuOpen: Boolean
+            get() = this@MainActivity::menu.isInitialized && menu.isOpen
         override val isFindBarShown: Boolean get() = findBarController.isShown
         override fun goBack() = goBackAnimated()
         override fun toggleMenu() = menu.toggle()
@@ -361,7 +362,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun pushBottomReserve() = pageEdge.pushBottomReserve()
     }
 
-    private val toolbar = ToolbarController(
+    private val toolbar: ToolbarController = ToolbarController(
         activity = this,
         host = toolbarHost,
         bottomBarHeightDp = BOTTOM_BAR_HEIGHT_DP,
