@@ -63,5 +63,6 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - WebView callback detaching and teardown live only in `TabWebViewLifecycleController` (`detachCallbacks`, `destroy`, `destroyAll`).
 - MainActivity split plan (one extraction per commit, move code verbatim, build + smoke test each):
   1. `ToastController` (done), 2. `FindBarController` (done), 3. `TopFadeController` + `PageEdgeController` (done; `applyInsets` stays in MainActivity because it lays out most views),
-  4. `BrowserChromeClient`, 5. `BrowserWebViewClient`, 6. `ToolbarController`, 7. tab logic into `TabOperationsController`.
+  4. `BrowserChromeClient` (done), 5. `BrowserWebViewClient` (done; both talk to the Activity through internal `Browser*Host` interfaces),
+  6. `ToolbarController`, 7. tab logic into `TabOperationsController`.
   Controllers take a small `XHost` interface or lambdas (see `BrowserJavascriptBridgeHost`); keep `onCreate` init order unchanged.

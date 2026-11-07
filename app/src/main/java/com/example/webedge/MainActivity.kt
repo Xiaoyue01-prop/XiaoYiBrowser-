@@ -5,7 +5,6 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -14,7 +13,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.Message
 import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
@@ -27,18 +25,10 @@ import android.webkit.CookieManager
 import android.webkit.WebStorage
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import android.webkit.JsPromptResult
-import android.webkit.JsResult
-import android.webkit.GeolocationPermissions
-import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.RenderProcessGoneDetail
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -198,181 +188,44 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
 
-    private val client: WebViewClient = object : WebViewClient() {
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            if (!request.isForMainFrame) return false
-            return handleSpecialUrl(request.url.toString(), view)
-        }
-        @Deprecated("Deprecated in Java")
-        override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
-            handleSpecialUrl(url, view)
-        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            if (request.isForMainFrame && !isActivityDestroyed && view === web) {
-                toast("Không tải được trang (${error.errorCode})")
-                AnimationSystem.fade(view, 1f, AnimationSystem.SETTLE)
-            }
-        }
-        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-            if (request.isForMainFrame && response.statusCode >= 400 && !isActivityDestroyed && view === web) {
-                toast("Máy chủ trả về lỗi HTTP ${response.statusCode}")
-            }
-        }
-        override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-            YouTubeAdBlocker.onMainFrameNavigation(view, url)
-            tabManager.updateForWebView(view, url, view.title ?: url)
-            // A navigation must not reuse the previous document's background tone.
-            pageBackgrounds.remove(view)
-            if (view === web) GlassSystem.setPageBackground(null, window.decorView)
-            if (view !== web) return
-            // Chụp trang cũ trước khi mờ đi và trước khi nội dung đổi, để lần sau vuốt quay lại có ảnh xem trước.
-            if (view.url != url) pageTransition.remember(view)
-            webMedia.reset()
-            currentUrl = url
-            // Mờ đi bằng spring (trước đây đặt thẳng 0.6 nên bị giật); đang chuyển trang thì lớp phủ đã che, không mờ.
-            if (!pageTransition.isRunning) AnimationSystem.fade(view, 0.6f, AnimationSystem.QUICK)
-            if (!urlBar.hasFocus()) showDomain()
-            setBarHidden(false)
-            updateNav()
-        }
-
-        override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-            YouTubeAdBlocker.onMainFrameNavigation(view, url)
-            tabManager.updateForWebView(view, url, view.title ?: url)
-            if (view !== web) return
-            pageTransition.onHistoryChanged()
-            currentUrl = url
-            if (!urlBar.hasFocus()) showDomain()
-            updateNav()
-        }
-
-        override fun onPageCommitVisible(view: WebView, url: String) {
-            if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
-            YouTubeAdBlocker.sync(view, url, store.youtubeAdBlockEnabled)
-            view.evaluateJavascript(MEDIA_JS, null)
-            if (view !== web) return
-            pageEdge.injectInsets()
-            AnimationSystem.fade(view, 1f, AnimationSystem.SETTLE)
-            pageTransition.onPageReady()
-            tabSwipe.onPageReady()
-        }
-
-        override fun shouldInterceptRequest(
-            view: WebView,
-            request: WebResourceRequest
-        ): WebResourceResponse? {
-            if (store.adBlockEnabled && AdBlocker.shouldBlock(request)) {
-                YouTubeAdBlocker.recordGlobalBlockIfRelevant(request, view)
-                return AdBlocker.createEmptyResponse()
-            }
-            if (store.youtubeAdBlockEnabled && YouTubeAdBlocker.shouldBlock(request, view)) {
-                return AdBlocker.createEmptyResponse()
-            }
-            return super.shouldInterceptRequest(view, request)
-        }
-
-        override fun onPageFinished(view: WebView, url: String) {
-            tabManager.updateForWebView(view, url, view.title ?: url)
-            // Private pages never enter the persisted browsing history.
-            if (tabManager.getForWebView(view)?.isPrivate != true) {
-                store.addHistory(view.title ?: "", url)
-            }
-            if (store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
-            YouTubeAdBlocker.sync(view, url, store.youtubeAdBlockEnabled)
-            view.evaluateJavascript(MEDIA_JS, null)
-            if (view !== web) return
-            pullRefresh?.finish()
-            pageEdge.injectInsets()
-            AnimationSystem.fade(view, 1f, AnimationSystem.SETTLE)
-            pageTransition.onPageReady()
-            tabSwipe.onPageReady()
-            currentUrl = url
-            updateTabBadge()
-        }
-
-        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            YouTubeAdBlocker.forget(view)
-            pageBackgrounds.remove(view)
-            if (view === web) GlassSystem.setPageBackground(null, window.decorView)
-            val tab = tabManager.getForWebView(view)
-            val lastUrl = view.url
-            if (tab != null) {
-                if (!lastUrl.isNullOrBlank()) tab.url = lastUrl
-                if (tab.webView === view) tab.webView = null
-            }
-            (view.parent as? ViewGroup)?.removeView(view)
-            runCatching { view.destroy() }
-            // Android có thể thu hồi renderer của tab nền; tạo lại tab đó khi người dùng quay về.
-            if (!isActivityDestroyed && tab != null && tab === tabManager.getActive()) activateTab(tab)
-            return true
-        }
+    private val webClientHost = object : BrowserWebViewHost {
+        override val web: WebView get() = this@MainActivity.web
+        override val store: Store get() = this@MainActivity.store
+        override val tabManager: TabManager get() = this@MainActivity.tabManager
+        override val isDestroyed: Boolean get() = isActivityDestroyed
+        override val pageTransition: PageTransitionController get() = this@MainActivity.pageTransition
+        override val tabSwipe: TabSwipeController get() = this@MainActivity.tabSwipe
+        override val webMedia: WebMediaController get() = this@MainActivity.webMedia
+        override val pullRefresh: PullToRefreshController? get() = this@MainActivity.pullRefresh
+        override var currentUrl: String
+            get() = this@MainActivity.currentUrl
+            set(value) { this@MainActivity.currentUrl = value }
+        override val isUrlBarFocused: Boolean get() = urlBar.hasFocus()
+        override fun handleSpecialUrl(url: String, view: WebView): Boolean =
+            this@MainActivity.handleSpecialUrl(url, view)
+        override fun toast(msg: String) = this@MainActivity.toast(msg)
+        override fun forgetPageBackground(view: WebView) { pageBackgrounds.remove(view) }
+        override fun clearWindowPageBackground() { GlassSystem.setPageBackground(null, window.decorView) }
+        override fun showDomain() = this@MainActivity.showDomain()
+        override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
+        override fun updateNav() = this@MainActivity.updateNav()
+        override fun injectInsets() = pageEdge.injectInsets()
+        override fun updateTabBadge() = this@MainActivity.updateTabBadge()
+        override fun activateTab(tab: TabManager.Tab) = this@MainActivity.activateTab(tab)
     }
 
-    /** Tạo ChromeClient gắn với profile của WebView nguồn, kể cả popup đăng nhập. */
-    private fun createChromeClient(isPrivateSource: () -> Boolean): WebChromeClient = object : WebChromeClient() {
-        override fun onShowCustomView(view: View, callback: CustomViewCallback) {
-            fullscreenVideoController?.show(view, callback) ?: callback.onCustomViewHidden()
-        }
-        override fun onShowCustomView(view: View, requestedOrientation: Int, callback: CustomViewCallback) {
-            fullscreenVideoController?.show(view, callback, requestedOrientation) ?: callback.onCustomViewHidden()
-        }
-        override fun onHideCustomView() {
-            exitFullscreenView()
-        }
-        override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
-            return popup.create(resultMsg, view)
-        }
-        override fun onCloseWindow(window: WebView) {
-            if (window === popup.webView) popup.close()
-            else super.onCloseWindow(window)
-        }
-        // Hộp thoại JavaScript của trang: dùng chung hộp kính mờ. Trả lời JsResult là bắt buộc, nếu không trang sẽ đơ.
-        // Trang trong cửa sổ popup trả false để hệ thống tự hiện (hộp kính nằm sau cửa sổ popup nên sẽ bị che).
-        override fun onJsAlert(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-            if (view === popup.webView) return false
-            if (isActivityDestroyed) { result.cancel(); return true }
-            glassDialog.show(jsTitle(url), message.orEmpty(), "OK") { _, _ -> result.confirm() }
-            return true
-        }
-        override fun onJsConfirm(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-            if (view === popup.webView) return false
-            if (isActivityDestroyed) { result.cancel(); return true }
-            glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy") { ok, _ ->
-                if (ok) result.confirm() else result.cancel()
-            }
-            return true
-        }
-        override fun onJsPrompt(view: WebView, url: String?, message: String?, defaultValue: String?, result: JsPromptResult): Boolean {
-            if (view === popup.webView) return false
-            if (isActivityDestroyed) { result.cancel(); return true }
-            glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy", defaultValue.orEmpty()) { ok, text ->
-                if (ok) result.confirm(text.orEmpty()) else result.cancel()
-            }
-            return true
-        }
-        override fun onJsBeforeUnload(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-            if (view === popup.webView) return false
-            if (isActivityDestroyed) { result.cancel(); return true }
-            val text = message?.takeIf { it.isNotBlank() } ?: "Các thay đổi bạn đã thực hiện có thể chưa được lưu."
-            glassDialog.show("Rời khỏi trang này?", text, "Rời khỏi", "Ở lại") { ok, _ ->
-                if (ok) result.confirm() else result.cancel()
-            }
-            return true
-        }
-        override fun onPermissionRequest(request: PermissionRequest) {
-            runOnUiThread { webPermissions.requestMedia(request, isPrivateSource()) }
-        }
-        override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
-            runOnUiThread { webPermissions.requestGeolocation(origin, callback, isPrivateSource()) }
-        }
-
-        override fun onProgressChanged(view: WebView, newProgress: Int) {
-            if (view === web) pillProgress.progress = if (newProgress in 1..99) newProgress / 100f else 0f
-        }
-
-        override fun onShowFileChooser(
-            webView: WebView,
+    private val chromeHost = object : BrowserChromeHost {
+        override val web: WebView get() = this@MainActivity.web
+        override val popup: PopupWindowController get() = this@MainActivity.popup
+        override val glassDialog: GlassDialogController get() = this@MainActivity.glassDialog
+        override val webPermissions: WebPermissionController get() = this@MainActivity.webPermissions
+        override val fullscreenVideo: BrowserFullscreenController? get() = fullscreenVideoController
+        override val isDestroyed: Boolean get() = isActivityDestroyed
+        override fun runOnUi(block: () -> Unit) { runOnUiThread { block() } }
+        override fun setPageProgress(progress: Float) { pillProgress.progress = progress }
+        override fun chooseFile(
             callback: ValueCallback<Array<Uri>>,
-            params: FileChooserParams
+            params: WebChromeClient.FileChooserParams
         ): Boolean {
             pendingFileCallback?.onReceiveValue(null)
             pendingFileCallback = callback
@@ -386,6 +239,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
     }
 
+    private val client: WebViewClient = BrowserWebViewClient(webClientHost)
+
+    /** Tạo ChromeClient gắn với profile của WebView nguồn, kể cả popup đăng nhập. */
+    private fun createChromeClient(isPrivateSource: () -> Boolean): WebChromeClient =
+        BrowserChromeClient(chromeHost, isPrivateSource)
+
     // ---------------- Tiện ích giao diện ----------------
 
 
@@ -397,12 +256,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private lateinit var menu: MenuController
     private var contextMenuController: ContextMenuController? = null
     private lateinit var glassDialog: GlassDialogController
-
-    // Tiêu đề hộp thoại của trang: "tenmien.com cho biết".
-    private fun jsTitle(url: String?): String {
-        val host = runCatching { Uri.parse(url.orEmpty()).host }.getOrNull()?.removePrefix("www.")
-        return if (host.isNullOrBlank()) "Trang web cho biết" else "$host cho biết"
-    }
 
     // Cầu nối cho MenuController: đọc giá trị mới nhất của Activity mỗi lần cần.
     private val menuHost = object : MenuHost {
