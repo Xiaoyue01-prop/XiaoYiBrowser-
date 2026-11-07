@@ -3,8 +3,6 @@ package com.example.webedge
 
 import android.annotation.SuppressLint
 import android.content.Intent
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -633,6 +631,14 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             accent = accent,
             onVisibilityChanged = { syncOrbMenuVisibility() }
         )
+        val pageActions = PageActions(
+            activity = this,
+            web = { web },
+            tabManager = { tabManager },
+            privateProfileManager = { privateProfileManager },
+            downloads = downloads,
+            toast = ::toast
+        )
         contextMenuController = ContextMenuController(
             activity = this,
             root = root,
@@ -641,30 +647,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             isNight = { GlassSystem.isDarkPage() },
             foreground = fg,
             onOpenLink = ::openLinkInNewTab,
-            onCopy = { value ->
-                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("Summit", value))
-                toast("Đã sao chép")
-            },
-            onShare = { value ->
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, value)
-                }
-                startActivity(Intent.createChooser(intent, "Chia sẻ bằng"))
-            },
-            onDownloadImage = { imageUrl ->
-                runCatching {
-                    val currentTab = tabManager.getForWebView(web)
-                    val request = downloads.buildRequest(
-                        imageUrl, web.settings.userAgentString, "image", "image/*",
-                        privateProfileManager.cookieHeader(web, currentTab?.isPrivate == true, imageUrl),
-                        useCookieHeader = true
-                    )
-                    downloads.enqueue(request)
-                    toast("Đang tải hình ảnh")
-                }.onFailure { toast("Không thể tải hình ảnh này") }
-            },
+            onCopy = pageActions::copy,
+            onShare = pageActions::share,
+            onDownloadImage = pageActions::downloadImage,
             onOpenLinkInBackground = ::openLinkInBackgroundTab,
             onFind = ::openFind
         )
