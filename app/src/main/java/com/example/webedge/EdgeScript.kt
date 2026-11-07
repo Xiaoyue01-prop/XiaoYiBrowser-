@@ -3,12 +3,12 @@ package com.example.webedge
 import android.content.Context
 
 /**
- * Script chạy trong trang (assets/edge_script.js). Nó chỉ còn hai việc: đọc màu mép trên của trang để tô
- * dải thanh trạng thái (khi WebView nằm dưới thanh trạng thái) và nâng thanh cố định ở đáy trang lên trên
- * viên thuốc địa chỉ. Việc tràn viền do native quyết định theo từng trang: trang khai báo
- * viewport-fit=cover ([COVER_JS]) thì WebView tràn lên và trang tự lo bằng env(safe-area-inset-*).
+ * Script chạy trong trang (assets/edge_script.js). Việc của nó: (1) khi không tràn viền thì đọc màu mép trên
+ * để tô dải thanh trạng thái; (2) khi tràn viền mà trang không khai báo viewport-fit=cover ([COVER_JS]) thì
+ * đặt lại header cố định/sticky (đứng yên dưới thanh trạng thái hoặc cuộn như phần tử thường); (3) nâng thanh
+ * cố định ở đáy trang lên trên viên thuốc địa chỉ. Trang có cover thì tự lo bằng env(safe-area-inset-*).
  *
- * File JS chứa các placeholder %COVER%, %BOTTOM%, %COMPACT%, %PILL_METRICS% để Activity thay số.
+ * File JS chứa các placeholder %FULL%, %INSET%, %HEADER%, %BOTTOM%, %COMPACT%, %PILL_METRICS% để Activity thay số.
  */
 internal object EdgeScript {
     @Volatile private var cached: String? = null
