@@ -16,8 +16,6 @@ import android.view.Gravity
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.WebStorage
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -91,7 +89,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private val barPresent: Boolean get() = toolbar.barPresent
     private var pageBg = Color.WHITE
     private var currentUrl = ""
-    private var mobileUa = ""
 
     // Màu dải thanh trạng thái và màu nền trang được lưu độc lập theo từng WebView.
     private class TopState(val color: Int?)
@@ -436,7 +433,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                     }
                 }
             },
-            configureWebView = ::configureTabWebView,
+            configureWebView = tabConfigurator::configure,
             beforeDestroy = { view -> if (::pageTransition.isInitialized) pageTransition.forget(view) }
         )
         tabOperations = TabOperationsController(
@@ -929,80 +926,32 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         web.loadUrl(toUrl(input))
     }
 
-    private fun isDesktopMode(): Boolean =
-        (tabManager.getForWebView(web) ?: tabManager.getActive())?.desktop == true
-
-    /** Đổi UA cho đúng tab đang xem rồi tải lại; các tab khác giữ nguyên chế độ của chúng. */
-    private fun toggleDesktopMode() {
-        val tab = tabManager.getForWebView(web) ?: tabManager.getActive() ?: return
-        tab.desktop = !tab.desktop
-        applyDesktopMode(web, tab.desktop)
-        web.reload()
+    private val tabConfigHost: TabWebViewConfigHost = object : TabWebViewConfigHost {
+        override val web: WebView get() = this@MainActivity.web
+        override val tabManager: TabManager get() = this@MainActivity.tabManager
+        override val webViewClient: WebViewClient get() = client
+        override val privateProfileManager: PrivateProfileManager get() = this@MainActivity.privateProfileManager
+        override val bridgeHost: BrowserJavascriptBridgeHost get() = this@MainActivity
+        override val downloads: DownloadController get() = this@MainActivity.downloads
+        override val downloadPrompt: DownloadPromptController? get() = downloadPromptController
+        override val contextMenu: ContextMenuController? get() = contextMenuController
+        override val isUrlBarFocused: Boolean get() = urlBar.hasFocus()
+        override fun createChromeClient(isPrivateSource: () -> Boolean): WebChromeClient =
+            this@MainActivity.createChromeClient(isPrivateSource)
+        override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
+        override fun setFindCount(text: String) = findBarController.setCount(text)
+        override fun toast(msg: String) = this@MainActivity.toast(msg)
     }
 
-    private fun applyDesktopMode(target: WebView, desktop: Boolean) {
-        val settings = target.settings
-        if (desktop) {
-            settings.userAgentString = desktopUserAgent(mobileUa)
-            settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true
-        } else {
-            settings.userAgentString = mobileUa
-            // Không tắt wide viewport ở mobile: website có meta viewport cần
-            // layout theo chiều rộng thiết bị thay vì viewport mặc định ~980px.
-            settings.useWideViewPort = true
-            settings.loadWithOverviewMode = false
-        }
-    }
+    private val tabConfigurator: TabWebViewConfigurator = TabWebViewConfigurator(tabConfigHost)
 
-    /** Mỗi tab có cấu hình/client riêng; cookie và web storage đi theo profile của tab. */
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun configureTabWebView(view: WebView, tab: TabManager.Tab) {
-        // Private WebViews must not participate in Android's automatic view-state snapshots
-        // or expose form values to the platform Autofill service.
-        view.isSaveEnabled = !tab.isPrivate
-        if (tab.isPrivate) {
-            view.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        }
-        view.setBackgroundColor(Color.WHITE)
-        val settings = view.settings
-        settings.applyBrowserDefaults()
-        if (mobileUa.isBlank()) mobileUa = cleanMobileUserAgent(settings.userAgentString)
-        applyDesktopMode(view, tab.desktop)
-        privateProfileManager.configureCookies(view, tab.isPrivate)
-        view.webViewClient = client
-        view.webChromeClient = createChromeClient { tab.isPrivate }
-        // Chạy script media ở mọi khung (kể cả iframe chứa trình phát) ngay từ đầu tài liệu.
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            WebViewCompat.addDocumentStartJavaScript(view, MEDIA_JS, setOf("*"))
-            WebViewCompat.addDocumentStartJavaScript(view, LONG_PRESS_JS, setOf("*"))
-        }
-        view.addJavascriptInterface(BrowserJavascriptBridge(view, this), "EdgeBridge")
-        view.setFindListener { active, total, _ ->
-            if (view === web) findBarController.setCount(if (total == 0) "0" else "${active + 1}/$total")
-        }
-        view.setDownloadListener { dlUrl, userAgent, contentDisposition, mimetype, _ ->
-            try {
-                val request = downloads.buildRequest(
-                    dlUrl, userAgent, contentDisposition, mimetype,
-                    privateProfileManager.cookieHeader(view, tab.isPrivate, dlUrl),
-                    useCookieHeader = true
-                )
-                downloadPromptController?.show(request.fileName) {
-                    downloads.enqueue(request)
-                } ?: toast("Summit chưa sẵn sàng để tải xuống")
-            } catch (_: Exception) {
-                toast("Không tải được file này")
-            }
-        }
-        contextMenuController?.attach(view)
-        view.setOnScrollChangeListener { _, _, y, _, oldY ->
-            if (view !== web || urlBar.hasFocus()) return@setOnScrollChangeListener
-            val dy = y - oldY
-            if (dy > 12) setBarHidden(true)
-            else if (dy < -12 || y < 10) setBarHidden(false)
-        }
-    }
+    private fun isDesktopMode(): Boolean = tabConfigurator.isDesktopMode()
+
+    private fun toggleDesktopMode() = tabConfigurator.toggleDesktopMode()
+
+
+
+
 
     private fun captureActiveTab(withThumbnail: Boolean = true) {
         if (::web.isInitialized) tabPersistence.captureActiveTab(web, withThumbnail)
