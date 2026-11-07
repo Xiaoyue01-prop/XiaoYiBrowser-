@@ -55,14 +55,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private val bar: LinearLayout get() = toolbar.bar
     private val backBtn: FrameLayout get() = toolbar.backBtn
     private val menuBtn: FrameLayout get() = toolbar.menuBtn
-    private val reloadBtn: ImageView get() = toolbar.reloadBtn
     private val tabBtn: ImageView get() = toolbar.tabBtn
     private lateinit var tabManager: TabManager
     private lateinit var privateProfileManager: PrivateProfileManager
     private lateinit var tabWebViewLifecycle: TabWebViewLifecycleController
     private lateinit var tabPersistence: TabPersistenceController
     private lateinit var tabOperations: TabOperationsController
-    private val urlPill: LinearLayout get() = toolbar.urlPill
     private val pillProgress: PillProgress get() = toolbar.pillProgress
     private lateinit var bottomFade: View
     private lateinit var suggestBox: LinearLayout

@@ -21,7 +21,6 @@ import java.util.concurrent.atomic.AtomicLong
  * - broad text/aria-label selectors that could hide ordinary videos or controls.
  */
 object YouTubeAdBlocker {
-    private const val STYLE_ID = "__summit_youtube_adblock_v1"
 
     private val topLevelUrls = Collections.synchronizedMap(WeakHashMap<WebView, String>())
     private val adHosts = setOf(
