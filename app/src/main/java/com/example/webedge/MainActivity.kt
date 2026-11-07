@@ -879,6 +879,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private val tabConfigHost: TabWebViewConfigHost = object : TabWebViewConfigHost {
         override val web: WebView get() = this@MainActivity.web
         override val tabManager: TabManager get() = this@MainActivity.tabManager
+        override val youtubeAdBlockEnabled: Boolean get() = store.youtubeAdBlockEnabled
         override val webViewClient: WebViewClient get() = client
         override val privateProfileManager: PrivateProfileManager get() = this@MainActivity.privateProfileManager
         override val bridgeHost: BrowserJavascriptBridgeHost get() = this@MainActivity

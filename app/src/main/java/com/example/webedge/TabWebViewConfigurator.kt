@@ -13,6 +13,7 @@ import androidx.webkit.WebViewFeature
 internal interface TabWebViewConfigHost {
     val web: WebView
     val tabManager: TabManager
+    val youtubeAdBlockEnabled: Boolean
     val webViewClient: WebViewClient
     val privateProfileManager: PrivateProfileManager
     val bridgeHost: BrowserJavascriptBridgeHost
@@ -78,6 +79,12 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(view, MEDIA_JS, setOf("*"))
             WebViewCompat.addDocumentStartJavaScript(view, LONG_PRESS_JS, setOf("*"))
+            // YouTube-only player-response filtering must run before Innertube requests begin.
+            WebViewCompat.addDocumentStartJavaScript(
+                view,
+                YouTubeAdBlocker.documentStartScript(host.youtubeAdBlockEnabled),
+                setOf("*")
+            )
         }
         view.addJavascriptInterface(BrowserJavascriptBridge(view, host.bridgeHost), "EdgeBridge")
         view.setFindListener { active, total, _ ->
