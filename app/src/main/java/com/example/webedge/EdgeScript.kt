@@ -32,8 +32,8 @@ internal object EdgeScript {
     if (!m && !done) return;
     var c = !!(m && /viewport-fit\s*=\s*cover/i.test(m.getAttribute('content') || ''));
     if (c === last) return;
-    last = c;
-    try { EdgeBridge.setCover(c); } catch (e) {}
+    // Chỉ ghi nhận đã báo khi cầu nối thật sự nhận được, để lần kiểm tra sau còn thử lại nếu cầu nối chưa sẵn sàng.
+    try { EdgeBridge.setCover(c); last = c; } catch (e) {}
   }
   function watchHead(){
     if (mo) mo.disconnect();
@@ -46,6 +46,7 @@ internal object EdgeScript {
     mo.observe(document, {childList: true, subtree: true});
   } catch (e) {}
   document.addEventListener('DOMContentLoaded', function(){ check(true); watchHead(); }, {once: true});
+  window.addEventListener('load', function(){ check(true); }, {once: true});
   check(false);
 })();
 """
