@@ -140,6 +140,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private fun coverKey(url: String?): String? =
         url?.let { runCatching { android.net.Uri.parse(it).host }.getOrNull() }?.removePrefix("www.")
 
+    // Màu nền trang đang xem (do script báo); chưa có thì dùng trắng, hoặc đen khi trang tối
+    private fun currentPageBg(): Int {
+        val reported = if (this::web.isInitialized) pageBackgrounds[web]?.color else null
+        return reported ?: if (GlassSystem.isDarkPage()) Color.BLACK else pageBg
+    }
+
     private fun pageCovers(): Boolean = this::web.isInitialized && coverPages[web] == true
 
     private fun setCoverState(view: WebView, cover: Boolean) {
@@ -332,7 +338,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         root = { root },
         isEdgeMode = { store.edgeMode },
         insetTop = { insetTop },
-        pageBackground = { pageBg },
+        pageBackground = { currentPageBg() },
         isNight = { isNight }
     )
 

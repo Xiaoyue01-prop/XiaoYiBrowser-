@@ -12,8 +12,9 @@ import androidx.core.graphics.ColorUtils
 import androidx.core.view.WindowCompat
 
 /**
- * Dải thanh trạng thái: tràn viền thì dùng lớp mờ (hoặc màu thanh menu của trang nếu có),
- * không tràn viền thì luôn là màu đặc theo mép trên của trang.
+ * Dải thanh trạng thái ("clone"): tràn viền thì là màu nền trang, đặc hoàn toàn trong vùng thanh trạng thái rồi mờ dần
+ * trong 16dp bên dưới, nên nội dung cuộn lên không lộ ra trên thanh trạng thái; không tràn viền thì là màu đặc theo
+ * mép trên của trang.
  */
 class TopFadeController(
     private val activity: Activity,
@@ -36,7 +37,7 @@ class TopFadeController(
     /** Màu thanh menu cố định của trang đang xem; null = dùng lớp mờ mặc định. */
     var solidTop: Int? = null
 
-    /** Lớp mờ dần dưới thanh trạng thái, theo tông của trang chứ không theo theme hệ thống. */
+    /** Lớp mờ dần dưới thanh trạng thái, theo màu nền của trang. */
     fun create() {
         val pageIsDark = GlassSystem.isDarkPage()
         fadeDrawable = GradientDrawable(
@@ -49,8 +50,6 @@ class TopFadeController(
 
     fun refreshPalette() {
         if (!::fadeDrawable.isInitialized) return
-        val dark = GlassSystem.isDarkPage()
-        fadeDrawable.colors = intArrayOf(Theme.fadeStart(dark), Theme.fadeEnd(dark))
         if (::view.isInitialized) update()
     }
 
@@ -59,10 +58,17 @@ class TopFadeController(
         val c = solidTop
         val lightBar: Boolean
         if (isEdgeMode() && c == null) {
+            val col = ColorUtils.setAlphaComponent(pageBackground(), 255)
+            val solid = insetTop()
+            val height = solid + dp(16)
+            // Đặc hoàn toàn đến hết vùng thanh trạng thái, rồi mờ dần về trong suốt (cùng màu để không bị xám giữa chừng)
+            fadeDrawable.setColors(
+                intArrayOf(col, col, ColorUtils.setAlphaComponent(col, 0)),
+                floatArrayOf(0f, solid.toFloat() / height, 1f)
+            )
             view.background = fadeDrawable
-            // Phần dưới status bar thuộc Native Clone nên phải để trong suốt, không phủ gradient lên nội dung.
-            lp.height = insetTop()
-            lightBar = !GlassSystem.isDarkPage()
+            lp.height = height
+            lightBar = ColorUtils.calculateLuminance(col) > 0.5
         } else {
             val col = c ?: pageBackground()
             view.setBackgroundColor(col)
@@ -84,7 +90,7 @@ class TopFadeController(
     val swipeStrip: TabSwipeStatusStrip = object : TabSwipeStatusStrip {
         override val enabled: Boolean get() = isEdgeMode()
         override val solidPx: Int get() = insetTop()
-        override val fadePx: Int get() = insetTop()
+        override val fadePx: Int get() = insetTop() + dp(16)
 
         override fun colorFor(tab: TabManager.Tab?, current: Boolean): Int? {
             if (current) return solidTop
