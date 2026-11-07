@@ -12,7 +12,8 @@ interface PageEdgeHost {
     val imeBottom: Int
     val barHidden: Boolean
     val barPresent: Boolean
-    val isEdgeMode: Boolean
+    /** Trang đang xem tràn viền (khai báo viewport-fit=cover); WebView nằm dưới thanh trạng thái thì là false. */
+    val isCover: Boolean
     val isDestroyed: Boolean
     val isFullscreenVideoShowing: Boolean
     /** Thanh địa chỉ nổi đã được dựng chưa. */
@@ -24,7 +25,8 @@ interface PageEdgeHost {
 }
 
 /**
- * Chừa chỗ đầu/cuối trang cho các thanh nổi và chạy script xử lý thanh menu cố định của website.
+ * Chừa chỗ cuối trang cho viên thuốc địa chỉ và chạy script lấy màu mép trên / nâng thanh đáy của website.
+ * Phía trên không đệm gì: WebView hoặc nằm dưới thanh trạng thái, hoặc tràn viền và trang tự lo bằng env().
  * Script gốc nằm ở assets/edge_script.js (xem [EdgeScript]).
  */
 class PageEdgeController(
@@ -32,34 +34,28 @@ class PageEdgeController(
     private val host: PageEdgeHost,
     private val bottomBarHeightDp: Int
 ) {
-    // Chừa chỗ đầu/cuối trang cho các thanh và chạy script xử lý thanh menu cố định
+    // Chừa chỗ cuối trang cho viên thuốc và chạy script lấy màu / nâng thanh đáy
     fun injectInsets() {
         val target = host.web ?: return
         val d = host.density
-        val edge = host.isEdgeMode
-        val insetCss = (host.insetTop / d).toInt()
-        val topCss = if (edge) insetCss else 0
         val bottomCss = (host.insetBottom / d).toInt() + 64
-        val rule = (if (edge) "padding-top:" + topCss + "px!important;" else "") +
-            "padding-bottom:" + bottomCss + "px!important;box-sizing:border-box!important"
         val js = "(function(){var s=document.getElementById('__edge');" +
             "if(!s){s=document.createElement('style');s.id='__edge';" +
             "(document.head||document.documentElement).appendChild(s);}" +
-            "s.textContent='html{" + rule + "}';})();"
+            "s.textContent='html{padding-bottom:" + bottomCss + "px!important;box-sizing:border-box!important}';})();"
         target.evaluateJavascript(js, null)
-        val mode = if (edge) "1" else "0"
+        val cover = host.isCover.toString()
         val bottom = bottomReserveCss()
         // Trang đã nạp script rồi thì chỉ cập nhật vài con số; chỉ gửi cả đoạn script dài khi trang chưa có.
         target.evaluateJavascript(
-            "(function(){if(!window.__edgeStarted)return 0;window.__edgeInset=" + insetCss +
-                ";window.__edgeMode=" + mode + ";window.__edgeBottom=" + bottom +
+            "(function(){if(!window.__edgeStarted)return 0;window.__edgeCover=" + cover +
+                ";window.__edgeBottom=" + bottom +
                 ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() + ";" + compactPillMetricsJs() +
                 "if(window.__edgeRun)window.__edgeRun();return 1})()"
         ) { result ->
             if (result != "1" && !host.isDestroyed) {
                 target.evaluateJavascript(
-                    EdgeScript.template(context).replace("%INSET%", insetCss.toString())
-                        .replace("%MODE%", mode)
+                    EdgeScript.template(context).replace("%COVER%", cover)
                         .replace("%BOTTOM%", bottom.toString())
                         .replace("%COMPACT%", shouldHideWebsiteBottomNav().toString())
                         .replace("%PILL_METRICS%", compactPillMetricsJs()),

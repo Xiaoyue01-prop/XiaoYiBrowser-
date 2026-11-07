@@ -79,6 +79,7 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(view, MEDIA_JS, setOf("*"))
             WebViewCompat.addDocumentStartJavaScript(view, LONG_PRESS_JS, setOf("*"))
+            WebViewCompat.addDocumentStartJavaScript(view, EdgeScript.COVER_JS, setOf("*"))
             // YouTube-only player-response filtering must run before Innertube requests begin.
             WebViewCompat.addDocumentStartJavaScript(
                 view,

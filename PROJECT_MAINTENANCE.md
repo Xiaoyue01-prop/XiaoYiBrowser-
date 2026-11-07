@@ -59,7 +59,7 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 ## Code cleanup (2026-11-07)
 
 - `dp()`, `ovalDrawable()` and `roundedDrawable()` live in `UiKit.kt`; do not re-add per-class `dp` helpers or `dp: (Int) -> Int` constructor params. `dp()` uses `Resources.getSystem()` density.
-- The page script is `assets/edge_script.js`, loaded by `EdgeScript.template(context)`; placeholders are `%INSET%`, `%MODE%`, `%BOTTOM%`, `%COMPACT%`, `%PILL_METRICS%`.
+- The page script is `assets/edge_script.js`, loaded by `EdgeScript.template(context)`; placeholders are `%COVER%`, `%BOTTOM%`, `%COMPACT%`, `%PILL_METRICS%`.
 - WebView callback detaching and teardown live only in `TabWebViewLifecycleController` (`detachCallbacks`, `destroy`, `destroyAll`).
 - MainActivity split plan (one extraction per commit, move code verbatim, build + smoke test each):
   1. `ToastController` (done), 2. `FindBarController` (done), 3. `TopFadeController` + `PageEdgeController` (done; `applyInsets` stays in MainActivity because it lays out most views),
@@ -70,3 +70,4 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
   Controllers take a small `XHost` interface or lambdas (see `BrowserJavascriptBridgeHost`); keep `onCreate` init order unchanged.
 - Top status-bar colour reports per WebView (`recordColor`/`recordedColor`) and the tab-swipe status strip (`swipeStrip`) live in `TopFadeController`.
 - File layout: `DownloadLiveUpdate.kt` (live-update notifications + cancel receiver) is separate from `Downloads.kt` (`DownloadController`); `WebWindows.kt` was split into `PictureInPictureController.kt` and `PopupWindowController.kt`. `PageActions.kt` holds copy/share/download-image from the long-press menu.
+- Edge-to-edge is decided per page by native code: `EdgeScript.COVER_JS` (document-start) reports `viewport-fit=cover` via `EdgeBridge.setCover`; only cover pages get `webLp.topMargin = 0` and handle `env(safe-area-inset-*)` themselves. Other pages sit under the status bar (solid top color from `runTop`). The old header-shifting code was removed.

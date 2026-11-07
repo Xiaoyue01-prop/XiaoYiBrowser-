@@ -131,6 +131,40 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (owner === web) topFadeController.applyColor(color)
     }
 
+    // ---- Tràn viền theo từng trang: chỉ trang khai báo viewport-fit=cover mới cho WebView tràn lên dưới thanh trạng thái ----
+    private val coverPages = java.util.WeakHashMap<WebView, Boolean>()
+    private val coverMemory = object : LinkedHashMap<String, Boolean>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > 200
+    }
+
+    private fun coverKey(url: String?): String? =
+        url?.let { runCatching { android.net.Uri.parse(it).host }.getOrNull() }?.removePrefix("www.")
+
+    private fun isCoverNow(): Boolean =
+        store.edgeMode && this::web.isInitialized && coverPages[web] == true
+
+    private fun setCoverState(view: WebView, cover: Boolean) {
+        if (coverPages[view] == cover) return
+        coverPages[view] = cover
+        if (view !== web || isActivityDestroyed) return
+        // Tràn viền thì dải thanh trạng thái dùng lớp mờ, bỏ màu đặc của chế độ nằm dưới thanh trạng thái.
+        if (cover) {
+            topFadeController.recordColor(view, null)
+            topFadeController.applyColor(null)
+        }
+        applyInsets()
+    }
+
+    // Điều hướng mới: dùng trạng thái đã biết của domain để WebView không nhảy lên xuống giữa hai trang cùng loại.
+    private fun presetCover(view: WebView, url: String) {
+        setCoverState(view, coverMemory[coverKey(url)] ?: false)
+    }
+
+    override fun onBridgeCover(owner: WebView, cover: Boolean) {
+        coverKey(owner.url)?.let { coverMemory[it] = cover }
+        setCoverState(owner, cover)
+    }
+
     override fun onBridgePageBackground(owner: WebView, color: Int?) {
         pageBackgrounds[owner] = PageBackgroundState(color)
         if (owner === web && !isActivityDestroyed) {
@@ -186,6 +220,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             this@MainActivity.handleSpecialUrl(url, view)
         override fun toast(msg: String) = this@MainActivity.toast(msg)
         override fun forgetPageBackground(view: WebView) { pageBackgrounds.remove(view) }
+        override fun onNavigationStarted(view: WebView, url: String) = this@MainActivity.presetCover(view, url)
         override fun clearWindowPageBackground() { GlassSystem.setPageBackground(null, window.decorView) }
         override fun showDomain() = this@MainActivity.showDomain()
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
@@ -301,7 +336,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private val topFadeController: TopFadeController = TopFadeController(
         activity = this,
         root = { root },
-        isEdgeMode = { store.edgeMode },
+        isEdgeMode = { isCoverNow() },
         insetTop = { insetTop },
         pageBackground = { pageBg },
         isNight = { isNight }
@@ -316,7 +351,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             override val imeBottom: Int get() = this@MainActivity.imeBottom
             override val barHidden: Boolean get() = this@MainActivity.barHidden
             override val barPresent: Boolean get() = this@MainActivity.barPresent
-            override val isEdgeMode: Boolean get() = store.edgeMode
+            override val isCover: Boolean get() = isCoverNow()
             override val isDestroyed: Boolean get() = isActivityDestroyed
             override val isFullscreenVideoShowing: Boolean get() = this@MainActivity.isFullscreenVideoShowing()
             override val hasBar: Boolean get() = toolbar.isCreated
@@ -819,7 +854,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             maxOf(insetBottom, imeBottom) + dp(80)
 
         val webLp = web.layoutParams as FrameLayout.LayoutParams
-        webLp.topMargin = if (store.edgeMode) 0 else insetTop
+        webLp.topMargin = if (isCoverNow()) 0 else insetTop
         webLp.bottomMargin = imeBottom
         web.layoutParams = webLp
 

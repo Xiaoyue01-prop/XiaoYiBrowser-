@@ -9,6 +9,7 @@ internal interface BrowserJavascriptBridgeHost {
     fun isBridgeHostDestroyed(): Boolean
     fun onBridgeTopColor(owner: WebView, color: Int?)
     fun onBridgePageBackground(owner: WebView, color: Int?)
+    fun onBridgeCover(owner: WebView, cover: Boolean)
     fun onBridgeMediaState(owner: WebView, info: WebMediaInfo)
     fun onBridgePipRequest(owner: WebView)
     fun onBridgeLongPress(owner: WebView, linkUrl: String, imageUrl: String)
@@ -75,6 +76,12 @@ internal class BrowserJavascriptBridge(
         val safeLink = linkUrl.orEmpty()
         val safeImage = imageUrl.orEmpty()
         dispatch { host, owner -> host.onBridgeLongPress(owner, safeLink, safeImage) }
+    }
+
+    /** Trang có khai báo viewport-fit=cover hay không (xem [EdgeScript.COVER_JS]). */
+    @JavascriptInterface
+    fun setCover(cover: Boolean) {
+        dispatch { host, owner -> host.onBridgeCover(owner, cover) }
     }
 
     @JavascriptInterface
