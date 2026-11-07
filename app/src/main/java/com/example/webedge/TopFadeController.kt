@@ -1,8 +1,12 @@
 package com.example.webedge
 
 import android.app.Activity
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.view.View
+import android.webkit.WebView
 import android.widget.FrameLayout
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.WindowCompat
@@ -16,8 +20,14 @@ class TopFadeController(
     private val root: () -> View,
     private val isEdgeMode: () -> Boolean,
     private val insetTop: () -> Int,
-    private val pageBackground: () -> Int
+    private val pageBackground: () -> Int,
+    private val isNight: () -> Boolean
 ) {
+    private class TopState(val color: Int?)
+
+    /** Màu thanh menu cố định mà từng WebView đã báo về (kể cả báo "không có"). */
+    private val reported = java.util.WeakHashMap<WebView, TopState>()
+
     lateinit var view: View
         private set
     lateinit var fadeDrawable: GradientDrawable
@@ -60,6 +70,46 @@ class TopFadeController(
         }
         view.requestLayout()
         WindowCompat.getInsetsController(activity.window, root()).isAppearanceLightStatusBars = lightBar
+    }
+
+    fun recordColor(owner: WebView, color: Int?) {
+        reported[owner] = TopState(color)
+    }
+
+    /** Màu đã báo của WebView; null nếu chưa báo hoặc trang không có thanh menu cố định. */
+    fun recordedColor(view: WebView): Int? = reported[view]?.color
+
+    /** Dải thanh trạng thái dùng cho cử chỉ vuốt viên thuốc đổi tab. */
+    val swipeStrip: TabSwipeStatusStrip = object : TabSwipeStatusStrip {
+        override val enabled: Boolean get() = isEdgeMode()
+        override val solidPx: Int get() = insetTop()
+        override val fadePx: Int get() = insetTop() + dp(16)
+
+        override fun colorFor(tab: TabManager.Tab?, current: Boolean): Int? {
+            if (current) return solidTop
+            if (tab == null) return pageBackground()
+            val wv = tab.webView
+            val state = if (wv != null) reported[wv] else null
+            if (state != null) return state.color
+            // Chưa có báo cáo: lấy màu điểm giữa mép trên của ảnh chụp tab đó.
+            val bmp = tab.thumbnail?.takeUnless { it.isRecycled } ?: return pageBackground()
+            return runCatching { bmp.getPixel(bmp.width / 2, 1) }.getOrDefault(pageBackground())
+        }
+
+        override fun newFade(): Drawable =
+            fadeDrawable.constantState?.newDrawable()?.mutate() ?: ColorDrawable(Color.TRANSPARENT)
+
+        override fun isLightBar(color: Int?): Boolean =
+            if (color == null) !isNight() else ColorUtils.calculateLuminance(color) > 0.5
+
+        override fun setLightBar(light: Boolean) {
+            WindowCompat.getInsetsController(activity.window, root()).isAppearanceLightStatusBars = light
+        }
+
+        override fun setHidden(hidden: Boolean) {
+            view.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
+            if (!hidden) update()
+        }
     }
 
     /** Tô dải thanh trạng thái theo màu thanh menu của trang; null = dùng lớp mờ mặc định. */

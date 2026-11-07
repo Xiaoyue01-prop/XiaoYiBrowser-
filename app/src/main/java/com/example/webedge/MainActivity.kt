@@ -29,9 +29,7 @@ import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
@@ -91,8 +89,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private var currentUrl = ""
 
     // Màu dải thanh trạng thái và màu nền trang được lưu độc lập theo từng WebView.
-    private class TopState(val color: Int?)
-    private val topColors = java.util.WeakHashMap<WebView, TopState>()
     private class PageBackgroundState(val color: Int?)
     private val pageBackgrounds = java.util.WeakHashMap<WebView, PageBackgroundState>()
     private var orbController: OrbMenuController? = null
@@ -135,7 +131,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun isBridgeHostDestroyed(): Boolean = isActivityDestroyed
 
     override fun onBridgeTopColor(owner: WebView, color: Int?) {
-        topColors[owner] = TopState(color)
+        topFadeController.recordColor(owner, color)
         if (owner === web) topFadeController.applyColor(color)
     }
 
@@ -311,7 +307,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         root = { root },
         isEdgeMode = { store.edgeMode },
         insetTop = { insetTop },
-        pageBackground = { pageBg }
+        pageBackground = { pageBg },
+        isNight = { isNight }
     )
 
     private val pageEdge: PageEdgeController = PageEdgeController(
@@ -521,37 +518,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             webProvider = { if (::web.isInitialized) web else null },
             pageBg = { pageBg },
             canStart = { tabSwipeAvailable() },
-            strip = object : TabSwipeStatusStrip {
-                override val enabled: Boolean get() = store.edgeMode
-                override val solidPx: Int get() = insetTop
-                override val fadePx: Int get() = insetTop + dp(16)
-
-                override fun colorFor(tab: TabManager.Tab?, current: Boolean): Int? {
-                    if (current) return topFadeController.solidTop
-                    if (tab == null) return pageBg
-                    val wv = tab.webView
-                    val reported = if (wv != null) topColors[wv] else null
-                    if (reported != null) return reported.color
-                    // Chưa có báo cáo: lấy màu điểm giữa mép trên của ảnh chụp tab đó.
-                    val bmp = tab.thumbnail?.takeUnless { it.isRecycled } ?: return pageBg
-                    return runCatching { bmp.getPixel(bmp.width / 2, 1) }.getOrDefault(pageBg)
-                }
-
-                override fun newFade(): android.graphics.drawable.Drawable =
-                    topFadeController.fadeDrawable.constantState?.newDrawable()?.mutate() ?: ColorDrawable(Color.TRANSPARENT)
-
-                override fun isLightBar(color: Int?): Boolean =
-                    if (color == null) !isNight else ColorUtils.calculateLuminance(color) > 0.5
-
-                override fun setLightBar(light: Boolean) {
-                    WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = light
-                }
-
-                override fun setHidden(hidden: Boolean) {
-                    topFadeController.view.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
-                    if (!hidden) topFadeController.update()
-                }
-            },
+            strip = topFadeController.swipeStrip,
             onSwitch = { tab ->
                 // Thumbnail đã chụp lúc bắt đầu vuốt (trang nằm yên, đang hiện đủ). Lúc này WebView vừa bị
                 // trượt ra ngoài màn hình nên Chromium chỉ còn vẽ sẵn một phần: chụp bây giờ sẽ ra ảnh trắng nửa màn.
@@ -991,7 +958,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         topFadeController.refreshPalette()
         // Dải thanh trạng thái theo tab mới ngay lúc đổi, rồi nhờ script báo lại để chắc chắn (script
         // chỉ báo khi giá trị đổi, còn báo cáo lúc tab chạy nền đã bị bỏ qua).
-        topFadeController.solidTop = topColors[target]?.color
+        topFadeController.solidTop = topFadeController.recordedColor(target)
         target.post {
             if (web === target) target.evaluateJavascript("window.__edgeForceTop&&window.__edgeForceTop()", null)
         }
