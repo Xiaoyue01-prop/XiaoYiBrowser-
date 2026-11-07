@@ -16,6 +16,12 @@ var lastPageBg = '';
 var pageBgTimer = null;
 var styleCache = new WeakMap();
 var rafId = null;
+var rafDelayId = null;
+var lastScanAt = 0;
+// Native WebView keeps scrolling at the display's full refresh rate. This script only
+// maintains adaptive headers/fixed bars, so scanning every 32 ms is visually sufficient
+// while avoiding a full DOM hit-test on every 60/90/120 Hz scroll frame.
+var SCAN_INTERVAL_MS = 32;
 
 var cvCtx = null;
 // Màu hiện đại (color(srgb ...), oklab, hsl...) không khớp rgb() -> nhờ canvas đổi sang RGB
@@ -501,12 +507,33 @@ function run(){
   else { runTop(); }
 }
 
+function runScheduledScan(){
+  rafId = null;
+  lastScanAt = Date.now();
+  run();
+}
+
 function sched(){
-  if (rafId) return;
-  rafId = requestAnimationFrame(function(){
-    rafId = null;
-    run();
-  });
+  if (rafId || rafDelayId) return;
+  var wait = Math.max(0, SCAN_INTERVAL_MS - (Date.now() - lastScanAt));
+  if (wait > 0) {
+    rafDelayId = setTimeout(function(){
+      rafDelayId = null;
+      if (!rafId) rafId = requestAnimationFrame(runScheduledScan);
+    }, wait);
+  } else {
+    rafId = requestAnimationFrame(runScheduledScan);
+  }
+}
+
+// Explicit native updates (e.g. after changing edge mode or tab) stay immediate.
+function runNow(){
+  if (rafDelayId) clearTimeout(rafDelayId);
+  if (rafId) cancelAnimationFrame(rafId);
+  rafDelayId = null;
+  rafId = null;
+  lastScanAt = Date.now();
+  run();
 }
 
 
@@ -884,10 +911,10 @@ function schedLift(){
 
 function schedAll(){ sched(); schedLift(); schedPageBackground(); }
 
-window.__edgeRun = function(){ run(); runLift(); schedPageBackground(); };
+window.__edgeRun = function(){ runNow(); runLift(); schedPageBackground(); };
 window.__edgePageBgRun = function(){ runPageBackground(); };
 // Đổi tab: native đã bỏ qua báo cáo màu lúc trang này chạy nền, nên xoá bộ nhớ 'last' để báo lại.
-window.__edgeForceTop = function(){ last = ''; run(); };
+window.__edgeForceTop = function(){ last = ''; runNow(); };
 window.__edgeLift = function(){ runLift(); };
 window.addEventListener('scroll', function(){
   sched();
@@ -910,7 +937,11 @@ try {
   window.addEventListener('beforeunload', function(){
     observer.disconnect();
     if (pageBgTimer) clearTimeout(pageBgTimer);
+    if (rafDelayId) clearTimeout(rafDelayId);
+    if (rafId) cancelAnimationFrame(rafId);
     pageBgTimer = null;
+    rafDelayId = null;
+    rafId = null;
     styleCache = null;
   });
 } catch (e) {}
