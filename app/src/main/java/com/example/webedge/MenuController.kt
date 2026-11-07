@@ -872,11 +872,6 @@ class MenuController(
             host.web.reload()
             showSettings()
         }
-        addRow("Header trang khi tràn viền", if (store.headerScroll) "Cuộn như nội dung" else "Đứng yên dưới thanh trạng thái", fg) {
-            store.headerScroll = !store.headerScroll
-            host.applyInsets()
-            showSettings()
-        }
         addRow("Chặn quảng cáo", onOff(store.adBlockEnabled), fg) {
             store.adBlockEnabled = !store.adBlockEnabled
             host.web.reload()

@@ -1,7 +1,6 @@
 (function(){
 window.__edgeFull = %FULL%;
 window.__edgeInset = %INSET%;
-window.__edgeHeader = %HEADER%;
 window.__edgeBottom = %BOTTOM%;
 window.__edgeCompact = %COMPACT%;
 %PILL_METRICS%
@@ -254,16 +253,16 @@ function report(v){
   } catch (e) {}
 }
 
-function runTop(){
+function runTop(y){
   if (!document.elementsFromPoint) return;
   var w = window.innerWidth, color = null;
   try {
-    var stack = document.elementsFromPoint(w * 0.5, 2);
+    var stack = document.elementsFromPoint(w * 0.5, Math.max(1, y || 2));
     for (var j = 0; j < stack.length && !color; j++) {
       if (pinned(stack[j])) { color = climb(stack[j]); }
     }
     if (!color) {
-      if ((window.scrollY || 0) > 2) { return; }
+      if ((window.scrollY || 0) > 2 && (y || 2) <= 2) { return; }
       color = stack.length ? climb(stack[0]) : null;
     }
     if (!color) { color = climb(document.body) || climb(document.documentElement); }
@@ -271,23 +270,22 @@ function runTop(){
   } catch (e) {}
 }
 
-// WebView tràn viền: dải thanh trạng thái là lớp mờ của app nên không báo màu; header do runHeaders xử lý riêng.
-// WebView nằm dưới thanh trạng thái: chỉ cần màu mép trên của trang.
+// Clone là dải trong suốt nằm ngay dưới status bar. Khi Edge-to-Edge, lấy màu
+// tại phần nội dung vừa đi vào Clone để Native đồng bộ nền status bar theo header.
+// Không Edge-to-Edge thì tiếp tục lấy màu ở mép trên như trước.
 function run(){
-  if (window.__edgeFull) { report('none'); }
-  else { runTop(); }
+  if (window.__edgeFull) { runTop((window.__edgeInset || 0) + 2); }
+  else { runTop(2); }
 }
 
-// ---- Tràn viền, trang không khai báo viewport-fit=cover: đặt lại header cố định/sticky ở mép trên ----
-// Native đệm padding-top cho html bằng chiều cao thanh trạng thái (window.__edgeInset > 0), nên chỉ còn header
-// cố định là bị thanh trạng thái đè. __edgeHeader = 0: hạ header xuống dưới thanh trạng thái, đứng yên;
-// 1: cho header cuộn như phần tử thường (fixed -> absolute, sticky -> relative). Chạy rời rạc quanh lúc nạp trang,
-// không theo dõi liên tục; phần tử nào đặt lại không đúng chỗ thì trả về như cũ.
+// ---- Sticky boundary của Native Clone ----
+// Không chuyển fixed thành absolute, không chuyển sticky thành relative.
+// Browser tiếp tục điều khiển scroll; Summit chỉ nâng ngưỡng top của sticky header
+// nằm sát mép trên để nó dừng ở cạnh dưới Clone. Chỉ quét ở các mốc nạp/resize/inset.
 var hdrRecs = [];
 var hdrDone = new WeakSet();
 var hdrKey = '';
 var hdrTimer = null;
-var hdrObsRuns = 0;
 
 function hdrSave(el){
   var s = el.style;
@@ -312,7 +310,7 @@ function hdrUndo(){
 // Các header cố định/sticky nằm sát mép trên, rộng và thấp (loại hộp thoại, banner chiếm nhiều màn hình)
 function hdrCandidates(I){
   var w = window.innerWidth, h = window.innerHeight, out = [];
-  var ys = [2, I + 4], xs = [0.5, 0.15, 0.85];
+  var ys = [I + 2, I + 4], xs = [0.5, 0.15, 0.85];
   for (var a = 0; a < ys.length; a++) {
     for (var b = 0; b < xs.length; b++) {
       var st = document.elementsFromPoint(w * xs[b], ys[a]);
@@ -335,42 +333,34 @@ function hdrCandidates(I){
   return out;
 }
 
-function hdrApply(el, I, scrolls){
+function hdrApply(el, I){
   var cs = getComputedStyle(el);
+  // Fixed luôn giữ nguyên vị trí viewport. Chỉ điều chỉnh sticky để mép bám
+  // không vượt lên trên cạnh dưới Clone.
+  if (cs.position !== 'sticky') { hdrDone.add(el); return; }
   var top = parseFloat(cs.top);
-  if (isNaN(top)) { hdrDone.add(el); return; }          // top: auto -> để nguyên
-  var fixed = cs.position === 'fixed';
-  var rec = hdrSave(el);
-  if (!scrolls) {
-    // Đứng yên: hạ xuống dưới thanh trạng thái
-    if (top < I - 0.5) el.style.setProperty('top', (top + I) + 'px', 'important');
-  } else if (fixed) {
-    // Cuộn đi: gắn vào tài liệu tại đầu trang (sau phần đệm), rồi kiểm tra lại vị trí thật
-    var docTop = top + I;
-    var before = el.getBoundingClientRect().top;
-    el.style.setProperty('position', 'absolute', 'important');
-    el.style.setProperty('top', docTop + 'px', 'important');
-    var want = docTop - (window.scrollY || 0);
-    if (Math.abs(el.getBoundingClientRect().top - want) > 2) { hdrRestore(rec); hdrRecs.pop(); }
-  } else {
-    // sticky -> relative (vẫn nằm đúng chỗ trong dòng chảy của trang)
-    if (Math.abs(top) < 0.5) {
-      el.style.setProperty('position', 'relative', 'important');
-      el.style.setProperty('top', '0px', 'important');
-    } else { hdrRestore(rec); hdrRecs.pop(); }
+  if (isNaN(top)) { hdrDone.add(el); return; }
+  if (top < I - 0.5) {
+    var rec = hdrSave(el);
+    el.style.setProperty('top', I + 'px', 'important');
+    // Nếu layout của trang không chấp nhận thay đổi top, hoàn tác thay vì phá header.
+    var after = getComputedStyle(el);
+    if (after.position !== 'sticky' || Math.abs(parseFloat(after.top) - I) > 2) {
+      hdrRestore(rec);
+      hdrRecs.pop();
+    }
   }
   hdrDone.add(el);
 }
 
 function runHeaders(){
   var I = window.__edgeInset || 0;
-  var scrolls = window.__edgeHeader === 1;
-  var key = I + ':' + (scrolls ? 1 : 0);
+  var key = I;
   if (key !== hdrKey) { hdrUndo(); hdrKey = key; }
   if (!window.__edgeFull || I <= 0 || !document.elementsFromPoint) return;
   try {
     var list = hdrCandidates(I);
-    for (var i = 0; i < list.length; i++) hdrApply(list[i], I, scrolls);
+    for (var i = 0; i < list.length; i++) hdrApply(list[i], I);
   } catch (e) {}
 }
 
@@ -775,6 +765,7 @@ window.addEventListener('resize', schedAll);
 window.addEventListener('load', schedPageBackground, true);
 window.addEventListener('load', headersSoon);
 window.addEventListener('pageshow', headersSoon);
+window.addEventListener('resize', headersSoon);
 window.addEventListener('pageshow', schedPageBackground);
 
 try {
@@ -784,7 +775,21 @@ try {
 } catch (e) {}
 
 try {
-  var observer = new MutationObserver(schedAll);
+  // Dùng chung observer hiện có cho page background/lift; chỉ cho phép một số lần
+  // quét header khi SPA dựng DOM ban đầu, không theo dõi header vô hạn.
+  var headerMutationBudget = 12;
+  var observer = new MutationObserver(function(records){
+    schedAll();
+    if (headerMutationBudget > 0) {
+      for (var i = 0; i < records.length; i++) {
+        if (records[i].type === 'childList') {
+          headerMutationBudget--;
+          headersSoon();
+          break;
+        }
+      }
+    }
+  });
   observer.observe(document.documentElement,
     {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style']});
   window.addEventListener('beforeunload', function(){
@@ -800,15 +805,5 @@ setTimeout(window.__edgeRun, 800);
 setTimeout(window.__edgeRun, 2000);
 setTimeout(headersSoon, 3500);
 
-// Header gắn muộn (trang dựng bằng JS): theo dõi riêng, chỉ phần tử con trực tiếp của html/body và có giới hạn số lần
-try {
-  var hdrObserver = new MutationObserver(function(){
-    if (!window.__edgeFull || !(window.__edgeInset > 0)) return;
-    if (++hdrObsRuns > 15) { hdrObserver.disconnect(); return; }
-    headersSoon();
-  });
-  hdrObserver.observe(document.documentElement, {childList: true});
-  if (document.body) hdrObserver.observe(document.body, {childList: true});
-} catch (e) {}
 window.__edgeRun();
 })();

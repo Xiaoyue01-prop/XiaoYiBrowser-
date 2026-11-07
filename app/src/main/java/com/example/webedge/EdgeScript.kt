@@ -4,11 +4,11 @@ import android.content.Context
 
 /**
  * Script chạy trong trang (assets/edge_script.js). Việc của nó: (1) khi không tràn viền thì đọc màu mép trên
- * để tô dải thanh trạng thái; (2) khi tràn viền mà trang không khai báo viewport-fit=cover ([COVER_JS]) thì
- * đặt lại header cố định/sticky (đứng yên dưới thanh trạng thái hoặc cuộn như phần tử thường); (3) nâng thanh
- * cố định ở đáy trang lên trên viên thuốc địa chỉ. Trang có cover thì tự lo bằng env(safe-area-inset-*).
+ * đọc màu ở mép trên/Native Clone để đồng bộ status bar; (2) giữ fixed nguyên trạng và chỉ đẩy
+ * sticky xuống mép dưới Clone khi cần; (3) nâng thanh cố định ở đáy trang lên trên viên thuốc địa chỉ.
+ * env(safe-area-inset-*) của website được giữ nguyên, không bị Summit ghi đè.
  *
- * File JS chứa các placeholder %FULL%, %INSET%, %HEADER%, %BOTTOM%, %COMPACT%, %PILL_METRICS% để Activity thay số.
+ * File JS chứa các placeholder %FULL%, %INSET%, %BOTTOM%, %COMPACT%, %PILL_METRICS% để Activity thay số.
  */
 internal object EdgeScript {
     @Volatile private var cached: String? = null

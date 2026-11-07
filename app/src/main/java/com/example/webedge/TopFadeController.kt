@@ -60,7 +60,8 @@ class TopFadeController(
         val lightBar: Boolean
         if (isEdgeMode() && c == null) {
             view.background = fadeDrawable
-            lp.height = insetTop() + dp(16)
+            // Phần dưới status bar thuộc Native Clone nên phải để trong suốt, không phủ gradient lên nội dung.
+            lp.height = insetTop()
             lightBar = !GlassSystem.isDarkPage()
         } else {
             val col = c ?: pageBackground()
@@ -83,7 +84,7 @@ class TopFadeController(
     val swipeStrip: TabSwipeStatusStrip = object : TabSwipeStatusStrip {
         override val enabled: Boolean get() = isEdgeMode()
         override val solidPx: Int get() = insetTop()
-        override val fadePx: Int get() = insetTop() + dp(16)
+        override val fadePx: Int get() = insetTop()
 
         override fun colorFor(tab: TabManager.Tab?, current: Boolean): Int? {
             if (current) return solidTop
