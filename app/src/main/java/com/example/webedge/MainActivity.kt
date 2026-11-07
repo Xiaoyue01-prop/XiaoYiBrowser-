@@ -45,8 +45,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private lateinit var tabSwipe: TabSwipeController
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
-    /** Dải Clone trong suốt ngay dưới status bar; chỉ đánh dấu vùng quan sát, không chặn tương tác WebView. */
-    private lateinit var cloneBand: View
     private lateinit var fullscreenContainer: FrameLayout
     private var fullscreenVideoController: BrowserFullscreenController? = null
     private lateinit var webPermissions: WebPermissionController
@@ -623,17 +621,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             findBarController.createContainer(blurTarget, d, isNight),
             FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
         )
-
-        // Native Clone: dải trong suốt nằm ngay dưới status bar. Nội dung WebView vẫn
-        // được vẽ và nhận chạm xuyên qua; Edge JS quan sát DOM tại vùng tương ứng.
-        cloneBand = View(this).apply {
-            setBackgroundColor(Color.TRANSPARENT)
-            isClickable = false
-            isFocusable = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            elevation = dp(2).toFloat()
-        }
-        root.addView(cloneBand, FrameLayout.LayoutParams(-1, 0, Gravity.TOP))
         setContentView(root)
     }
 
@@ -865,14 +852,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         webLp.topMargin = if (store.edgeMode) 0 else insetTop
         webLp.bottomMargin = imeBottom
         web.layoutParams = webLp
-
-        // Clone chiếm dải từ đáy status bar xuống thêm một khoảng bằng status bar.
-        // Không thêm padding cho WebView tại đây; việc đó vẫn do PageEdgeController quản lý.
-        val cloneLp = cloneBand.layoutParams as FrameLayout.LayoutParams
-        cloneLp.topMargin = if (store.edgeMode) insetTop else 0
-        cloneLp.height = if (store.edgeMode) insetTop else 0
-        cloneBand.layoutParams = cloneLp
-        cloneBand.visibility = if (store.edgeMode && insetTop > 0) View.VISIBLE else View.GONE
 
         topFadeController.update()
         updateBarVisibility()

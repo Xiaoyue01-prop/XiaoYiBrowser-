@@ -105,11 +105,6 @@ class Store(context: Context) {
     var edgeMode: Boolean
     get() = sp.getBoolean("edge", true)
     set(v) { sp.edit().putBoolean("edge", v).apply() }
-    // Chế độ tràn viền, trang không khai báo viewport-fit=cover: false = header cố định đứng yên dưới thanh trạng thái,
-    // true = header cố định/sticky cuộn đi như phần tử thường.
-    var headerScroll: Boolean
-    get() = sp.getBoolean("header_scroll", false)
-    set(v) { sp.edit().putBoolean("header_scroll", v).apply() }
     @Volatile private var adBlockCache: Boolean = sp.getBoolean("adblock", true)
     var adBlockEnabled: Boolean
     get() = adBlockCache

@@ -14,7 +14,7 @@ interface PageEdgeHost {
     val barPresent: Boolean
     /** WebView tràn lên dưới thanh trạng thái (công tắc "Tràn viền nội dung"). */
     val isEdgeMode: Boolean
-    /** Trang khai báo viewport-fit=cover; Summit giữ nguyên cơ chế safe-area của trang, không ghi đè env(). */
+    /** Trang đang xem tự khai báo viewport-fit=cover nên tự lo vùng an toàn bằng env(). */
     val isCover: Boolean
     val isDestroyed: Boolean
     val isFullscreenVideoShowing: Boolean
@@ -27,8 +27,9 @@ interface PageEdgeHost {
 }
 
 /**
- * Cấp chiều cao Clone, chừa chỗ cuối trang cho viên thuốc địa chỉ và chạy script xử lý sticky / thanh đáy.
- * Trang không có viewport-fit=cover vẫn nhận padding đầu trang; trang cover giữ nguyên env() của website.
+ * Chừa chỗ cuối trang cho viên thuốc địa chỉ và chạy script xử lý header / nâng thanh đáy của website.
+ * Tràn viền: trang có viewport-fit=cover tự lo bằng env(); trang không có thì đệm padding-top bằng chiều cao
+ * thanh trạng thái và script đặt lại header cố định (xem edge_script.js).
  * Script gốc nằm ở assets/edge_script.js (xem [EdgeScript]).
  */
 class PageEdgeController(
@@ -41,25 +42,21 @@ class PageEdgeController(
         val target = host.web ?: return
         val d = host.density
         val edge = host.isEdgeMode
-        // Clone tồn tại với mọi trang Edge-to-Edge; padding đầu trang chỉ dành cho trang
-        // không tự khai báo viewport-fit=cover. Không sửa/giả lập env(safe-area-inset-top).
-        val cloneInset = if (edge) (host.insetTop / d).toInt() else 0
-        val pageInset = if (edge && !host.isCover) cloneInset else 0
+        val inset = if (edge && !host.isCover) (host.insetTop / d).toInt() else 0
         val bottomCss = (host.insetBottom / d).toInt() + 64
-        val rule = (if (pageInset > 0) "padding-top:" + pageInset + "px!important;" else "") +
+        val rule = (if (inset > 0) "padding-top:" + inset + "px!important;" else "") +
             "padding-bottom:" + bottomCss + "px!important;box-sizing:border-box!important"
         val js = "(function(){var s=document.getElementById('__edge');" +
             "if(!s){s=document.createElement('style');s.id='__edge';" +
             "(document.head||document.documentElement).appendChild(s);}" +
-            "s.textContent=':root{--summit-clone-height:" + cloneInset + "px;}html{" + rule + "}';})();"
+            "s.textContent='html{" + rule + "}';})();"
         target.evaluateJavascript(js, null)
         val full = edge.toString()
-        // __edgeInset giờ là chiều cao Clone (không phải padding của trang).
         val bottom = bottomReserveCss()
         // Trang đã nạp script rồi thì chỉ cập nhật vài con số; chỉ gửi cả đoạn script dài khi trang chưa có.
         target.evaluateJavascript(
             "(function(){if(!window.__edgeStarted)return 0;window.__edgeFull=" + full +
-                ";window.__edgeInset=" + cloneInset +
+                ";window.__edgeInset=" + inset +
                 ";window.__edgeBottom=" + bottom +
                 ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() + ";" + compactPillMetricsJs() +
                 "if(window.__edgeRun)window.__edgeRun();return 1})()"
@@ -67,7 +64,7 @@ class PageEdgeController(
             if (result != "1" && !host.isDestroyed) {
                 target.evaluateJavascript(
                     EdgeScript.template(context).replace("%FULL%", full)
-                        .replace("%INSET%", cloneInset.toString())
+                        .replace("%INSET%", inset.toString())
                         .replace("%BOTTOM%", bottom.toString())
                         .replace("%COMPACT%", shouldHideWebsiteBottomNav().toString())
                         .replace("%PILL_METRICS%", compactPillMetricsJs()),

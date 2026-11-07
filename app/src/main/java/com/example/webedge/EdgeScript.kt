@@ -4,9 +4,9 @@ import android.content.Context
 
 /**
  * Script chạy trong trang (assets/edge_script.js). Việc của nó: (1) khi không tràn viền thì đọc màu mép trên
- * đọc màu ở mép trên/Native Clone để đồng bộ status bar; (2) giữ fixed nguyên trạng và chỉ đẩy
- * sticky xuống mép dưới Clone khi cần; (3) nâng thanh cố định ở đáy trang lên trên viên thuốc địa chỉ.
- * env(safe-area-inset-*) của website được giữ nguyên, không bị Summit ghi đè.
+ * để tô dải thanh trạng thái; (2) khi tràn viền mà trang không khai báo viewport-fit=cover ([COVER_JS]) thì
+ * hạ header cố định/sticky xuống dưới thanh trạng thái; (3) nâng thanh
+ * cố định ở đáy trang lên trên viên thuốc địa chỉ. Trang có cover thì tự lo bằng env(safe-area-inset-*).
  *
  * File JS chứa các placeholder %FULL%, %INSET%, %BOTTOM%, %COMPACT%, %PILL_METRICS% để Activity thay số.
  */
