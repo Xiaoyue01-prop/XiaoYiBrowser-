@@ -178,7 +178,7 @@ class BrowserBottomSheet(
             )
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
 
-            // Đồng bộ chính xác với PopupWindowController trong WebWindows:
+            // Đồng bộ chính xác với PopupWindowController (PopupWindowController.kt):
             // scrim phủ toàn cửa sổ, sheet bắt đầu ngay dưới status bar một khoảng
             // nhỏ, còn phần đáy kéo xuyên qua navigation bar như popup Summit.
             sheetLp.topMargin = bars.top + dp(BrowserSheetMotion.TOP_MARGIN_DP)

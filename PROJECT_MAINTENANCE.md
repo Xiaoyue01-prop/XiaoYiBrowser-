@@ -69,3 +69,4 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
   Intentionally left in MainActivity: `activateTab`/`switchTabMode` (they orchestrate almost every view and reassign `web`), the `*Host` glue objects, `onCreate` wiring and lifecycle.
   Controllers take a small `XHost` interface or lambdas (see `BrowserJavascriptBridgeHost`); keep `onCreate` init order unchanged.
 - Top status-bar colour reports per WebView (`recordColor`/`recordedColor`) and the tab-swipe status strip (`swipeStrip`) live in `TopFadeController`.
+- File layout: `DownloadLiveUpdate.kt` (live-update notifications + cancel receiver) is separate from `Downloads.kt` (`DownloadController`); `WebWindows.kt` was split into `PictureInPictureController.kt` and `PopupWindowController.kt`. `PageActions.kt` holds copy/share/download-image from the long-press menu.
