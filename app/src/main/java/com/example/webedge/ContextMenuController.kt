@@ -88,7 +88,6 @@ class ContextMenuController(
         val isAnchor: Boolean
     )
 
-    private fun dp(value: Int) = (value * density).toInt()
 
     /** Attach to each WebView. Returning false from touch preserves native scrolling/selection. */
     fun attach(webView: WebView) {

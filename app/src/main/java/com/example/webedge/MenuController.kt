@@ -222,7 +222,6 @@ class MenuController(
         if (back != null) back() else close()
     }
 
-    private fun dp(v: Int): Int = (v * d).toInt()
 
     private fun stylePrimary(view: TextView, color: Int = Color.BLACK) {
         view.setTextColor(color)

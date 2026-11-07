@@ -2,7 +2,6 @@ package com.example.webedge
 
 import android.app.Activity
 import android.app.Dialog
-import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -34,7 +33,6 @@ class BrowserBottomSheet(
 
     val isShowing: Boolean get() = dialog?.isShowing == true
 
-    private fun dp(value: Int): Int = (value * density).toInt()
 
     /**
      * Hộp thoại xác nhận bằng kính mờ của Summit, nằm ngay trong cửa sổ của sheet
@@ -96,10 +94,7 @@ class BrowserBottomSheet(
 
         val dragZone = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val grabber = View(activity).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = dp(3).toFloat()
-                setColor(grabberColor)
-            }
+            background = roundedDrawable(dp(3).toFloat(), grabberColor)
         }
         dragZone.addView(
             grabber,
@@ -113,10 +108,7 @@ class BrowserBottomSheet(
         val closeButton = ImageView(activity).apply {
             setImageDrawable(PathIcon(Icons.CLOSE, textColor))
             setPadding(dp(10), dp(10), dp(10), dp(10))
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(buttonColor)
-            }
+            background = ovalDrawable(buttonColor)
             contentDescription = "Đóng"
             setOnClickListener { animateClose() }
         }
@@ -247,10 +239,7 @@ class BrowserBottomSheet(
             sheet.background = ColorDrawable(GlassSystem.pageSurfaceColor(color))
             titleView.setTextColor(foregroundColor)
             closeButton.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
-            closeButton.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(GlassSystem.pageSheetButtonColor(color))
-            }
+            closeButton.background = ovalDrawable(GlassSystem.pageSheetButtonColor(color))
             (grabber.background as? GradientDrawable)?.setColor(GlassSystem.pageSheetGrabberColor(color))
             dlg.window?.let { BrowserSheetMotion.configureWindow(it, windowRoot, dark) }
             onPageToneChanged?.invoke(color)

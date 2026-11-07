@@ -52,7 +52,6 @@ class RingIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
 class OrbMenuController(
     private val rootLayout: FrameLayout,
     private val blurTarget: BlurTarget,
-    private val dp: (Int) -> Int,
     private val d: Float,
     private val isNight: Boolean,
     private val BOTTOM_BAR_HEIGHT_DP: Int,

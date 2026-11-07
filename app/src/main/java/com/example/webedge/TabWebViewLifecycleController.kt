@@ -41,16 +41,21 @@ class TabWebViewLifecycleController(
         return target
     }
 
-    /** Releases a WebView completely. The caller must save tab metadata first. */
-    fun destroy(view: WebView) {
-        beforeDestroy(view)
-        runCatching { view.stopLoading() }
+    /** Gỡ mọi callback do Activity gắn vào WebView; gọi trước khi hủy bất kỳ WebView nào. */
+    fun detachCallbacks(view: WebView) {
         runCatching { view.removeJavascriptInterface("EdgeBridge") }
         runCatching { view.webViewClient = WebViewClient() }
         runCatching { view.webChromeClient = WebChromeClient() }
         runCatching { view.setDownloadListener(null) }
         runCatching { view.setFindListener(null) }
         runCatching { view.setOnScrollChangeListener(null as View.OnScrollChangeListener?) }
+    }
+
+    /** Releases a WebView completely. The caller must save tab metadata first. */
+    fun destroy(view: WebView) {
+        beforeDestroy(view)
+        runCatching { view.stopLoading() }
+        detachCallbacks(view)
         runCatching { view.onPause() }
         (view.parent as? ViewGroup)?.removeView(view)
         runCatching { view.loadUrl("about:blank") }
@@ -72,7 +77,15 @@ class TabWebViewLifecycleController(
         manager.staleLiveTabs(maxLiveWebViews).forEach { evict(it, current) }
     }
 
+    /** Recycles transient thumbnails and destroys all live tab WebViews exactly once. */
     fun destroyAll(manager: TabManager) {
+        manager.getAll().forEach { tab ->
+            tab.thumbnail?.let { bitmap ->
+                if (!bitmap.isRecycled) runCatching { bitmap.recycle() }
+            }
+            tab.thumbnail = null
+            tab.thumbnailUrl = null
+        }
         val views = manager.getAll().mapNotNull { it.webView }.distinct()
         manager.getAll().forEach { it.webView = null }
         views.forEach(::destroy)

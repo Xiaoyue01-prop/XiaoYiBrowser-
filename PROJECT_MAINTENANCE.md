@@ -55,3 +55,10 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - Never add `googlevideo.com`, `ytimg.com`, or broad YouTube first-party hosts to the network block list. These deliver video, thumbnails, scripts, or other required site resources.
 - This MVP does not claim to remove all in-stream pre-roll/mid-roll ads. YouTube may deliver ads through the same media infrastructure as normal video, while `WebViewClient.shouldInterceptRequest` does not see `blob:`/`javascript:` URLs and only sees the initial URL in a redirect chain. Service Worker interception is a separate API and is not enabled by this module.
 - Validate on-device with Home, Search, Watch, Shorts, account sign-in, comments, live streams, fullscreen and PiP. For each case test the YouTube switch both on and off, with the global AdBlock switch independently on and off. If a rule breaks playback or navigation, remove that rule rather than broadening interception.
+
+## Code cleanup (2026-11-07)
+
+- `dp()`, `ovalDrawable()` and `roundedDrawable()` live in `UiKit.kt`; do not re-add per-class `dp` helpers or `dp: (Int) -> Int` constructor params. `dp()` uses `Resources.getSystem()` density.
+- The page script is `assets/edge_script.js`, loaded by `EdgeScript.template(context)`; placeholders are `%INSET%`, `%MODE%`, `%BOTTOM%`, `%COMPACT%`, `%PILL_METRICS%`.
+- WebView callback detaching and teardown live only in `TabWebViewLifecycleController` (`detachCallbacks`, `destroy`, `destroyAll`).
+- Not yet split: `MainActivity.kt` (WebViewClient/ChromeClient, toolbar/find bar, insets) because it touches most Activity state; do it with a compile check.

@@ -1,6 +1,7 @@
 package com.example.webedge
 
 import android.content.Context
+import android.content.res.Resources
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
@@ -16,7 +17,6 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.StateListDrawable
-import android.util.TypedValue
 import androidx.core.graphics.PathParser
 
 // UI cơ bản dùng chung toàn app: hằng số, màu, icon vector và các Drawable nhỏ.
@@ -98,11 +98,19 @@ object Theme {
         if (isNight) Color.rgb(10, 132, 255) else Color.rgb(0, 122, 255)
 }
 
-/** Id nền ripple mặc định của hệ thống cho hàng/ô bấm được. */
-fun Context.selectableItemBackgroundRes(): Int {
-    val tv = TypedValue()
-    theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
-    return tv.resourceId
+/** dp -> px theo mật độ màn hình (dùng chung toàn app). */
+fun dp(value: Int): Int = (value * Resources.getSystem().displayMetrics.density).toInt()
+
+/** Nền hình oval một màu. */
+fun ovalDrawable(color: Int): GradientDrawable = GradientDrawable().apply {
+    shape = GradientDrawable.OVAL
+    setColor(color)
+}
+
+/** Nền chữ nhật bo góc một màu (radiusPx tính bằng px). */
+fun roundedDrawable(radiusPx: Float, color: Int): GradientDrawable = GradientDrawable().apply {
+    cornerRadius = radiusPx
+    setColor(color)
 }
 
 /**

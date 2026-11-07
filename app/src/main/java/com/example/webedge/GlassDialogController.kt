@@ -93,7 +93,6 @@ class GlassDialogController(
         for (r in pending) runCatching { r.onResult(false, null) }
     }
 
-    private fun dp(v: Int): Int = (v * d).toInt()
 
     private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(GlassSystem.isDarkPage())
 

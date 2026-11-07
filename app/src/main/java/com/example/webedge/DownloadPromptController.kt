@@ -36,7 +36,6 @@ class DownloadPromptController(
     private var activeView: FrameLayout? = null
     private var finishing = false
 
-    private fun dp(value: Int): Int = (value * density).toInt()
 
     fun show(fileName: String, onConfirm: () -> Unit) {
         queue.addLast(Prompt(fileName, onConfirm))

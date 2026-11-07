@@ -15,7 +15,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CompoundButton
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -24,7 +23,6 @@ import android.widget.TextView
 import android.webkit.CookieManager
 import android.webkit.WebStorage
 import android.webkit.WebView
-import androidx.dynamicanimation.animation.DynamicAnimation
 import java.text.DecimalFormat
 import java.util.Date
 
@@ -45,7 +43,6 @@ class BrowserToolsController(
     private val toast: (String) -> Unit
 ) {
     private val handler = Handler(Looper.getMainLooper())
-    private fun dp(value: Int): Int = (value * density).toInt()
     private val muted: Int get() = if (isNight()) Color.rgb(190, 192, 200) else Color.rgb(105, 105, 112)
     private val cardColor: Int get() = if (isNight()) Color.rgb(43, 45, 52) else Color.rgb(247, 247, 249)
     private val sheet = BrowserBottomSheet(activity, density, isNight, foreground, accent)
@@ -676,10 +673,7 @@ class BrowserToolsController(
             clipToPadding = false
             setPadding(dp(14), dp(13), dp(14), dp(13))
         }
-        val surface = GradientDrawable().apply {
-            cornerRadius = dp(18).toFloat()
-            setColor(cardColor)
-        }
+        val surface = roundedDrawable(dp(18).toFloat(), cardColor)
         card.background = surface
         activeToneUpdates += { dark ->
             surface.setColor(if (dark) Color.rgb(43, 45, 52) else Color.rgb(247, 247, 249))

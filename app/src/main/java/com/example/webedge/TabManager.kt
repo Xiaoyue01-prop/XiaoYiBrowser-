@@ -56,7 +56,6 @@ class TabManager {
     fun getActive(): Tab? = currentList().find { it.isActive }
     fun getForWebView(view: WebView): Tab? = getAll().find { it.webView === view }
     fun count(): Int = currentList().size
-    fun normalCount(): Int = normalTabs.size
     fun privateCount(): Int = privateTabs.size
 
     /** Chuyển danh sách đang xem; nếu vùng riêng tư chưa có tab thì mở một tab trống đầu tiên. */

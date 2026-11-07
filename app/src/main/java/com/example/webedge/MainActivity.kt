@@ -134,7 +134,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private val downloads = DownloadController(this) { toast(it) }
     private val popup: PopupWindowController = PopupWindowController(
         activity = this,
-        dp = ::dp,
         mainWebView = { web },
         chromeClient = { sourceWebView ->
             val sourceIsPrivate = privateProfileManager.isPrivateProfile(sourceWebView)
@@ -397,7 +396,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     // ---------------- Tiện ích giao diện ----------------
 
-    private fun dp(v: Int): Int = (v * d).toInt()
 
     // ---------------- Hiệu ứng ----------------
 
@@ -724,10 +722,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         isFocusable = true
         clipChildren = true
         clipToPadding = true
-        background = GradientDrawable().apply {
-            cornerRadius = preset.radiusDp * d
-            setColor(Color.TRANSPARENT)
-        }
+        background = roundedDrawable(preset.radiusDp * d, Color.TRANSPARENT)
         clipToOutline = true
         contentDescription = description
         addView(
@@ -985,7 +980,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         suggestionController = SuggestionController(
             activity = this,
             scope = lifecycleScope,
-            density = d,
             input = urlBar,
             container = suggestBox,
             blurView = suggestBlurView,
@@ -1070,7 +1064,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             hostRoot = root,
             isNight = { GlassSystem.isDarkPage() },
             accentColor = accent,
-            dp = ::dp,
             captureActiveTab = { captureActiveTab() },
             onActivateTab = ::activateTab,
             onCloseTab = ::closeBrowserTab,
@@ -1281,7 +1274,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         ) { result ->
             if (result != "1" && !isActivityDestroyed) {
                 target.evaluateJavascript(
-                    EDGE_JS.replace("%INSET%", insetCss.toString())
+                    EdgeScript.template(this).replace("%INSET%", insetCss.toString())
                         .replace("%MODE%", mode)
                         .replace("%BOTTOM%", bottom.toString())
                         .replace("%COMPACT%", shouldHideWebsiteBottomNav().toString())
@@ -1802,7 +1795,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         orbController = OrbMenuController(
             blurTarget = blurTarget,
             rootLayout = root,
-            dp = { dp(it) },
             d = d,
             isNight = isNight,
             BOTTOM_BAR_HEIGHT_DP = BOTTOM_BAR_HEIGHT_DP,
@@ -1825,7 +1817,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onDestroy() {
         isActivityDestroyed = true
         GlassSystem.setPageBackground(null, window.decorView)
-        val cleanupController = BrowserActivityCleanupController()
         if (::pageTransition.isInitialized) pageTransition.cancelNow()
         if (::tabSwipe.isInitialized) tabSwipe.cancelNow()
         pullRefresh?.destroy()
@@ -1839,7 +1830,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         fullscreenVideoController?.destroy()
         webMedia.release()
         // Gỡ listener và giải phóng toàn bộ WebView sau khi các controller phụ thuộc đã dừng.
-        cleanupController.detachWebViewCallbacks(web)
+        tabWebViewLifecycle.detachCallbacks(web)
 
         // 3. Hủy tất cả Runnable đang chờ trong Handler
         handler.removeCallbacksAndMessages(null)
@@ -1855,7 +1846,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
         // Destroy every tab WebView last, including views detached in the background.
         // The normal profile remains persistent; the ephemeral private profile is deleted afterward.
-        cleanupController.destroyTabWebViews(tabManager, tabWebViewLifecycle)
+        tabWebViewLifecycle.destroyAll(tabManager)
         privateProfileManager.endSession()
 
         super.onDestroy()

@@ -19,7 +19,6 @@ import kotlinx.coroutines.launch
 internal class SuggestionController(
     private val activity: Activity,
     private val scope: CoroutineScope,
-    private val density: Float,
     private val input: EditText,
     private val container: LinearLayout,
     private val blurView: View,
@@ -31,7 +30,6 @@ internal class SuggestionController(
     private var requestJob: Job? = null
     private var isShown = false
 
-    private fun dp(value: Int): Int = (value * density).toInt()
 
     fun schedule(query: String) {
         val normalized = query.trim()

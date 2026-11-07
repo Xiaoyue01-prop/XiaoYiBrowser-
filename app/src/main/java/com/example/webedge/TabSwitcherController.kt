@@ -41,7 +41,6 @@ class TabSwitcherController(
     private val hostRoot: FrameLayout,
     private val isNight: () -> Boolean,
     private val accentColor: Int,
-    private val dp: (Int) -> Int,
     private val captureActiveTab: () -> Unit,
     private val onActivateTab: (TabManager.Tab) -> Unit,
     private val onCloseTab: (TabManager.Tab) -> Unit,
@@ -65,10 +64,7 @@ class TabSwitcherController(
     /** Nút ✓ kiểu Safari: tròn đặc màu nhấn, dấu tick trắng đậm, to hơn các nút khác. */
     private fun createDoneButton(onClick: () -> Unit): FrameLayout {
         val button = FrameLayout(activity).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(accentColor)
-            }
+            background = ovalDrawable(accentColor)
             clipChildren = false
             clipToPadding = false
             isClickable = true
@@ -109,10 +105,7 @@ class TabSwitcherController(
             activity, blurTarget, GlassSystem.Preset.TABS_BUTTON,
             activity.resources.displayMetrics.density, isNight(), rim = false
         ).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(fillColor)
-            }
+            background = ovalDrawable(fillColor)
             clipToOutline = true
             isClickable = false
             isFocusable = false
@@ -152,10 +145,7 @@ class TabSwitcherController(
             initialIndex = if (tabManager.isPrivateMode) 1 else 0,
             selectedColor = if (dark) Color.WHITE else Color.BLACK,
             normalColor = if (dark) Color.argb(190, 236, 237, 242) else Color.argb(150, 60, 60, 67),
-            trackFill = GradientDrawable().apply {
-                cornerRadius = dp(24).toFloat()
-                setColor(if (dark) Color.argb(94, 36, 38, 44) else Color.argb(118, 255, 255, 255))
-            },
+            trackFill = roundedDrawable(dp(24).toFloat(), if (dark) Color.argb(94, 36, 38, 44) else Color.argb(118, 255, 255, 255)),
             backdrop = backdrop,
             textSizeSp = 15f
         ) { index ->
@@ -416,10 +406,7 @@ class TabSwitcherController(
                 // The rounded thumbnail viewport clips only webpage pixels; Safari-style controls
                 // are siblings above it, so their press animation can expand without being cut off.
                 val preview = FrameLayout(activity).apply {
-                    background = GradientDrawable().apply {
-                        cornerRadius = dp(14).toFloat()
-                        setColor(Color.argb(28, 120, 120, 132))
-                    }
+                    background = roundedDrawable(dp(14).toFloat(), Color.argb(28, 120, 120, 132))
                     clipChildren = false
                     clipToPadding = false
                 }
@@ -592,10 +579,7 @@ class TabSwitcherController(
                 setColor(addFill)
                 setStroke(dp(1), addStroke)
             }
-            (addButton.getChildAt(0) as? BlurView)?.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(addFill)
-            }
+            (addButton.getChildAt(0) as? BlurView)?.background = ovalDrawable(addFill)
             cardViews.values.forEach { card ->
                 (card.background as? GradientDrawable)?.setColor(GlassSystem.pageCardColor())
                 (card.background as? GradientDrawable)?.setStroke(

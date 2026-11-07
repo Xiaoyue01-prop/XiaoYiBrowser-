@@ -5,7 +5,6 @@ import android.app.Activity
 import android.app.Dialog
 import android.app.PictureInPictureParams
 import android.graphics.Bitmap
-import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Rect
 import android.graphics.Typeface
@@ -132,7 +131,6 @@ class PictureInPictureController(
 
 class PopupWindowController(
     private val activity: Activity,
-    private val dp: (Int) -> Int,
     private val mainWebView: () -> WebView,
     private val chromeClient: (source: WebView) -> WebChromeClient,
     private val openExternal: (String, WebView) -> Boolean,
@@ -212,10 +210,7 @@ class PopupWindowController(
         // --- Tay nắm + thanh tiêu đề (vùng kéo để đóng) ---
         val dragZone = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val grabber = View(activity).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = dp(3).toFloat()
-                setColor(grabberColor)
-            }
+            background = roundedDrawable(dp(3).toFloat(), grabberColor)
         }
         dragZone.addView(
             grabber,
@@ -228,10 +223,7 @@ class PopupWindowController(
         val closeBtn = ImageView(activity).apply {
             setImageDrawable(PathIcon(Icons.CLOSE, textColor))
             setPadding(dp(10), dp(10), dp(10), dp(10))
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(buttonColor)
-            }
+            background = ovalDrawable(buttonColor)
             contentDescription = "Đóng"
             setOnClickListener { animateClose() }
         }
@@ -316,7 +308,7 @@ class PopupWindowController(
         }
 
         // --- Kéo xuống để đóng ---
-        BrowserSheetMotion.bindDragZone(dragZone, sheetView, scrimView, dp, ::animateClose)
+        BrowserSheetMotion.bindDragZone(dragZone, sheetView, scrimView, ::dp, ::animateClose)
 
         // --- Cửa sổ: trong suốt, toàn màn hình, tự lo vùng thanh hệ thống và bàn phím ---
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
@@ -364,10 +356,7 @@ class PopupWindowController(
             sheetView.background = ColorDrawable(GlassSystem.pageSurfaceColor(color))
             titleView.setTextColor(foregroundColor)
             closeBtn.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
-            closeBtn.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(GlassSystem.pageSheetButtonColor(color))
-            }
+            closeBtn.background = ovalDrawable(GlassSystem.pageSheetButtonColor(color))
             (grabber.background as? GradientDrawable)?.setColor(GlassSystem.pageSheetGrabberColor(color))
             dlg.window?.let { BrowserSheetMotion.configureWindow(it, root, dark) }
             sheetView.invalidate()
@@ -390,7 +379,7 @@ class PopupWindowController(
         val dlg = dialog ?: return
         if (closing) return
         closing = true
-        BrowserSheetMotion.close(dlg, sheet, scrim, dp, velocity)
+        BrowserSheetMotion.close(dlg, sheet, scrim, ::dp, velocity)
     }
 
     /** [immediate] = true: đóng ngay không animation (khi Activity đang bị huỷ). */

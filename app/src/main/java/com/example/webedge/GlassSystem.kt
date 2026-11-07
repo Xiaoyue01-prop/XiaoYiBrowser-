@@ -390,10 +390,7 @@ object GlassSystem {
     /** Real blurred material for compact editable fields. */
     fun createInputBlurView(context: Context, target: BlurTarget, density: Float): BlurView {
         val view = BlurView(context).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = 12f * density
-                setColor(Color.TRANSPARENT)
-            }
+            background = roundedDrawable(12f * density, Color.TRANSPARENT)
             foreground = registerRimSurface(GlassRimDrawable(12f * density, density))
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
@@ -755,10 +752,7 @@ half4 main(float2 coord) {
         isNight: Boolean,
         rim: Boolean = true
     ): BlurView {
-        val shape = GradientDrawable().apply {
-            cornerRadius = preset.radiusDp * density
-            setColor(Color.TRANSPARENT)
-        }
+        val shape = roundedDrawable(preset.radiusDp * density, Color.TRANSPARENT)
 
         val view = BlurView(context).apply {
             background = shape
@@ -777,10 +771,7 @@ half4 main(float2 coord) {
      * của iOS nên màu phía sau thấu qua. Viền do [SegmentedControl] vẽ bằng viền kính chung của app.
      */
     fun createSegmentedTrack(radiusDp: Int, density: Float, isNight: Boolean): Drawable =
-        GradientDrawable().apply {
-            cornerRadius = radiusDp * density
-            setColor(if (isNight) Color.argb(72, 120, 120, 128) else Color.argb(30, 118, 118, 128))
-        }
+        roundedDrawable(radiusDp * density, if (isNight) Color.argb(72, 120, 120, 128) else Color.argb(30, 118, 118, 128))
 
     /**
      * Thanh chọn phân đoạn hoàn chỉnh. Xếp lớp từ dưới lên: nền track, [backdrop] tuỳ chọn (ví dụ BlurView),

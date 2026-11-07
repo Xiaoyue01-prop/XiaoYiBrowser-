@@ -39,11 +39,6 @@ class TabPersistenceController(
         saveNow()
     }
 
-    /** Cancels a delayed write without touching the persisted snapshot. */
-    fun cancelPending() {
-        handler.removeCallbacks(saveRunnable)
-    }
-
     private fun persist() {
         store.saveTabs(tabManager.exportTabs())
     }
