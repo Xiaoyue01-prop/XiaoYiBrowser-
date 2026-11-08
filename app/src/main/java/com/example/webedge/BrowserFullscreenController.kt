@@ -90,6 +90,21 @@ internal class BrowserFullscreenController(
         callback?.onCustomViewHidden()
     }
 
+    /**
+     * Sau khi từ PiP mở rộng lại toàn màn hình, surface của video (SurfaceView bên trong view fullscreen của
+     * WebView) có thể không được vẽ lại và hiện đen. Gắn lại view để buộc tạo surface mới, rồi layout lại.
+     */
+    fun refreshSurface() {
+        val view = customView ?: return
+        if (isHostDestroyed() || activity.isFinishing || activity.isDestroyed) return
+        container.removeView(view)
+        container.addView(view, FrameLayout.LayoutParams(-1, -1))
+        container.requestLayout()
+        view.requestLayout()
+        view.invalidate()
+        applyImmersiveSystemBars()
+    }
+
     /** Gọi lại sau khi Activity resume/đổi cấu hình vì một số ROM hiện lại system bars khi xoay màn hình. */
     fun reapplyImmersiveIfShowing() {
         if (customView != null && !isHostDestroyed() && !activity.isFinishing && !activity.isDestroyed) {

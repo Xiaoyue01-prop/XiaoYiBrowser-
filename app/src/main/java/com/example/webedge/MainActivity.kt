@@ -8,6 +8,7 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -391,12 +392,19 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     /** Xin chế độ màn hình có tần số quét cao nhất (cùng độ phân giải) để animation chạy 120Hz thay vì 60Hz. */
     private fun requestHighRefreshRate() {
         runCatching {
+            // Đặt lại window.attributes mỗi lần resume làm cửa sổ layout lại; đang PiP hoặc đang xem video
+            // toàn màn hình thì dễ làm surface video bị tạo lại giữa chừng (màn hình đen khi quay lại từ PiP).
+            if (isInPictureInPictureMode) return
             val disp = display ?: return
             val cur = disp.mode
             val best = disp.supportedModes
                 .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
                 .maxByOrNull { it.refreshRate } ?: return
             val attrs = window.attributes
+            if (attrs.preferredDisplayModeId == best.modeId && attrs.preferredRefreshRate == best.refreshRate) {
+                window.decorView.requestedFrameRate = View.REQUESTED_FRAME_RATE_CATEGORY_HIGH
+                return
+            }
             attrs.preferredDisplayModeId = best.modeId
             attrs.preferredRefreshRate = best.refreshRate
             window.attributes = attrs
@@ -1081,11 +1089,19 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         return super.dispatchTouchEvent(ev)
     }
 
+    private var lastPipExitUptime = 0L
+
+    private companion object PipTiming {
+        const val PIP_RETURN_REFRESH_DELAY_MS = 180L
+        const val PIP_CLOSE_WINDOW_MS = 1_500L
+    }
+
     override fun onPictureInPictureModeChanged(
         isInPictureInPictureMode: Boolean,
         newConfig: android.content.res.Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (!isInPictureInPictureMode && isFullscreenVideoShowing()) lastPipExitUptime = SystemClock.uptimeMillis()
         if (!isInPictureInPictureMode && !isFullscreenVideoShowing()) {
             pipController.setVideoActive(false)
         }
@@ -1100,7 +1116,28 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                     exitFullscreenView()
                 }
             }
+            // Bấm cửa sổ PiP để mở lại app: đợi cửa sổ ổn định kích thước rồi gắn lại view video cho khỏi đen.
+            handler.postDelayed({
+                if (isFullscreenVideoShowing() && !this@MainActivity.isInPictureInPictureMode &&
+                    lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+                ) {
+                    fullscreenVideoController?.refreshSurface()
+                }
+            }, PIP_RETURN_REFRESH_DELAY_MS)
         }
+    }
+
+    // Đóng PiP bằng nút X: Android gọi onPictureInPictureModeChanged(false) rồi mới onStop, nên kiểm tra ở
+    // onPictureInPictureModeChanged dễ chạy trước onStop và bỏ sót. Nếu app dừng khi video vẫn ở toàn màn hình
+    // thì surface đã mất: thoát toàn màn hình (vừa đóng PiP thì dừng luôn video) để lần mở lại không bị đen.
+    override fun onStop() {
+        if (isFullscreenVideoShowing() && !isInPictureInPictureMode && !isChangingConfigurations) {
+            if (SystemClock.uptimeMillis() - lastPipExitUptime < PIP_CLOSE_WINDOW_MS) {
+                WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.pause()")
+            }
+            exitFullscreenView()
+        }
+        super.onStop()
     }
 
     override fun onPause() {
