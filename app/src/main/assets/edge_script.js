@@ -501,11 +501,23 @@ function run(){
   else { runTop(); }
 }
 
+// Không bỏ qua phần tử bị chính script ghi style (xem drainSelf) và không chạy dò header ở mọi khung hình khi cuộn:
+// tối thiểu 80ms giữa hai lần chạy.
+var observer = null;
+var runLastAt = 0, runTimer = null;
+function drainSelf(){
+  // Mutation do chính script gây ra (dời top, translate...) đang nằm trong hàng đợi: bỏ đi để không tự kích hoạt lại
+  try { if (observer) observer.takeRecords(); } catch (e) {}
+}
 function sched(){
-  if (rafId) return;
+  if (rafId || runTimer) return;
+  var wait = Math.max(0, 80 - (Date.now() - runLastAt));
+  if (wait > 0) { runTimer = setTimeout(function(){ runTimer = null; sched(); }, wait); return; }
   rafId = requestAnimationFrame(function(){
     rafId = null;
+    runLastAt = Date.now();
     run();
+    drainSelf();
   });
 }
 
@@ -850,8 +862,8 @@ function runLift(){
   lifted = keep;
   syncCompactBars();
   if (R > 0 && document.elementsFromPoint) {
-    var ys = [H - 4, H - 30, H - 70, H - 120, H - 170];
-    var xs = [0.08, 0.3, 0.5, 0.7, 0.92];
+    var ys = [H - 4, H - 40, H - 90, H - 160];
+    var xs = [0.1, 0.5, 0.9];
     for (var a = 0; a < ys.length; a++) {
       for (var b = 0; b < xs.length; b++) {
         var stack = document.elementsFromPoint(W * xs[b], ys[a]);
@@ -874,6 +886,7 @@ function runLift(){
   }
   syncCompactBars();
   applyLift();
+  drainSelf();
 }
 
 function schedLift(){
@@ -904,7 +917,16 @@ try {
 } catch (e) {}
 
 try {
-  var observer = new MutationObserver(schedAll);
+  var obsLast = 0, obsTimer = null;
+  observer = new MutationObserver(function(records){
+    for (var i = 0; i < records.length; i++) {
+      if (records[i].type === 'childList') { schedAll(); return; }   // thêm/bớt phần tử: làm đủ như cũ
+    }
+    // Chỉ đổi class/style (hoạt ảnh, carousel...): nhẹ hơn và gộp tối đa một lần mỗi 150ms
+    if (obsTimer) return;
+    var wait = Math.max(0, 150 - (Date.now() - obsLast));
+    obsTimer = setTimeout(function(){ obsTimer = null; obsLast = Date.now(); sched(); schedLift(); }, wait);
+  });
   observer.observe(document.documentElement,
     {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style']});
   window.addEventListener('beforeunload', function(){
