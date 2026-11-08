@@ -333,32 +333,55 @@ function hdrCandidates(I){
   return out;
 }
 
-function hdrApply(el, I){
+// animate = true (header dính vào mép trên lúc đang cuộn): trượt xuống mượt thay vì nhảy một phát
+function hdrApply(el, I, animate){
   var cs = getComputedStyle(el);
   var top = parseFloat(cs.top);
   if (isNaN(top)) { hdrDone.add(el); return; }          // top: auto -> để nguyên
   if (top < I - 0.5) {
     hdrSave(el);
-    el.style.setProperty('top', (top + I) + 'px', 'important');
+    if (animate) {
+      var st = el.style;
+      var prev = st.getPropertyValue('transition'), prevP = st.getPropertyPriority('transition');
+      st.setProperty('transition', 'top 200ms cubic-bezier(0.2, 0.8, 0.2, 1)', 'important');
+      void el.offsetTop;                                // chốt vị trí hiện tại để hiệu ứng bắt đầu từ đó
+      st.setProperty('top', (top + I) + 'px', 'important');
+      setTimeout(function(){
+        if (prev) st.setProperty('transition', prev, prevP); else st.removeProperty('transition');
+      }, 280);
+    } else {
+      el.style.setProperty('top', (top + I) + 'px', 'important');
+    }
   }
   hdrDone.add(el);
 }
 
-function runHeaders(){
+function runHeaders(animate){
   var I = window.__edgeInset || 0;
   var key = String(I);
   if (key !== hdrKey) { hdrUndo(); hdrKey = key; }
   if (!window.__edgeFull || I <= 0 || !document.elementsFromPoint) return;
   try {
     var list = hdrCandidates(I);
-    for (var i = 0; i < list.length; i++) hdrApply(list[i], I);
+    for (var i = 0; i < list.length; i++) hdrApply(list[i], I, animate);
   } catch (e) {}
 }
 
 function headersSoon(){
   if (hdrTimer) return;
-  hdrTimer = setTimeout(function(){ hdrTimer = null; runHeaders(); }, 120);
+  hdrTimer = setTimeout(function(){ hdrTimer = null; runHeaders(false); }, 120);
 }
+
+// Header sticky nằm sâu trong trang chỉ dính vào mép trên khi cuộn tới nó: quét lại một lượt nhỏ sau khi người dùng
+// ngừng cuộn (không chạy trong lúc đang cuộn) rồi trượt nó xuống dưới thanh trạng thái.
+var hdrScrollTimer = null;
+function headersAfterScroll(){
+  if (!window.__edgeFull || !(window.__edgeInset > 0)) return;
+  if (hdrScrollTimer) clearTimeout(hdrScrollTimer);
+  hdrScrollTimer = setTimeout(function(){ hdrScrollTimer = null; runHeaders(true); }, 150);
+}
+window.addEventListener('scroll', headersAfterScroll, {passive: true, capture: true});
+window.addEventListener('scrollend', headersAfterScroll, {passive: true, capture: true});
 
 function sched(){
   if (rafId) return;

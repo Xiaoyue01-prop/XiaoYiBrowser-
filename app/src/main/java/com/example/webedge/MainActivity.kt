@@ -936,6 +936,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun createChromeClient(isPrivateSource: () -> Boolean): WebChromeClient =
             this@MainActivity.createChromeClient(isPrivateSource)
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
+        override fun onWebScrolled(view: WebView, y: Int) {
+            if (view === web) topFadeController.setContentUnder(y > 2)
+        }
         override fun setFindCount(text: String) = findBarController.setCount(text)
         override fun toast(msg: String) = this@MainActivity.toast(msg)
     }
@@ -989,6 +992,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         // Dải thanh trạng thái theo tab mới ngay lúc đổi, rồi nhờ script báo lại để chắc chắn (script
         // chỉ báo khi giá trị đổi, còn báo cáo lúc tab chạy nền đã bị bỏ qua).
         topFadeController.solidTop = topFadeController.recordedColor(target)
+        topFadeController.setContentUnder(target.scrollY > 2, animate = false)
         target.post {
             if (web === target) target.evaluateJavascript("window.__edgeForceTop&&window.__edgeForceTop()", null)
         }

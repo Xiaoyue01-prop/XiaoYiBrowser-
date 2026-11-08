@@ -1,5 +1,6 @@
 package com.example.webedge
 
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -12,9 +13,9 @@ import androidx.core.graphics.ColorUtils
 import androidx.core.view.WindowCompat
 
 /**
- * Dải thanh trạng thái ("clone"): tràn viền thì là màu nền trang, đặc hoàn toàn trong vùng thanh trạng thái rồi mờ dần
- * trong 16dp bên dưới, nên nội dung cuộn lên không lộ ra trên thanh trạng thái; không tràn viền thì là màu đặc theo
- * mép trên của trang.
+ * Nền thanh trạng thái. Tràn viền: khi trang đang ở đầu thì chỉ là nền đặc theo màu nền trang trong vùng thanh trạng
+ * thái; khi nội dung đã cuộn xuống dưới thanh thì chuyển (có hiệu ứng) sang lớp mờ dần, nên nội dung thấy được lờ mờ
+ * khi trôi qua. Không tràn viền: màu đặc theo mép trên của trang.
  */
 class TopFadeController(
     private val activity: Activity,
@@ -36,6 +37,32 @@ class TopFadeController(
 
     /** Màu thanh menu cố định của trang đang xem; null = dùng lớp mờ mặc định. */
     var solidTop: Int? = null
+
+    // 0 = nền đặc chỉ trong vùng thanh trạng thái (trang ở đầu), 1 = lớp mờ (nội dung đã cuộn dưới thanh)
+    private var progress = 0f
+    private var contentUnder = false
+    private var animator: ValueAnimator? = null
+
+    /** Nội dung trang đã cuộn xuống dưới thanh trạng thái hay chưa: đặc <-> mờ, có hiệu ứng chuyển. */
+    fun setContentUnder(under: Boolean, animate: Boolean = true) {
+        if (under == contentUnder) return
+        contentUnder = under
+        animator?.cancel()
+        val target = if (under) 1f else 0f
+        if (!animate || !::view.isInitialized) {
+            progress = target
+            if (::view.isInitialized) update()
+            return
+        }
+        animator = ValueAnimator.ofFloat(progress, target).apply {
+            duration = 160
+            addUpdateListener {
+                progress = it.animatedValue as Float
+                update()
+            }
+            start()
+        }
+    }
 
     /** Lớp mờ dần dưới thanh trạng thái, theo màu nền của trang. */
     fun create() {
@@ -61,10 +88,19 @@ class TopFadeController(
             val col = ColorUtils.setAlphaComponent(pageBackground(), 255)
             val solid = insetTop()
             val height = solid + dp(16)
-            // Đặc hoàn toàn đến hết vùng thanh trạng thái, rồi mờ dần về trong suốt (cùng màu để không bị xám giữa chừng)
+            val p = progress
+            // Ở đầu trang: đặc hết vùng thanh trạng thái, cạnh dưới sắc nét. Khi nội dung trôi dưới thanh: hơi trong
+            // (200/255) ở trên rồi mờ dần về trong suốt trong 16dp bên dưới.
+            val topAlpha = (255 - 55 * p).toInt()
+            val edge = solid.toFloat() / height
+            val tail = (edge + (1f - edge) * p).coerceAtLeast(edge + 0.001f).coerceAtMost(1f)
             fadeDrawable.setColors(
-                intArrayOf(col, col, ColorUtils.setAlphaComponent(col, 0)),
-                floatArrayOf(0f, solid.toFloat() / height, 1f)
+                intArrayOf(
+                    ColorUtils.setAlphaComponent(col, topAlpha),
+                    ColorUtils.setAlphaComponent(col, topAlpha),
+                    ColorUtils.setAlphaComponent(col, 0)
+                ),
+                floatArrayOf(0f, edge, tail)
             )
             view.background = fadeDrawable
             lp.height = height

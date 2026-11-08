@@ -23,6 +23,8 @@ internal interface TabWebViewConfigHost {
     val isUrlBarFocused: Boolean
     fun createChromeClient(isPrivateSource: () -> Boolean): WebChromeClient
     fun setBarHidden(hide: Boolean)
+    /** Trang vừa cuộn tới vị trí y (px): dùng để đổi nền thanh trạng thái giữa đặc và mờ. */
+    fun onWebScrolled(view: WebView, y: Int)
     fun setFindCount(text: String)
     fun toast(msg: String)
 }
@@ -107,6 +109,7 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
         }
         host.contextMenu?.attach(view)
         view.setOnScrollChangeListener { _, _, y, _, oldY ->
+            host.onWebScrolled(view, y)
             if (view !== host.web || host.isUrlBarFocused) return@setOnScrollChangeListener
             val dy = y - oldY
             if (dy > 12) host.setBarHidden(true)
