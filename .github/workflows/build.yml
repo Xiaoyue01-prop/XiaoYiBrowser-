@@ -60,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           zip -qr Summit-Wrapper-Ready-Project.zip . \
-            -x '.git/*' '.gradle/*' 'app/build/*' 'build/*' '*.apk' '*.zip'
+            -x '.git/*' '.gradle/*' 'app/build/*' 'gecko-prototype/build/*' 'build/*' '*.apk' '*.zip'
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
@@ -69,6 +69,14 @@ jobs:
           path: |
             app/build/outputs/apk/debug/app-debug.apk
             app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload GeckoView prototype APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Summit-GeckoView-Prototype
+          path: gecko-prototype/build/outputs/apk/debug/gecko-prototype-debug.apk
           if-no-files-found: error
           retention-days: 14
 

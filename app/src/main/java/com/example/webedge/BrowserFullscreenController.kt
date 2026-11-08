@@ -17,8 +17,7 @@ internal class BrowserFullscreenController(
     private val onBottomReserveChanged: () -> Unit,
     private val onOrbTemporarilyHidden: (Boolean) -> Unit,
     private val onOrbVisibilitySync: () -> Unit,
-    private val isHostDestroyed: () -> Boolean,
-    private val isLandscapeVideo: () -> Boolean = { false }
+    private val isHostDestroyed: () -> Boolean
 ) {
     private var customView: View? = null
     private var customViewCallback: android.webkit.WebChromeClient.CustomViewCallback? = null
@@ -48,10 +47,9 @@ internal class BrowserFullscreenController(
         customView = view
         customViewCallback = callback
         previousRequestedOrientation = activity.requestedOrientation
-        // Giao diện app khoá dọc, nhưng video ngang thì xoay ngang trong lúc toàn màn hình (thoát thì hide() trả về như cũ)
-        val wanted = requestedOrientation?.takeIf { it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
-            ?: if (isLandscapeVideo()) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else null
-        wanted?.let { activity.requestedOrientation = it }
+        requestedOrientation?.takeIf { it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }?.let {
+            activity.requestedOrientation = it
+        }
 
         (view.parent as? ViewGroup)?.removeView(view)
         container.removeAllViews()
@@ -88,21 +86,6 @@ internal class BrowserFullscreenController(
         }
         onOrbVisibilitySync()
         callback?.onCustomViewHidden()
-    }
-
-    /**
-     * Sau khi từ PiP mở rộng lại toàn màn hình, surface của video (SurfaceView bên trong view fullscreen của
-     * WebView) có thể không được vẽ lại và hiện đen. Gắn lại view để buộc tạo surface mới, rồi layout lại.
-     */
-    fun refreshSurface() {
-        val view = customView ?: return
-        if (isHostDestroyed() || activity.isFinishing || activity.isDestroyed) return
-        container.removeView(view)
-        container.addView(view, FrameLayout.LayoutParams(-1, -1))
-        container.requestLayout()
-        view.requestLayout()
-        view.invalidate()
-        applyImmersiveSystemBars()
     }
 
     /** Gọi lại sau khi Activity resume/đổi cấu hình vì một số ROM hiện lại system bars khi xoay màn hình. */

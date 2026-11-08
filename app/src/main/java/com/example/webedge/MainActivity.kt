@@ -8,7 +8,6 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
-import android.os.SystemClock
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -122,10 +121,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     // Trạng thái media của tab đang xem: đẩy sang MediaSession và cập nhật cửa sổ PiP.
     private fun onWebMediaState(info: WebMediaInfo) {
         webMedia.onPageState(info)
-        if (info.active) {
-            lastVideoAspect = info.aspect
-            pipController.setVideoInfo(info.videoWidth, info.videoHeight, info.title, info.artist)
-        }
+        if (info.active) pipController.setVideoInfo(info.videoWidth, info.videoHeight, info.title, info.artist)
     }
 
     override fun isBridgeHostDestroyed(): Boolean = isActivityDestroyed
@@ -133,6 +129,34 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onBridgeTopColor(owner: WebView, color: Int?) {
         topFadeController.recordColor(owner, color)
         if (owner === web) topFadeController.applyColor(color)
+    }
+
+    // ---- Theo dõi từng trang có khai báo viewport-fit=cover hay không (trang có cover thì không đệm / không dời header) ----
+    private val coverPages = java.util.WeakHashMap<WebView, Boolean>()
+    private val coverMemory = object : LinkedHashMap<String, Boolean>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > 200
+    }
+
+    private fun coverKey(url: String?): String? =
+        url?.let { runCatching { android.net.Uri.parse(it).host }.getOrNull() }?.removePrefix("www.")
+
+    private fun pageCovers(): Boolean = this::web.isInitialized && coverPages[web] == true
+
+    private fun setCoverState(view: WebView, cover: Boolean) {
+        if (coverPages[view] == cover) return
+        coverPages[view] = cover
+        // Trang có cover tự lo vùng an toàn; trang không có thì cần đệm đầu trang và xử lý header. Đẩy lại số cho script.
+        if (view === web && !isActivityDestroyed) applyInsets()
+    }
+
+    // Điều hướng mới: dùng trạng thái đã biết của domain để WebView không nhảy lên xuống giữa hai trang cùng loại.
+    private fun presetCover(view: WebView, url: String) {
+        setCoverState(view, coverMemory[coverKey(url)] ?: false)
+    }
+
+    override fun onBridgeCover(owner: WebView, cover: Boolean) {
+        coverKey(owner.url)?.let { coverMemory[it] = cover }
+        setCoverState(owner, cover)
     }
 
     override fun onBridgePageBackground(owner: WebView, color: Int?) {
@@ -190,6 +214,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             this@MainActivity.handleSpecialUrl(url, view)
         override fun toast(msg: String) = this@MainActivity.toast(msg)
         override fun forgetPageBackground(view: WebView) { pageBackgrounds.remove(view) }
+        override fun onNavigationStarted(view: WebView, url: String) = this@MainActivity.presetCover(view, url)
         override fun clearWindowPageBackground() { GlassSystem.setPageBackground(null, window.decorView) }
         override fun showDomain() = this@MainActivity.showDomain()
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
@@ -321,6 +346,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             override val barHidden: Boolean get() = this@MainActivity.barHidden
             override val barPresent: Boolean get() = this@MainActivity.barPresent
             override val isEdgeMode: Boolean get() = store.edgeMode
+            override val isCover: Boolean get() = pageCovers()
+            override val headerScrolls: Boolean get() = store.headerScroll
             override val isDestroyed: Boolean get() = isActivityDestroyed
             override val isFullscreenVideoShowing: Boolean get() = this@MainActivity.isFullscreenVideoShowing()
             override val hasBar: Boolean get() = toolbar.isCreated
@@ -392,19 +419,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     /** Xin chế độ màn hình có tần số quét cao nhất (cùng độ phân giải) để animation chạy 120Hz thay vì 60Hz. */
     private fun requestHighRefreshRate() {
         runCatching {
-            // Đặt lại window.attributes mỗi lần resume làm cửa sổ layout lại; đang PiP hoặc đang xem video
-            // toàn màn hình thì dễ làm surface video bị tạo lại giữa chừng (màn hình đen khi quay lại từ PiP).
-            if (isInPictureInPictureMode) return
             val disp = display ?: return
             val cur = disp.mode
             val best = disp.supportedModes
                 .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
                 .maxByOrNull { it.refreshRate } ?: return
             val attrs = window.attributes
-            if (attrs.preferredDisplayModeId == best.modeId && attrs.preferredRefreshRate == best.refreshRate) {
-                window.decorView.requestedFrameRate = View.REQUESTED_FRAME_RATE_CATEGORY_HIGH
-                return
-            }
             attrs.preferredDisplayModeId = best.modeId
             attrs.preferredRefreshRate = best.refreshRate
             window.attributes = attrs
@@ -606,9 +626,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     /** Các controller dùng chung BlurTarget (tải xuống, menu, hộp thoại, tab, Orb). */
-    // Tỉ lệ khung hình video đang phát (rộng/cao), 0 = chưa biết
-    private var lastVideoAspect = 0f
-
     private fun createControllers() {
         fullscreenVideoController = BrowserFullscreenController(
             activity = this,
@@ -617,8 +634,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             onBottomReserveChanged = pageEdge::pushBottomReserve,
             onOrbTemporarilyHidden = { hidden -> orbController?.setTemporarilyHidden(hidden) },
             onOrbVisibilitySync = ::syncOrbMenuVisibility,
-            isHostDestroyed = { isActivityDestroyed },
-            isLandscapeVideo = { lastVideoAspect == 0f || lastVideoAspect > 1f }
+            isHostDestroyed = { isActivityDestroyed }
         )
         suggestionController = SuggestionController(
             activity = this,
@@ -1089,19 +1105,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         return super.dispatchTouchEvent(ev)
     }
 
-    private var lastPipExitUptime = 0L
-
-    private companion object PipTiming {
-        const val PIP_RETURN_REFRESH_DELAY_MS = 180L
-        const val PIP_CLOSE_WINDOW_MS = 1_500L
-    }
-
     override fun onPictureInPictureModeChanged(
         isInPictureInPictureMode: Boolean,
         newConfig: android.content.res.Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        if (!isInPictureInPictureMode && isFullscreenVideoShowing()) lastPipExitUptime = SystemClock.uptimeMillis()
         if (!isInPictureInPictureMode && !isFullscreenVideoShowing()) {
             pipController.setVideoActive(false)
         }
@@ -1116,28 +1124,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                     exitFullscreenView()
                 }
             }
-            // Bấm cửa sổ PiP để mở lại app: đợi cửa sổ ổn định kích thước rồi gắn lại view video cho khỏi đen.
-            handler.postDelayed({
-                if (isFullscreenVideoShowing() && !this@MainActivity.isInPictureInPictureMode &&
-                    lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
-                ) {
-                    fullscreenVideoController?.refreshSurface()
-                }
-            }, PIP_RETURN_REFRESH_DELAY_MS)
         }
-    }
-
-    // Đóng PiP bằng nút X: Android gọi onPictureInPictureModeChanged(false) rồi mới onStop, nên kiểm tra ở
-    // onPictureInPictureModeChanged dễ chạy trước onStop và bỏ sót. Nếu app dừng khi video vẫn ở toàn màn hình
-    // thì surface đã mất: thoát toàn màn hình (vừa đóng PiP thì dừng luôn video) để lần mở lại không bị đen.
-    override fun onStop() {
-        if (isFullscreenVideoShowing() && !isInPictureInPictureMode && !isChangingConfigurations) {
-            if (SystemClock.uptimeMillis() - lastPipExitUptime < PIP_CLOSE_WINDOW_MS) {
-                WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.pause()")
-            }
-            exitFullscreenView()
-        }
-        super.onStop()
     }
 
     override fun onPause() {

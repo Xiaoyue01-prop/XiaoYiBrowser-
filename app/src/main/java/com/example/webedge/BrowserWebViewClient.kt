@@ -24,6 +24,8 @@ internal interface BrowserWebViewHost {
     fun handleSpecialUrl(url: String, view: WebView): Boolean
     fun toast(msg: String)
     fun forgetPageBackground(view: WebView)
+    /** Điều hướng chính mới bắt đầu: đặt trước trạng thái tràn viền theo trang đã biết của domain. */
+    fun onNavigationStarted(view: WebView, url: String)
     /** Bỏ nền trang đang áp lên cửa sổ (khi điều hướng hoặc renderer chết). */
     fun clearWindowPageBackground()
     fun showDomain()
@@ -64,6 +66,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         host.tabManager.updateForWebView(view, url, view.title ?: url)
         // A navigation must not reuse the previous document's background tone.
         host.forgetPageBackground(view)
+        host.onNavigationStarted(view, url)
         if (view === host.web) host.clearWindowPageBackground()
         if (view !== host.web) return
         // Chụp trang cũ trước khi mờ đi và trước khi nội dung đổi, để lần sau vuốt quay lại có ảnh xem trước.

@@ -1,6 +1,7 @@
 (function(){
+window.__edgeFull = %FULL%;
 window.__edgeInset = %INSET%;
-window.__edgeMode = %MODE%;
+window.__edgeHeader = %HEADER%;
 window.__edgeBottom = %BOTTOM%;
 window.__edgeCompact = %COMPACT%;
 %PILL_METRICS%
@@ -234,7 +235,7 @@ function runPageBackground(){
 }
 
 function schedPageBackground(){
-  if (inFs() || pageBgTimer) return;
+  if (pageBgTimer) return;
   pageBgTimer = setTimeout(function(){
     pageBgTimer = null;
     runPageBackground();
@@ -270,297 +271,119 @@ function runTop(){
   } catch (e) {}
 }
 
-// Màu nền thật của header (nền có thể nằm ở phần tử con): lấy mẫu chỗ thấy được rồi mới leo lên cha
-function headerColor(hdEl, I){
-  try {
-    var hb = window.__edgeHdBg;
-    if (hb && hb.isConnected) { var c0 = climb(hb); if (c0) return c0; }
-  } catch (e) {}
-  try {
-    var w = window.innerWidth, y = I + 4, xs = [0.03, 0.97, 0.5];
-    for (var i = 0; i < xs.length; i++) {
-      var st = document.elementsFromPoint(w * xs[i], y);
-      for (var j = 0; j < st.length; j++) {
-        if (!hdEl.contains(st[j])) continue;
-        var c = climb(st[j]);
-        if (c) return c;
-      }
-    }
-    var kids = hdEl.querySelectorAll('*');
-    for (var k = 0; k < kids.length && k < 60; k++) {
-      var b = bgOf(kids[k]);
-      if (b && kids[k].getBoundingClientRect().width > w * 0.6) return b;
-    }
-  } catch (e) {}
-  var cl = climb(hdEl);
-  if (cl) return cl;
-  var dark = false;
-  try { dark = window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) {}
-  return dark ? [24, 25, 26, 1] : [255, 255, 255, 1];
+// WebView tràn viền: dải thanh trạng thái là lớp mờ của app nên không báo màu; header do runHeaders xử lý riêng.
+// WebView nằm dưới thanh trạng thái: chỉ cần màu mép trên của trang.
+function run(){
+  if (window.__edgeFull) { report('none'); }
+  else { runTop(); }
 }
 
-// Tìm khối header cố định (fixed/sticky) đang chồng lên dải thanh trạng thái, kể cả khi có lớp phủ rỗng
-// (banner cookie...) nằm trên nó. Chọn khối ngoài cùng thấp hơn 30% màn hình và có chữ.
-function findHeader(I){
-  var w = window.innerWidth, h = window.innerHeight;
-  var ys = [Math.max(2, I * 0.4), I + 4];
-  var xs = [0.5, 0.15, 0.85], best = null;
-  for (var q = 0; q < xs.length * ys.length; q++) {
-    var st = document.elementsFromPoint(w * xs[q % xs.length], ys[Math.floor(q / xs.length)]);
-    for (var j = 0; j < st.length; j++) {
-      var el = st[j];
-      while (el && el !== document.documentElement && el !== document.body) {
-        var cs = getComputedStyle(el);
-        if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none' && parseFloat(cs.opacity) >= 0.1) {
-          var r = el.getBoundingClientRect();
-          var txt = (el.textContent || '').trim().length;
-          if (r.top <= I + 1 && r.width > w * 0.6 && r.height > 8 && r.height < h * 0.3 && txt > 0) {
-            if (!best || el.contains(best.el)) best = { el: el, cs: cs };
-          }
-        }
-        el = el.parentElement;
-      }
-    }
-  }
-  return best;
-}
+// ---- Tràn viền, trang không khai báo viewport-fit=cover: đặt lại header cố định/sticky ở mép trên ----
+// Native đệm padding-top cho html bằng chiều cao thanh trạng thái (window.__edgeInset > 0), nên chỉ còn header
+// cố định là bị thanh trạng thái đè. __edgeHeader = 0: hạ header xuống dưới thanh trạng thái, đứng yên;
+// 1: cho header cuộn như phần tử thường (fixed -> absolute, sticky -> relative). Chạy rời rạc quanh lúc nạp trang,
+// không theo dõi liên tục; phần tử nào đặt lại không đúng chỗ thì trả về như cũ.
+var hdrRecs = [];
+var hdrDone = new WeakSet();
+var hdrKey = '';
+var hdrTimer = null;
+var hdrObsRuns = 0;
 
-// Các phần tử đã hạ xuống: YouTube có thể ghi đè lại style.top của chúng (vd. player về 48px), nên mỗi lần chạy
-// kiểm tra lại giá trị thực tế và áp lại phần đã cộng thêm.
-var edgeShiftList = [];
-function edgeShiftTop(el, baseTop, delta){
-  el.setAttribute('data-edge-shift', '1');
-  el.__edgeDelta = delta;
-  el.__edgeWant = baseTop + delta;
-  el.style.setProperty('top', el.__edgeWant + 'px', 'important');
-  edgeShiftList.push(el);
+function hdrSave(el){
+  var s = el.style;
+  var rec = {el: el, pos: s.getPropertyValue('position'), posP: s.getPropertyPriority('position'),
+             top: s.getPropertyValue('top'), topP: s.getPropertyPriority('top')};
+  hdrRecs.push(rec);
+  return rec;
 }
-function edgeReassert(){
+function hdrRestore(rec){
   try {
-    for (var i = edgeShiftList.length - 1; i >= 0; i--) {
-      var el = edgeShiftList[i];
-      if (!el.isConnected) { edgeShiftList.splice(i, 1); continue; }
-      var t = parseFloat(getComputedStyle(el).top);
-      if (!isNaN(t) && Math.abs(t - el.__edgeWant) > 0.5) {
-        el.__edgeWant = t + el.__edgeDelta;
-        el.style.setProperty('top', el.__edgeWant + 'px', 'important');
-      }
-    }
+    var s = rec.el.style;
+    if (rec.pos) s.setProperty('position', rec.pos, rec.posP); else s.removeProperty('position');
+    if (rec.top) s.setProperty('top', rec.top, rec.topP); else s.removeProperty('top');
   } catch (e) {}
 }
+function hdrUndo(){
+  for (var i = 0; i < hdrRecs.length; i++) hdrRestore(hdrRecs[i]);
+  hdrRecs = [];
+  hdrDone = new WeakSet();
+}
 
-// Các phần tử fixed/sticky nằm ngay dưới header (vd. player YouTube) cũng phải hạ theo header,
-// nếu không header đã hạ xuống dưới thanh trạng thái sẽ đè lên chúng. Chỉ đụng tới phần tử bắt đầu
-// trong dải header mới (từ đáy header cũ tới đáy header mới); lớp phủ bắt đầu từ mép trên thì bỏ qua.
-function shiftCompanions(hd, I){
-  try {
-    var w = window.innerWidth;
-    var hH = hd.el.getBoundingClientRect().height;
-    var probeY = I + hH - 6;
-    if (hH < 8 || probeY <= 0 || probeY >= window.innerHeight) return;
-    var xs = [0.5, 0.2, 0.8];
-    for (var q = 0; q < xs.length; q++) {
-      var st = document.elementsFromPoint(w * xs[q], probeY);
+// Các header cố định/sticky nằm sát mép trên, rộng và thấp (loại hộp thoại, banner chiếm nhiều màn hình)
+function hdrCandidates(I){
+  var w = window.innerWidth, h = window.innerHeight, out = [];
+  var ys = [2, I + 4], xs = [0.5, 0.15, 0.85];
+  for (var a = 0; a < ys.length; a++) {
+    for (var b = 0; b < xs.length; b++) {
+      var st = document.elementsFromPoint(w * xs[b], ys[a]);
       for (var j = 0; j < st.length; j++) {
         var el = st[j];
         while (el && el !== document.documentElement && el !== document.body) {
-          if (el === hd.el || hd.el.contains(el) || el.contains(hd.el)) break;
-          var cs = getComputedStyle(el);
-          if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none') {
-            if (!el.hasAttribute('data-edge-shift')) {
+          if (out.indexOf(el) < 0 && !hdrDone.has(el)) {
+            var cs = getComputedStyle(el);
+            if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none' && parseFloat(cs.opacity) >= 0.1) {
               var r = el.getBoundingClientRect();
-              var top = parseFloat(cs.top);
-              if (!isNaN(top) && r.width > w * 0.6 && r.height > 20 && r.top >= hH - 4 && r.top < probeY) {
-                edgeShiftTop(el, top, I);
-              }
+              var txt = (el.textContent || '').trim().length;
+              if (r.top <= I + 1 && r.width > w * 0.6 && r.height > 8 && r.height < h * 0.3 && txt > 0) out.push(el);
             }
-            break;
           }
           el = el.parentElement;
         }
       }
     }
-  } catch (e) {}
+  }
+  return out;
 }
 
-// Trình phát video nằm trong khối fixed/sticky (YouTube...) mà header đã hạ vừa đè lên: hạ khối đó xuống
-// đúng bằng phần bị đè, bất kể giá trị top ban đầu là bao nhiêu.
-function shiftVideoHost(hd, I){
-  try {
-    var vids = document.getElementsByTagName('video');
-    var best = null, bestArea = 0;
-    for (var i = 0; i < vids.length; i++) {
-      var vr = vids[i].getBoundingClientRect();
-      if (vr.width * vr.height > bestArea) { bestArea = vr.width * vr.height; best = vids[i]; }
-    }
-    if (!best || bestArea < 20000) return;
-    var host = null;
-    for (var el = best.parentElement; el && el !== document.documentElement && el !== document.body; el = el.parentElement) {
-      var cs = getComputedStyle(el);
-      if (cs.position === 'fixed' || cs.position === 'sticky') host = el;
-    }
-    if (!host || host === hd.el || hd.el.contains(host) || host.contains(hd.el)) return;
-    if (host.hasAttribute('data-edge-shift')) return;
-    var hs = getComputedStyle(host);
-    var top = parseFloat(hs.top);
-    var hb = hd.el.getBoundingClientRect().bottom;
-    var rt = host.getBoundingClientRect().top;
-    var delta = hb - rt;
-    if (isNaN(top) || delta < 4 || rt < I - 4) return;
-    edgeShiftTop(host, top, delta);
-  } catch (e) {}
+function hdrApply(el, I, scrolls){
+  var cs = getComputedStyle(el);
+  var top = parseFloat(cs.top);
+  if (isNaN(top)) { hdrDone.add(el); return; }          // top: auto -> để nguyên
+  var fixed = cs.position === 'fixed';
+  var rec = hdrSave(el);
+  if (!scrolls) {
+    // Đứng yên: hạ xuống dưới thanh trạng thái
+    if (top < I - 0.5) el.style.setProperty('top', (top + I) + 'px', 'important');
+  } else if (fixed) {
+    // Cuộn đi: gắn vào tài liệu tại đầu trang (sau phần đệm), rồi kiểm tra lại vị trí thật
+    var docTop = top + I;
+    var before = el.getBoundingClientRect().top;
+    el.style.setProperty('position', 'absolute', 'important');
+    el.style.setProperty('top', docTop + 'px', 'important');
+    var want = docTop - (window.scrollY || 0);
+    if (Math.abs(el.getBoundingClientRect().top - want) > 2) { hdrRestore(rec); hdrRecs.pop(); }
+  } else {
+    // sticky -> relative (vẫn nằm đúng chỗ trong dòng chảy của trang)
+    if (Math.abs(top) < 0.5) {
+      el.style.setProperty('position', 'relative', 'important');
+      el.style.setProperty('top', '0px', 'important');
+    } else { hdrRestore(rec); hdrRecs.pop(); }
+  }
+  hdrDone.add(el);
 }
 
-// Nền của header đôi khi là một khối fixed riêng (YouTube: mobile-topbar-header-background, z-index -1)
-// nằm cùng vị trí và cao bằng header. Header đã hạ mà nền ở lại chỗ cũ thì chữ/icon trắng nằm trên nền trắng.
-function shiftHeaderBackground(hd, I){
-  try {
-    var w = window.innerWidth;
-    var hr = hd.el.getBoundingClientRect();
-    var hH = hr.height, oldTop = hr.top - I;
-    if (hH < 8) return;
-    var cands = [], par = hd.el.parentElement, i, j;
-    for (var lvl = 0; par && lvl < 2; lvl++, par = par.parentElement) {
-      for (i = 0; i < par.children.length && i < 30; i++) cands.push(par.children[i]);
-    }
-    var st = document.elementsFromPoint(w * 0.5, Math.max(1, oldTop + hH - 4));
-    for (j = 0; j < st.length; j++) cands.push(st[j]);
-    for (i = 0; i < cands.length; i++) {
-      var el = cands[i];
-      if (el === hd.el || hd.el.contains(el) || el.contains(hd.el)) continue;
-      if (el.hasAttribute('data-edge-shift') || el.hasAttribute('data-edge-hdbg')) continue;
-      var cs = getComputedStyle(el);
-      if ((cs.position !== 'fixed' && cs.position !== 'sticky') || cs.display === 'none') continue;
-      var r = el.getBoundingClientRect(), top = parseFloat(cs.top);
-      if (!isNaN(top) && r.width > w * 0.6 && Math.abs(r.top - oldTop) <= 2 && Math.abs(r.height - hH) <= 4) {
-        el.setAttribute('data-edge-hdbg', '1');
-        edgeShiftTop(el, top, I);
-        window.__edgeHdBg = el;
-      }
-    }
-  } catch (e) {}
-}
-
-function runEdge(){
+function runHeaders(){
   var I = window.__edgeInset || 0;
-  if (!I || !document.elementsFromPoint) return;
+  var scrolls = window.__edgeHeader === 1;
+  var key = I + ':' + (scrolls ? 1 : 0);
+  if (key !== hdrKey) { hdrUndo(); hdrKey = key; }
+  if (!window.__edgeFull || I <= 0 || !document.elementsFromPoint) return;
   try {
-    var hd = findHeader(I);
-    if (hd) {
-      var topNow = parseFloat(hd.cs.top);
-      if (isNaN(topNow) || topNow < I - 0.5) {
-        hd.el.style.setProperty('top', I + 'px', 'important');
-        hd.el.setAttribute('data-edge-hd', '1');
-      }
-      if (hd.el.getAttribute('data-edge-hd')) shiftHeaderBackground(hd, I);
-      edgeReassert();
-      shiftCompanions(hd, I);
-      shiftVideoHost(hd, I);
-      var hc = headerColor(hd.el, I);
-      report(hc ? (hc[0] + ',' + hc[1] + ',' + hc[2]) : 'none');
-      return;
-    }
-    var y = I + 2, w = window.innerWidth, hit = null, big = false, color = null;
-    var xs = [0.5, 0.15, 0.85];
-    for (var i = 0; i < xs.length && !hit; i++) {
-      var stack = document.elementsFromPoint(w * xs[i], y);
-      for (var j = 0; j < stack.length && !hit; j++) {
-        var f = pinned(stack[j]);
-        if (!f) continue;
-        var r = f.getBoundingClientRect();
-        if (r.top <= y && r.width > w * 0.6) {
-          hit = f;
-          big = r.height >= window.innerHeight * 0.45;
-          color = climb(stack[j]);
-        }
-      }
-    }
-    if (!hit) { report('none'); return; }
-    if (big) {
-      if (!hit.getAttribute('data-edge-pad')) {
-        hit.setAttribute('data-edge-pad', '1');
-        var cs = styleCache.get(hit) || getComputedStyle(hit);
-        if (!styleCache.has(hit)) styleCache.set(hit, cs);
-        hit.style.setProperty('box-sizing', 'border-box', 'important');
-        hit.style.setProperty('padding-top', ((parseFloat(cs.paddingTop) || 0) + I) + 'px', 'important');
-      }
-    } else {
-      var cs2 = styleCache.get(hit) || getComputedStyle(hit);
-      if (!styleCache.has(hit)) styleCache.set(hit, cs2);
-      var top = parseFloat(cs2.top);
-      if (!isNaN(top) && top < I - 0.5) {
-        hit.style.setProperty('top', I + 'px', 'important');
-      }
-    }
-    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
-  } catch (e) { report('none'); }
-}
-
-function run(){
-  if (inFs()) return;
-  if (window.__edgeMode) { runEdge(); }
-  else { runTop(); }
-}
-
-// Không bỏ qua phần tử bị chính script ghi style (xem drainSelf) và không chạy dò header ở mọi khung hình khi cuộn:
-// tối thiểu 80ms giữa hai lần chạy.
-var observer = null;
-var runLastAt = 0, runTimer = null;
-
-// ---- Video toàn màn hình ----
-// Trong lúc phát toàn màn hình, trình phát YouTube biến thành một khối cố định rất lớn và đổi kích thước liên tục:
-// script tạm dừng hẳn (đỡ lag), và khi thoát thì xoá mọi thứ nó đã ghi vào trang (top đã dời, padding thêm cho khối lớn)
-// rồi cho trang tự bố cục lại trước khi tính lại từ đầu.
-function inFs(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
-var wasFs = false;
-function edgeResetAll(){
-  try {
-    var els = document.querySelectorAll('[data-edge-shift],[data-edge-hd],[data-edge-hdbg],[data-edge-pad]');
-    for (var i = 0; i < els.length; i++) {
-      var el = els[i];
-      if (el.hasAttribute('data-edge-pad')) {
-        el.style.removeProperty('padding-top');
-        el.style.removeProperty('box-sizing');
-      }
-      if (el.hasAttribute('data-edge-shift') || el.hasAttribute('data-edge-hd') || el.hasAttribute('data-edge-hdbg')) {
-        el.style.removeProperty('top');
-      }
-      el.removeAttribute('data-edge-shift');
-      el.removeAttribute('data-edge-hd');
-      el.removeAttribute('data-edge-hdbg');
-      el.removeAttribute('data-edge-pad');
-    }
-    edgeShiftList = [];
-    window.__edgeHdBg = null;
-    styleCache = new WeakMap();
-    last = '';
+    var list = hdrCandidates(I);
+    for (var i = 0; i < list.length; i++) hdrApply(list[i], I, scrolls);
   } catch (e) {}
 }
-function fsCheck(){
-  if (inFs()) { wasFs = true; return; }
-  if (!wasFs) return;
-  wasFs = false;
-  edgeResetAll();
-  try { window.dispatchEvent(new Event('resize')); } catch (e) {}   // để YouTube tự tính lại kích thước trình phát
-  setTimeout(function(){ window.__edgeRun(); }, 250);
-  setTimeout(function(){ window.__edgeRun(); }, 900);
+
+function headersSoon(){
+  if (hdrTimer) return;
+  hdrTimer = setTimeout(function(){ hdrTimer = null; runHeaders(); }, 120);
 }
-document.addEventListener('fullscreenchange', fsCheck);
-document.addEventListener('webkitfullscreenchange', fsCheck);
-window.__edgeFsCheck = fsCheck;
-function drainSelf(){
-  // Mutation do chính script gây ra (dời top, translate...) đang nằm trong hàng đợi: bỏ đi để không tự kích hoạt lại
-  try { if (observer) observer.takeRecords(); } catch (e) {}
-}
+
 function sched(){
-  if (rafId || runTimer) return;
-  var wait = Math.max(0, 80 - (Date.now() - runLastAt));
-  if (wait > 0) { runTimer = setTimeout(function(){ runTimer = null; sched(); }, wait); return; }
+  if (rafId) return;
   rafId = requestAnimationFrame(function(){
     rafId = null;
-    runLastAt = Date.now();
     run();
-    drainSelf();
   });
 }
 
@@ -886,7 +709,6 @@ function applyLift(){
 }
 
 function runLift(){
-  if (inFs()) return;
   var R = window.__edgeBottom || 0;
   var H = window.innerHeight, W = window.innerWidth;
   var zone = 200;
@@ -906,8 +728,8 @@ function runLift(){
   lifted = keep;
   syncCompactBars();
   if (R > 0 && document.elementsFromPoint) {
-    var ys = [H - 4, H - 40, H - 90, H - 160];
-    var xs = [0.1, 0.5, 0.9];
+    var ys = [H - 4, H - 30, H - 70, H - 120, H - 170];
+    var xs = [0.08, 0.3, 0.5, 0.7, 0.92];
     for (var a = 0; a < ys.length; a++) {
       for (var b = 0; b < xs.length; b++) {
         var stack = document.elementsFromPoint(W * xs[b], ys[a]);
@@ -930,7 +752,6 @@ function runLift(){
   }
   syncCompactBars();
   applyLift();
-  drainSelf();
 }
 
 function schedLift(){
@@ -941,7 +762,7 @@ function schedLift(){
 
 function schedAll(){ sched(); schedLift(); schedPageBackground(); }
 
-window.__edgeRun = function(){ run(); runLift(); schedPageBackground(); };
+window.__edgeRun = function(){ run(); headersSoon(); runLift(); schedPageBackground(); };
 window.__edgePageBgRun = function(){ runPageBackground(); };
 // Đổi tab: native đã bỏ qua báo cáo màu lúc trang này chạy nền, nên xoá bộ nhớ 'last' để báo lại.
 window.__edgeForceTop = function(){ last = ''; run(); };
@@ -952,6 +773,8 @@ window.addEventListener('scroll', function(){
 }, {passive: true});
 window.addEventListener('resize', schedAll);
 window.addEventListener('load', schedPageBackground, true);
+window.addEventListener('load', headersSoon);
+window.addEventListener('pageshow', headersSoon);
 window.addEventListener('pageshow', schedPageBackground);
 
 try {
@@ -961,17 +784,7 @@ try {
 } catch (e) {}
 
 try {
-  var obsLast = 0, obsTimer = null;
-  observer = new MutationObserver(function(records){
-    if (inFs()) return;
-    for (var i = 0; i < records.length; i++) {
-      if (records[i].type === 'childList') { schedAll(); return; }   // thêm/bớt phần tử: làm đủ như cũ
-    }
-    // Chỉ đổi class/style (hoạt ảnh, carousel...): nhẹ hơn và gộp tối đa một lần mỗi 150ms
-    if (obsTimer) return;
-    var wait = Math.max(0, 150 - (Date.now() - obsLast));
-    obsTimer = setTimeout(function(){ obsTimer = null; obsLast = Date.now(); sched(); schedLift(); }, wait);
-  });
+  var observer = new MutationObserver(schedAll);
   observer.observe(document.documentElement,
     {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style']});
   window.addEventListener('beforeunload', function(){
@@ -985,5 +798,17 @@ try {
 setTimeout(window.__edgeRun, 100);
 setTimeout(window.__edgeRun, 800);
 setTimeout(window.__edgeRun, 2000);
+setTimeout(headersSoon, 3500);
+
+// Header gắn muộn (trang dựng bằng JS): theo dõi riêng, chỉ phần tử con trực tiếp của html/body và có giới hạn số lần
+try {
+  var hdrObserver = new MutationObserver(function(){
+    if (!window.__edgeFull || !(window.__edgeInset > 0)) return;
+    if (++hdrObsRuns > 15) { hdrObserver.disconnect(); return; }
+    headersSoon();
+  });
+  hdrObserver.observe(document.documentElement, {childList: true});
+  if (document.body) hdrObserver.observe(document.body, {childList: true});
+} catch (e) {}
 window.__edgeRun();
 })();

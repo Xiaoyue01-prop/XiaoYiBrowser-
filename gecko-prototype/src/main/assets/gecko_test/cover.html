@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Summit Gecko safe-area test</title>
+<style>
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    color-scheme: light;
+    font-family: system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f3f5f8; color: #15202b; }
+  .fixed {
+    position: fixed; z-index: 20; inset: 0 0 auto 0; height: 64px;
+    display: flex; align-items: center; padding: 0 18px;
+    background: #174ea6; color: white; font-weight: 700;
+    box-shadow: 0 2px 12px #0003;
+  }
+  .metrics {
+    position: fixed; z-index: 19; top: 72px; left: 12px; right: 12px;
+    border-radius: 12px; padding: 10px 12px; background: #101820eF;
+    color: #fff; font: 12px/1.5 ui-monospace, monospace;
+  }
+  main { padding: 150px 18px 140px; }
+  .intro { min-height: 430px; padding: 18px; background: white; border-radius: 16px; }
+  .sticky {
+    position: sticky; top: 0; z-index: 10; margin: 18px -18px 18px;
+    padding: 16px 18px; background: #ffca28; color: #241900; font-weight: 700;
+  }
+  .card { margin: 16px 0; padding: 20px; min-height: 180px; border-radius: 16px; background: white; }
+</style>
+</head>
+<body>
+<header class="fixed">FIXED HEADER · top: 0</header>
+<div class="metrics" id="metrics">Reading safe-area values…</div>
+<main>
+  <section class="intro">
+    <h1>GeckoView edge-to-edge test</h1>
+    <p>This page is intentionally designed to reveal whether the browser engine accounts for the Android status bar when positioning fixed and sticky elements.</p>
+    <p>Scroll down to test the sticky header. The fixed blue header should remain visible, not disappear behind the status bar.</p>
+  </section>
+  <div class="sticky">STICKY HEADER · top: 0</div>
+  <section class="card"><h2>Scroll section 1</h2><p>Content below the sticky header.</p></section>
+  <section class="card"><h2>Scroll section 2</h2><p>Keep scrolling. Observe whether the sticky header pins at the correct visible edge.</p></section>
+  <section class="card"><h2>Scroll section 3</h2><p>Safe area values are displayed at the top of the page.</p></section>
+  <section class="card"><h2>Scroll section 4</h2><p>End of test content.</p></section>
+</main>
+<script>
+(function () {
+  const root = document.documentElement;
+  const box = document.getElementById('metrics');
+  function update() {
+    const cs = getComputedStyle(root);
+    box.textContent =
+      'env top=' + cs.getPropertyValue('--safe-top').trim() +
+      ' | right=' + cs.getPropertyValue('--safe-right').trim() +
+      ' | bottom=' + cs.getPropertyValue('--safe-bottom').trim() +
+      ' | left=' + cs.getPropertyValue('--safe-left').trim() +
+      ' | innerHeight=' + window.innerHeight +
+      ' | visualViewport=' + (window.visualViewport ? Math.round(window.visualViewport.height) : 'n/a');
+  }
+  update();
+  window.addEventListener('resize', update);
+  window.addEventListener('scroll', update, { passive: true });
+})();
+</script>
+</body>
+</html>
