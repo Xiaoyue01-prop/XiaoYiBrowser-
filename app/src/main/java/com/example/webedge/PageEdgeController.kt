@@ -113,7 +113,7 @@ class PageEdgeController(
         web.evaluateJavascript(
             "window.__edgeBottom=" + bottomReserveCss() +
                 ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() + ";" + compactPillMetricsJs() +
-                "window.__edgeLift&&window.__edgeLift();",
+                "window.__edgeFsCheck&&window.__edgeFsCheck();window.__edgeLift&&window.__edgeLift();",
             null
         )
     }

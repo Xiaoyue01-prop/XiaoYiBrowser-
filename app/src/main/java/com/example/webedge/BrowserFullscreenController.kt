@@ -17,7 +17,8 @@ internal class BrowserFullscreenController(
     private val onBottomReserveChanged: () -> Unit,
     private val onOrbTemporarilyHidden: (Boolean) -> Unit,
     private val onOrbVisibilitySync: () -> Unit,
-    private val isHostDestroyed: () -> Boolean
+    private val isHostDestroyed: () -> Boolean,
+    private val isLandscapeVideo: () -> Boolean = { false }
 ) {
     private var customView: View? = null
     private var customViewCallback: android.webkit.WebChromeClient.CustomViewCallback? = null
@@ -47,9 +48,10 @@ internal class BrowserFullscreenController(
         customView = view
         customViewCallback = callback
         previousRequestedOrientation = activity.requestedOrientation
-        requestedOrientation?.takeIf { it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }?.let {
-            activity.requestedOrientation = it
-        }
+        // Giao diện app khoá dọc, nhưng video ngang thì xoay ngang trong lúc toàn màn hình (thoát thì hide() trả về như cũ)
+        val wanted = requestedOrientation?.takeIf { it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+            ?: if (isLandscapeVideo()) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else null
+        wanted?.let { activity.requestedOrientation = it }
 
         (view.parent as? ViewGroup)?.removeView(view)
         container.removeAllViews()

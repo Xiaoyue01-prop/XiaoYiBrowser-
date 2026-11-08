@@ -234,7 +234,7 @@ function runPageBackground(){
 }
 
 function schedPageBackground(){
-  if (pageBgTimer) return;
+  if (inFs() || pageBgTimer) return;
   pageBgTimer = setTimeout(function(){
     pageBgTimer = null;
     runPageBackground();
@@ -497,6 +497,7 @@ function runEdge(){
 }
 
 function run(){
+  if (inFs()) return;
   if (window.__edgeMode) { runEdge(); }
   else { runTop(); }
 }
@@ -505,6 +506,48 @@ function run(){
 // tối thiểu 80ms giữa hai lần chạy.
 var observer = null;
 var runLastAt = 0, runTimer = null;
+
+// ---- Video toàn màn hình ----
+// Trong lúc phát toàn màn hình, trình phát YouTube biến thành một khối cố định rất lớn và đổi kích thước liên tục:
+// script tạm dừng hẳn (đỡ lag), và khi thoát thì xoá mọi thứ nó đã ghi vào trang (top đã dời, padding thêm cho khối lớn)
+// rồi cho trang tự bố cục lại trước khi tính lại từ đầu.
+function inFs(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+var wasFs = false;
+function edgeResetAll(){
+  try {
+    var els = document.querySelectorAll('[data-edge-shift],[data-edge-hd],[data-edge-hdbg],[data-edge-pad]');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.hasAttribute('data-edge-pad')) {
+        el.style.removeProperty('padding-top');
+        el.style.removeProperty('box-sizing');
+      }
+      if (el.hasAttribute('data-edge-shift') || el.hasAttribute('data-edge-hd') || el.hasAttribute('data-edge-hdbg')) {
+        el.style.removeProperty('top');
+      }
+      el.removeAttribute('data-edge-shift');
+      el.removeAttribute('data-edge-hd');
+      el.removeAttribute('data-edge-hdbg');
+      el.removeAttribute('data-edge-pad');
+    }
+    edgeShiftList = [];
+    window.__edgeHdBg = null;
+    styleCache = new WeakMap();
+    last = '';
+  } catch (e) {}
+}
+function fsCheck(){
+  if (inFs()) { wasFs = true; return; }
+  if (!wasFs) return;
+  wasFs = false;
+  edgeResetAll();
+  try { window.dispatchEvent(new Event('resize')); } catch (e) {}   // để YouTube tự tính lại kích thước trình phát
+  setTimeout(function(){ window.__edgeRun(); }, 250);
+  setTimeout(function(){ window.__edgeRun(); }, 900);
+}
+document.addEventListener('fullscreenchange', fsCheck);
+document.addEventListener('webkitfullscreenchange', fsCheck);
+window.__edgeFsCheck = fsCheck;
 function drainSelf(){
   // Mutation do chính script gây ra (dời top, translate...) đang nằm trong hàng đợi: bỏ đi để không tự kích hoạt lại
   try { if (observer) observer.takeRecords(); } catch (e) {}
@@ -843,6 +886,7 @@ function applyLift(){
 }
 
 function runLift(){
+  if (inFs()) return;
   var R = window.__edgeBottom || 0;
   var H = window.innerHeight, W = window.innerWidth;
   var zone = 200;
@@ -919,6 +963,7 @@ try {
 try {
   var obsLast = 0, obsTimer = null;
   observer = new MutationObserver(function(records){
+    if (inFs()) return;
     for (var i = 0; i < records.length; i++) {
       if (records[i].type === 'childList') { schedAll(); return; }   // thêm/bớt phần tử: làm đủ như cũ
     }

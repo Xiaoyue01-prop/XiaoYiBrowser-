@@ -121,7 +121,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     // Trạng thái media của tab đang xem: đẩy sang MediaSession và cập nhật cửa sổ PiP.
     private fun onWebMediaState(info: WebMediaInfo) {
         webMedia.onPageState(info)
-        if (info.active) pipController.setVideoInfo(info.videoWidth, info.videoHeight, info.title, info.artist)
+        if (info.active) {
+            lastVideoAspect = info.aspect
+            pipController.setVideoInfo(info.videoWidth, info.videoHeight, info.title, info.artist)
+        }
     }
 
     override fun isBridgeHostDestroyed(): Boolean = isActivityDestroyed
@@ -595,6 +598,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     /** Các controller dùng chung BlurTarget (tải xuống, menu, hộp thoại, tab, Orb). */
+    // Tỉ lệ khung hình video đang phát (rộng/cao), 0 = chưa biết
+    private var lastVideoAspect = 0f
+
     private fun createControllers() {
         fullscreenVideoController = BrowserFullscreenController(
             activity = this,
@@ -603,7 +609,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             onBottomReserveChanged = pageEdge::pushBottomReserve,
             onOrbTemporarilyHidden = { hidden -> orbController?.setTemporarilyHidden(hidden) },
             onOrbVisibilitySync = ::syncOrbMenuVisibility,
-            isHostDestroyed = { isActivityDestroyed }
+            isHostDestroyed = { isActivityDestroyed },
+            isLandscapeVideo = { lastVideoAspect == 0f || lastVideoAspect > 1f }
         )
         suggestionController = SuggestionController(
             activity = this,
