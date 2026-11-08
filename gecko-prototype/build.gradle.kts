@@ -31,5 +31,5 @@ kotlin {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.19.1")
-    implementation("org.mozilla.geckoview:geckoview-stable:159.0.20261022150525")
+    implementation("org.mozilla.geckoview:geckoview:159.0.20261022150525")
 }
