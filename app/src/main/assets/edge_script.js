@@ -305,6 +305,8 @@ function hdrUndo(){
   for (var i = 0; i < hdrRecs.length; i++) hdrRestore(hdrRecs[i]);
   hdrRecs = [];
   hdrDone = new WeakSet();
+  stickySeen = new WeakSet();
+  stickyRuns = 0;
 }
 
 // Các header cố định/sticky nằm sát mép trên, rộng và thấp (loại hộp thoại, banner chiếm nhiều màn hình)
@@ -333,55 +335,65 @@ function hdrCandidates(I){
   return out;
 }
 
-// animate = true (header dính vào mép trên lúc đang cuộn): trượt xuống mượt thay vì nhảy một phát
-function hdrApply(el, I, animate){
+function hdrApply(el, I){
   var cs = getComputedStyle(el);
   var top = parseFloat(cs.top);
   if (isNaN(top)) { hdrDone.add(el); return; }          // top: auto -> để nguyên
   if (top < I - 0.5) {
     hdrSave(el);
-    if (animate) {
-      var st = el.style;
-      var prev = st.getPropertyValue('transition'), prevP = st.getPropertyPriority('transition');
-      st.setProperty('transition', 'top 200ms cubic-bezier(0.2, 0.8, 0.2, 1)', 'important');
-      void el.offsetTop;                                // chốt vị trí hiện tại để hiệu ứng bắt đầu từ đó
-      st.setProperty('top', (top + I) + 'px', 'important');
-      setTimeout(function(){
-        if (prev) st.setProperty('transition', prev, prevP); else st.removeProperty('transition');
-      }, 280);
-    } else {
-      el.style.setProperty('top', (top + I) + 'px', 'important');
-    }
+    el.style.setProperty('top', (top + I) + 'px', 'important');
   }
   hdrDone.add(el);
 }
 
-function runHeaders(animate){
+function runHeaders(){
   var I = window.__edgeInset || 0;
   var key = String(I);
   if (key !== hdrKey) { hdrUndo(); hdrKey = key; }
   if (!window.__edgeFull || I <= 0 || !document.elementsFromPoint) return;
   try {
     var list = hdrCandidates(I);
-    for (var i = 0; i < list.length; i++) hdrApply(list[i], I, animate);
+    for (var i = 0; i < list.length; i++) hdrApply(list[i], I);
+    stickyScan();
   } catch (e) {}
 }
 
 function headersSoon(){
   if (hdrTimer) return;
-  hdrTimer = setTimeout(function(){ hdrTimer = null; runHeaders(false); }, 120);
+  hdrTimer = setTimeout(function(){ hdrTimer = null; runHeaders(); }, 120);
 }
 
-// Header sticky nằm sâu trong trang chỉ dính vào mép trên khi cuộn tới nó: quét lại một lượt nhỏ sau khi người dùng
-// ngừng cuộn (không chạy trong lúc đang cuộn) rồi trượt nó xuống dưới thanh trạng thái.
-var hdrScrollTimer = null;
-function headersAfterScroll(){
-  if (!window.__edgeFull || !(window.__edgeInset > 0)) return;
-  if (hdrScrollTimer) clearTimeout(hdrScrollTimer);
-  hdrScrollTimer = setTimeout(function(){ hdrScrollTimer = null; runHeaders(true); }, 150);
+// Header sticky nằm sâu trong trang (dưới banner, dưới hero...) chỉ kẹt vào mép trên khi cuộn tới nó, nên không
+// thấy được lúc nạp. Đặt sẵn top = chiều cao thanh trạng thái cho mọi phần tử sticky dạng thanh rộng: chưa kẹt thì
+// nó vẫn nằm đúng chỗ trong dòng chảy của trang, tới lúc kẹt thì kẹt ngay dưới thanh trạng thái, không cần đuổi theo
+// lúc cuộn. Quét toàn bộ phần tử theo từng lô nhỏ lúc trình duyệt rảnh, và chỉ vài lần cho mỗi trang.
+var stickySeen = new WeakSet();
+var stickyRuns = 0;
+function stickyScan(){
+  var I = window.__edgeInset || 0;
+  if (!window.__edgeFull || I <= 0 || !document.body || stickyRuns >= 5) return;
+  stickyRuns++;
+  var all = document.body.getElementsByTagName('*');
+  var i = 0, n = all.length, w = window.innerWidth, h = window.innerHeight;
+  function chunk(){
+    var end = Math.min(n, i + 300);
+    for (; i < end; i++) {
+      var el = all[i];
+      if (stickySeen.has(el)) continue;
+      var cs = getComputedStyle(el);
+      if (cs.position !== 'sticky') continue;
+      stickySeen.add(el);
+      var top = parseFloat(cs.top);
+      if (isNaN(top) || top >= I - 0.5) continue;
+      var r = el.getBoundingClientRect();
+      if (r.width <= w * 0.6 || r.height <= 8 || r.height >= h * 0.3) continue;   // chỉ thanh rộng, thấp
+      hdrSave(el);
+      el.style.setProperty('top', (top + I) + 'px', 'important');
+    }
+    if (i < n) { (window.requestIdleCallback || function(f){ setTimeout(f, 50); })(chunk); }
+  }
+  chunk();
 }
-window.addEventListener('scroll', headersAfterScroll, {passive: true, capture: true});
-window.addEventListener('scrollend', headersAfterScroll, {passive: true, capture: true});
 
 function sched(){
   if (rafId) return;
