@@ -270,10 +270,26 @@ function runTop(){
   } catch (e) {}
 }
 
-// WebView tràn viền: dải thanh trạng thái là lớp mờ của app nên không báo màu; header do runHeaders xử lý riêng.
+// Tràn viền, trang không có cover: header cố định/sticky đang nằm ngay dưới thanh trạng thái thì thanh trạng thái lấy
+// màu nền của header đó (đặc, như Safari kéo màu header lên phủ thanh trạng thái). Không có header thì báo 'none':
+// app tự vẽ nền theo màu nền trang (đặc ở đầu trang, mờ dần khi nội dung trôi dưới thanh). Trang có cover thì
+// trang tự lo nên không báo màu.
+function runTopFull(){
+  var I = window.__edgeInset || 0;
+  if (I <= 0 || !document.elementsFromPoint) { report('none'); return; }
+  try {
+    var stack = document.elementsFromPoint(window.innerWidth * 0.5, I + 2);
+    var color = null;
+    for (var j = 0; j < stack.length && !color; j++) {
+      if (pinned(stack[j])) { color = climb(stack[j]); }
+    }
+    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
+  } catch (e) { report('none'); }
+}
+
 // WebView nằm dưới thanh trạng thái: chỉ cần màu mép trên của trang.
 function run(){
-  if (window.__edgeFull) { report('none'); }
+  if (window.__edgeFull) { runTopFull(); }
   else { runTop(); }
 }
 
