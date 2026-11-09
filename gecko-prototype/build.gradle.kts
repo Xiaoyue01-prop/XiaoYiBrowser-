@@ -16,7 +16,7 @@ android {
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
         versionCode = 1
-        versionName = "0.2-gecko-display"
+        versionName = "0.3-gecko-statusbar"
     }
 
     compileOptions {

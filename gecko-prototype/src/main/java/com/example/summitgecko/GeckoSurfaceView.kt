@@ -26,6 +26,10 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
     private var insetBottom = 0
     private var insetLeft = 0
 
+    /** True once the Surface exists and is valid; PixelCopy needs this. */
+    val isSurfaceReady: Boolean
+        get() = surfaceValid && holder.surface.isValid
+
     init {
         holder.addCallback(this)
     }

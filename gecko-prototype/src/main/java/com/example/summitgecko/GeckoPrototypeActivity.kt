@@ -1,10 +1,27 @@
 package com.example.summitgecko
 
 import android.app.Activity
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
+import android.graphics.Rect
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.InputType
 import android.view.Gravity
+import android.view.PixelCopy
+import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.view.ViewCompat
@@ -15,11 +32,17 @@ import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
 
 /**
- * Engine spike v2. Uses a custom GeckoSurfaceView (public GeckoSession.acquireDisplay API)
- * instead of the stock GeckoView widget, so the app can feed GeckoDisplay.safeAreaInsetsChanged.
+ * Engine spike v3 (public API only).
  *
- * Experiment: load the cover page, press "Inset", and see whether env(safe-area-inset-top)
- * on the page changes from 0 to the status bar height.
+ *  Mode "Below": Gecko sits under the status bar (like Chrome). The strip above it is painted
+ *                with a colour sampled from the top pixels of the page (Safari-like).
+ *  Mode "Edge" : Gecko extends under the status bar, safeAreaInsetsChanged is fed, and the strip
+ *                shows a blurred copy of the page's top area (glass test).
+ *
+ * Both rely on PixelCopy reading the Gecko surface. The info line shows whether that works:
+ *   "surface ok"  -> PixelCopy from the SurfaceView works
+ *   "window ok"   -> only a whole-window copy works (fallback, Below mode only)
+ *   "failed ..."  -> neither works, report the codes
  */
 class GeckoPrototypeActivity : Activity() {
 
@@ -33,18 +56,34 @@ class GeckoPrototypeActivity : Activity() {
                     .also { sharedRuntime = it }
             }
 
-        private const val COVER_URL = "resource://android/assets/gecko_test/cover.html"
-        private const val DEFAULT_URL = "resource://android/assets/gecko_test/default.html"
+        private const val TEST_URL = "resource://android/assets/gecko_test/default.html"
+        private const val SAMPLE_INTERVAL_MS = 300L
     }
 
+    private lateinit var root: FrameLayout
     private lateinit var surfaceView: GeckoSurfaceView
+    private lateinit var topStrip: ImageView
+    private lateinit var controls: LinearLayout
+    private lateinit var info: TextView
+    private lateinit var urlField: EditText
+    private lateinit var modeButton: Button
     private lateinit var session: GeckoSession
-    private lateinit var stateLabel: TextView
-    private lateinit var insetButton: Button
+    private lateinit var insetsController: WindowInsetsControllerCompat
 
+    private val ui = Handler(Looper.getMainLooper())
     private var statusTop = 0
-    private var insetOn = false
-    private var pageLabel = "viewport-fit=cover"
+    private var controlsHeight = 0
+    private var edgeMode = false
+    private var fullscreen = false
+    private var sampledColor = Color.BLACK
+    private var copyState = "waiting"
+
+    private val tick = object : Runnable {
+        override fun run() {
+            sampleTop()
+            ui.postDelayed(this, SAMPLE_INTERVAL_MS)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,51 +91,83 @@ class GeckoPrototypeActivity : Activity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            isAppearanceLightStatusBars = false
-            isAppearanceLightNavigationBars = false
-        }
+        insetsController = WindowInsetsControllerCompat(window, window.decorView)
+        insetsController.isAppearanceLightStatusBars = false
+        insetsController.isAppearanceLightNavigationBars = false
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.BLACK)
-        }
+        root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
 
         surfaceView = GeckoSurfaceView(this)
         root.addView(
             surfaceView,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
             )
         )
 
-        val controls = LinearLayout(this).apply {
+        topStrip = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_XY
+            setBackgroundColor(Color.BLACK)
+        }
+        root.addView(
+            topStrip,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                0,
+                Gravity.TOP
+            )
+        )
+
+        controls = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
             setPadding(dp(12), dp(8), dp(12), dp(8))
-            setBackgroundColor(Color.argb(232, 18, 22, 30))
+            setBackgroundColor(Color.argb(240, 18, 22, 30))
             elevation = dp(12).toFloat()
         }
 
-        stateLabel = TextView(this).apply {
+        info = TextView(this).apply {
             setTextColor(Color.WHITE)
-            textSize = 12f
-            gravity = Gravity.CENTER
+            textSize = 11f
+            maxLines = 2
+        }
+        controls.addView(info)
+
+        urlField = EditText(this).apply {
+            hint = "URL hoặc từ khoá"
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            imeOptions = EditorInfo.IME_ACTION_GO
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_GO) {
+                    go()
+                    true
+                } else {
+                    false
+                }
+            }
         }
         controls.addView(
-            stateLabel,
+            urlField,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(28)
+                LinearLayout.LayoutParams.WRAP_CONTENT
             )
         )
 
-        insetButton = makeButton("Inset: off") {
-            insetOn = !insetOn
-            applyInsets()
-            // Reload so the page re-evaluates env() from scratch.
+        modeButton = makeButton("Mode: Below") {
+            edgeMode = !edgeMode
+            if (!edgeMode) {
+                topStrip.setImageDrawable(null)
+                topStrip.setRenderEffect(null)
+                topStrip.colorFilter = null
+                topStrip.setBackgroundColor(sampledColor)
+            }
+            copyState = "waiting"
+            updateLayout()
             if (::session.isInitialized) session.reload()
         }
 
@@ -104,9 +175,11 @@ class GeckoPrototypeActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        buttons.addView(makeButton("Cover") { loadTestPage(COVER_URL, "viewport-fit=cover") }, weighted())
-        buttons.addView(makeButton("No cover") { loadTestPage(DEFAULT_URL, "default viewport") }, weighted())
-        buttons.addView(insetButton, weighted())
+        buttons.addView(makeButton("Go") { go() }, weighted())
+        buttons.addView(makeButton("Test") {
+            if (::session.isInitialized) session.loadUri(TEST_URL)
+        }, weighted())
+        buttons.addView(modeButton, weighted())
         buttons.addView(makeButton("Reload") {
             if (::session.isInitialized) session.reload()
         }, weighted())
@@ -120,21 +193,29 @@ class GeckoPrototypeActivity : Activity() {
 
         root.addView(
             controls,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
             )
         )
 
-        // One listener: remember the status bar height for the Inset experiment and keep
-        // the native controls above the navigation gesture area. Insets are not consumed.
+        controls.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+            val h = bottom - top
+            if (h != controlsHeight && right - left > 0) {
+                controlsHeight = h
+                updateLayout()
+            }
+        }
+
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
-            statusTop = bars.top
-            controls.setPadding(dp(12), dp(8), dp(12), bars.bottom + dp(8))
-            if (insetOn) applyInsets()
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            if (!fullscreen) statusTop = bars.top
+            controls.setPadding(dp(12), dp(8), dp(12), maxOf(bars.bottom, ime.bottom) + dp(8))
+            updateLayout()
             insets
         }
 
@@ -142,19 +223,185 @@ class GeckoPrototypeActivity : Activity() {
         ViewCompat.requestApplyInsets(root)
 
         session = GeckoSession()
-        session.setContentDelegate(object : GeckoSession.ContentDelegate {})
+        session.setContentDelegate(object : GeckoSession.ContentDelegate {
+            override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
+                runOnUiThread { setFullscreen(fullScreen) }
+            }
+        })
         session.open(runtime(this))
         surfaceView.attach(session)
-        applyInsets()
-        loadTestPage(COVER_URL, "viewport-fit=cover")
+        updateLayout()
+        session.loadUri(TEST_URL)
     }
 
-    private fun applyInsets() {
-        val top = if (insetOn) statusTop else 0
-        surfaceView.setSafeInsets(top, 0, 0, 0)
-        val css = top / resources.displayMetrics.density
-        insetButton.text = if (insetOn) "Inset: on" else "Inset: off"
-        stateLabel.text = "GeckoView 159 · $pageLabel · inset ${top}px (≈${"%.1f".format(css)} css)"
+    // ---- layout / modes -------------------------------------------------------------------
+
+    private fun updateLayout() {
+        if (!::surfaceView.isInitialized || !::modeButton.isInitialized) return
+
+        val top = if (fullscreen || edgeMode) 0 else statusTop
+        val bottom = if (fullscreen) 0 else controlsHeight
+        val lp = surfaceView.layoutParams as FrameLayout.LayoutParams
+        if (lp.topMargin != top || lp.bottomMargin != bottom) {
+            lp.topMargin = top
+            lp.bottomMargin = bottom
+            surfaceView.layoutParams = lp
+        }
+
+        val stripHeight = if (fullscreen) 0 else statusTop
+        val sp = topStrip.layoutParams
+        if (sp.height != stripHeight) {
+            sp.height = stripHeight
+            topStrip.layoutParams = sp
+        }
+
+        controls.visibility = if (fullscreen) View.GONE else View.VISIBLE
+        surfaceView.setSafeInsets(if (edgeMode && !fullscreen) statusTop else 0, 0, 0, 0)
+        modeButton.text = if (edgeMode) "Mode: Edge" else "Mode: Below"
+        updateInfo()
+    }
+
+    private fun setFullscreen(on: Boolean) {
+        fullscreen = on
+        if (on) {
+            insetsController.hide(WindowInsetsCompat.Type.systemBars())
+            insetsController.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        } else {
+            insetsController.show(WindowInsetsCompat.Type.systemBars())
+        }
+        updateLayout()
+    }
+
+    // ---- sampling the Gecko surface -------------------------------------------------------
+
+    private fun sampleTop() {
+        if (fullscreen || !::surfaceView.isInitialized) return
+        if (!surfaceView.isSurfaceReady || surfaceView.width <= 0 || statusTop <= 0) return
+        try {
+            if (edgeMode) sampleGlass() else sampleColor()
+        } catch (e: Exception) {
+            copyState = "error ${e.javaClass.simpleName}"
+            updateInfo()
+        }
+    }
+
+    private fun sampleColor() {
+        val w = surfaceView.width
+        val h = minOf(6, surfaceView.height)
+        if (h <= 0) return
+        val bmp = Bitmap.createBitmap(8, 1, Bitmap.Config.ARGB_8888)
+        PixelCopy.request(
+            surfaceView,
+            Rect(0, 0, w, h),
+            bmp,
+            PixelCopy.OnPixelCopyFinishedListener { code ->
+                if (code == PixelCopy.SUCCESS) {
+                    copyState = "surface ok"
+                    applyColor(bmp)
+                } else {
+                    sampleColorFromWindow(code)
+                }
+            },
+            ui
+        )
+    }
+
+    private fun sampleColorFromWindow(surfaceCode: Int) {
+        try {
+            val loc = IntArray(2)
+            surfaceView.getLocationInWindow(loc)
+            val rect = Rect(loc[0], loc[1], loc[0] + surfaceView.width, loc[1] + 6)
+            val bmp = Bitmap.createBitmap(8, 1, Bitmap.Config.ARGB_8888)
+            PixelCopy.request(
+                window,
+                rect,
+                bmp,
+                PixelCopy.OnPixelCopyFinishedListener { code ->
+                    if (code == PixelCopy.SUCCESS) {
+                        copyState = "window ok (surface=$surfaceCode)"
+                        applyColor(bmp)
+                    } else {
+                        copyState = "failed surface=$surfaceCode window=$code"
+                        updateInfo()
+                    }
+                },
+                ui
+            )
+        } catch (e: Exception) {
+            copyState = "failed surface=$surfaceCode window=${e.javaClass.simpleName}"
+            updateInfo()
+        }
+    }
+
+    private fun sampleGlass() {
+        val w = surfaceView.width
+        val h = statusTop
+        if (h <= 0 || surfaceView.height < h) return
+        val bmp = Bitmap.createBitmap(maxOf(1, w / 8), maxOf(1, h / 8), Bitmap.Config.ARGB_8888)
+        PixelCopy.request(
+            surfaceView,
+            Rect(0, 0, w, h),
+            bmp,
+            PixelCopy.OnPixelCopyFinishedListener { code ->
+                if (code == PixelCopy.SUCCESS) {
+                    copyState = "surface ok (glass)"
+                    topStrip.setImageBitmap(bmp)
+                    topStrip.setBackgroundColor(Color.TRANSPARENT)
+                    topStrip.setRenderEffect(
+                        RenderEffect.createBlurEffect(16f, 16f, Shader.TileMode.CLAMP)
+                    )
+                    topStrip.colorFilter = PorterDuffColorFilter(
+                        Color.argb(60, 18, 22, 30),
+                        PorterDuff.Mode.SRC_ATOP
+                    )
+                } else {
+                    copyState = "glass failed surface=$code"
+                }
+                updateInfo()
+            },
+            ui
+        )
+    }
+
+    private fun luminance(c: Int): Double =
+        0.299 * Color.red(c) + 0.587 * Color.green(c) + 0.114 * Color.blue(c)
+
+    private fun applyColor(bmp: Bitmap) {
+        val px = IntArray(8)
+        bmp.getPixels(px, 0, 8, 0, 0, 8, 1)
+        // Median by luminance: ignores a logo or button sitting in the sampled row.
+        val c = px.sortedBy { luminance(it) }[4] or (0xFF shl 24)
+        sampledColor = c
+        topStrip.setImageDrawable(null)
+        topStrip.setRenderEffect(null)
+        topStrip.colorFilter = null
+        topStrip.setBackgroundColor(c)
+        insetsController.isAppearanceLightStatusBars = luminance(c) > 150
+        updateInfo()
+    }
+
+    private fun updateInfo() {
+        if (!::info.isInitialized) return
+        val mode = if (edgeMode) "Edge" else "Below"
+        info.text = "GeckoView 159 · $mode · copy: $copyState · " +
+            "#%06X · bar ${statusTop}px".format(sampledColor and 0xFFFFFF)
+    }
+
+    // ---- navigation -----------------------------------------------------------------------
+
+    private fun go() {
+        val t = urlField.text.toString().trim()
+        if (t.isEmpty() || !::session.isInitialized) return
+        val url = when {
+            t.contains("://") -> t
+            t.contains(' ') || !t.contains('.') -> "https://duckduckgo.com/?q=" + Uri.encode(t)
+            else -> "https://$t"
+        }
+        session.loadUri(url)
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(urlField.windowToken, 0)
+        urlField.clearFocus()
     }
 
     private fun makeButton(label: String, action: () -> Unit): Button =
@@ -174,15 +421,10 @@ class GeckoPrototypeActivity : Activity() {
         marginEnd = dp(3)
     }
 
-    private fun loadTestPage(url: String, label: String) {
-        if (!::session.isInitialized) return
-        pageLabel = label
-        applyInsets()
-        session.loadUri(url)
-    }
-
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density + 0.5f).toInt()
+
+    // ---- lifecycle ------------------------------------------------------------------------
 
     override fun onResume() {
         super.onResume()
@@ -190,9 +432,12 @@ class GeckoPrototypeActivity : Activity() {
             session.setActive(true)
             session.setFocused(true)
         }
+        ui.removeCallbacks(tick)
+        ui.postDelayed(tick, SAMPLE_INTERVAL_MS)
     }
 
     override fun onPause() {
+        ui.removeCallbacks(tick)
         if (::session.isInitialized) {
             session.setFocused(false)
             session.setActive(false)
@@ -201,6 +446,7 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     override fun onDestroy() {
+        ui.removeCallbacks(tick)
         if (::surfaceView.isInitialized) surfaceView.detach()
         if (::session.isInitialized && session.isOpen) session.close()
         super.onDestroy()

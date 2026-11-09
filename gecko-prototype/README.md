@@ -21,6 +21,13 @@ APK output:
 gecko-prototype/build/outputs/apk/debug/gecko-prototype-debug.apk
 ```
 
+## v3: status bar colour + glass test
+Mode "Below": Gecko sits under the status bar, and the strip above it takes a colour sampled
+(PixelCopy, median of the top row) from the page. Mode "Edge": Gecko extends under the bar,
+insets are fed, and the strip shows a blurred copy of the page top. The info line reports
+"copy: surface ok / window ok / failed ..." so we know whether the Gecko surface can be read.
+URL box and Go button for trying real sites (Facebook, YouTube; fullscreen video is handled).
+
 ## v2: custom display host (public API)
 `GeckoSurfaceView` replaces the stock `GeckoView` widget. It calls the public
 `GeckoSession.acquireDisplay()`, feeds `GeckoDisplay.surfaceChanged(SurfaceInfo)` and
