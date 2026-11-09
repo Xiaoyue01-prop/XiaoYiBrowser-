@@ -12,8 +12,9 @@ android {
 
     defaultConfig {
         applicationId = "com.example.summitgecko"
-        minSdk = 26
+        minSdk = 36
         targetSdk = 36
+        ndk { abiFilters += "arm64-v8a" }
         versionCode = 1
         versionName = "0.1-gecko-prototype"
     }
