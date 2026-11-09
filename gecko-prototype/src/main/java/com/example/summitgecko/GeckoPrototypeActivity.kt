@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.net.Uri
+import android.util.Log
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -63,6 +64,7 @@ class GeckoPrototypeActivity : Activity() {
         private const val TEST_URL = "resource://android/assets/gecko_test/default.html"
         private const val PROBE_URI = "resource://android/assets/summit_probe/"
         private const val PROBE_ID = "summit-probe@example.com"
+        private const val PROBE_LOG_TAG = "SummitProbe"
         private const val SAMPLE_INTERVAL_MS = 300L
         private val MODE_NAMES = arrayOf("Below", "Edge JS", "Edge Native")
     }
@@ -101,8 +103,38 @@ class GeckoPrototypeActivity : Activity() {
             message: Any,
             sender: WebExtension.MessageSender
         ): GeckoResult<Any>? {
-            if (message is JSONObject) {
-                runOnUiThread { handleProbe(message) }
+            // Keep this log before parsing/validation: it proves the native callback was reached.
+            Log.i(
+                PROBE_LOG_TAG,
+                "onMessage nativeApp=$nativeApp env=${sender.environmentType} " +
+                    "url=${sender.url} message=$message"
+            )
+
+            val payload = message as? JSONObject
+            if (payload == null) {
+                runOnUiThread {
+                    probeState = "message received (non-JSON: ${message.javaClass.simpleName})"
+                    updateInfo()
+                }
+                return null
+            }
+
+            runOnUiThread {
+                when (payload.optString("type")) {
+                    "background-start" -> {
+                        probeState = "background msg OK · waiting content script"
+                        updateInfo()
+                    }
+                    "probe-start" -> {
+                        probeState = "content injected · native msg OK · ${sender.url.substringAfter("//").take(34)}"
+                        updateInfo()
+                    }
+                    "top" -> handleProbe(payload)
+                    else -> {
+                        probeState = "message received · type=${payload.optString("type", "?")}"
+                        updateInfo()
+                    }
+                }
             }
             return null
         }
@@ -276,11 +308,13 @@ class GeckoPrototypeActivity : Activity() {
                         if (ext == null) {
                             probeState = "ext null"
                         } else {
-                            // Background-level and content-script-level delegates.
-                            ext.setMessageDelegate(probeDelegate, "browser")
+                            // Register both routes. Content scripts require the session-specific
+                            // delegate; the extension-level delegate is for background scripts.
                             session.webExtensionController
                                 .setMessageDelegate(ext, probeDelegate, "browser")
-                            probeState = "ext ok, no msg yet"
+                            ext.setMessageDelegate(probeDelegate, "browser")
+                            probeState = "ext ok · waiting probe-start"
+                            Log.i(PROBE_LOG_TAG, "Built-in extension installed; delegates registered")
                         }
                         updateInfo()
                     }

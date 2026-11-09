@@ -26,7 +26,10 @@ The Mode button cycles Below / Edge JS / Edge Native. Edge JS uses the bundled W
 `assets/summit_probe` (content script) to move fixed/sticky headers down by
 `env(safe-area-inset-top)` and report the header colour. Edge Native instead sets
 `GeckoDisplay.setDynamicToolbarMaxHeight(statusBar)` to see if Gecko does it by itself.
-The info line shows `probe: msgs=.. fixed=.. shifted=.. inset=..` (extension to app messaging).
+The info line now distinguishes `background msg OK`, `content injected`, and `msgs=.. fixed=.. shifted=.. inset=..`.
+The bundled extension version is bumped to 1.1 so `ensureBuiltIn` replaces a previously persisted 1.0 copy.
+The content script sends an immediate `probe-start` handshake and logs native-messaging failures instead
+of swallowing them; failed payloads remain eligible for retry on the next scan.
 
 ## v3: status bar colour + glass test
 Mode "Below": Gecko sits under the status bar, and the strip above it takes a colour sampled

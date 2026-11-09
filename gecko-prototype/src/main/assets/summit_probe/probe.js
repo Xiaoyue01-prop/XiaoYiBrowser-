@@ -13,6 +13,7 @@
   let timer = null;
   let lastScan = 0;
   let lastKey = '';
+  const inFlight = new Set();
 
   function readInset() {
     try {
@@ -57,15 +58,48 @@
 
   function send(msg) {
     const key = JSON.stringify(msg);
-    if (key === lastKey) return;
-    lastKey = key;
+    if (key === lastKey || inFlight.has(key)) return;
+
+    if (typeof browser === 'undefined' ||
+        !browser.runtime ||
+        typeof browser.runtime.sendNativeMessage !== 'function') {
+      window.__summitProbeStatus = 'native-messaging-api-unavailable';
+      console.error('[Summit Probe] browser.runtime.sendNativeMessage is unavailable');
+      return;
+    }
+
+    inFlight.add(key);
     try {
-      const p = browser.runtime.sendNativeMessage('browser', msg);
-      if (p && p.catch) p.catch(() => {});
-    } catch (e) {
-      /* messaging unavailable */
+      Promise.resolve(browser.runtime.sendNativeMessage('browser', msg)).then(
+        () => {
+          // Mark a payload as sent only after the API call succeeds. Failed messages
+          // remain eligible for retry on the next scan.
+          lastKey = key;
+          inFlight.delete(key);
+          window.__summitProbeStatus = 'native-message-sent';
+        },
+        error => {
+          inFlight.delete(key);
+          window.__summitProbeStatus = 'native-message-error';
+          console.error('[Summit Probe] sendNativeMessage failed:', error);
+        }
+      );
+    } catch (error) {
+      inFlight.delete(key);
+      window.__summitProbeStatus = 'native-message-error';
+      console.error('[Summit Probe] sendNativeMessage threw:', error);
     }
   }
+
+  // Send this before waiting for document.body or running the DOM scanner.
+  // If Kotlin receives it, both content-script injection and native messaging work.
+  window.__summitProbeStatus = 'injected';
+  send({
+    type: 'probe-start',
+    href: location.href,
+    readyState: document.readyState,
+    timestamp: Date.now()
+  });
 
   function scan() {
     lastScan = Date.now();
