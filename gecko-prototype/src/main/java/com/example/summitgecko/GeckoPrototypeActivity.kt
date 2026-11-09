@@ -4,22 +4,22 @@ import android.app.Activity
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
-import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.core.view.ViewCompat
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
-import org.mozilla.geckoview.GeckoView
 
 /**
- * Isolated engine spike. It deliberately does not touch Summit's production WebView path.
- * The only purpose of this APK is to verify Gecko rendering and edge-to-edge behavior
- * against pages with and without viewport-fit=cover.
+ * Engine spike v2. Uses a custom GeckoSurfaceView (public GeckoSession.acquireDisplay API)
+ * instead of the stock GeckoView widget, so the app can feed GeckoDisplay.safeAreaInsetsChanged.
+ *
+ * Experiment: load the cover page, press "Inset", and see whether env(safe-area-inset-top)
+ * on the page changes from 0 to the status bar height.
  */
 class GeckoPrototypeActivity : Activity() {
 
@@ -37,9 +37,14 @@ class GeckoPrototypeActivity : Activity() {
         private const val DEFAULT_URL = "resource://android/assets/gecko_test/default.html"
     }
 
-    private lateinit var geckoView: GeckoView
+    private lateinit var surfaceView: GeckoSurfaceView
     private lateinit var session: GeckoSession
     private lateinit var stateLabel: TextView
+    private lateinit var insetButton: Button
+
+    private var statusTop = 0
+    private var insetOn = false
+    private var pageLabel = "viewport-fit=cover"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,12 +62,9 @@ class GeckoPrototypeActivity : Activity() {
             setBackgroundColor(Color.BLACK)
         }
 
-        geckoView = GeckoView(this).apply {
-            setBackgroundColor(Color.WHITE)
-            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        }
+        surfaceView = GeckoSurfaceView(this)
         root.addView(
-            geckoView,
+            surfaceView,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -79,7 +81,6 @@ class GeckoPrototypeActivity : Activity() {
         }
 
         stateLabel = TextView(this).apply {
-            text = "GeckoView 159 · Edge-to-edge test"
             setTextColor(Color.WHITE)
             textSize = 12f
             gravity = Gravity.CENTER
@@ -92,12 +93,20 @@ class GeckoPrototypeActivity : Activity() {
             )
         )
 
+        insetButton = makeButton("Inset: off") {
+            insetOn = !insetOn
+            applyInsets()
+            // Reload so the page re-evaluates env() from scratch.
+            if (::session.isInitialized) session.reload()
+        }
+
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
         buttons.addView(makeButton("Cover") { loadTestPage(COVER_URL, "viewport-fit=cover") }, weighted())
         buttons.addView(makeButton("No cover") { loadTestPage(DEFAULT_URL, "default viewport") }, weighted())
+        buttons.addView(insetButton, weighted())
         buttons.addView(makeButton("Reload") {
             if (::session.isInitialized) session.reload()
         }, weighted())
@@ -117,11 +126,15 @@ class GeckoPrototypeActivity : Activity() {
             )
         )
 
-        // Keep the native test controls above the navigation gesture area.
-        // GeckoView itself remains edge-to-edge and receives the full content surface.
-        ViewCompat.setOnApplyWindowInsetsListener(controls) { view, insets ->
-            val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            view.setPadding(dp(12), dp(8), dp(12), nav.bottom + dp(8))
+        // One listener: remember the status bar height for the Inset experiment and keep
+        // the native controls above the navigation gesture area. Insets are not consumed.
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            statusTop = bars.top
+            controls.setPadding(dp(12), dp(8), dp(12), bars.bottom + dp(8))
+            if (insetOn) applyInsets()
             insets
         }
 
@@ -131,8 +144,17 @@ class GeckoPrototypeActivity : Activity() {
         session = GeckoSession()
         session.setContentDelegate(object : GeckoSession.ContentDelegate {})
         session.open(runtime(this))
-        geckoView.setSession(session)
+        surfaceView.attach(session)
+        applyInsets()
         loadTestPage(COVER_URL, "viewport-fit=cover")
+    }
+
+    private fun applyInsets() {
+        val top = if (insetOn) statusTop else 0
+        surfaceView.setSafeInsets(top, 0, 0, 0)
+        val css = top / resources.displayMetrics.density
+        insetButton.text = if (insetOn) "Inset: on" else "Inset: off"
+        stateLabel.text = "GeckoView 159 · $pageLabel · inset ${top}px (≈${"%.1f".format(css)} css)"
     }
 
     private fun makeButton(label: String, action: () -> Unit): Button =
@@ -154,7 +176,8 @@ class GeckoPrototypeActivity : Activity() {
 
     private fun loadTestPage(url: String, label: String) {
         if (!::session.isInitialized) return
-        stateLabel.text = "GeckoView 159 · $label"
+        pageLabel = label
+        applyInsets()
         session.loadUri(url)
     }
 
@@ -163,19 +186,23 @@ class GeckoPrototypeActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (::session.isInitialized) session.setActive(true)
+        if (::session.isInitialized) {
+            session.setActive(true)
+            session.setFocused(true)
+        }
     }
 
     override fun onPause() {
-        if (::session.isInitialized) session.setActive(false)
+        if (::session.isInitialized) {
+            session.setFocused(false)
+            session.setActive(false)
+        }
         super.onPause()
     }
 
     override fun onDestroy() {
-        if (::geckoView.isInitialized) {
-            val attached = geckoView.releaseSession()
-            if (attached != null && attached.isOpen) attached.close()
-        }
+        if (::surfaceView.isInitialized) surfaceView.detach()
+        if (::session.isInitialized && session.isOpen) session.close()
         super.onDestroy()
     }
 }

@@ -21,8 +21,15 @@ APK output:
 gecko-prototype/build/outputs/apk/debug/gecko-prototype-debug.apk
 ```
 
-## Important scope note
-The prototype uses the public `GeckoView` widget and its normal lifecycle. The public `GeckoDisplay.safeAreaInsetsChanged()` API exists for custom display integrations, but the normal `GeckoView` widget does not expose its internal `GeckoDisplay` directly. Do not use reflection or private GeckoView internals in production. This prototype first measures the stock widget behavior; if top system-bar occlusion still is not propagated, that is a separate engine-integration blocker to investigate before migrating Summit.
+## v2: custom display host (public API)
+`GeckoSurfaceView` replaces the stock `GeckoView` widget. It calls the public
+`GeckoSession.acquireDisplay()`, feeds `GeckoDisplay.surfaceChanged(SurfaceInfo)` and
+`screenOriginChanged`, forwards touch to `PanZoomController`, and exposes
+`safeAreaInsetsChanged` through `setSafeInsets(top, right, bottom, left)`.
+
+Experiment: open the cover page, note `env top` (expected 0 with "Inset: off"), press
+"Inset" (feeds the status bar height) and check whether `env top` changes.
+Public API only; no reflection or private GeckoView internals.
 
 ## Baseline protection
 The existing `:app` module, its WebView code, Summit UI, Frost Glass, tab system, private profile, downloads, Media3 and AdBlock remain unchanged. Only the root settings/workflow are extended to include and build this separate prototype module.
