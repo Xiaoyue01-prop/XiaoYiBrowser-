@@ -52,3 +52,8 @@ Public API only; no reflection or private GeckoView internals.
 
 ## Baseline protection
 The existing `:app` module, its WebView code, Summit UI, Frost Glass, tab system, private profile, downloads, Media3 and AdBlock remain unchanged. Only the root settings/workflow are extended to include and build this separate prototype module.
+
+
+### Probe 1.4
+- Call `requestIdleCallback` with the `window` receiver to avoid detached-call failures.
+- Report scheduler errors and fall back to a direct scan so detection does not silently stop.

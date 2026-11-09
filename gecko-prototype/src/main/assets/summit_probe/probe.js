@@ -167,9 +167,26 @@
   }
 
   function run() {
-    const idle = window.requestIdleCallback;
-    if (idle) idle(scan, { timeout: 800 });
-    else scan();
+    // Keep the Window receiver: Gecko may reject a detached requestIdleCallback
+    // with an "Illegal invocation" even though the content script was injected.
+    try {
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback.call(window, scan, { timeout: 800 });
+      } else {
+        scan();
+      }
+    } catch (error) {
+      const detail = error && error.message ? error.message : String(error);
+      console.error('[Summit Probe] scheduler failed; falling back to direct scan:', error);
+      send({
+        type: 'scan-error',
+        phase: 'scheduler',
+        error: detail.slice(0, 160),
+        href: location.href
+      });
+      // A scheduler failure must not silently disable header detection.
+      scan();
+    }
   }
 
   function schedule(delay) {
