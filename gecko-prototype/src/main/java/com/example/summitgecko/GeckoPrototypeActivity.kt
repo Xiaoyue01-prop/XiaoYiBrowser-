@@ -43,8 +43,9 @@ import org.mozilla.geckoview.WebExtension
  *  1 Edge JS     Gecko extends under the status bar, safeAreaInsetsChanged is fed, and the
  *                bundled WebExtension ("Summit Probe") moves fixed/sticky headers down by
  *                env(safe-area-inset-top).
- *  2 Edge Native Gecko extends under the status bar, insets are 0 and setDynamicToolbarMaxHeight
- *                is set to the status bar height (does Gecko push fixed headers down itself?).
+ *  2 Edge Native Gecko extends under the status bar, insets are 0 and
+ *                setDynamicToolbarMaxHeight is tested as a separate dynamic-toolbar experiment.
+ *                This API is not documented as a status-bar/header offset.
  *
  * In both Edge modes the strip above the page is the header colour when the extension reports a
  * pinned header, and a blurred copy of the page top otherwise (content scrolls under glass).
@@ -61,7 +62,6 @@ class GeckoPrototypeActivity : Activity() {
                     .also { sharedRuntime = it }
             }
 
-        private const val TEST_URL = "resource://android/assets/gecko_test/default.html"
         private const val PROBE_URI = "resource://android/assets/summit_probe/"
         private const val PROBE_ID = "summit-probe@example.com"
         private const val PROBE_LOG_TAG = "SummitProbe"
@@ -77,6 +77,9 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var urlField: EditText
     private lateinit var modeButton: Button
     private lateinit var session: GeckoSession
+    private var testServer: LocalProbeTestServer? = null
+    private var initialPageLoaded = false
+    private var probeSetupFinished = false
     private lateinit var insetsController: WindowInsetsControllerCompat
 
     private val ui = Handler(Looper.getMainLooper())
@@ -127,6 +130,14 @@ class GeckoPrototypeActivity : Activity() {
                     }
                     "probe-start" -> {
                         probeState = "content injected · native msg OK · ${sender.url.substringAfter("//").take(34)}"
+                        updateInfo()
+                    }
+                    "scan-start" -> {
+                        probeState = "content injected · scan started"
+                        updateInfo()
+                    }
+                    "scan-error" -> {
+                        probeState = "scan error: ${payload.optString("error", "unknown")}".take(110)
                         updateInfo()
                     }
                     "top" -> handleProbe(payload)
@@ -238,7 +249,7 @@ class GeckoPrototypeActivity : Activity() {
         buttons.addView(makeButton("Go") { go() }, weighted())
         buttons.addView(makeButton("Test") {
             resetProbeState()
-            if (::session.isInitialized) session.loadUri(TEST_URL)
+            loadTestPage()
         }, weighted(1.6f))
         buttons.addView(modeButton, weighted(2f))
         buttons.addView(makeButton("Reload") {
@@ -292,9 +303,10 @@ class GeckoPrototypeActivity : Activity() {
         })
         session.open(runtime(this))
         surfaceView.attach(session)
+        testServer = LocalProbeTestServer(assets)
+        testServer?.start()
         installProbe()
         updateLayout()
-        session.loadUri(TEST_URL)
     }
 
     // ---- WebExtension probe ---------------------------------------------------------------
@@ -313,21 +325,44 @@ class GeckoPrototypeActivity : Activity() {
                             session.webExtensionController
                                 .setMessageDelegate(ext, probeDelegate, "browser")
                             ext.setMessageDelegate(probeDelegate, "browser")
-                            probeState = "ext ok · waiting probe-start"
+                            probeState = "ext ok · delegates ready · waiting content script"
                             Log.i(PROBE_LOG_TAG, "Built-in extension installed; delegates registered")
                         }
+                        probeSetupFinished = true
                         updateInfo()
+                        loadInitialTestPage()
                     }
                 }, { err ->
                     runOnUiThread {
                         probeState = "ext failed: ${err?.message}"
+                        probeSetupFinished = true
                         updateInfo()
+                        loadInitialTestPage()
                     }
                 })
         } catch (e: Exception) {
             probeState = "ext error ${e.javaClass.simpleName}"
+            probeSetupFinished = true
             updateInfo()
+            loadInitialTestPage()
         }
+    }
+
+    private fun loadInitialTestPage() {
+        if (initialPageLoaded || !::session.isInitialized) return
+        initialPageLoaded = true
+        loadTestPage()
+    }
+
+    private fun loadTestPage() {
+        if (!probeSetupFinished) {
+            probeState = "waiting for extension setup"
+            updateInfo()
+            return
+        }
+        val base = testServer?.baseUrl ?: return
+        resetProbeState()
+        session.loadUri("$base/cover.html")
     }
 
     private fun handleProbe(m: JSONObject) {
@@ -337,15 +372,19 @@ class GeckoPrototypeActivity : Activity() {
         probeShifted = m.optInt("shifted", 0)
         probeInset = m.optDouble("inset", 0.0)
         probeState = "msgs=$probeMessages fixed=$probeHasFixed shifted=$probeShifted " +
-            "inset=${"%.1f".format(probeInset)}"
+            "inset=${"%.1f".format(probeInset)} nodes=${m.optInt("nodes", 0)} " +
+            "scan=${m.optLong("scanMs", 0)}ms"
         if (isEdge) sampleTop()
         updateInfo()
     }
 
     private fun resetProbeState() {
+        probeMessages = 0
         probeHasFixed = false
         probeColor = null
         probeShifted = 0
+        probeInset = 0.0
+        probeState = "waiting for content script"
     }
 
     private fun parseCssColor(css: String): Int? {
@@ -593,6 +632,8 @@ class GeckoPrototypeActivity : Activity() {
         ui.removeCallbacks(tick)
         if (::surfaceView.isInitialized) surfaceView.detach()
         if (::session.isInitialized && session.isOpen) session.close()
+        testServer?.close()
+        testServer = null
         super.onDestroy()
     }
 }

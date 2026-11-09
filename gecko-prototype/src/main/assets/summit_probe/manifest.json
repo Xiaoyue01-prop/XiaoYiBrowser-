@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Summit Probe",
-  "version": "1.1",
+  "version": "1.2",
   "description": "Finds fixed/sticky headers at the top of a page, keeps them below the status bar and reports their colour to the app.",
   "browser_specific_settings": {
     "gecko": {

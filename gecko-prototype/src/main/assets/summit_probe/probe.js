@@ -14,6 +14,7 @@
   let lastScan = 0;
   let lastKey = '';
   const inFlight = new Set();
+  let scanStarted = false;
 
   function readInset() {
     try {
@@ -102,52 +103,67 @@
   });
 
   function scan() {
-    lastScan = Date.now();
-    const root = document.body;
-    if (!root) return schedule(500);
-    const inset = readInset();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const all = root.getElementsByTagName('*');
-    let shifted = 0;
-    let pinned = null;
-
-    for (let i = 0; i < all.length && i < 6000; i++) {
-      const el = all[i];
-      const cs = getComputedStyle(el);
-      const pos = cs.position;
-      if (pos !== 'fixed' && pos !== 'sticky') continue;
-      const marked = el.hasAttribute(MARK);
-      const top = parseFloat(cs.top);
-      if (Number.isNaN(top)) continue;
-      if (!marked && top > 2) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width < vw * 0.6 || r.height < 24 || r.height > vh * 0.4) continue;
-      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
-
-      if (!marked) el.setAttribute(MARK, String(top));
-      const base = parseFloat(el.getAttribute(MARK)) || 0;
-      const target = base + inset;
-      if (Math.abs(top - target) > 0.5) {
-        el.style.setProperty('top', target + 'px', 'important');
+    const startedAt = Date.now();
+    lastScan = startedAt;
+    try {
+      if (!scanStarted) {
+        scanStarted = true;
+        send({ type: 'scan-start', href: location.href, timestamp: startedAt });
       }
-      if (inset > 0) shifted++;
 
-      // "Pinned" = currently touching the top edge (a fixed header, or a sticky one that is stuck).
-      const rr = el.getBoundingClientRect();
-      if (rr.bottom > 0 && rr.top <= target + 2) {
-        if (!pinned || rr.width > pinned.width) pinned = { el, width: rr.width };
+      const root = document.body;
+      if (!root) return schedule(500);
+      const inset = readInset();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const all = root.getElementsByTagName('*');
+      let shifted = 0;
+      let pinned = null;
+      let nodes = 0;
+
+      for (let i = 0; i < all.length && i < 6000; i++) {
+        nodes++;
+        const el = all[i];
+        const cs = getComputedStyle(el);
+        const pos = cs.position;
+        if (pos !== 'fixed' && pos !== 'sticky') continue;
+        const marked = el.hasAttribute(MARK);
+        const top = parseFloat(cs.top);
+        if (Number.isNaN(top)) continue;
+        if (!marked && top > 2) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < vw * 0.6 || r.height < 24 || r.height > vh * 0.4) continue;
+        if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+
+        if (!marked) el.setAttribute(MARK, String(top));
+        const base = parseFloat(el.getAttribute(MARK)) || 0;
+        const target = base + inset;
+        if (Math.abs(top - target) > 0.5) {
+          el.style.setProperty('top', target + 'px', 'important');
+        }
+        if (inset > 0) shifted++;
+
+        const rr = el.getBoundingClientRect();
+        if (rr.bottom > 0 && rr.top <= target + 2) {
+          if (!pinned || rr.width > pinned.width) pinned = { el, width: rr.width };
+        }
       }
+
+      send({
+        type: 'top',
+        hasFixed: !!pinned,
+        color: pinned ? solidBackground(pinned.el) : '',
+        shifted,
+        inset: Math.round(inset * 10) / 10,
+        nodes,
+        scanMs: Date.now() - startedAt,
+        host: location.host
+      });
+    } catch (error) {
+      const detail = error && error.message ? error.message : String(error);
+      console.error('[Summit Probe] scan failed:', error);
+      send({ type: 'scan-error', error: detail.slice(0, 160), href: location.href });
     }
-
-    send({
-      type: 'top',
-      hasFixed: !!pinned,
-      color: pinned ? solidBackground(pinned.el) : '',
-      shifted,
-      inset: Math.round(inset * 10) / 10,
-      host: location.host
-    });
   }
 
   function run() {

@@ -22,14 +22,16 @@ gecko-prototype/build/outputs/apk/debug/gecko-prototype-debug.apk
 ```
 
 ## v4: sticky headers below the status bar
-The Mode button cycles Below / Edge JS / Edge Native. Edge JS uses the bundled WebExtension in
-`assets/summit_probe` (content script) to move fixed/sticky headers down by
-`env(safe-area-inset-top)` and report the header colour. Edge Native instead sets
-`GeckoDisplay.setDynamicToolbarMaxHeight(statusBar)` to see if Gecko does it by itself.
-The info line now distinguishes `background msg OK`, `content injected`, and `msgs=.. fixed=.. shifted=.. inset=..`.
-The bundled extension version is bumped to 1.1 so `ensureBuiltIn` replaces a previously persisted 1.0 copy.
-The content script sends an immediate `probe-start` handshake and logs native-messaging failures instead
-of swallowing them; failed payloads remain eligible for retry on the next scan.
+The Mode button cycles Below / Edge JS / Edge Native. The Test button now loads the bundled
+`cover.html` through a loopback HTTP server (`127.0.0.1`) instead of `resource://`, so the
+`<all_urls>` content script can be injected as it would on an ordinary web origin. This test page
+uses `viewport-fit=cover`, which is required for the safe-area CSS environment values to be useful.
+The app waits until `ensureBuiltIn` completes and both message delegates are registered before the
+initial test navigation, avoiding a first-load race. Edge JS uses the bundled WebExtension to move
+fixed/sticky headers down by `env(safe-area-inset-top)` and report the header colour. Edge Native
+remains a separate experiment using `GeckoDisplay.setDynamicToolbarMaxHeight(statusBar)`; that API
+represents dynamic browser-toolbar geometry, not a documented status-bar/header offset. The info
+line distinguishes extension setup, content-script injection, and DOM scan results.
 
 ## v3: status bar colour + glass test
 Mode "Below": Gecko sits under the status bar, and the strip above it takes a colour sampled
