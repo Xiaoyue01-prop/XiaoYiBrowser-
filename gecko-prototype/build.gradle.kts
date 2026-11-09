@@ -16,7 +16,7 @@ android {
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
         versionCode = 1
-        versionName = "0.4-gecko-probe"
+        versionName = "0.5-summit-chrome-preview"
     }
 
     compileOptions {
