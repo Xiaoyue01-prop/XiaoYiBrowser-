@@ -42,7 +42,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/gradle-wrapper-bootstrap"
           cd "$RUNNER_TEMP/gradle-wrapper-bootstrap"
           touch build.gradle
-          gradle --no-daemon wrapper --gradle-version 9.7.0 --distribution-type bin
+          gradle --no-daemon wrapper --gradle-version 9.7.0 --distribution-type bin --no-validate-url
           install -D -m 0755 gradlew "$GITHUB_WORKSPACE/gradlew"
           install -D -m 0644 gradlew.bat "$GITHUB_WORKSPACE/gradlew.bat"
           install -D -m 0644 gradle/wrapper/gradle-wrapper.jar "$GITHUB_WORKSPACE/gradle/wrapper/gradle-wrapper.jar"
