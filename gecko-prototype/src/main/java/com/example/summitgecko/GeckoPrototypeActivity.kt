@@ -28,21 +28,25 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import org.json.JSONObject
+import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.WebExtension
 
 /**
- * Engine spike v3 (public API only).
+ * Engine spike v4 (public API only).
  *
- *  Mode "Below": Gecko sits under the status bar (like Chrome). The strip above it is painted
- *                with a colour sampled from the top pixels of the page (Safari-like).
- *  Mode "Edge" : Gecko extends under the status bar, safeAreaInsetsChanged is fed, and the strip
- *                shows a blurred copy of the page's top area (glass test).
+ * Three modes (button cycles them):
+ *  0 Below       Gecko sits under the status bar (like Chrome). Strip colour = sampled page top.
+ *  1 Edge JS     Gecko extends under the status bar, safeAreaInsetsChanged is fed, and the
+ *                bundled WebExtension ("Summit Probe") moves fixed/sticky headers down by
+ *                env(safe-area-inset-top).
+ *  2 Edge Native Gecko extends under the status bar, insets are 0 and setDynamicToolbarMaxHeight
+ *                is set to the status bar height (does Gecko push fixed headers down itself?).
  *
- * Both rely on PixelCopy reading the Gecko surface. The info line shows whether that works:
- *   "surface ok"  -> PixelCopy from the SurfaceView works
- *   "window ok"   -> only a whole-window copy works (fallback, Below mode only)
- *   "failed ..."  -> neither works, report the codes
+ * In both Edge modes the strip above the page is the header colour when the extension reports a
+ * pinned header, and a blurred copy of the page top otherwise (content scrolls under glass).
  */
 class GeckoPrototypeActivity : Activity() {
 
@@ -57,7 +61,10 @@ class GeckoPrototypeActivity : Activity() {
             }
 
         private const val TEST_URL = "resource://android/assets/gecko_test/default.html"
+        private const val PROBE_URI = "resource://android/assets/summit_probe/"
+        private const val PROBE_ID = "summit-probe@example.com"
         private const val SAMPLE_INTERVAL_MS = 300L
+        private val MODE_NAMES = arrayOf("Below", "Edge JS", "Edge Native")
     }
 
     private lateinit var root: FrameLayout
@@ -73,10 +80,33 @@ class GeckoPrototypeActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private var statusTop = 0
     private var controlsHeight = 0
-    private var edgeMode = false
+    private var mode = 0
     private var fullscreen = false
     private var sampledColor = Color.BLACK
     private var copyState = "waiting"
+
+    // Probe (WebExtension) state
+    private var probeState = "starting"
+    private var probeMessages = 0
+    private var probeHasFixed = false
+    private var probeColor: Int? = null
+    private var probeShifted = 0
+    private var probeInset = 0.0
+
+    private val isEdge: Boolean get() = mode != 0
+
+    private val probeDelegate = object : WebExtension.MessageDelegate {
+        override fun onMessage(
+            nativeApp: String,
+            message: Any,
+            sender: WebExtension.MessageSender
+        ): GeckoResult<Any>? {
+            if (message is JSONObject) {
+                runOnUiThread { handleProbe(message) }
+            }
+            return null
+        }
+    }
 
     private val tick = object : Runnable {
         override fun run() {
@@ -128,8 +158,8 @@ class GeckoPrototypeActivity : Activity() {
 
         info = TextView(this).apply {
             setTextColor(Color.WHITE)
-            textSize = 11f
-            maxLines = 2
+            textSize = 10.5f
+            maxLines = 3
         }
         controls.addView(info)
 
@@ -159,12 +189,10 @@ class GeckoPrototypeActivity : Activity() {
         )
 
         modeButton = makeButton("Mode: Below") {
-            edgeMode = !edgeMode
-            if (!edgeMode) {
-                topStrip.setImageDrawable(null)
-                topStrip.setRenderEffect(null)
-                topStrip.colorFilter = null
-                topStrip.setBackgroundColor(sampledColor)
+            mode = (mode + 1) % MODE_NAMES.size
+            resetProbeState()
+            if (!isEdge) {
+                setStripSolid(sampledColor)
             }
             copyState = "waiting"
             updateLayout()
@@ -177,10 +205,12 @@ class GeckoPrototypeActivity : Activity() {
         }
         buttons.addView(makeButton("Go") { go() }, weighted())
         buttons.addView(makeButton("Test") {
+            resetProbeState()
             if (::session.isInitialized) session.loadUri(TEST_URL)
-        }, weighted())
-        buttons.addView(modeButton, weighted())
+        }, weighted(1.6f))
+        buttons.addView(modeButton, weighted(2f))
         buttons.addView(makeButton("Reload") {
+            resetProbeState()
             if (::session.isInitialized) session.reload()
         }, weighted())
         controls.addView(
@@ -230,8 +260,70 @@ class GeckoPrototypeActivity : Activity() {
         })
         session.open(runtime(this))
         surfaceView.attach(session)
+        installProbe()
         updateLayout()
         session.loadUri(TEST_URL)
+    }
+
+    // ---- WebExtension probe ---------------------------------------------------------------
+
+    private fun installProbe() {
+        try {
+            runtime(this).webExtensionController
+                .ensureBuiltIn(PROBE_URI, PROBE_ID)
+                .accept({ ext ->
+                    runOnUiThread {
+                        if (ext == null) {
+                            probeState = "ext null"
+                        } else {
+                            // Background-level and content-script-level delegates.
+                            ext.setMessageDelegate(probeDelegate, "browser")
+                            session.webExtensionController
+                                .setMessageDelegate(ext, probeDelegate, "browser")
+                            probeState = "ext ok, no msg yet"
+                        }
+                        updateInfo()
+                    }
+                }, { err ->
+                    runOnUiThread {
+                        probeState = "ext failed: ${err?.message}"
+                        updateInfo()
+                    }
+                })
+        } catch (e: Exception) {
+            probeState = "ext error ${e.javaClass.simpleName}"
+            updateInfo()
+        }
+    }
+
+    private fun handleProbe(m: JSONObject) {
+        probeMessages++
+        probeHasFixed = m.optBoolean("hasFixed", false)
+        probeColor = parseCssColor(m.optString("color", ""))
+        probeShifted = m.optInt("shifted", 0)
+        probeInset = m.optDouble("inset", 0.0)
+        probeState = "msgs=$probeMessages fixed=$probeHasFixed shifted=$probeShifted " +
+            "inset=${"%.1f".format(probeInset)}"
+        if (isEdge) sampleTop()
+        updateInfo()
+    }
+
+    private fun resetProbeState() {
+        probeHasFixed = false
+        probeColor = null
+        probeShifted = 0
+    }
+
+    private fun parseCssColor(css: String): Int? {
+        val m = Regex("""rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?\s*\)""")
+            .find(css) ?: return null
+        val alpha = m.groupValues[4].toDoubleOrNull() ?: 1.0
+        if (alpha < 0.5) return null
+        return Color.rgb(
+            m.groupValues[1].toInt().coerceIn(0, 255),
+            m.groupValues[2].toInt().coerceIn(0, 255),
+            m.groupValues[3].toInt().coerceIn(0, 255)
+        )
     }
 
     // ---- layout / modes -------------------------------------------------------------------
@@ -239,7 +331,7 @@ class GeckoPrototypeActivity : Activity() {
     private fun updateLayout() {
         if (!::surfaceView.isInitialized || !::modeButton.isInitialized) return
 
-        val top = if (fullscreen || edgeMode) 0 else statusTop
+        val top = if (fullscreen || isEdge) 0 else statusTop
         val bottom = if (fullscreen) 0 else controlsHeight
         val lp = surfaceView.layoutParams as FrameLayout.LayoutParams
         if (lp.topMargin != top || lp.bottomMargin != bottom) {
@@ -256,8 +348,11 @@ class GeckoPrototypeActivity : Activity() {
         }
 
         controls.visibility = if (fullscreen) View.GONE else View.VISIBLE
-        surfaceView.setSafeInsets(if (edgeMode && !fullscreen) statusTop else 0, 0, 0, 0)
-        modeButton.text = if (edgeMode) "Mode: Edge" else "Mode: Below"
+        val feedInset = mode == 1 && !fullscreen
+        val feedToolbar = mode == 2 && !fullscreen
+        surfaceView.setSafeInsets(if (feedInset) statusTop else 0, 0, 0, 0)
+        surfaceView.setDynamicToolbarMaxHeight(if (feedToolbar) statusTop else 0)
+        modeButton.text = "Mode: ${MODE_NAMES[mode]}"
         updateInfo()
     }
 
@@ -273,13 +368,36 @@ class GeckoPrototypeActivity : Activity() {
         updateLayout()
     }
 
-    // ---- sampling the Gecko surface -------------------------------------------------------
+    // ---- status bar strip -----------------------------------------------------------------
+
+    private fun luminance(c: Int): Double =
+        0.299 * Color.red(c) + 0.587 * Color.green(c) + 0.114 * Color.blue(c)
+
+    private fun setStripSolid(c: Int) {
+        sampledColor = c
+        topStrip.setImageDrawable(null)
+        topStrip.setRenderEffect(null)
+        topStrip.colorFilter = null
+        topStrip.setBackgroundColor(c)
+        insetsController.isAppearanceLightStatusBars = luminance(c) > 150
+    }
 
     private fun sampleTop() {
         if (fullscreen || !::surfaceView.isInitialized) return
         if (!surfaceView.isSurfaceReady || surfaceView.width <= 0 || statusTop <= 0) return
         try {
-            if (edgeMode) sampleGlass() else sampleColor()
+            if (!isEdge) {
+                sampleColor()
+            } else {
+                val c = probeColor
+                if (probeHasFixed && c != null) {
+                    setStripSolid(c)
+                    copyState = "probe colour"
+                    updateInfo()
+                } else {
+                    sampleGlass()
+                }
+            }
         } catch (e: Exception) {
             copyState = "error ${e.javaClass.simpleName}"
             updateInfo()
@@ -345,7 +463,7 @@ class GeckoPrototypeActivity : Activity() {
             bmp,
             PixelCopy.OnPixelCopyFinishedListener { code ->
                 if (code == PixelCopy.SUCCESS) {
-                    copyState = "surface ok (glass)"
+                    copyState = "glass ok"
                     topStrip.setImageBitmap(bmp)
                     topStrip.setBackgroundColor(Color.TRANSPARENT)
                     topStrip.setRenderEffect(
@@ -364,28 +482,19 @@ class GeckoPrototypeActivity : Activity() {
         )
     }
 
-    private fun luminance(c: Int): Double =
-        0.299 * Color.red(c) + 0.587 * Color.green(c) + 0.114 * Color.blue(c)
-
     private fun applyColor(bmp: Bitmap) {
         val px = IntArray(8)
         bmp.getPixels(px, 0, 8, 0, 0, 8, 1)
         // Median by luminance: ignores a logo or button sitting in the sampled row.
         val c = px.sortedBy { luminance(it) }[4] or (0xFF shl 24)
-        sampledColor = c
-        topStrip.setImageDrawable(null)
-        topStrip.setRenderEffect(null)
-        topStrip.colorFilter = null
-        topStrip.setBackgroundColor(c)
-        insetsController.isAppearanceLightStatusBars = luminance(c) > 150
+        setStripSolid(c)
         updateInfo()
     }
 
     private fun updateInfo() {
         if (!::info.isInitialized) return
-        val mode = if (edgeMode) "Edge" else "Below"
-        info.text = "GeckoView 159 · $mode · copy: $copyState · " +
-            "#%06X · bar ${statusTop}px".format(sampledColor and 0xFFFFFF)
+        info.text = "GeckoView 159 · ${MODE_NAMES[mode]} · bar ${statusTop}px · copy: $copyState\n" +
+            "probe: $probeState"
     }
 
     // ---- navigation -----------------------------------------------------------------------
@@ -398,6 +507,7 @@ class GeckoPrototypeActivity : Activity() {
             t.contains(' ') || !t.contains('.') -> "https://duckduckgo.com/?q=" + Uri.encode(t)
             else -> "https://$t"
         }
+        resetProbeState()
         session.loadUri(url)
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(urlField.windowToken, 0)
@@ -412,10 +522,10 @@ class GeckoPrototypeActivity : Activity() {
             setOnClickListener { action() }
         }
 
-    private fun weighted() = LinearLayout.LayoutParams(
+    private fun weighted(weight: Float = 1f) = LinearLayout.LayoutParams(
         0,
         LinearLayout.LayoutParams.MATCH_PARENT,
-        1f
+        weight
     ).apply {
         marginStart = dp(3)
         marginEnd = dp(3)

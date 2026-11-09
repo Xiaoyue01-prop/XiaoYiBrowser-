@@ -21,6 +21,13 @@ APK output:
 gecko-prototype/build/outputs/apk/debug/gecko-prototype-debug.apk
 ```
 
+## v4: sticky headers below the status bar
+The Mode button cycles Below / Edge JS / Edge Native. Edge JS uses the bundled WebExtension in
+`assets/summit_probe` (content script) to move fixed/sticky headers down by
+`env(safe-area-inset-top)` and report the header colour. Edge Native instead sets
+`GeckoDisplay.setDynamicToolbarMaxHeight(statusBar)` to see if Gecko does it by itself.
+The info line shows `probe: msgs=.. fixed=.. shifted=.. inset=..` (extension to app messaging).
+
 ## v3: status bar colour + glass test
 Mode "Below": Gecko sits under the status bar, and the strip above it takes a colour sampled
 (PixelCopy, median of the top row) from the page. Mode "Edge": Gecko extends under the bar,

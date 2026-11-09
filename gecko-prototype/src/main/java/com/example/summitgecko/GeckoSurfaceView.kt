@@ -25,6 +25,7 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
     private var insetRight = 0
     private var insetBottom = 0
     private var insetLeft = 0
+    private var toolbarMax = 0
 
     /** True once the Surface exists and is valid; PixelCopy needs this. */
     val isSurfaceReady: Boolean
@@ -41,6 +42,7 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
         if (surfaceValid) pushSurface(width, height)
         pushOrigin()
         pushInsets()
+        pushToolbar()
     }
 
     fun detach() {
@@ -61,6 +63,17 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
         insetBottom = bottom
         insetLeft = left
         pushInsets()
+    }
+
+    /** Experiment: tell Gecko a dynamic toolbar of this height (device px) exists. */
+    fun setDynamicToolbarMaxHeight(height: Int) {
+        if (height == toolbarMax) return
+        toolbarMax = height
+        pushToolbar()
+    }
+
+    private fun pushToolbar() {
+        display?.setDynamicToolbarMaxHeight(toolbarMax)
     }
 
     private fun pushInsets() {
@@ -88,6 +101,7 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         surfaceValid = true
+        pushToolbar()
         pushSurface(width, height)
         pushOrigin()
         pushInsets()
