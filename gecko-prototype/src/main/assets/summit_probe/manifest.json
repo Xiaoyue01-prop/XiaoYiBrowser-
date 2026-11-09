@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Summit Probe",
-  "version": "1.8",
-  "description": "Detects navigation layers, offsets YouTube watch-page top player controls only when they collide with the shifted masthead, restores all modified styles on route changes, and reports visible diagnostics.",
+  "version": "1.9",
+  "description": "Detects pinned and normal-flow top headers, offsets ordinary page flow with a reversible spacer margin, protects YouTube watch-player overlays, restores modified styles on route changes, and reports diagnostics.",
   "browser_specific_settings": {
     "gecko": {
       "id": "summit-probe@example.com"

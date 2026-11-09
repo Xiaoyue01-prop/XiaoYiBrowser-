@@ -25,6 +25,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -41,14 +42,15 @@ import org.mozilla.geckoview.WebExtension
  * Three modes (button cycles them):
  *  0 Below       Gecko sits under the status bar (like Chrome). Strip colour = sampled page top.
  *  1 Edge JS     Gecko extends under the status bar, safeAreaInsetsChanged is fed, and the
- *                bundled WebExtension ("Summit Probe") moves fixed/sticky headers down by
- *                env(safe-area-inset-top).
+ *                bundled WebExtension ("Summit Probe") offsets pinned headers and adds a
+ *                reversible normal-flow top margin when a scrolling header starts under it.
  *  2 Edge Native Gecko extends under the status bar, insets are 0 and
  *                setDynamicToolbarMaxHeight is tested as a separate dynamic-toolbar experiment.
  *                This API is not documented as a status-bar/header offset.
  *
  * In both Edge modes the strip above the page is the header colour when the extension reports a
- * pinned header, and a blurred copy of the page top otherwise (content scrolls under glass).
+ * pinned header, and a blurred copy of the page top otherwise. Normal-flow headers remain in the
+ * document and scroll naturally; only their initial flow position is inset below the status bar.
  */
 class GeckoPrototypeActivity : Activity() {
 
@@ -261,10 +263,22 @@ class GeckoPrototypeActivity : Activity() {
             gravity = Gravity.CENTER
         }
         buttons.addView(makeButton("Go") { go() }, weighted())
-        buttons.addView(makeButton("Test") {
+        val testButton = makeButton("Test") {
             resetProbeState()
             loadTestPage()
-        }, weighted(1.6f))
+        }.apply {
+            setOnLongClickListener {
+                resetProbeState()
+                val base = testServer?.baseUrl
+                if (base != null && ::session.isInitialized) {
+                    session.loadUri("$base/flow.html")
+                } else {
+                    Toast.makeText(this@GeckoPrototypeActivity, "Flow test server unavailable", Toast.LENGTH_SHORT).show()
+                }
+                true
+            }
+        }
+        buttons.addView(testButton, weighted(1.6f))
         buttons.addView(modeButton, weighted(2f))
         buttons.addView(makeButton("Reload") {
             resetProbeState()
@@ -400,7 +414,9 @@ class GeckoPrototypeActivity : Activity() {
             "page=${m.optString("page", "?")} overlay=${m.optInt("overlayShifted", 0)} " +
             "dy=${m.optInt("playerOverlayOffset", 0)}\n" +
             "hdr=$layerSummary player=${m.optString("playerOverlay", "none")} " +
-            "excluded=${m.optInt("excluded", 0)}"
+            "excluded=${m.optInt("excluded", 0)}\n" +
+            "flow=${m.optString("flowSelector", "none")} +${m.optInt("flowOffset", 0)}px " +
+            "active=${m.optInt("flowShifted", 0)} fallback=${m.optBoolean("flowFallback", false)}"
         if (isEdge) sampleTop()
         updateInfo()
     }

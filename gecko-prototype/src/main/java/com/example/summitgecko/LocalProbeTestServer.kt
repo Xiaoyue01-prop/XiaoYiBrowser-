@@ -65,6 +65,7 @@ internal class LocalProbeTestServer(private val assets: AssetManager) : AutoClos
                 val page = when (path) {
                     "/", "/cover.html", "/test" -> "gecko_test/cover.html"
                     "/default.html" -> "gecko_test/default.html"
+                    "/flow.html" -> "gecko_test/flow.html"
                     else -> null
                 }
 

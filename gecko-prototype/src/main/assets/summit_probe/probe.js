@@ -9,6 +9,7 @@
   const MIN_GAP_MS = 1200;
   const MAX_NODES = 6000;
   const MAX_HEADER_TOP = 240;
+  const MAX_FLOW_HEADER_DOC_TOP = 260;
   const timerState = { id: null };
   let lastScan = 0;
   let lastKey = '';
@@ -22,6 +23,10 @@
   // moves the masthead below the status bar, the player's own top-row controls can end
   // up underneath it. Keep a separate, reversible offset for that player control row.
   const activePlayerOverlayShifts = new Map();
+  // Ordinary document-flow headers are not fixed/sticky. When one begins underneath
+  // the Android status bar, add a reversible margin to the page's top-level flow root.
+  // The header remains in normal flow and continues to scroll with the document.
+  const activeFlowOffsets = new Map();
   const PLAYER_TOP_OVERLAY_SELECTOR =
     '#movie_player .ytp-chrome-top, .html5-video-player .ytp-chrome-top, ' +
     '.ytm-player-control-overlay-top, .ytm-player-controls-top';
@@ -189,6 +194,106 @@
     return -1;
   }
 
+  function selfHeaderHint(el) {
+    const t = nodeTokens(el);
+    if (HEADER_TAGS.has(t.tag)) return t.tag;
+    if (t.role === 'banner' || t.role === 'navigation') return t.role;
+    const identity = `${t.tag} ${t.id} ${t.classes} ${t.aria}`;
+    const match = identity.match(HEADER_HINT_RE);
+    return match ? (match[2] || t.tag).toLowerCase() : '';
+  }
+
+  function topLevelBodyChild(el, body) {
+    let node = el;
+    while (node && node.parentElement && node.parentElement !== body) {
+      node = node.parentElement;
+    }
+    return node && node.parentElement === body ? node : null;
+  }
+
+  function restoreFlowOffset(el, state) {
+    try {
+      if (state.inlineMarginTop) {
+        el.style.setProperty('margin-top', state.inlineMarginTop, state.inlinePriority || '');
+      } else {
+        el.style.removeProperty('margin-top');
+      }
+    } catch (e) {
+      console.warn('[Summit Probe] could not restore flow offset:', e);
+    }
+    activeFlowOffsets.delete(el);
+  }
+
+  function findFallbackFlowRoot(body, vw, inset, scrollY) {
+    // If a page uses a generic app shell instead of a semantic <header>/<nav>,
+    // use only the first visible, full-width normal-flow body child. This is a
+    // conservative fallback, not a search through arbitrary content sections.
+    for (const el of Array.from(body.children || [])) {
+      const tag = (el.tagName || '').toLowerCase();
+      if (['script', 'style', 'link', 'meta', 'template', 'noscript'].includes(tag)) continue;
+      const cs = getComputedStyle(el);
+      if ((cs.position !== 'static' && cs.position !== 'relative') ||
+          cs.display === 'none' || cs.visibility === 'hidden') continue;
+      if (isExcludedContent(el) || containsExcludedContent(el)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < vw * 0.72 || rect.height < 24) continue;
+      const state = activeFlowOffsets.get(el);
+      const baseDocTop = rect.top + scrollY - (state ? state.appliedInset : 0);
+      if (baseDocTop < -24 || baseDocTop > MAX_FLOW_HEADER_DOC_TOP ||
+          baseDocTop >= inset - 2) continue;
+      return {
+        root: el,
+        anchor: el,
+        selector: describeElement(el),
+        baseDocTop,
+        fallback: true
+      };
+    }
+    return null;
+  }
+
+  function applyFlowOffset(target, inset, scrollY) {
+    const activeRoot = target ? target.root : null;
+    for (const [el, state] of Array.from(activeFlowOffsets.entries())) {
+      if (el !== activeRoot || inset <= 0) restoreFlowOffset(el, state);
+    }
+    if (!target || inset <= 0) {
+      return { shifted: 0, selector: 'none', offset: 0, fallback: false };
+    }
+
+    const root = target.root;
+    let state = activeFlowOffsets.get(root);
+    const currentAnchorTop = target.anchor.getBoundingClientRect().top + scrollY;
+    const baseAnchorTop = currentAnchorTop - (state ? state.appliedInset : 0);
+    const needed = Math.max(0, inset - baseAnchorTop);
+    if (needed <= 1) {
+      if (state) restoreFlowOffset(root, state);
+      return { shifted: 0, selector: target.selector, offset: 0, fallback: target.fallback };
+    }
+
+    if (!state) {
+      const computedMargin = parseFloat(getComputedStyle(root).marginTop);
+      state = {
+        inlineMarginTop: root.style.getPropertyValue('margin-top'),
+        inlinePriority: root.style.getPropertyPriority('margin-top'),
+        baseMarginTop: Number.isFinite(computedMargin) ? computedMargin : 0,
+        appliedInset: 0
+      };
+      activeFlowOffsets.set(root, state);
+    }
+
+    // Margin participates in normal document flow. Unlike transform/top, it reserves
+    // the space and lets the header naturally scroll underneath the translucent status bar.
+    root.style.setProperty('margin-top', `${(state.baseMarginTop + needed).toFixed(1)}px`, 'important');
+    state.appliedInset = needed;
+    return {
+      shifted: 1,
+      selector: target.selector,
+      offset: Math.round(needed),
+      fallback: target.fallback
+    };
+  }
+
   function describeElement(el) {
     const t = nodeTokens(el);
     const classNames = t.classes.trim().split(/\s+/).filter(Boolean).slice(0, 2);
@@ -334,16 +439,47 @@
       const vh = window.innerHeight;
       const all = root.getElementsByTagName('*');
       const rawCandidates = [];
+      const flowCandidates = [];
       let nodes = 0;
       let excludedNodes = 0;
+      const scrollY = window.scrollY || window.pageYOffset || 0;
+      const allowFlowOffset = pageKind() !== 'watch' && inset > 0;
 
       for (let i = 0; i < all.length && i < MAX_NODES; i++) {
         nodes++;
         const el = all[i];
         const cs = getComputedStyle(el);
         const pos = cs.position;
-        if (pos !== 'fixed' && pos !== 'sticky') continue;
         if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+
+        if (pos !== 'fixed' && pos !== 'sticky') {
+          // Third header class: normal-flow header. Only inspect elements that carry
+          // their own semantic header/navigation hint; descendants inherit neither
+          // classification nor an offset from a distant ancestor.
+          if (allowFlowOffset && (pos === 'static' || pos === 'relative')) {
+            const hint = selfHeaderHint(el);
+            if (hint && !isExcludedContent(el) && !containsExcludedContent(el)) {
+              const rect = el.getBoundingClientRect();
+              if (rect.width >= vw * 0.6 && rect.height >= 24 && rect.height <= vh * 0.45) {
+                const bodyRoot = topLevelBodyChild(el, root);
+                const prior = bodyRoot ? activeFlowOffsets.get(bodyRoot) : null;
+                const docTop = rect.top + scrollY - (prior ? prior.appliedInset : 0);
+                if (bodyRoot && docTop >= -24 && docTop <= MAX_FLOW_HEADER_DOC_TOP &&
+                    docTop < inset - 2) {
+                  flowCandidates.push({
+                    root: bodyRoot,
+                    anchor: el,
+                    selector: describeElement(el),
+                    baseDocTop: docTop,
+                    hint,
+                    fallback: false
+                  });
+                }
+              }
+            }
+          }
+          continue;
+        }
 
         if (isExcludedContent(el) || containsExcludedContent(el)) {
           excludedNodes++;
@@ -398,6 +534,14 @@
         if (!selected.has(el) || inset <= 0) restoreElement(el, state);
       }
 
+      let flowTarget = null;
+      if (candidates.length === 0 && allowFlowOffset) {
+        flowCandidates.sort((a, b) => a.baseDocTop - b.baseDocTop ||
+          (a.fallback ? 1 : 0) - (b.fallback ? 1 : 0));
+        flowTarget = flowCandidates[0] || findFallbackFlowRoot(root, vw, inset, scrollY);
+      }
+      const flowResult = applyFlowOffset(flowTarget, inset, scrollY);
+
       let shifted = 0;
       const layers = [];
       for (const candidate of candidates) {
@@ -445,6 +589,10 @@
         overlayShifted: playerOverlay.shifted,
         playerOverlay: playerOverlay.selector,
         playerOverlayOffset: playerOverlay.offset,
+        flowShifted: flowResult.shifted,
+        flowSelector: flowResult.selector,
+        flowOffset: flowResult.offset,
+        flowFallback: flowResult.fallback,
         inset: Math.round(inset * 10) / 10,
         nodes,
         excluded: excludedNodes,
