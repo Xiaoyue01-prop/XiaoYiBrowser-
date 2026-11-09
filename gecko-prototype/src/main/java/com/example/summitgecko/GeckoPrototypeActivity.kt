@@ -97,6 +97,8 @@ class GeckoPrototypeActivity : Activity() {
     private var probeColor: Int? = null
     private var probeShifted = 0
     private var probeInset = 0.0
+    // Message delivery is asynchronous: late startup handshakes must not overwrite scan results.
+    private var probeScanStarted = false
 
     private val isEdge: Boolean get() = mode != 0
 
@@ -125,22 +127,34 @@ class GeckoPrototypeActivity : Activity() {
             runOnUiThread {
                 when (payload.optString("type")) {
                     "background-start" -> {
-                        probeState = "background msg OK · waiting content script"
-                        updateInfo()
+                        // Background and content messages can arrive out of order.
+                        // Never let a late startup ping replace a more advanced state.
+                        if (!probeScanStarted && probeMessages == 0 &&
+                            probeState == "waiting for content script") {
+                            probeState = "background msg OK · waiting content script"
+                            updateInfo()
+                        }
                     }
                     "probe-start" -> {
-                        probeState = "content injected · native msg OK · ${sender.url.substringAfter("//").take(34)}"
-                        updateInfo()
+                        if (!probeScanStarted && probeMessages == 0) {
+                            probeState = "content injected · native msg OK · ${sender.url.substringAfter("//").take(34)}"
+                            updateInfo()
+                        }
                     }
                     "scan-start" -> {
+                        probeScanStarted = true
                         probeState = "content injected · scan started"
                         updateInfo()
                     }
                     "scan-error" -> {
+                        probeScanStarted = true
                         probeState = "scan error: ${payload.optString("error", "unknown")}".take(110)
                         updateInfo()
                     }
-                    "top" -> handleProbe(payload)
+                    "top" -> {
+                        probeScanStarted = true
+                        handleProbe(payload)
+                    }
                     else -> {
                         probeState = "message received · type=${payload.optString("type", "?")}"
                         updateInfo()
@@ -384,6 +398,7 @@ class GeckoPrototypeActivity : Activity() {
         probeColor = null
         probeShifted = 0
         probeInset = 0.0
+        probeScanStarted = false
         probeState = "waiting for content script"
     }
 
