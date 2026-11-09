@@ -385,10 +385,19 @@ class GeckoPrototypeActivity : Activity() {
         probeColor = parseCssColor(m.optString("color", ""))
         probeShifted = m.optInt("shifted", 0)
         probeInset = m.optDouble("inset", 0.0)
+        val layerInfo = m.optJSONArray("layerInfo")
+        val layerSummary = if (layerInfo != null && layerInfo.length() > 0) {
+            (0 until minOf(layerInfo.length(), 3)).mapNotNull { index ->
+                val layer = layerInfo.optJSONObject(index) ?: return@mapNotNull null
+                val selector = layer.optString("selector", layer.optString("tag", "?"))
+                "${selector.take(24)}@${layer.optInt("top", 0)}"
+            }.joinToString(",")
+        } else "none"
         probeState = "msgs=$probeMessages fixed=$probeHasFixed shifted=$probeShifted " +
             "layers=${m.optInt("layers", if (probeHasFixed) 1 else 0)} " +
             "inset=${"%.1f".format(probeInset)} nodes=${m.optInt("nodes", 0)} " +
-            "scan=${m.optLong("scanMs", 0)}ms"
+            "scan=${m.optLong("scanMs", 0)}ms page=${m.optString("page", "?")}\n" +
+            "hdr=$layerSummary excluded=${m.optInt("excluded", 0)}"
         if (isEdge) sampleTop()
         updateInfo()
     }

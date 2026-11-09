@@ -57,3 +57,11 @@ The existing `:app` module, its WebView code, Summit UI, Frost Glass, tab system
 ### Probe 1.4
 - Call `requestIdleCallback` with the `window` receiver to avoid detached-call failures.
 - Report scheduler errors and fall back to a direct scan so detection does not silently stop.
+
+
+## Probe v1.6 notes
+
+- Header candidates now require semantic navigation/header hints when their CSS `top` is greater than 4px.
+- YouTube watch/player/metadata/comment subtrees are excluded from header shifting.
+- Previously shifted nodes are restored when they stop qualifying after SPA navigation or layout changes.
+- Probe diagnostics report selected selectors, page kind, and excluded content-node count.

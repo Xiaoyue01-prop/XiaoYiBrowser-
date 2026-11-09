@@ -1,20 +1,49 @@
 // Summit Probe: content script.
-// 1) Finds full-width fixed/sticky elements pinned to the top of the page.
-// 2) If the app feeds a safe-area inset (env(safe-area-inset-top) > 0), moves them down by it,
-//    so a sticky header sits below the status bar instead of under it.
-// 3) Reports whether a header is pinned and its background colour to the app.
+// Detects top navigation/header layers, offsets only those layers below the Android
+// status bar, restores stale offsets after SPA navigation, and reports diagnostics.
 (() => {
   'use strict';
   if (window.__summitProbe) return;
   window.__summitProbe = true;
 
-  const MARK = 'data-summit-shift';
   const MIN_GAP_MS = 1200;
-  let timer = null;
+  const MAX_NODES = 6000;
+  const MAX_HEADER_TOP = 240;
+  const timerState = { id: null };
   let lastScan = 0;
   let lastKey = '';
-  const inFlight = new Set();
   let scanStarted = false;
+  const inFlight = new Set();
+
+  // Remember the exact inline style before Summit modifies an element. A Map is used
+  // intentionally so that SPA route changes can restore nodes that stop being headers.
+  const activeShifts = new Map();
+
+  const EXCLUDED_TAGS = new Set([
+    'ytd-watch-flexy',
+    'ytd-player',
+    'ytd-watch-metadata',
+    'ytd-video-primary-info-renderer',
+    'ytd-video-secondary-info-renderer',
+    'ytd-comments',
+    'ytd-comments-entry-point-header-renderer',
+    'ytd-watch-next-secondary-results-renderer',
+    'ytm-watch',
+    'ytm-player',
+    'ytm-slim-video-metadata-section-renderer'
+  ]);
+
+  const HEADER_TAGS = new Set([
+    'header',
+    'nav',
+    'ytd-masthead',
+    'ytd-feed-filter-chip-bar-renderer',
+    'ytm-mobile-topbar-renderer',
+    'ytm-pivot-bar-renderer'
+  ]);
+
+  const HEADER_HINT_RE = /(^|[\s_-])(header|masthead|topbar|top-bar|navbar|nav-bar|navigation|toolbar|appbar|app-bar|filter-chip|chip-bar|pivot-bar|tab-bar)([\s_-]|$)/i;
+  const EXCLUDED_CONTEXT_RE = /(watch-metadata|video-primary-info|video-secondary-info|video-player|comments-entry|watch-next|movie_player|player-container)/i;
 
   function readInset() {
     try {
@@ -73,8 +102,6 @@
     try {
       Promise.resolve(browser.runtime.sendNativeMessage('browser', msg)).then(
         () => {
-          // Mark a payload as sent only after the API call succeeds. Failed messages
-          // remain eligible for retry on the next scan.
           lastKey = key;
           inFlight.delete(key);
           window.__summitProbeStatus = 'native-message-sent';
@@ -92,8 +119,82 @@
     }
   }
 
+  function nodeTokens(el) {
+    const tag = (el.tagName || '').toLowerCase();
+    const id = typeof el.id === 'string' ? el.id : '';
+    const classes = typeof el.className === 'string' ? el.className :
+      (el.className && typeof el.className.baseVal === 'string' ? el.className.baseVal : '');
+    const role = el.getAttribute ? (el.getAttribute('role') || '') : '';
+    const aria = el.getAttribute ? (el.getAttribute('aria-label') || '') : '';
+    return { tag, id, classes, role, aria };
+  }
+
+  function isExcludedContent(el) {
+    let node = el;
+    for (let depth = 0; node && depth < 12; depth++, node = node.parentElement) {
+      const t = nodeTokens(node);
+      const identity = `${t.tag} ${t.id} ${t.classes}`;
+      if (EXCLUDED_TAGS.has(t.tag) || EXCLUDED_CONTEXT_RE.test(identity)) return true;
+    }
+    return false;
+  }
+
+  function containsExcludedContent(el) {
+    try {
+      return !!el.querySelector(
+        'ytd-watch-flexy, ytd-player, ytd-watch-metadata, ytd-video-primary-info-renderer, ' +
+        'ytd-video-secondary-info-renderer, ytd-comments, ytd-watch-next-secondary-results-renderer, ' +
+        'ytm-watch, ytm-player, ytm-slim-video-metadata-section-renderer'
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function findHeaderHint(el) {
+    let node = el;
+    for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+      const t = nodeTokens(node);
+      if (HEADER_TAGS.has(t.tag) || t.role === 'banner' || t.role === 'navigation') {
+        return t.tag || t.role;
+      }
+      const identity = `${t.tag} ${t.id} ${t.classes} ${t.aria}`;
+      const match = identity.match(HEADER_HINT_RE);
+      if (match) return (match[2] || t.tag).toLowerCase();
+    }
+    return '';
+  }
+
+  function describeElement(el) {
+    const t = nodeTokens(el);
+    const classNames = t.classes.trim().split(/\s+/).filter(Boolean).slice(0, 2);
+    return (t.tag || 'element') + (t.id ? `#${t.id}` : '') +
+      classNames.map(c => `.${c}`).join('');
+  }
+
+  function restoreElement(el, state) {
+    try {
+      if (state.inlineTop) {
+        el.style.setProperty('top', state.inlineTop, state.inlinePriority || '');
+      } else {
+        el.style.removeProperty('top');
+      }
+    } catch (e) {
+      console.warn('[Summit Probe] could not restore header style:', e);
+    }
+    activeShifts.delete(el);
+  }
+
+  function pageKind() {
+    const host = location.hostname.toLowerCase();
+    if (host.includes('youtube.com') && document.querySelector('ytd-watch-flexy, ytm-watch')) {
+      return 'watch';
+    }
+    if (host.includes('youtube.com')) return 'youtube';
+    return 'web';
+  }
+
   // Send this before waiting for document.body or running the DOM scanner.
-  // If Kotlin receives it, both content-script injection and native messaging work.
   window.__summitProbeStatus = 'injected';
   send({
     type: 'probe-start',
@@ -119,32 +220,50 @@
       const all = root.getElementsByTagName('*');
       const rawCandidates = [];
       let nodes = 0;
+      let excludedNodes = 0;
 
-      // Collect independently pinned, full-width layers before changing any geometry.
-      // A second sticky row may legitimately have CSS top: 48px/56px; the old
-      // top<=2 filter silently ignored it, which is why YouTube's category row
-      // could remain underneath the shifted masthead.
-      for (let i = 0; i < all.length && i < 6000; i++) {
+      for (let i = 0; i < all.length && i < MAX_NODES; i++) {
         nodes++;
         const el = all[i];
         const cs = getComputedStyle(el);
         const pos = cs.position;
         if (pos !== 'fixed' && pos !== 'sticky') continue;
-        const top = parseFloat(cs.top);
-        if (!Number.isFinite(top) || top < 0 || top > 240) continue;
         if (cs.display === 'none' || cs.visibility === 'hidden') continue;
 
+        if (isExcludedContent(el)) {
+          excludedNodes++;
+          continue;
+        }
+
+        const top = parseFloat(cs.top);
+        if (!Number.isFinite(top) || top < 0 || top > MAX_HEADER_TOP) continue;
+        const state = activeShifts.get(el);
+        const baseTop = state ? state.baseTop : top;
+        const expectedRectTop = state ? (state.baseTop + state.appliedInset) : top;
         const r = el.getBoundingClientRect();
         if (r.width < vw * 0.6 || r.height < 24 || r.height > vh * 0.4) continue;
-        // A sticky element is a candidate only while it is actually pinned at
-        // its CSS top. This excludes ordinary sticky elements further down the feed.
-        if (Math.abs(r.top - top) > 5) continue;
-        rawCandidates.push({ el, top, rectTop: r.top, width: r.width, height: r.height });
+        if (r.bottom <= 0 || r.top > MAX_HEADER_TOP + 8) continue;
+        if (Math.abs(r.top - expectedRectTop) > 7) continue;
+
+        const hint = findHeaderHint(el);
+        // A non-zero CSS top is accepted only with a semantic header/navigation hint.
+        // A generic top-edge wrapper is also rejected if it encloses the watch/player area;
+        // otherwise shifting a broad app container could move the video title and feed too.
+        if (!hint && (baseTop > 4 || containsExcludedContent(el))) continue;
+
+        rawCandidates.push({
+          el,
+          top: baseTop,
+          width: r.width,
+          height: r.height,
+          rectTop: r.top,
+          hint: hint || 'top-edge',
+          selector: describeElement(el)
+        });
       }
 
-      // If a qualifying layer contains another qualifying layer, moving the
-      // ancestor already moves the descendant. Shift only the outer positioned
-      // layer to avoid applying the status-bar inset twice.
+      // If a qualifying header contains another qualifying header, shifting the outer
+      // element moves both. Keep only outer roots to avoid double offsets.
       const candidates = rawCandidates.filter(candidate => {
         let parent = candidate.el.parentElement;
         while (parent && parent !== root.parentElement) {
@@ -154,24 +273,42 @@
         return true;
       }).sort((a, b) => a.top - b.top || b.width - a.width);
 
+      const selected = new Set(candidates.map(c => c.el));
+      // Restore elements which stopped being pinned/header-like after a route or layout change.
+      for (const [el, state] of Array.from(activeShifts.entries())) {
+        if (!selected.has(el) || inset <= 0) restoreElement(el, state);
+      }
+
       let shifted = 0;
       const layers = [];
       for (const candidate of candidates) {
         const el = candidate.el;
-        if (!el.hasAttribute(MARK)) el.setAttribute(MARK, String(candidate.top));
-        const base = parseFloat(el.getAttribute(MARK));
-        const safeBase = Number.isFinite(base) ? base : candidate.top;
-        const target = safeBase + inset;
-        const currentTop = parseFloat(getComputedStyle(el).top);
-        if (Math.abs(currentTop - target) > 0.5) {
+        if (inset > 0) {
+          let state = activeShifts.get(el);
+          if (!state) {
+            state = {
+              baseTop: candidate.top,
+              inlineTop: el.style.getPropertyValue('top'),
+              inlinePriority: el.style.getPropertyPriority('top'),
+              appliedInset: 0
+            };
+            activeShifts.set(el, state);
+          }
+          const target = state.baseTop + inset;
           el.style.setProperty('top', target + 'px', 'important');
+          state.appliedInset = inset;
+          shifted++;
         }
-        if (inset > 0) shifted++;
-        layers.push({ top: safeBase, height: Math.round(candidate.height), tag: el.tagName.toLowerCase() });
+        layers.push({
+          top: Math.round(candidate.top * 10) / 10,
+          y: Math.round(candidate.rectTop),
+          height: Math.round(candidate.height),
+          tag: candidate.el.tagName.toLowerCase(),
+          selector: candidate.selector.slice(0, 72),
+          hint: candidate.hint
+        });
       }
 
-      // The first/topmost layer supplies the status-bar tint. If the topmost
-      // layer is transparent, solidBackground walks its descendants/ancestors.
       const topLayer = candidates.length ? candidates[0].el : null;
       send({
         type: 'top',
@@ -182,7 +319,9 @@
         layerInfo: layers.slice(0, 5),
         inset: Math.round(inset * 10) / 10,
         nodes,
+        excluded: excludedNodes,
         scanMs: Date.now() - startedAt,
+        page: pageKind(),
         host: location.host
       });
     } catch (error) {
@@ -193,8 +332,6 @@
   }
 
   function run() {
-    // Keep the Window receiver: Gecko may reject a detached requestIdleCallback
-    // with an "Illegal invocation" even though the content script was injected.
     try {
       if (typeof window.requestIdleCallback === 'function') {
         window.requestIdleCallback.call(window, scan, { timeout: 800 });
@@ -210,15 +347,14 @@
         error: detail.slice(0, 160),
         href: location.href
       });
-      // A scheduler failure must not silently disable header detection.
       scan();
     }
   }
 
   function schedule(delay) {
-    clearTimeout(timer);
+    clearTimeout(timerState.id);
     const wait = Math.max(delay || 350, lastScan + MIN_GAP_MS - Date.now());
-    timer = setTimeout(run, wait);
+    timerState.id = setTimeout(run, wait);
   }
 
   document.addEventListener('DOMContentLoaded', () => schedule(150));
@@ -231,7 +367,7 @@
       subtree: true
     });
   } catch (e) {
-    /* ignore */
+    console.warn('[Summit Probe] MutationObserver unavailable:', e);
   }
   schedule(200);
 })();

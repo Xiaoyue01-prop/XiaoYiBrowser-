@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Summit Probe",
-  "version": "1.5",
-  "description": "Detects independent stacked fixed/sticky header layers, offsets them below the status bar and reports their colour to the app.",
+  "version": "1.6",
+  "description": "Detects semantic top navigation layers, avoids video/player metadata, restores stale offsets after SPA navigation and reports header diagnostics.",
   "browser_specific_settings": {
     "gecko": {
       "id": "summit-probe@example.com"
