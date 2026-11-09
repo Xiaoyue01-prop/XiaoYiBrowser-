@@ -18,6 +18,13 @@
   // Remember the exact inline style before Summit modifies an element. A Map is used
   // intentionally so that SPA route changes can restore nodes that stop being headers.
   const activeShifts = new Map();
+  // On YouTube watch pages the player may sit behind the fixed masthead. When Summit
+  // moves the masthead below the status bar, the player's own top-row controls can end
+  // up underneath it. Keep a separate, reversible offset for that player control row.
+  const activePlayerOverlayShifts = new Map();
+  const PLAYER_TOP_OVERLAY_SELECTOR =
+    '#movie_player .ytp-chrome-top, .html5-video-player .ytp-chrome-top, ' +
+    '.ytm-player-control-overlay-top, .ytm-player-controls-top';
 
   const EXCLUDED_TAGS = new Set([
     'ytd-watch-flexy',
@@ -202,6 +209,97 @@
     activeShifts.delete(el);
   }
 
+  function restorePlayerOverlay(el, state) {
+    try {
+      if (state.inlineTranslate) {
+        el.style.setProperty('translate', state.inlineTranslate, state.inlinePriority || '');
+      } else {
+        el.style.removeProperty('translate');
+      }
+    } catch (e) {
+      console.warn('[Summit Probe] could not restore player overlay:', e);
+    }
+    activePlayerOverlayShifts.delete(el);
+  }
+
+  function alignWatchPlayerOverlay(candidates) {
+    const watchPage = pageKind() === 'watch';
+    if (!watchPage || candidates.length === 0) {
+      for (const [el, state] of Array.from(activePlayerOverlayShifts.entries())) {
+        restorePlayerOverlay(el, state);
+      }
+      return { shifted: 0, selector: 'none', offset: 0 };
+    }
+
+    // The selected masthead/header has already received its safe-area offset by the
+    // time this function runs. Use its actual rendered bottom edge, not a guessed height.
+    const headerBottom = candidates.reduce((bottom, candidate) => {
+      return Math.max(bottom, candidate.el.getBoundingClientRect().bottom);
+    }, 0);
+    const headerTop = candidates.reduce((top, candidate) => {
+      return Math.min(top, candidate.el.getBoundingClientRect().top);
+    }, Number.POSITIVE_INFINITY);
+
+    let nodes = [];
+    try {
+      nodes = Array.from(document.querySelectorAll(PLAYER_TOP_OVERLAY_SELECTOR));
+    } catch (e) {
+      console.warn('[Summit Probe] player overlay query failed:', e);
+    }
+
+    // Prefer outer control rows if a page exposes both a row and its child buttons.
+    nodes = nodes.filter(el => !nodes.some(other => other !== el && other.contains(el)));
+    const selected = new Set();
+    let shifted = 0;
+    let totalOffset = 0;
+    let selectorSummary = 'none';
+
+    for (const el of nodes) {
+      const cs = getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      const visible = cs.display !== 'none' && cs.visibility !== 'hidden' &&
+        parseFloat(cs.opacity || '1') > 0.02;
+      if (!visible || rect.width < 40 || rect.height < 8 || rect.top > 260 || rect.bottom <= 0) {
+        continue;
+      }
+
+      const previous = activePlayerOverlayShifts.get(el);
+      const previousOffset = previous ? previous.appliedY : 0;
+      const baseTop = rect.top - previousOffset;
+      const baseBottom = rect.bottom - previousOffset;
+      const overlapsHeader = baseTop < headerBottom && baseBottom > headerTop;
+      const needed = overlapsHeader ? Math.max(0, headerBottom + 8 - baseTop) : 0;
+
+      if (needed <= 1 || needed > 128) {
+        continue;
+      }
+
+      let state = previous;
+      if (!state) {
+        state = {
+          inlineTranslate: el.style.getPropertyValue('translate'),
+          inlinePriority: el.style.getPropertyPriority('translate'),
+          appliedY: 0
+        };
+        activePlayerOverlayShifts.set(el, state);
+      }
+      // CSS individual translate composes with the element's existing transform, so
+      // YouTube's own player animations and scale transforms are not overwritten.
+      el.style.setProperty('translate', `0px ${needed.toFixed(1)}px`, 'important');
+      state.appliedY = needed;
+      selected.add(el);
+      shifted++;
+      totalOffset = Math.max(totalOffset, needed);
+      selectorSummary = describeElement(el).slice(0, 42);
+    }
+
+    for (const [el, state] of Array.from(activePlayerOverlayShifts.entries())) {
+      if (!selected.has(el)) restorePlayerOverlay(el, state);
+    }
+
+    return { shifted, selector: selectorSummary, offset: Math.round(totalOffset) };
+  }
+
   function pageKind() {
     const host = location.hostname.toLowerCase();
     if (host.includes('youtube.com') && document.querySelector('ytd-watch-flexy, ytm-watch')) {
@@ -331,6 +429,11 @@
         });
       }
 
+      // YouTube's watch layout can place the player behind the fixed masthead. Move
+      // only the player's top control row out of the masthead's hit/visual area; never
+      // translate the video surface, title/metadata, timeline or the whole player.
+      const playerOverlay = alignWatchPlayerOverlay(candidates);
+
       const topLayer = candidates.length ? candidates[0].el : null;
       send({
         type: 'top',
@@ -339,6 +442,9 @@
         shifted,
         layers: candidates.length,
         layerInfo: layers.slice(0, 5),
+        overlayShifted: playerOverlay.shifted,
+        playerOverlay: playerOverlay.selector,
+        playerOverlayOffset: playerOverlay.offset,
         inset: Math.round(inset * 10) / 10,
         nodes,
         excluded: excludedNodes,
@@ -383,10 +489,14 @@
   window.addEventListener('load', () => schedule(300));
   window.addEventListener('resize', () => schedule(400));
   window.addEventListener('scroll', () => schedule(900), { passive: true });
+  document.addEventListener('pointerdown', () => schedule(250), { passive: true });
+  document.addEventListener('touchstart', () => schedule(250), { passive: true });
   try {
     new MutationObserver(() => schedule(600)).observe(document.documentElement, {
       childList: true,
-      subtree: true
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'aria-hidden']
     });
   } catch (e) {
     console.warn('[Summit Probe] MutationObserver unavailable:', e);

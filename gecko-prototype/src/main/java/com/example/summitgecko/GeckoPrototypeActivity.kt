@@ -216,7 +216,7 @@ class GeckoPrototypeActivity : Activity() {
         info = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 10.5f
-            maxLines = 3
+            maxLines = 4
         }
         controls.addView(info)
 
@@ -395,9 +395,12 @@ class GeckoPrototypeActivity : Activity() {
         } else "none"
         probeState = "msgs=$probeMessages fixed=$probeHasFixed shifted=$probeShifted " +
             "layers=${m.optInt("layers", if (probeHasFixed) 1 else 0)} " +
-            "inset=${"%.1f".format(probeInset)} nodes=${m.optInt("nodes", 0)} " +
-            "scan=${m.optLong("scanMs", 0)}ms page=${m.optString("page", "?")}\n" +
-            "hdr=$layerSummary excluded=${m.optInt("excluded", 0)}"
+            "inset=${"%.1f".format(probeInset)}\n" +
+            "nodes=${m.optInt("nodes", 0)} scan=${m.optLong("scanMs", 0)}ms " +
+            "page=${m.optString("page", "?")} overlay=${m.optInt("overlayShifted", 0)} " +
+            "dy=${m.optInt("playerOverlayOffset", 0)}\n" +
+            "hdr=$layerSummary player=${m.optString("playerOverlay", "none")} " +
+            "excluded=${m.optInt("excluded", 0)}"
         if (isEdge) sampleTop()
         updateInfo()
     }
