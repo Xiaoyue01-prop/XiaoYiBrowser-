@@ -8,6 +8,7 @@ plugins {
 android {
     namespace = "com.example.summitgecko"
     compileSdk = 37
+    compileSdkExtension = 2
 
     defaultConfig {
         applicationId = "com.example.summitgecko"
