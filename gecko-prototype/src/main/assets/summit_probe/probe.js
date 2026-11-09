@@ -117,43 +117,69 @@
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       const all = root.getElementsByTagName('*');
-      let shifted = 0;
-      let pinned = null;
+      const rawCandidates = [];
       let nodes = 0;
 
+      // Collect independently pinned, full-width layers before changing any geometry.
+      // A second sticky row may legitimately have CSS top: 48px/56px; the old
+      // top<=2 filter silently ignored it, which is why YouTube's category row
+      // could remain underneath the shifted masthead.
       for (let i = 0; i < all.length && i < 6000; i++) {
         nodes++;
         const el = all[i];
         const cs = getComputedStyle(el);
         const pos = cs.position;
         if (pos !== 'fixed' && pos !== 'sticky') continue;
-        const marked = el.hasAttribute(MARK);
         const top = parseFloat(cs.top);
-        if (Number.isNaN(top)) continue;
-        if (!marked && top > 2) continue;
-        const r = el.getBoundingClientRect();
-        if (r.width < vw * 0.6 || r.height < 24 || r.height > vh * 0.4) continue;
+        if (!Number.isFinite(top) || top < 0 || top > 240) continue;
         if (cs.display === 'none' || cs.visibility === 'hidden') continue;
 
-        if (!marked) el.setAttribute(MARK, String(top));
-        const base = parseFloat(el.getAttribute(MARK)) || 0;
-        const target = base + inset;
-        if (Math.abs(top - target) > 0.5) {
+        const r = el.getBoundingClientRect();
+        if (r.width < vw * 0.6 || r.height < 24 || r.height > vh * 0.4) continue;
+        // A sticky element is a candidate only while it is actually pinned at
+        // its CSS top. This excludes ordinary sticky elements further down the feed.
+        if (Math.abs(r.top - top) > 5) continue;
+        rawCandidates.push({ el, top, rectTop: r.top, width: r.width, height: r.height });
+      }
+
+      // If a qualifying layer contains another qualifying layer, moving the
+      // ancestor already moves the descendant. Shift only the outer positioned
+      // layer to avoid applying the status-bar inset twice.
+      const candidates = rawCandidates.filter(candidate => {
+        let parent = candidate.el.parentElement;
+        while (parent && parent !== root.parentElement) {
+          if (rawCandidates.some(other => other.el === parent)) return false;
+          parent = parent.parentElement;
+        }
+        return true;
+      }).sort((a, b) => a.top - b.top || b.width - a.width);
+
+      let shifted = 0;
+      const layers = [];
+      for (const candidate of candidates) {
+        const el = candidate.el;
+        if (!el.hasAttribute(MARK)) el.setAttribute(MARK, String(candidate.top));
+        const base = parseFloat(el.getAttribute(MARK));
+        const safeBase = Number.isFinite(base) ? base : candidate.top;
+        const target = safeBase + inset;
+        const currentTop = parseFloat(getComputedStyle(el).top);
+        if (Math.abs(currentTop - target) > 0.5) {
           el.style.setProperty('top', target + 'px', 'important');
         }
         if (inset > 0) shifted++;
-
-        const rr = el.getBoundingClientRect();
-        if (rr.bottom > 0 && rr.top <= target + 2) {
-          if (!pinned || rr.width > pinned.width) pinned = { el, width: rr.width };
-        }
+        layers.push({ top: safeBase, height: Math.round(candidate.height), tag: el.tagName.toLowerCase() });
       }
 
+      // The first/topmost layer supplies the status-bar tint. If the topmost
+      // layer is transparent, solidBackground walks its descendants/ancestors.
+      const topLayer = candidates.length ? candidates[0].el : null;
       send({
         type: 'top',
-        hasFixed: !!pinned,
-        color: pinned ? solidBackground(pinned.el) : '',
+        hasFixed: candidates.length > 0,
+        color: topLayer ? solidBackground(topLayer) : '',
         shifted,
+        layers: candidates.length,
+        layerInfo: layers.slice(0, 5),
         inset: Math.round(inset * 10) / 10,
         nodes,
         scanMs: Date.now() - startedAt,

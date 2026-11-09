@@ -386,6 +386,7 @@ class GeckoPrototypeActivity : Activity() {
         probeShifted = m.optInt("shifted", 0)
         probeInset = m.optDouble("inset", 0.0)
         probeState = "msgs=$probeMessages fixed=$probeHasFixed shifted=$probeShifted " +
+            "layers=${m.optInt("layers", if (probeHasFixed) 1 else 0)} " +
             "inset=${"%.1f".format(probeInset)} nodes=${m.optInt("nodes", 0)} " +
             "scan=${m.optLong("scanMs", 0)}ms"
         if (isEdge) sampleTop()
