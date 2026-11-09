@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Summit Probe",
-  "version": "1.6",
-  "description": "Detects semantic top navigation layers, avoids video/player metadata, restores stale offsets after SPA navigation and reports header diagnostics.",
+  "version": "1.7",
+  "description": "Detects semantic navigation layers, strictly excludes YouTube player overlays/watch content, restores stale offsets after SPA navigation and reports diagnostics.",
   "browser_specific_settings": {
     "gecko": {
       "id": "summit-probe@example.com"

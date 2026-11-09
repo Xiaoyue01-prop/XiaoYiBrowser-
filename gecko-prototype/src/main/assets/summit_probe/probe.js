@@ -43,7 +43,9 @@
   ]);
 
   const HEADER_HINT_RE = /(^|[\s_-])(header|masthead|topbar|top-bar|navbar|nav-bar|navigation|toolbar|appbar|app-bar|filter-chip|chip-bar|pivot-bar|tab-bar)([\s_-]|$)/i;
-  const EXCLUDED_CONTEXT_RE = /(watch-metadata|video-primary-info|video-secondary-info|video-player|comments-entry|watch-next|movie_player|player-container)/i;
+  // YouTube watch-page player overlays are not navigation headers. These classes can be
+  // fixed/sticky and sit near the top of the viewport, so exclude them explicitly.
+  const EXCLUDED_CONTEXT_RE = /(watch-metadata|video-primary-info|video-secondary-info|video-player|comments-entry|watch-next|movie_player|player-container|html5-video|ytp-chrome|ytp-title|ytp-gradient|ytp-tooltip|ytp-progress|ytp-controls)/i;
 
   function readInset() {
     try {
@@ -141,11 +143,15 @@
 
   function containsExcludedContent(el) {
     try {
-      return !!el.querySelector(
+      // Reject a candidate if it is itself, or wraps, any player/watch-content region.
+      // This guard must run even when an ancestor happens to have a 'header'/'navigation' hint.
+      const selector =
         'ytd-watch-flexy, ytd-player, ytd-watch-metadata, ytd-video-primary-info-renderer, ' +
         'ytd-video-secondary-info-renderer, ytd-comments, ytd-watch-next-secondary-results-renderer, ' +
-        'ytm-watch, ytm-player, ytm-slim-video-metadata-section-renderer'
-      );
+        'ytm-watch, ytm-player, ytm-slim-video-metadata-section-renderer, ' +
+        '#movie_player, .html5-video-player, .html5-video-container, .ytp-chrome-top, ' +
+        '.ytp-title, .ytp-gradient-top, .ytp-chrome-controls, video';
+      return el.matches(selector) || !!el.querySelector(selector);
     } catch (e) {
       return false;
     }
@@ -163,6 +169,17 @@
       if (match) return (match[2] || t.tag).toLowerCase();
     }
     return '';
+  }
+
+  function findHeaderHintDepth(el) {
+    let node = el;
+    for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+      const t = nodeTokens(node);
+      if (HEADER_TAGS.has(t.tag) || t.role === 'banner' || t.role === 'navigation') return depth;
+      const identity = `${t.tag} ${t.id} ${t.classes} ${t.aria}`;
+      if (HEADER_HINT_RE.test(identity)) return depth;
+    }
+    return -1;
   }
 
   function describeElement(el) {
@@ -230,7 +247,7 @@
         if (pos !== 'fixed' && pos !== 'sticky') continue;
         if (cs.display === 'none' || cs.visibility === 'hidden') continue;
 
-        if (isExcludedContent(el)) {
+        if (isExcludedContent(el) || containsExcludedContent(el)) {
           excludedNodes++;
           continue;
         }
@@ -246,10 +263,13 @@
         if (Math.abs(r.top - expectedRectTop) > 7) continue;
 
         const hint = findHeaderHint(el);
+        const hintDepth = findHeaderHintDepth(el);
+        // On YouTube watch pages, only the actual navigation node or a very close wrapper
+        // may be shifted. A distant ancestor hint is not enough: it can accidentally label
+        // player overlays or watch-content wrappers as headers.
+        if (pageKind() === 'watch' && (!hint || hintDepth > 2)) continue;
         // A non-zero CSS top is accepted only with a semantic header/navigation hint.
-        // A generic top-edge wrapper is also rejected if it encloses the watch/player area;
-        // otherwise shifting a broad app container could move the video title and feed too.
-        if (!hint && (baseTop > 4 || containsExcludedContent(el))) continue;
+        if (!hint && baseTop > 4) continue;
 
         rawCandidates.push({
           el,
@@ -258,6 +278,7 @@
           height: r.height,
           rectTop: r.top,
           hint: hint || 'top-edge',
+          hintDepth,
           selector: describeElement(el)
         });
       }
@@ -305,7 +326,8 @@
           height: Math.round(candidate.height),
           tag: candidate.el.tagName.toLowerCase(),
           selector: candidate.selector.slice(0, 72),
-          hint: candidate.hint
+          hint: candidate.hint,
+          hintDepth: candidate.hintDepth
         });
       }
 
