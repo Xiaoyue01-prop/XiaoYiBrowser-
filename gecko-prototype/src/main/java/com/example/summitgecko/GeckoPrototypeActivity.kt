@@ -418,7 +418,7 @@ class GeckoPrototypeActivity : Activity() {
         // Menu ba chấm mở: orb thu vào viên thuốc trước, rồi viên thuốc mới bị menu hút vào.
         orbMenu.absorbTarget = {
         if (::menuController.isInitialized && menuController.isOpen && ::toolbar.isInitialized) {
-        OriginTransitionController.boundsOnScreen(toolbar.urlPillFrame)?.let {
+        com.example.webedge.OriginTransitionController.boundsOnScreen(toolbar.urlPillFrame)?.let {
         android.graphics.PointF(it.centerX(), it.centerY())
         }
         } else null
