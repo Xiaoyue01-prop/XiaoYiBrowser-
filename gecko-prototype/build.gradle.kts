@@ -15,8 +15,8 @@ android {
         minSdk = 36
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
-        versionCode = 5
-        versionName = "0.10-summit-dialogs"
+        versionCode = 6
+        versionName = "0.11-browser-core"
     }
 
     compileOptions {

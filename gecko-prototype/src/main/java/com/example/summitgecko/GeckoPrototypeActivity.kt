@@ -41,6 +41,8 @@ import com.example.webedge.GeckoFindBarController
 import com.example.webedge.GeckoMenuController
 import com.example.webedge.GeckoMenuHost
 import com.example.webedge.GeckoDownloadController
+import com.example.webedge.GeckoBrowserToolsController
+import com.example.webedge.GeckoContextMenuController
 import com.example.webedge.GeckoPermissionController
 import com.example.webedge.GeckoPromptController
 import com.example.webedge.OrbMenuController
@@ -123,6 +125,8 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var permissionController: GeckoPermissionController
     private lateinit var promptController: GeckoPromptController
     private lateinit var downloadController: GeckoDownloadController
+    private lateinit var browserToolsController: GeckoBrowserToolsController
+    private lateinit var contextMenuController: GeckoContextMenuController
     private val loadingBySession = HashMap<GeckoSession, Boolean>()
     private val progressBySession = HashMap<GeckoSession, Int>()
     private var testServer: LocalProbeTestServer? = null
@@ -411,6 +415,31 @@ class GeckoPrototypeActivity : Activity() {
             isActiveSession = { it === session },
             notify = { showToast(it) }
         )
+        browserToolsController = GeckoBrowserToolsController(
+            activity = this,
+            root = root,
+            blurTarget = blurTarget,
+            store = summitStore,
+            dialog = { glassDialog },
+            density = d,
+            isNight = { GlassSystem.isDarkPage() },
+            foreground = { GlassSystem.pagePrimaryText() },
+            adBlockEnabled = { summitStore.adBlockEnabled },
+            onToggleAdBlock = ::toggleAdBlock,
+            onClearPermissions = { if (::permissionController.isInitialized) permissionController.cancelAll() },
+            onToast = ::showToast
+        )
+        contextMenuController = GeckoContextMenuController(
+            activity = this,
+            root = root,
+            blurTarget = blurTarget,
+            density = d,
+            isNight = { GlassSystem.isDarkPage() },
+            foreground = { GlassSystem.pagePrimaryText() },
+            onOpenCurrent = ::loadInput,
+            onOpenNewTab = ::createTab,
+            onToast = ::showToast
+        )
 
         // Summit's tab grid (thumbnails, origin morph from the Tab button). Private mode is not
         // available in the Gecko prototype yet, so the "Riêng tư" segment explains and snaps back.
@@ -495,8 +524,8 @@ class GeckoPrototypeActivity : Activity() {
                     if (!summitStore.autoHideBar) toolbar.setBarHidden(false)
                     toolbar.updateBarVisibility()
                 }
-                override fun showDownloads() = showToast("Tệp tải xuống được lưu trong Download/Summit; trình quản lý danh sách sẽ được bổ sung sau")
-                override fun showPrivacy() = showToast("Gecko Enhanced Tracking Protection: ${if (summitStore.adBlockEnabled) "đang bật" else "đang tắt"}")
+                override fun showDownloads() = browserToolsController.showDownloads()
+                override fun showPrivacy() = browserToolsController.showPrivacy()
                 override fun clearSitePermissions() {
                     summitStore.clearSitePermissions(null)
                     if (::permissionController.isInitialized) permissionController.cancelAll()
@@ -549,6 +578,8 @@ class GeckoPrototypeActivity : Activity() {
         ) {
             when {
                 ::glassDialog.isInitialized && glassDialog.isShowing -> glassDialog.cancelCurrent()
+                ::contextMenuController.isInitialized && contextMenuController.isShowing -> contextMenuController.dismiss()
+                ::browserToolsController.isInitialized && browserToolsController.isShowing -> browserToolsController.close()
                 fullscreen -> session.exitFullScreen()
                 ::tabSwitcher.isInitialized && tabSwitcher.isShowing -> tabSwitcher.close()
                 ::menuController.isInitialized && menuController.isOpen -> menuController.handleBack()
@@ -1413,43 +1444,9 @@ class GeckoPrototypeActivity : Activity() {
         }
     }
 
-    /** Native Gecko long-press context menu; intentionally excludes downloads until a safe
-     * stream-to-storage lifecycle (progress, cancellation and response close) is implemented. */
+    /** Native Gecko long-press is rendered with Summit Frost Glass rather than a platform AlertDialog. */
     private fun showContextMenu(element: GeckoSession.ContentDelegate.ContextElement) {
-        val link = safeWebUri(element.linkUri)
-        val media = safeWebUri(element.srcUri)
-        val typeLabel = when (element.type) {
-            GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE -> "Hình ảnh"
-            GeckoSession.ContentDelegate.ContextElement.TYPE_VIDEO -> "Video"
-            GeckoSession.ContentDelegate.ContextElement.TYPE_AUDIO -> "Âm thanh"
-            else -> "Nội dung"
-        }
-        val title = sequenceOf(element.title, element.linkText, element.altText)
-            .mapNotNull { it?.trim()?.takeIf(String::isNotEmpty) }
-            .firstOrNull()?.take(64) ?: typeLabel
-        val actions = mutableListOf<Pair<String, () -> Unit>>()
-        if (link != null) {
-            actions += "Mở liên kết trong thẻ mới" to { createTab(link) }
-            actions += "Sao chép liên kết" to { copyToClipboard(link, "Liên kết") }
-            actions += "Chia sẻ liên kết" to { shareText(link) }
-        }
-        if (media != null && media != link) {
-            val mediaAction = when (element.type) {
-                GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE -> "Mở hình ảnh trong thẻ mới"
-                GeckoSession.ContentDelegate.ContextElement.TYPE_VIDEO -> "Mở video trong thẻ mới"
-                GeckoSession.ContentDelegate.ContextElement.TYPE_AUDIO -> "Mở âm thanh trong thẻ mới"
-                else -> "Mở nguồn trong thẻ mới"
-            }
-            actions += mediaAction to { createTab(media) }
-            actions += "Sao chép địa chỉ nguồn" to { copyToClipboard(media, "Nguồn media") }
-            actions += "Chia sẻ địa chỉ nguồn" to { shareText(media) }
-        }
-        if (actions.isEmpty()) return
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second.invoke() }
-            .setNegativeButton("Đóng", null)
-            .show()
+        if (::contextMenuController.isInitialized) contextMenuController.show(element)
     }
 
     private fun copyToClipboard(value: String, label: String) {
@@ -1528,6 +1525,8 @@ class GeckoPrototypeActivity : Activity() {
         ui.removeCallbacks(tick)
         if (::orbMenu.isInitialized) orbMenu.destroy()
         if (::menuController.isInitialized) menuController.dispose()
+        if (::contextMenuController.isInitialized) contextMenuController.dispose()
+        if (::browserToolsController.isInitialized) browserToolsController.dispose()
         if (::findBarController.isInitialized) findBarController.dispose()
         if (::surfaceView.isInitialized) surfaceView.detach()
         tabManager.getAll().forEach { tab ->
