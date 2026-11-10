@@ -13,6 +13,8 @@ import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.net.Uri
 import android.util.Log
+import android.util.Rational
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -30,6 +32,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.window.OnBackInvokedDispatcher
 import android.app.AlertDialog
+import android.app.PictureInPictureParams
 import android.graphics.drawable.GradientDrawable
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -411,6 +414,7 @@ class GeckoPrototypeActivity : Activity() {
         )
         downloadController = GeckoDownloadController(
             activity = this,
+            root = root,
             dialog = { glassDialog },
             isActiveSession = { it === session },
             notify = { showToast(it) }
@@ -1594,11 +1598,36 @@ class GeckoPrototypeActivity : Activity() {
     override fun onPause() {
         ui.removeCallbacks(tick)
         if (::summitStore.isInitialized) summitStore.flush()
-        if (::session.isInitialized) {
+        // Keep Gecko's media pipeline alive while Android displays this Activity in PiP.
+        if (::session.isInitialized && !isInPictureInPictureMode) {
             session.setFocused(false)
             session.setActive(false)
         }
         super.onPause()
+    }
+
+    /** Enter system PiP only while Gecko has an active fullscreen video surface. */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && fullscreen && !isInPictureInPictureMode) {
+            runCatching {
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                enterPictureInPictureMode(params)
+            }.onFailure { Log.w("SummitGecko", "Unable to enter PiP", it) }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (isInPictureInPictureMode) {
+            // The system owns the small window; hide Summit chrome without exiting Gecko fullscreen.
+            if (!fullscreen) setFullscreen(true)
+        } else if (::session.isInitialized) {
+            session.setActive(true)
+            session.setFocused(true)
+        }
     }
 
     override fun onDestroy() {
@@ -1608,6 +1637,7 @@ class GeckoPrototypeActivity : Activity() {
         if (::contextMenuController.isInitialized) contextMenuController.dispose()
         if (::browserToolsController.isInitialized) browserToolsController.dispose()
         if (::findBarController.isInitialized) findBarController.dispose()
+        if (::downloadController.isInitialized) downloadController.dispose()
         if (::surfaceView.isInitialized) surfaceView.detach()
         tabManager.getAll().forEach { tab ->
             tab.session?.let { s ->

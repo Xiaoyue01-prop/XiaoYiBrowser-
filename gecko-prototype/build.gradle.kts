@@ -15,8 +15,8 @@ android {
         minSdk = 36
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
-        versionCode = 6
-        versionName = "0.11-browser-core"
+        versionCode = 7
+        versionName = "0.12-download-pip"
     }
 
     compileOptions {
