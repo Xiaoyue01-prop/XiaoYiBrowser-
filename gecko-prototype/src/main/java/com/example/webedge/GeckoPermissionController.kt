@@ -108,7 +108,7 @@ internal class GeckoPermissionController(
         session: GeckoSession,
         perm: PermissionDelegate.ContentPermission
     ): GeckoResult<Int>? {
-        if (perm.permission != PermissionDelegate.ContentPermission.PERMISSION_GEOLOCATION) {
+        if (perm.permission != PermissionDelegate.PERMISSION_GEOLOCATION) {
             return GeckoResult.fromValue(PermissionDelegate.ContentPermission.VALUE_DENY)
         }
         val result = GeckoResult<Int>()
