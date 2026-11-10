@@ -1,0 +1,366 @@
+package com.example.webedge
+
+import android.annotation.SuppressLint
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
+import android.view.View
+import androidx.dynamicanimation.animation.DynamicAnimation
+import androidx.dynamicanimation.animation.FloatValueHolder
+import androidx.dynamicanimation.animation.SpringAnimation
+import androidx.dynamicanimation.animation.SpringForce
+import java.util.WeakHashMap
+
+/**
+ * Hệ thống animation kiểu iOS (spring theo vật lý) cho toàn app.
+ *
+ * iOS mô tả spring bằng "response" (thời gian một chu kỳ, giây) và "damping ratio".
+ * Android dùng stiffness, nên đổi: stiffness = (2π / response)².
+ * Apple không công bố thông số số học cho từng animation của Safari iOS 27,
+ * các preset dưới đây được căn theo cảm giác spring mặc định của iOS (smooth / snappy / bouncy).
+ */
+object AnimationSystem {
+
+    class SpringSpec(val response: Float, val dampingRatio: Float) {
+        val stiffness: Float = run {
+            val w = (2.0 * Math.PI / response).toFloat()
+            w * w
+        }
+    }
+
+    // === Preset spring (dùng chung toàn app, dampingRatio càng thấp càng nảy) ===
+    /** Nhấn xuống, hiện nhanh: không nảy. */
+    val QUICK = SpringSpec(0.20f, 1.0f)
+    /** Nhả tay sau khi nhấn: nảy rõ, đúng cảm giác nút kính của iOS. */
+    val PRESS_RELEASE = SpringSpec(0.40f, 0.30f)
+    /** Preset mặc định: bề mặt mở ra/bung từ nút (menu, dialog, thẻ, bảng tab, nút Orb), thu gọn thanh công cụ, toast, đổi trạng thái. Vượt đích chừng 4-5% rồi đứng yên, kiểu iOS 26. */
+    val SETTLE = SpringSpec(0.50f, 0.76f)
+    /** Menu ba chấm: đo từ video tham chiếu (iOS), đạt 90% sau ~0.19s, gần như không nảy (~0.5%). */
+    val MENU_MORPH = SpringSpec(0.34f, 0.85f)
+    /** Menu ba chấm khi đóng: video đóng xong trong ~0.17s, không nảy. */
+    val MENU_MORPH_CLOSE = SpringSpec(0.27f, 1.0f)
+    /** Nút ba chấm nảy sang khung to hơn trước khi menu bung (video: nảy lên rồi nở): nảy rõ, nhanh. */
+    val MENU_POP = SpringSpec(0.22f, 0.60f)
+    /** Khi đóng: thẻ thu về khung nảy trước, rồi nút nảy ngược về chỗ cũ (như video). */
+    val MENU_POP_BACK = SpringSpec(0.24f, 0.70f)
+    /** Nút gốc mờ đi/hiện lại khi bề mặt morph: chậm hơn QUICK để nút tan vào menu thay vì biến mất đột ngột. */
+    val SOURCE_FADE = SpringSpec(0.32f, 1.0f)
+    /** Đóng lại, thu về nút, trả về vị trí cũ (scale/alpha được chặn ở 0 nên không bị lật): gần như không nảy, không chạy lố qua nút. */
+    val DISMISS = SpringSpec(0.40f, 0.90f)
+
+    // === Hằng số ===
+    /** Nút kính phồng lên khi nhấn (như Liquid Glass của iOS 26). */
+    const val GLASS_PRESS_SCALE = 1.12f
+
+    /** Scale đầu/cuối chung của mọi bề mặt hiện/ẩn (menu, dialog, thẻ, thanh...). Chỉ truyền 1f khi muốn thuần fade/trượt. */
+    const val SURFACE_SCALE = 0.94f
+
+    /** Scale khi nút/thẻ thu gần về một điểm (về viên thuốc, hút vào Orb) trước khi mờ hẳn. */
+    const val COLLAPSE_SCALE = 0.08f
+
+    /** Ngưỡng kết thúc phù hợp cho tiến độ chuẩn hoá (0..1), như morph và resize. */
+    val NORMALIZED_VALUE_MIN_CHANGE = DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE
+
+    /**
+     * Android 15+ có thể hạ tần số quét khi không có thao tác chạm, làm animation tự chạy
+     * (bung menu, morph) chỉ ~60Hz trên màn 120Hz nên kém mượt hơn iOS. Xin tần số cao trong lúc chạy.
+     */
+    fun boostFrameRate(view: View) {
+        view.setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_HIGH)
+    }
+
+    fun releaseFrameRate(view: View) {
+        view.setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT)
+    }
+
+    private val running =
+        WeakHashMap<View, HashMap<DynamicAnimation.ViewProperty, SpringAnimation>>()
+
+    /**
+     * Handle cho spring của một giá trị không gắn trực tiếp với View (ví dụ tiến độ morph hoặc kích thước thẻ).
+     * Controller chỉ giữ handle để huỷ/kiểm tra; việc tạo, cấu hình và chạy spring luôn thuộc AnimationSystem.
+     */
+    class FloatSpringHandle internal constructor(private val animation: SpringAnimation) {
+        val isRunning: Boolean
+            get() = animation.isRunning
+
+        fun cancel() {
+            animation.cancel()
+        }
+    }
+
+    /** Cấu hình vật lý duy nhất cho mọi spring, bất kể đang animate View hay một giá trị thuần. */
+    private fun springForce(target: Float, spec: SpringSpec): SpringForce =
+        SpringForce(target).apply {
+            stiffness = spec.stiffness
+            dampingRatio = spec.dampingRatio
+        }
+
+    /**
+     * Chạy spring cho một giá trị thuần. Dùng chung preset và cấu hình vật lý với spring trên View.
+     * Nhờ vậy Origin Morph, đổi kích thước menu và các hiệu ứng View không tự tạo engine riêng.
+     */
+    fun springFloat(
+        from: Float,
+        to: Float,
+        spec: SpringSpec = SETTLE,
+        minimumVisibleChange: Float = DynamicAnimation.MIN_VISIBLE_CHANGE_PIXELS,
+        onUpdate: (Float) -> Unit,
+        onEnd: ((canceled: Boolean, value: Float, velocity: Float) -> Unit)? = null
+    ): FloatSpringHandle {
+        val animation = SpringAnimation(FloatValueHolder(from)).apply {
+            spring = springForce(to, spec)
+            setMinimumVisibleChange(minimumVisibleChange)
+            addUpdateListener { _, value, _ -> onUpdate(value) }
+            addEndListener { _, canceled, value, velocity ->
+                onEnd?.invoke(canceled, value, velocity)
+            }
+        }
+        val handle = FloatSpringHandle(animation)
+        animation.start()
+        return handle
+    }
+
+    /** Chạy một spring cho một thuộc tính của view; spring cũ cùng thuộc tính bị huỷ. */
+    fun spring(
+        view: View,
+        prop: DynamicAnimation.ViewProperty,
+        target: Float,
+        spec: SpringSpec = SETTLE,
+        velocity: Float = 0f,
+        onEnd: (() -> Unit)? = null
+    ) {
+        val map = running.getOrPut(view) { HashMap() }
+        map.remove(prop)?.cancel()
+        val anim = SpringAnimation(view, prop)
+        anim.spring = springForce(target, spec)
+        anim.setStartVelocity(velocity)
+        if (prop === DynamicAnimation.ALPHA) {
+            anim.setMinValue(0f)
+            anim.setMaxValue(1f)
+        } else if (prop === DynamicAnimation.SCALE_X || prop === DynamicAnimation.SCALE_Y) {
+            anim.setMinValue(0f) // spring nảy qua 0 sẽ làm view bị lật ngược
+        }
+        anim.addEndListener { _, canceled, _, _ ->
+            if (map[prop] === anim) map.remove(prop)
+            if (map.isEmpty()) releaseFrameRate(view)
+            if (!canceled) onEnd?.invoke()
+        }
+        map[prop] = anim
+        boostFrameRate(view)
+        anim.start()
+    }
+
+    /** Chỉ huỷ spring của một thuộc tính (vd. để tay kéo trực tiếp mà không dừng các spring khác). */
+    fun cancel(view: View, prop: DynamicAnimation.ViewProperty) {
+        running[view]?.remove(prop)?.cancel()
+    }
+
+    /** Huỷ mọi animation (spring và ViewPropertyAnimator) đang chạy trên view. */
+    fun cancel(view: View) {
+        running.remove(view)?.values?.toList()?.forEach { it.cancel() }
+        view.animate().cancel()
+    }
+
+    /** Có đang chạy spring cho thuộc tính này về đúng đích đó không (để khỏi khởi động lại giữa chừng). */
+    private fun isSpringingTo(view: View, prop: DynamicAnimation.ViewProperty, target: Float): Boolean {
+        val anim = running[view]?.get(prop) ?: return false
+        return anim.isRunning && anim.spring.finalPosition == target
+    }
+
+    fun fade(view: View, to: Float, spec: SpringSpec = QUICK, onEnd: (() -> Unit)? = null) {
+        // Hai sự kiện liên tiếp cùng yêu cầu fade về một giá trị (vd. tải trang xong) không được làm đổi tốc độ giữa chừng.
+        if (onEnd == null && isSpringingTo(view, DynamicAnimation.ALPHA, to)) return
+        spring(view, DynamicAnimation.ALPHA, to, spec, onEnd = onEnd)
+    }
+
+    fun scaleTo(view: View, sx: Float, sy: Float = sx, spec: SpringSpec = SETTLE) {
+        spring(view, DynamicAnimation.SCALE_X, sx, spec)
+        spring(view, DynamicAnimation.SCALE_Y, sy, spec)
+    }
+
+    /** Nhấn xuống: đổi kích thước nhanh (scale < 1 là co lại, > 1 là phồng lên). */
+    fun pressDown(view: View, scale: Float) = scaleTo(view, scale, scale, QUICK)
+
+    /**
+     * Gắn hiệu ứng nhấn theo loại view: nút kính (scale <= PRESS_SCALE_PILL) phồng lên khi nhấn,
+     * hàng danh sách/thẻ co lại. Cả hai nhả ra nảy.
+     */
+    fun press(v: View, scale: Float) {
+        if (scale <= Constants.PRESS_SCALE_PILL) attachGlassPress(v) else attachPress(v, v, scale)
+    }
+
+    /** Nhả tay: bật về kích thước gốc, nảy mạnh. */
+    fun pressUp(view: View) = scaleTo(view, 1f, 1f, PRESS_RELEASE)
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun attachPress(touch: View, target: View = touch, scale: Float) {
+        touch.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    // Chỉ áp dụng Spatial Awareness (bung từ điểm chạm) cho hiệu ứng co lại (scale < 1).
+                    // Các nút kính phồng lên (scale > 1) giữ pivot ở tâm để phồng đều, tránh cảm giác "bay".
+                    if (scale < 1f) {
+                        target.pivotX = ev.x.coerceIn(0f, target.width.toFloat())
+                        target.pivotY = ev.y.coerceIn(0f, target.height.toFloat())
+                    }
+                    unclipParents(target)
+                    pressDown(target, scale)
+                }
+                MotionEvent.ACTION_UP -> {
+                    // Chạm nhanh thì spring nhấn chưa kịp tới đích: đẩy tới ~70% để lần nhả luôn nảy rõ.
+                    val mid = 1f + (scale - 1f) * 0.7f
+                    if (Math.abs(target.scaleX - 1f) < Math.abs(mid - 1f)) {
+                        target.scaleX = mid
+                        target.scaleY = mid
+                    }
+                    pressUp(target)
+                    if (scale < 1f) resetPivotLater(target)
+                    if (ev.x >= 0f && ev.x <= v.width && ev.y >= 0f && ev.y <= v.height) {
+                        v.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    pressUp(target)
+                    if (scale < 1f) resetPivotLater(target)
+                }
+            }
+            false
+        }
+    }
+
+    private fun resetPivotLater(target: View) {
+        target.post {
+            target.pivotX = target.width / 2f
+            target.pivotY = target.height / 2f
+        }
+    }
+
+    /**
+     * View cha mặc định cắt phần con vẽ tràn ra ngoài (kể cả theo padding), làm nút phồng lên bị lẹm.
+     * Dừng ở khung cuộn: ScrollView phải giữ cắt nội dung trong khung của nó, nếu không phần cuộn
+     * sẽ tràn lên đè tiêu đề.
+     */
+    fun unclipParents(view: View) {
+        var p = view.parent
+        while (p is android.view.ViewGroup) {
+            if (p is android.widget.ScrollView || p is android.widget.HorizontalScrollView ||
+                p is android.widget.AbsListView
+            ) break
+            p.clipChildren = false
+            p.clipToPadding = false
+            p = p.parent
+        }
+    }
+
+    /** Nút kính: phồng lên khi nhấn rồi nảy về. */
+    fun attachGlassPress(touch: View, target: View = touch) =
+        attachPress(touch, target, GLASS_PRESS_SCALE)
+
+    /**
+     * Hiện một bề mặt: bắt đầu từ trạng thái đầu (alpha 0, scale [fromScale], lệch Y [offsetY]) rồi fade + phồng + trượt về nghỉ.
+     * Dùng cho dialog, thẻ, menu, toast. [toAlpha] là độ mờ lúc nghỉ. Muốn bung từ góc thì đặt pivot trước khi gọi.
+     * Không đụng tới visibility; xem [appear] cho view đang GONE.
+     */
+    fun enter(
+        view: View,
+        offsetY: Float = 0f,
+        fromScale: Float = SURFACE_SCALE,
+        toAlpha: Float = 1f,
+        spec: SpringSpec = SETTLE
+    ) {
+        view.alpha = 0f
+        view.scaleX = fromScale
+        view.scaleY = fromScale
+        fade(view, toAlpha, QUICK)
+        scaleTo(view, 1f, 1f, spec)
+        if (offsetY != 0f) {
+            view.translationY = offsetY
+            spring(view, DynamicAnimation.TRANSLATION_Y, 0f, spec)
+        }
+    }
+
+    /** Đóng một bề mặt: thu về [toScale], trượt tới [offsetY] (nếu khác 0) và fade ra; [onEnd] chạy khi fade xong. */
+    fun exit(
+        view: View,
+        offsetY: Float = 0f,
+        toScale: Float = SURFACE_SCALE,
+        spec: SpringSpec = DISMISS,
+        onEnd: (() -> Unit)? = null
+    ) {
+        scaleTo(view, toScale, toScale, spec)
+        if (offsetY != 0f) spring(view, DynamicAnimation.TRANSLATION_Y, offsetY, spec)
+        fade(view, 0f, spec, onEnd)
+    }
+
+    /**
+     * [enter] cho một thanh/bề mặt đang ẩn (GONE): đặt VISIBLE rồi chạy [enter].
+     * Đang hiện thì không làm gì; đang ẩn dở thì đảo chiều từ đúng vị trí hiện tại, không nhảy về đầu.
+     */
+    fun appear(view: View, offsetY: Float = 0f, fromScale: Float = SURFACE_SCALE, toAlpha: Float = 1f) {
+        if (view.visibility == View.VISIBLE) {
+            if (isSpringingTo(view, DynamicAnimation.ALPHA, 0f)) {
+                fade(view, toAlpha, QUICK)
+                spring(view, DynamicAnimation.TRANSLATION_Y, 0f, SETTLE)
+                scaleTo(view, 1f, 1f, SETTLE)
+            }
+            return
+        }
+        cancel(view)
+        view.visibility = View.VISIBLE
+        enter(view, offsetY, fromScale, toAlpha)
+    }
+
+    /**
+     * [exit] rồi mới đặt [View.GONE] và trả thuộc tính về gốc.
+     * Nếu trong lúc đó [appear] được gọi lại thì việc ẩn bị huỷ và không đụng vào view.
+     */
+    fun disappear(view: View, offsetY: Float = 0f, toScale: Float = SURFACE_SCALE, onEnd: (() -> Unit)? = null) {
+        if (view.visibility != View.VISIBLE) {
+            onEnd?.invoke()
+            return
+        }
+        exit(view, offsetY, toScale) {
+            view.visibility = View.GONE
+            view.alpha = 1f
+            view.translationY = 0f
+            view.scaleX = 1f
+            view.scaleY = 1f
+            onEnd?.invoke()
+        }
+    }
+
+    /**
+     * Khi [change] làm các view trong [views] đổi chỗ (xoá một thẻ, sắp xếp lại), cho từng view trượt từ vị trí cũ
+     * về vị trí mới bằng spring thay vì nhảy cóc (kỹ thuật FLIP). Vị trí lấy theo màn hình, tính cả transform đang chạy.
+     */
+    fun reflow(container: android.view.ViewGroup, views: Collection<View>, spec: SpringSpec = SETTLE, change: () -> Unit) {
+        val before = HashMap<View, IntArray>()
+        val loc = IntArray(2)
+        for (v in views) {
+            if (!v.isAttachedToWindow) continue
+            v.getLocationOnScreen(loc)
+            before[v] = intArrayOf(loc[0], loc[1])
+        }
+        change()
+        val observer = container.viewTreeObserver
+        if (!observer.isAlive) return
+        observer.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (container.viewTreeObserver.isAlive) container.viewTreeObserver.removeOnPreDrawListener(this)
+                val now = IntArray(2)
+                for ((v, old) in before) {
+                    if (!v.isAttachedToWindow) continue
+                    v.getLocationOnScreen(now)
+                    val dx = old[0] - now[0]
+                    val dy = old[1] - now[1]
+                    if (dx == 0 && dy == 0) continue
+                    v.translationX += dx
+                    v.translationY += dy
+                    spring(v, DynamicAnimation.TRANSLATION_X, 0f, spec)
+                    spring(v, DynamicAnimation.TRANSLATION_Y, 0f, spec)
+                }
+                return true
+            }
+        })
+    }
+}

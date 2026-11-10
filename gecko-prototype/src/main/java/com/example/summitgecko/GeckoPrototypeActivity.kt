@@ -33,6 +33,14 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.example.webedge.Constants
+import com.example.webedge.GlassSystem
+import com.example.webedge.Store
+import com.example.webedge.Theme
+import com.example.webedge.ToolbarController
+import com.example.webedge.ToolbarHost
+import eightbitlab.com.blurview.BlurTarget
+import eightbitlab.com.blurview.BlurView
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
@@ -80,13 +88,12 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var root: FrameLayout
     private lateinit var surfaceView: GeckoSurfaceView
     private lateinit var topStrip: ImageView
-    private lateinit var controls: LinearLayout
+    private lateinit var blurTarget: BlurTarget
+    private lateinit var bottomFade: View
+    private lateinit var toolbar: ToolbarController
+    private lateinit var urlPillBlur: BlurView
+    private lateinit var summitStore: Store
     private lateinit var info: TextView
-    private lateinit var urlField: EditText
-    private lateinit var modeButton: Button
-    private lateinit var tabsButton: Button
-    private lateinit var backButton: Button
-    private lateinit var forwardButton: Button
     private val canGoBackMap = HashMap<GeckoSession, Boolean>()
     private val canGoForwardMap = HashMap<GeckoSession, Boolean>()
     private lateinit var session: GeckoSession
@@ -100,7 +107,12 @@ class GeckoPrototypeActivity : Activity() {
 
     private val ui = Handler(Looper.getMainLooper())
     private var statusTop = 0
-    private var controlsHeight = 0
+    private var insetBottom = 0
+    private var insetLeft = 0
+    private var insetRight = 0
+    private var imeBottom = 0
+    private var toneDark: Boolean? = null
+    private val accent = Theme.ACCENT_BLUE
     private var mode = 0
     private var fullscreen = false
     private var sampledColor = Color.BLACK
@@ -185,9 +197,39 @@ class GeckoPrototypeActivity : Activity() {
         }
     }
 
+    private val toolbarHost: ToolbarHost = object : ToolbarHost {
+        override val store: Store get() = summitStore
+        override val isNight: Boolean get() = GlassSystem.isDarkPage()
+        override val density: Float get() = resources.displayMetrics.density
+        override val foreground: Int get() = Color.rgb(18, 18, 20)
+        override val imeBottom: Int get() = this@GeckoPrototypeActivity.imeBottom
+        override val currentUrl: String get() = this@GeckoPrototypeActivity.currentUrl
+        override val blurTarget: BlurTarget get() = this@GeckoPrototypeActivity.blurTarget
+        override val rootView: View get() = root
+        override val bottomFade: View get() = this@GeckoPrototypeActivity.bottomFade
+        override val isMenuOpen: Boolean get() = false
+        override val isFindBarShown: Boolean get() = false
+        override val canGoBack: Boolean get() = canGoBackMap[session] == true
+        override fun reload() {
+            resetProbeState()
+            session.reload()
+        }
+        override fun goBack() {
+            runCatching { session.goBack() }
+        }
+        override fun toggleMenu() = showBrowserMenu()
+        override fun openTabSwitcher() = showTabsDialog()
+        override fun load(input: String) = loadInput(input)
+        override fun scheduleSuggest(query: String) {}
+        override fun hideSuggestions() {}
+        override fun syncOrbMenuVisibility() {}
+        override fun pushBottomReserve() {}
+    }
+
     private val tick = object : Runnable {
         override fun run() {
             sampleTop()
+            syncPageTone()
             ui.postDelayed(this, SAMPLE_INTERVAL_MS)
         }
     }
@@ -203,11 +245,29 @@ class GeckoPrototypeActivity : Activity() {
         insetsController.isAppearanceLightNavigationBars = false
 
         loadBrowserLists()
-        root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        summitStore = Store(this)
+        val d = resources.displayMetrics.density
 
+        root = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            isFocusable = true
+            isFocusableInTouchMode = true
+        }
+
+        // Summit layout: the page fills the screen inside a BlurTarget, glass floats above it.
+        // (BlurTarget here is the Gecko-compatible one: it snapshots the Gecko surface.)
         surfaceView = GeckoSurfaceView(this)
-        root.addView(
+        blurTarget = BlurTarget(this)
+        blurTarget.addView(
             surfaceView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        blurTarget.source = surfaceView
+        root.addView(
+            blurTarget,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -227,94 +287,45 @@ class GeckoPrototypeActivity : Activity() {
             )
         )
 
-        controls = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            background = roundedPanel(Color.argb(238, 17, 20, 28), dp(22).toFloat())
-            elevation = dp(16).toFloat()
+        bottomFade = View(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(Color.argb(40, 0, 0, 0), Color.argb(0, 0, 0, 0))
+            )
         }
+        root.addView(bottomFade, FrameLayout.LayoutParams(-1, dp(80), Gravity.BOTTOM))
 
-        // Diagnostics remain available, but are collapsed by default so Gecko Lab no longer
-        // occupies the browser's primary chrome area.
+        // Summit's own bottom bar: back, address pill (tabs / field / reload), menu.
+        toolbar = ToolbarController(this, toolbarHost, Constants.BOTTOM_BAR_HEIGHT_DP, accent)
+        toolbar.createToolbar()
+        toolbar.addGlassLayer(toolbar.menuBtn, GlassSystem.Preset.ORB_BUTTON)
+        toolbar.addGlassLayer(toolbar.backBtn, GlassSystem.Preset.TOOLBAR_BUTTON)
+        urlPillBlur = GlassSystem.createBlurView(
+            this, blurTarget, GlassSystem.Preset.ADDRESS_BAR, d, false
+        )
+        toolbar.urlPillFrame.addView(urlPillBlur, 0, FrameLayout.LayoutParams(-1, -1))
+        root.addView(
+            toolbar.bar,
+            FrameLayout.LayoutParams(-1, dp(Constants.BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM)
+        )
+
+        // Engine diagnostics (opened from the menu). Sits just above the bar.
         info = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 10.5f
-            maxLines = 4
+            maxLines = 5
             visibility = View.GONE
-            setPadding(dp(8), dp(4), dp(8), dp(8))
+            background = roundedPanel(Color.argb(224, 17, 20, 28), dp(14).toFloat())
+            setPadding(dp(10), dp(8), dp(10), dp(8))
             setOnClickListener { visibility = View.GONE }
         }
-        controls.addView(info)
-
-        val addressRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        urlField = EditText(this).apply {
-            hint = "Tìm kiếm hoặc nhập địa chỉ"
-            setHintTextColor(Color.LTGRAY)
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            isSingleLine = true
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            imeOptions = EditorInfo.IME_ACTION_GO
-            background = roundedPanel(Color.argb(42, 255, 255, 255), dp(24).toFloat())
-            setPadding(dp(16), 0, dp(12), 0)
-            setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_GO) { go(); true } else false
-            }
-        }
-        addressRow.addView(urlField, LinearLayout.LayoutParams(0, dp(48), 1f))
-        addressRow.addView(makeButton("Go") { go() }, LinearLayout.LayoutParams(dp(58), dp(46)).apply {
-            marginStart = dp(8)
-        })
-        controls.addView(addressRow)
-
-        modeButton = makeButton("Below") {
-            mode = (mode + 1) % MODE_NAMES.size
-            resetProbeState()
-            if (!isEdge) setStripSolid(sampledColor)
-            copyState = "waiting"
-            updateLayout()
-            if (::session.isInitialized) session.reload()
-        }
-        val actionRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, 0)
-        }
-        backButton = makeButton("‹") { runCatching { session.goBack() } }
-        forwardButton = makeButton("›") { runCatching { session.goForward() } }
-        actionRow.addView(backButton, weighted())
-        actionRow.addView(forwardButton, weighted())
-        tabsButton = makeButton("Tabs · 1") {
-            showTabsDialog()
-        }
-        actionRow.addView(tabsButton, weighted(1.2f))
-        actionRow.addView(makeButton("⋯") { showBrowserMenu() }, weighted())
-        controls.addView(actionRow, LinearLayout.LayoutParams(-1, dp(46)))
-
-        // BUG FIX: the toolbar panel was built but never attached to the screen, so the app
-        // showed only the web page. Attach it at the bottom of the root layout.
         root.addView(
-            controls,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM
-            ).apply {
-                marginStart = dp(8)
-                marginEnd = dp(8)
+            info,
+            FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
+                leftMargin = dp(14)
+                rightMargin = dp(14)
             }
         )
-
-        controls.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
-            val h = bottom - top
-            if (h != controlsHeight && right - left > 0) {
-                controlsHeight = h
-                updateLayout()
-            }
-        }
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(
@@ -322,8 +333,11 @@ class GeckoPrototypeActivity : Activity() {
             )
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             if (!fullscreen) statusTop = bars.top
-            controls.setPadding(dp(12), dp(8), dp(12), maxOf(bars.bottom, ime.bottom) + dp(8))
-            updateLayout()
+            insetBottom = bars.bottom
+            insetLeft = bars.left
+            insetRight = bars.right
+            imeBottom = ime.bottom
+            applyInsets()
             insets
         }
 
@@ -335,6 +349,7 @@ class GeckoPrototypeActivity : Activity() {
         ) {
             when {
                 fullscreen -> session.exitFullScreen()
+                toolbar.urlBar.hasFocus() -> toolbar.leaveEdit()
                 canGoBackMap[session] == true -> session.goBack()
                 tabSessions.size > 1 -> closeCurrentTab()
                 else -> finish()
@@ -350,7 +365,51 @@ class GeckoPrototypeActivity : Activity() {
         testServer = LocalProbeTestServer(assets)
         testServer?.start()
         installProbe()
+        applyInsets()
+    }
+
+    /** Same placement rules as Summit's MainActivity.applyInsets. */
+    private fun applyInsets() {
+        if (!::toolbar.isInitialized) return
+        val bottom = maxOf(insetBottom, imeBottom) + dp(10)
+
+        val barLp = toolbar.bar.layoutParams as FrameLayout.LayoutParams
+        if (barLp.leftMargin != insetLeft + dp(14) || barLp.rightMargin != insetRight + dp(14) ||
+            barLp.bottomMargin != bottom
+        ) {
+            barLp.leftMargin = insetLeft + dp(14)
+            barLp.rightMargin = insetRight + dp(14)
+            barLp.bottomMargin = bottom
+            toolbar.bar.layoutParams = barLp
+        }
+
+        val fadeLp = bottomFade.layoutParams as FrameLayout.LayoutParams
+        val fadeH = maxOf(insetBottom, imeBottom) + dp(80)
+        if (fadeLp.height != fadeH) {
+            fadeLp.height = fadeH
+            bottomFade.layoutParams = fadeLp
+        }
+
+        val infoLp = info.layoutParams as FrameLayout.LayoutParams
+        val infoBottom = bottom + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
+        if (infoLp.bottomMargin != infoBottom) {
+            infoLp.bottomMargin = infoBottom
+            info.layoutParams = infoLp
+        }
+
+        toolbar.updateBarVisibility()
         updateLayout()
+    }
+
+    /** Adapt the glass tint and icon colours to the page behind it (dark / light). */
+    private fun syncPageTone() {
+        if (!::blurTarget.isInitialized) return
+        val tone = blurTarget.pageTone ?: return
+        val dark = luminance(tone) < 110
+        if (toneDark != dark) {
+            toneDark = dark
+            GlassSystem.setPageBackground(tone, root)
+        }
     }
 
     // ---- session configuration ------------------------------------------------------------
@@ -391,7 +450,7 @@ class GeckoPrototypeActivity : Activity() {
         tabUrls[index] = url
         if (source === session) {
             currentUrl = url
-            if (!urlField.hasFocus()) urlField.setText(url)
+            showAddress(url)
             browserPrefs.edit().putString("last_url", url).apply()
             addHistory(url)
         }
@@ -450,12 +509,12 @@ class GeckoPrototypeActivity : Activity() {
         if (!restored.isNullOrBlank()) {
             currentUrl = restored
             tabUrls[0] = restored
-            urlField.setText(restored)
+            showAddress(restored)
             session.loadUri(restored)
         } else {
             currentUrl = "https://www.google.com/"
             tabUrls[0] = currentUrl
-            urlField.setText(currentUrl)
+            showAddress(currentUrl)
             session.loadUri(currentUrl)
         }
     }
@@ -524,10 +583,11 @@ class GeckoPrototypeActivity : Activity() {
     // ---- layout / modes -------------------------------------------------------------------
 
     private fun updateLayout() {
-        if (!::surfaceView.isInitialized || !::modeButton.isInitialized) return
+        if (!::surfaceView.isInitialized || !::toolbar.isInitialized) return
 
         val top = if (fullscreen || isEdge) 0 else statusTop
-        val bottom = if (fullscreen) 0 else controlsHeight
+        // Like Summit: the page keeps the full height; only the keyboard shrinks it.
+        val bottom = if (fullscreen) 0 else imeBottom
         val lp = surfaceView.layoutParams as FrameLayout.LayoutParams
         if (lp.topMargin != top || lp.bottomMargin != bottom) {
             lp.topMargin = top
@@ -542,21 +602,23 @@ class GeckoPrototypeActivity : Activity() {
             topStrip.layoutParams = sp
         }
 
-        controls.visibility = if (fullscreen) View.GONE else View.VISIBLE
+        val chrome = if (fullscreen) View.GONE else View.VISIBLE
+        toolbar.bar.visibility = chrome
+        bottomFade.visibility = chrome
+
+        // Bottom reserve: env(safe-area-inset-bottom) = space the floating bar covers.
+        val reserve = if (fullscreen) 0 else
+            (if (imeBottom > 0) 0 else insetBottom) + dp(10) + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
         val feedInset = mode == 1 && !fullscreen
         val feedToolbar = mode == 2 && !fullscreen
-        surfaceView.setSafeInsets(if (feedInset) statusTop else 0, 0, 0, 0)
+        surfaceView.setSafeInsets(if (feedInset) statusTop else 0, 0, reserve, 0)
         surfaceView.setDynamicToolbarMaxHeight(if (feedToolbar) statusTop else 0)
-        modeButton.text = "Mode: ${MODE_NAMES[mode]}"
-        if (::tabsButton.isInitialized) tabsButton.text = "Tabs · ${tabSessions.size}"
         refreshNavButtons()
         updateInfo()
     }
 
     private fun refreshNavButtons() {
-        if (!::backButton.isInitialized || !::forwardButton.isInitialized) return
-        backButton.alpha = if (canGoBackMap[session] == true) 1f else 0.4f
-        forwardButton.alpha = if (canGoForwardMap[session] == true) 1f else 0.4f
+        if (::toolbar.isInitialized) toolbar.updateNav()
     }
 
     private fun setFullscreen(on: Boolean) {
@@ -702,23 +764,28 @@ class GeckoPrototypeActivity : Activity() {
 
     // ---- navigation -----------------------------------------------------------------------
 
-    private fun go() {
-        val t = urlField.text.toString().trim()
+    /** Called by Summit's toolbar when the user submits the address pill. */
+    private fun loadInput(input: String) {
+        val t = input.trim()
         if (t.isEmpty() || !::session.isInitialized) return
         val url = when {
             t.contains("://") -> t
             t.contains(' ') || !t.contains('.') -> "https://www.google.com/search?q=" + Uri.encode(t)
             else -> "https://$t"
         }
-        currentUrl = url
-        if (tabUrls.indices.contains(tabSessions.indexOf(session))) tabUrls[tabSessions.indexOf(session)] = url
+        showAddress(url)
+        val index = tabSessions.indexOf(session)
+        if (index in tabUrls.indices) tabUrls[index] = url
         browserPrefs.edit().putString("last_url", url).apply()
         addHistory(url)
         resetProbeState()
         session.loadUri(url)
-        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-            .hideSoftInputFromWindow(urlField.windowToken, 0)
-        urlField.clearFocus()
+    }
+
+    /** Address pill shows the domain, like Summit; the full URL appears while editing. */
+    private fun showAddress(url: String) {
+        currentUrl = url
+        if (::toolbar.isInitialized && !toolbar.urlBar.hasFocus()) toolbar.showDomain()
     }
 
     private fun addHistory(url: String) {
@@ -742,7 +809,7 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     private fun showBrowserMenu() {
-        val items = arrayOf("Tải lại trang", "Thêm dấu trang", "Dấu trang", "Lịch sử", "Thẻ mới", "Trang kiểm thử", "Chế độ Edge: ${MODE_NAMES[mode]}", "Thông tin engine")
+        val items = arrayOf("Tải lại trang", "Thêm dấu trang", "Dấu trang", "Lịch sử", "Thẻ mới", "Trang kiểm thử", "Chế độ Edge: ${MODE_NAMES[mode]}", "Thông tin engine", "Tiến")
         AlertDialog.Builder(this)
             .setTitle("Summit")
             .setItems(items) { _, which ->
@@ -767,6 +834,7 @@ class GeckoPrototypeActivity : Activity() {
                         info.visibility = View.VISIBLE
                         updateInfo()
                     }
+                    8 -> runCatching { session.goForward() }
                 }
             }.show()
     }
@@ -782,7 +850,7 @@ class GeckoPrototypeActivity : Activity() {
                 currentUrl = url
                 val activeIndex = tabSessions.indexOf(session)
                 if (activeIndex in tabUrls.indices) tabUrls[activeIndex] = url
-                urlField.setText(url)
+                showAddress(url)
                 browserPrefs.edit().putString("last_url", url).apply()
                 addHistory(url)
                 session.loadUri(url)
@@ -817,7 +885,7 @@ class GeckoPrototypeActivity : Activity() {
             session = next
             surfaceView.attach(next)
             currentUrl = url
-            urlField.setText(url)
+            showAddress(url)
             addHistory(url)
             resetProbeState()
             next.loadUri(url)
@@ -835,13 +903,12 @@ class GeckoPrototypeActivity : Activity() {
             session.setActive(false)
             session = tabSessions[index]
             currentUrl = tabUrls.getOrNull(index).orEmpty()
-            urlField.setText(currentUrl)
+            showAddress(currentUrl)
             session.setActive(true)
             session.setFocused(true)
             surfaceView.attach(session)
             resetProbeState()
             updateLayout()
-            if (::tabsButton.isInitialized) tabsButton.text = "Tabs · ${tabSessions.size}"
         }.onFailure {
             Toast.makeText(this, "Không chuyển được tab: ${it.message}", Toast.LENGTH_SHORT).show()
         }
@@ -860,13 +927,12 @@ class GeckoPrototypeActivity : Activity() {
         val nextIndex = (index - 1).coerceAtLeast(0)
         session = tabSessions[nextIndex]
         currentUrl = tabUrls.getOrNull(nextIndex).orEmpty()
-        urlField.setText(currentUrl)
+        showAddress(currentUrl)
         session.setActive(true)
         session.setFocused(true)
         surfaceView.attach(session)
         resetProbeState()
         updateLayout()
-        if (::tabsButton.isInitialized) tabsButton.text = "Tabs · ${tabSessions.size}"
     }
 
     private fun roundedPanel(color: Int, radius: Float) = GradientDrawable().apply {

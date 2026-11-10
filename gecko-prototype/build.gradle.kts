@@ -16,7 +16,7 @@ android {
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
         versionCode = 1
-        versionName = "0.5-summit-chrome-preview"
+        versionName = "0.6-summit-glass"
     }
 
     compileOptions {
@@ -33,5 +33,6 @@ kotlin {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.dynamicanimation:dynamicanimation:1.1.0")
     implementation("org.mozilla.geckoview:geckoview:159.0.20261022150525")
 }

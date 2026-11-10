@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Summit Probe",
-  "version": "1.9",
+  "version": "2.0",
   "description": "Detects pinned and normal-flow top headers, offsets ordinary page flow with a reversible spacer margin, protects YouTube watch-player overlays, restores modified styles on route changes, and reports diagnostics.",
   "browser_specific_settings": {
     "gecko": {
@@ -14,7 +14,8 @@
         "<all_urls>"
       ],
       "js": [
-        "probe.js"
+        "probe.js",
+        "reserve.js"
       ],
       "run_at": "document_start",
       "all_frames": false
