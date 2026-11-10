@@ -103,7 +103,6 @@ class GeckoPrototypeActivity : Activity() {
         private const val PROBE_ID = "summit-probe@example.com"
         private const val PROBE_LOG_TAG = "SummitProbe"
         private const val SAMPLE_INTERVAL_MS = 300L
-        private val MODE_NAMES = arrayOf("Below", "Edge JS", "Edge Native")
     }
 
     private lateinit var root: FrameLayout
@@ -149,7 +148,6 @@ class GeckoPrototypeActivity : Activity() {
     private var imeBottom = 0
     private var toneDark: Boolean? = null
     private val accent = Theme.ACCENT_BLUE
-    private var mode = 0
     private var fullscreen = false
     private var sampledColor = Color.BLACK
     private var copyState = "waiting"
@@ -168,7 +166,6 @@ class GeckoPrototypeActivity : Activity() {
     // Message delivery is asynchronous: late startup handshakes must not overwrite scan results.
     private var probeScanStarted = false
 
-    private val isEdge: Boolean get() = mode != 0
 
     private val probeDelegate = object : WebExtension.MessageDelegate {
         override fun onMessage(
@@ -184,6 +181,10 @@ class GeckoPrototypeActivity : Activity() {
             )
 
             val payload = message as? JSONObject
+            // Bottom-lift poll của content script: trả lời ngay, không log để khỏi spam logcat.
+            if (payload != null && payload.optString("type") == "bottomQuery") {
+                return GeckoResult.fromValue(bottomPayload())
+            }
             if (payload == null) {
                 runOnUiThread {
                     probeState = "message received (non-JSON: ${message.javaClass.simpleName})"
@@ -553,7 +554,6 @@ class GeckoPrototypeActivity : Activity() {
                 override val currentTitle: String get() = tabManager.forSession(session)?.title.orEmpty()
                 override val isDesktopMode: Boolean get() = tabManager.forSession(session)?.desktop == true
                 override val isAdBlockEnabled: Boolean get() = summitStore.adBlockEnabled
-                override val edgeModeLabel: String get() = MODE_NAMES[mode]
                 override val isHeaderScrollEnabled: Boolean get() = summitStore.headerScroll
                 override val isAutoHideEnabled: Boolean get() = summitStore.autoHideBar
                 override val canGoForward: Boolean get() = canGoForwardMap[session] == true
@@ -567,10 +567,6 @@ class GeckoPrototypeActivity : Activity() {
                 override fun openTabs() = showTabSwitcher()
                 override fun toggleDesktopMode() = this@GeckoPrototypeActivity.toggleDesktopMode()
                 override fun toggleAdBlock() = this@GeckoPrototypeActivity.toggleAdBlock()
-                override fun cycleEdgeMode() {
-                    mode = (mode + 1) % MODE_NAMES.size
-                    resetProbeState(); updateLayout(); session.reload()
-                }
                 override fun toggleHeaderScroll() {
                     summitStore.headerScroll = !summitStore.headerScroll
                     updateLayout(); resetProbeState(); session.reload()
@@ -997,7 +993,7 @@ class GeckoPrototypeActivity : Activity() {
             "excluded=${m.optInt("excluded", 0)}\n" +
             "flow=${m.optString("flowSelector", "none")} +${m.optInt("flowOffset", 0)}px " +
             "active=${m.optInt("flowShifted", 0)} fallback=${m.optBoolean("flowFallback", false)}"
-        if (isEdge) sampleTop()
+        sampleTop()
         updateInfo()
     }
 
@@ -1028,7 +1024,7 @@ class GeckoPrototypeActivity : Activity() {
     private fun updateLayout() {
         if (!::surfaceView.isInitialized || !::toolbar.isInitialized) return
 
-        val top = if (fullscreen || isEdge) 0 else statusTop
+        val top = 0
         // Like Summit: the page keeps the full height; only the keyboard shrinks it.
         val bottom = if (fullscreen) 0 else imeBottom
         val lp = surfaceView.layoutParams as FrameLayout.LayoutParams
@@ -1052,10 +1048,8 @@ class GeckoPrototypeActivity : Activity() {
         // Bottom reserve: env(safe-area-inset-bottom) = space the floating bar covers.
         val reserve = if (fullscreen) 0 else
             (if (imeBottom > 0) 0 else insetBottom) + dp(10) + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
-        val feedInset = mode == 1 && !fullscreen
-        val feedToolbar = mode == 2 && !fullscreen
-        surfaceView.setSafeInsets(if (feedInset) statusTop else 0, 0, reserve, 0)
-        surfaceView.setDynamicToolbarMaxHeight(if (feedToolbar) statusTop else 0)
+        surfaceView.setSafeInsets(if (fullscreen) 0 else statusTop, 0, reserve, 0)
+        surfaceView.setDynamicToolbarMaxHeight(0)
         refreshNavButtons()
         updateInfo()
     }
@@ -1063,6 +1057,19 @@ class GeckoPrototypeActivity : Activity() {
     private fun refreshNavButtons() {
         if (::toolbar.isInitialized) toolbar.updateNav()
     }
+
+    /** Khoảng (px CSS) từ đáy trang tới đỉnh viên thuốc địa chỉ, để nâng thanh đáy của website. */
+    private fun bottomLiftCss(): Int {
+        if (fullscreen || !::toolbar.isInitialized) return 0
+        val d = resources.displayMetrics.density
+        val half = Constants.BOTTOM_BAR_HEIGHT_DP * d / 2f
+        val barTop = maxOf(insetBottom, imeBottom) + 10 * d + half +
+            half * (if (toolbar.barHidden) 0.62f else 1f) + 6 * d
+        return (maxOf(0f, barTop - imeBottom) / d).toInt()
+    }
+
+    private fun bottomPayload(): JSONObject =
+        JSONObject().put("type", "bottom").put("px", bottomLiftCss())
 
     private fun setFullscreen(on: Boolean) {
         fullscreen = on
@@ -1094,17 +1101,13 @@ class GeckoPrototypeActivity : Activity() {
         if (fullscreen || !::surfaceView.isInitialized) return
         if (!surfaceView.isSurfaceReady || surfaceView.width <= 0 || statusTop <= 0) return
         try {
-            if (!isEdge) {
-                sampleColor()
+            val c = probeColor
+            if (probeHasFixed && c != null) {
+                setStripSolid(c)
+                copyState = "probe colour"
+                updateInfo()
             } else {
-                val c = probeColor
-                if (probeHasFixed && c != null) {
-                    setStripSolid(c)
-                    copyState = "probe colour"
-                    updateInfo()
-                } else {
-                    sampleGlass()
-                }
+                sampleGlass()
             }
         } catch (e: Exception) {
             copyState = "error ${e.javaClass.simpleName}"
@@ -1201,7 +1204,7 @@ class GeckoPrototypeActivity : Activity() {
 
     private fun updateInfo() {
         if (!::info.isInitialized) return
-        info.text = "GeckoView 159 · ${MODE_NAMES[mode]} · bar ${statusTop}px · copy: $copyState\n" +
+        info.text = "GeckoView 159 · Edge JS · bar ${statusTop}px · copy: $copyState\n" +
             "probe: $probeState"
     }
 

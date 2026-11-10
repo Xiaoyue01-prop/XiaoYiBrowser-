@@ -23,7 +23,6 @@ interface GeckoMenuHost {
     val currentTitle: String
     val isDesktopMode: Boolean
     val isAdBlockEnabled: Boolean
-    val edgeModeLabel: String
     val isHeaderScrollEnabled: Boolean
     val isAutoHideEnabled: Boolean
     val canGoForward: Boolean
@@ -34,7 +33,6 @@ interface GeckoMenuHost {
     fun openTabs()
     fun toggleDesktopMode()
     fun toggleAdBlock()
-    fun cycleEdgeMode()
     fun toggleHeaderScroll()
     fun toggleAutoHide()
     fun showDownloads()
@@ -400,7 +398,6 @@ class GeckoMenuController(
         val engines = listOf("Google", "Bing", "DuckDuckGo")
         addSetting("Công cụ tìm kiếm", engines.getOrElse(store.searchEngine) { "Google" }) { chooseEngine() }
         addSetting("Trang chủ", shortUrl(store.homeUrl)) { editHome() }
-        addSetting("Chế độ Edge", host.edgeModeLabel) { host.cycleEdgeMode(); showSettings() }
         addSetting("Header tràn viền", if (host.isHeaderScrollEnabled) "Cuộn cùng nội dung" else "Đứng yên") {
             host.toggleHeaderScroll(); showSettings()
         }
