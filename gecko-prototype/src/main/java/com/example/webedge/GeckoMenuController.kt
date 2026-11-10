@@ -126,7 +126,7 @@ class GeckoMenuController(
             setPadding(0, px(4), 0, px(8))
         }
         val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        scroller.addView(body, ScrollView.LayoutParams(-1, -2))
+        scroller.addView(body, ViewGroup.LayoutParams(-1, -2))
         menuCard.addView(blur, FrameLayout.LayoutParams(-1, -1))
         menuCard.addView(scroller, FrameLayout.LayoutParams(px(300), ViewGroup.LayoutParams.WRAP_CONTENT))
         hostLayer.addView(
