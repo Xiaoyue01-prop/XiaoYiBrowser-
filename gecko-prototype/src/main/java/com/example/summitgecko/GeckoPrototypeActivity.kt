@@ -38,6 +38,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.example.webedge.Constants
 import com.example.webedge.GlassSystem
 import com.example.webedge.GeckoFindBarController
+import com.example.webedge.GeckoMenuController
+import com.example.webedge.GeckoMenuHost
 import com.example.webedge.GeckoDownloadController
 import com.example.webedge.GeckoPermissionController
 import com.example.webedge.GeckoPromptController
@@ -106,6 +108,7 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var bottomFade: View
     private lateinit var toolbar: ToolbarController
     private lateinit var orbMenu: OrbMenuController
+    private lateinit var menuController: GeckoMenuController
     private lateinit var findBarController: GeckoFindBarController
     private lateinit var toaster: ToastController
     private lateinit var urlPillBlur: BlurView
@@ -230,7 +233,7 @@ class GeckoPrototypeActivity : Activity() {
         override val blurTarget: BlurTarget get() = this@GeckoPrototypeActivity.blurTarget
         override val rootView: View get() = root
         override val bottomFade: View get() = this@GeckoPrototypeActivity.bottomFade
-        override val isMenuOpen: Boolean get() = false
+        override val isMenuOpen: Boolean get() = ::menuController.isInitialized && menuController.isOpen
         override val isFindBarShown: Boolean get() = ::findBarController.isInitialized && findBarController.isShown
         override val isLoading: Boolean get() = loadingBySession[session] == true
         override val canGoBack: Boolean get() = canGoBackMap[session] == true
@@ -248,7 +251,7 @@ class GeckoPrototypeActivity : Activity() {
         override fun goBack() {
             runCatching { session.goBack() }
         }
-        override fun toggleMenu() = showBrowserMenu()
+        override fun toggleMenu() { if (::menuController.isInitialized) menuController.toggle() else showBrowserMenu() }
         override fun openTabSwitcher() = showTabSwitcher()
         override fun load(input: String) = loadInput(input)
         override fun scheduleSuggest(query: String) {}
@@ -261,6 +264,7 @@ class GeckoPrototypeActivity : Activity() {
                 (::findBarController.isInitialized && findBarController.isShown) || imeBottom > 0 || fullscreen
             )
             orbMenu.setToolbarCompact(toolbar.barHidden, toolbar.urlPillFrame)
+            if (::menuController.isInitialized) menuController.setToolbarCompact(toolbar.barHidden, toolbar.urlPillFrame)
         }
         override fun pushBottomReserve() {}
     }
@@ -449,6 +453,62 @@ class GeckoPrototypeActivity : Activity() {
             FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
         )
 
+        // Summit's native glass menu, adapted to GeckoSession rather than WebView.
+        menuController = GeckoMenuController(
+            activity = this,
+            root = root,
+            blurTarget = blurTarget,
+            store = summitStore,
+            density = d,
+            isNight = { GlassSystem.isDarkPage() },
+            foreground = { GlassSystem.pagePrimaryText() },
+            accent = accent,
+            host = object : GeckoMenuHost {
+                override val currentUrl: String get() = this@GeckoPrototypeActivity.currentUrl
+                override val currentTitle: String get() = tabManager.forSession(session)?.title.orEmpty()
+                override val isDesktopMode: Boolean get() = tabManager.forSession(session)?.desktop == true
+                override val isAdBlockEnabled: Boolean get() = summitStore.adBlockEnabled
+                override val edgeModeLabel: String get() = MODE_NAMES[mode]
+                override val isHeaderScrollEnabled: Boolean get() = summitStore.headerScroll
+                override val isAutoHideEnabled: Boolean get() = summitStore.autoHideBar
+                override val canGoForward: Boolean get() = canGoForwardMap[session] == true
+                override val tabCount: Int get() = tabManager.count()
+                override fun reload() {
+                    if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
+                    resetProbeState(); session.reload()
+                }
+                override fun load(url: String) = loadInput(url)
+                override fun openFind() = openFindInPage()
+                override fun openTabs() = showTabSwitcher()
+                override fun toggleDesktopMode() = this@GeckoPrototypeActivity.toggleDesktopMode()
+                override fun toggleAdBlock() = this@GeckoPrototypeActivity.toggleAdBlock()
+                override fun cycleEdgeMode() {
+                    mode = (mode + 1) % MODE_NAMES.size
+                    resetProbeState(); updateLayout(); session.reload()
+                }
+                override fun toggleHeaderScroll() {
+                    summitStore.headerScroll = !summitStore.headerScroll
+                    updateLayout(); resetProbeState(); session.reload()
+                }
+                override fun toggleAutoHide() {
+                    summitStore.autoHideBar = !summitStore.autoHideBar
+                    if (!summitStore.autoHideBar) toolbar.setBarHidden(false)
+                    toolbar.updateBarVisibility()
+                }
+                override fun showDownloads() = showToast("Tệp tải xuống được lưu trong Download/Summit; trình quản lý danh sách sẽ được bổ sung sau")
+                override fun showPrivacy() = showToast("Gecko Enhanced Tracking Protection: ${if (summitStore.adBlockEnabled) "đang bật" else "đang tắt"}")
+                override fun clearSitePermissions() {
+                    summitStore.clearSitePermissions(null)
+                    if (::permissionController.isInitialized) permissionController.cancelAll()
+                }
+                override fun clearBrowserHistory() { syncBrowserListsFromStore() }
+                override fun toast(message: String) = showToast(message)
+            }
+        ).also {
+            it.originView = toolbar.menuBtn
+            it.coverView = toolbar.urlPillFrame
+        }
+
         // Engine diagnostics (opened from the menu). Sits just above the bar.
         info = TextView(this).apply {
             setTextColor(Color.WHITE)
@@ -491,6 +551,7 @@ class GeckoPrototypeActivity : Activity() {
                 ::glassDialog.isInitialized && glassDialog.isShowing -> glassDialog.cancelCurrent()
                 fullscreen -> session.exitFullScreen()
                 ::tabSwitcher.isInitialized && tabSwitcher.isShowing -> tabSwitcher.close()
+                ::menuController.isInitialized && menuController.isOpen -> menuController.handleBack()
                 ::findBarController.isInitialized && findBarController.isShown -> findBarController.close()
                 toolbar.urlBar.hasFocus() -> toolbar.leaveEdit()
                 canGoBackMap[session] == true -> session.goBack()
@@ -1069,49 +1130,7 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     private fun showBrowserMenu() {
-        val items = arrayOf("Tải lại trang", "Tìm trong trang", "Thêm dấu trang", "Dấu trang", "Lịch sử", "Thẻ mới", "Trang kiểm thử", "Chế độ Edge: ${MODE_NAMES[mode]}", "Thông tin engine", "Tiến",
-            "Chặn quảng cáo: ${if (summitStore.adBlockEnabled) "Bật" else "Tắt"}",
-            "Trang web máy tính: ${if (tabManager.forSession(session)?.desktop == true) "Bật" else "Tắt"}",
-            "Đặt lại quyền trang web")
-        AlertDialog.Builder(this)
-            .setTitle("Summit")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> {
-                        if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
-                        resetProbeState()
-                        session.reload()
-                    }
-                    1 -> openFindInPage()
-                    2 -> {
-                        if (currentUrl.isNotBlank()) {
-                            val title = tabManager.forSession(session)?.title.orEmpty().ifBlank { currentUrl }
-                            val added = summitStore.toggleBookmark(title, currentUrl)
-                            syncBrowserListsFromStore()
-                            showToast(if (added) "Đã thêm dấu trang" else "Đã bỏ dấu trang")
-                        }
-                    }
-                    3 -> showSavedList("Dấu trang", bookmarkItems)
-                    4 -> showSavedList("Lịch sử", historyItems)
-                    5 -> createTab()
-                    6 -> loadTestPage()
-                    7 -> {
-                        mode = (mode + 1) % MODE_NAMES.size
-                        resetProbeState(); updateLayout(); session.reload()
-                    }
-                    8 -> {
-                        info.visibility = View.VISIBLE
-                        updateInfo()
-                    }
-                    9 -> runCatching { session.goForward() }
-                    10 -> toggleAdBlock()
-                    11 -> toggleDesktopMode()
-                    12 -> {
-                        summitStore.clearSitePermissions(null)
-                        showToast("Đã đặt lại quyền trang web")
-                    }
-                }
-            }.show()
+        if (::menuController.isInitialized) menuController.toggle()
     }
 
     private fun showSavedList(title: String, values: List<String>) {
@@ -1508,6 +1527,7 @@ class GeckoPrototypeActivity : Activity() {
     override fun onDestroy() {
         ui.removeCallbacks(tick)
         if (::orbMenu.isInitialized) orbMenu.destroy()
+        if (::menuController.isInitialized) menuController.dispose()
         if (::findBarController.isInitialized) findBarController.dispose()
         if (::surfaceView.isInitialized) surfaceView.detach()
         tabManager.getAll().forEach { tab ->
