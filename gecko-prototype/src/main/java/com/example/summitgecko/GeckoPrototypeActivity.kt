@@ -41,6 +41,7 @@ import com.example.webedge.GeckoFindBarController
 import com.example.webedge.GeckoDownloadController
 import com.example.webedge.GeckoPermissionController
 import com.example.webedge.GeckoPromptController
+import com.example.webedge.OrbMenuController
 import com.example.webedge.GlassDialogController
 import com.example.webedge.Store
 import com.example.webedge.TabManager
@@ -104,6 +105,7 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var blurTarget: BlurTarget
     private lateinit var bottomFade: View
     private lateinit var toolbar: ToolbarController
+    private lateinit var orbMenu: OrbMenuController
     private lateinit var findBarController: GeckoFindBarController
     private lateinit var toaster: ToastController
     private lateinit var urlPillBlur: BlurView
@@ -251,7 +253,15 @@ class GeckoPrototypeActivity : Activity() {
         override fun load(input: String) = loadInput(input)
         override fun scheduleSuggest(query: String) {}
         override fun hideSuggestions() {}
-        override fun syncOrbMenuVisibility() {}
+        override fun syncOrbMenuVisibility() {
+            if (!::orbMenu.isInitialized || !::toolbar.isInitialized) return
+            // Keep the Orb synchronized with Summit's actual toolbar, Find Bar and IME state.
+            orbMenu.setToolbarAvailable(!fullscreen && toolbar.barPresent)
+            orbMenu.setTemporarilyHidden(
+                (::findBarController.isInitialized && findBarController.isShown) || imeBottom > 0 || fullscreen
+            )
+            orbMenu.setToolbarCompact(toolbar.barHidden, toolbar.urlPillFrame)
+        }
         override fun pushBottomReserve() {}
     }
 
@@ -338,6 +348,25 @@ class GeckoPrototypeActivity : Activity() {
             FrameLayout.LayoutParams(-1, dp(Constants.BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM)
         )
 
+        // Native Summit Orb navigation: reuse the original controller and its spring/glass
+        // behavior, anchored to the Gecko toolbar's back button.
+        orbMenu = OrbMenuController(
+            rootLayout = root,
+            blurTarget = blurTarget,
+            d = d,
+            isNight = GlassSystem.isDarkPage(),
+            BOTTOM_BAR_HEIGHT_DP = Constants.BOTTOM_BAR_HEIGHT_DP,
+            onBack = { if (canGoBackMap[session] == true) session.goBack() },
+            onForward = { if (canGoForwardMap[session] == true) session.goForward() },
+            onHome = {
+                val home = summitStore.homeUrl.ifBlank { "https://www.google.com/" }
+                currentUrl = home
+                showAddress(home)
+                session.loadUri(home)
+            }
+        )
+        orbMenu.alignWith(toolbar.backBtn)
+
         // Reuse Summit's glass banner for browser feedback instead of platform Toast.
         toaster = ToastController(
             context = this,
@@ -408,7 +437,7 @@ class GeckoPrototypeActivity : Activity() {
             foreground = { GlassSystem.pagePrimaryText() },
             muted = { GlassSystem.pageSecondaryText() },
             accent = accent,
-            hideOrbTemporarily = { /* Orb menu integration is a later migration step. */ },
+            hideOrbTemporarily = { if (::orbMenu.isInitialized) orbMenu.setTemporarilyHidden(true) },
             onVisibilityChanged = {
                 if (::toolbar.isInitialized) toolbar.updateBarVisibility()
                 applyInsets()
@@ -526,6 +555,7 @@ class GeckoPrototypeActivity : Activity() {
         }
 
         toolbar.updateBarVisibility()
+        if (::orbMenu.isInitialized) toolbarHost.syncOrbMenuVisibility()
         updateLayout()
     }
 
@@ -1477,6 +1507,7 @@ class GeckoPrototypeActivity : Activity() {
 
     override fun onDestroy() {
         ui.removeCallbacks(tick)
+        if (::orbMenu.isInitialized) orbMenu.destroy()
         if (::findBarController.isInitialized) findBarController.dispose()
         if (::surfaceView.isInitialized) surfaceView.detach()
         tabManager.getAll().forEach { tab ->
