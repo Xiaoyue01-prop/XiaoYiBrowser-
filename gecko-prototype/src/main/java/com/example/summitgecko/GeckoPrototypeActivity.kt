@@ -108,6 +108,7 @@ class GeckoPrototypeActivity : Activity() {
 
     private lateinit var root: FrameLayout
     private lateinit var surfaceView: GeckoSurfaceView
+    private lateinit var pullRefreshHint: TextView
     private lateinit var topStrip: ImageView
     private lateinit var blurTarget: BlurTarget
     private lateinit var bottomFade: View
@@ -121,6 +122,8 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var info: TextView
     private val canGoBackMap = HashMap<GeckoSession, Boolean>()
     private val canGoForwardMap = HashMap<GeckoSession, Boolean>()
+    private val scrollYBySession = HashMap<GeckoSession, Int>()
+    private var pullRefreshActive = false
     private lateinit var session: GeckoSession
     private val tabManager = TabManager()
     private lateinit var tabSwitcher: TabSwitcherController
@@ -306,7 +309,9 @@ class GeckoPrototypeActivity : Activity() {
 
         // Summit layout: the page fills the screen inside a BlurTarget, glass floats above it.
         // (BlurTarget here is the Gecko-compatible one: it snapshots the Gecko surface.)
-        surfaceView = GeckoSurfaceView(this)
+        surfaceView = GeckoSurfaceView(this).apply {
+            onTabSwipe = ::switchAdjacentTab
+        }
         blurTarget = BlurTarget(this)
         blurTarget.addView(
             surfaceView,
@@ -323,6 +328,37 @@ class GeckoPrototypeActivity : Activity() {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         )
+
+        pullRefreshHint = TextView(this).apply {
+            text = "↓  Kéo xuống để tải lại"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(9), dp(16), dp(9))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(22).toFloat()
+                setColor(Color.argb(220, 35, 39, 48))
+                setStroke(dp(1), Color.argb(55, 255, 255, 255))
+            }
+            alpha = 0f
+            visibility = View.INVISIBLE
+            elevation = dp(18).toFloat()
+        }
+        root.addView(
+            pullRefreshHint,
+            FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                topMargin = dp(18)
+            }
+        )
+        surfaceView.canPullToRefresh = {
+            ::session.isInitialized && !fullscreen && loadingBySession[session] != true &&
+                (scrollYBySession[session] ?: 0) <= 0
+        }
+        surfaceView.onPullProgress = { progress, ready ->
+            if (progress <= 0f && !ready) pullRefreshActive = false
+            updatePullRefreshHint(progress, ready)
+        }
+        surfaceView.onPullToRefresh = ::performPullToRefresh
 
         topStrip = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_XY
@@ -441,12 +477,12 @@ class GeckoPrototypeActivity : Activity() {
             isNight = { GlassSystem.isDarkPage() },
             foreground = { GlassSystem.pagePrimaryText() },
             onOpenCurrent = ::loadInput,
-            onOpenNewTab = ::createTab,
+            onOpenNewTab = { targetUrl -> createTab(targetUrl) },
             onToast = ::showToast
         )
 
-        // Summit's tab grid (thumbnails, origin morph from the Tab button). Private mode is not
-        // available in the Gecko prototype yet, so the "Riêng tư" segment explains and snaps back.
+        // Summit's tab grid (thumbnails, origin morph from the Tab button). The private segment
+        // now creates/activates real Gecko private-mode sessions; regular tabs remain separate.
         tabSwitcher = TabSwitcherController(
             activity = this,
             tabManager = tabManager,
@@ -461,8 +497,24 @@ class GeckoPrototypeActivity : Activity() {
             onCreateTab = { createTab() },
             shortUrl = ::shortUrl,
             onModeChange = { wantPrivate ->
-                if (wantPrivate) showToast("Tab riêng tư chưa có trong bản Gecko")
-                false
+                val activePrivate = tabManager.isPrivateMode
+                if (wantPrivate == activePrivate) {
+                    true
+                } else if (wantPrivate) {
+                    createTab(privateMode = true)
+                    tabManager.isPrivateMode
+                } else {
+                    val regular = tabManager.getAll()
+                        .filter { !it.isPrivate }
+                        .maxByOrNull { it.lastActiveAt }
+                    if (regular != null) {
+                        activateTab(regular)
+                        !tabManager.isPrivateMode
+                    } else {
+                        createTab(privateMode = false)
+                        !tabManager.isPrivateMode
+                    }
+                }
             }
         )
 
@@ -596,10 +648,10 @@ class GeckoPrototypeActivity : Activity() {
         }
 
         applyAdBlock()
-        session = GeckoSession()
+        session = newBrowserSession(privateMode = false)
         configureSession(session)
         session.open(runtime(this))
-        tabManager.add(session)
+        tabManager.add(session, isPrivate = false)
         loadingBySession[session] = false
         progressBySession[session] = 0
         surfaceView.attach(session)
@@ -612,6 +664,14 @@ class GeckoPrototypeActivity : Activity() {
     /** Same placement rules as Summit's MainActivity.applyInsets. */
     private fun applyInsets() {
         if (!::toolbar.isInitialized) return
+        if (::pullRefreshHint.isInitialized) {
+            val hintLp = pullRefreshHint.layoutParams as FrameLayout.LayoutParams
+            val hintTop = (if (fullscreen) 0 else statusTop) + dp(12)
+            if (hintLp.topMargin != hintTop) {
+                hintLp.topMargin = hintTop
+                pullRefreshHint.layoutParams = hintLp
+            }
+        }
         val bottom = maxOf(insetBottom, imeBottom) + dp(10)
 
         val barLp = toolbar.bar.layoutParams as FrameLayout.LayoutParams
@@ -668,7 +728,22 @@ class GeckoPrototypeActivity : Activity() {
 
     // ---- session configuration ------------------------------------------------------------
 
+    /** Private mode is fixed at GeckoSession construction time (read-only after open). */
+    private fun newBrowserSession(privateMode: Boolean): GeckoSession {
+        val settings = GeckoSessionSettings.Builder()
+            .usePrivateMode(privateMode)
+            .build()
+        return GeckoSession(settings)
+    }
+
     private fun configureSession(target: GeckoSession) {
+        target.setScrollDelegate(object : GeckoSession.ScrollDelegate {
+            override fun onScrollChanged(session: GeckoSession, scrollX: Int, scrollY: Int) {
+                runOnUiThread {
+                    scrollYBySession[session] = scrollY.coerceAtLeast(0)
+                }
+            }
+        })
         target.setPermissionDelegate(permissionController)
         target.setPromptDelegate(promptController)
         target.setContentDelegate(object : GeckoSession.ContentDelegate {
@@ -682,6 +757,8 @@ class GeckoPrototypeActivity : Activity() {
                     val cleanTitle = title?.trim().orEmpty().take(180)
                     tab?.title = cleanTitle
                     val url = tab?.url.orEmpty()
+                    // Private browsing never writes titles or visits into persistent history.
+                    if (tab?.isPrivate == true) return@runOnUiThread
                     // Update only the newest matching history item; never create a duplicate visit.
                     val newestHistory = summitStore.list("history").firstOrNull()
                     if (cleanTitle.isNotBlank() && url.isNotBlank() && newestHistory?.url == url) {
@@ -716,6 +793,9 @@ class GeckoPrototypeActivity : Activity() {
                 runOnUiThread {
                     loadingBySession[session] = true
                     progressBySession[session] = 0
+                    if (session === this@GeckoPrototypeActivity.session && !pullRefreshActive) {
+                        updatePullRefreshHint(0f, false)
+                    }
                     onSessionUrl(session, url)
                     if (session === this@GeckoPrototypeActivity.session) toolbar.setLoading(true, 0)
                 }
@@ -735,7 +815,11 @@ class GeckoPrototypeActivity : Activity() {
                 runOnUiThread {
                     loadingBySession[session] = false
                     progressBySession[session] = if (success) 100 else 0
-                    if (session === this@GeckoPrototypeActivity.session) toolbar.setLoading(false, 0)
+                    if (session === this@GeckoPrototypeActivity.session) {
+                        toolbar.setLoading(false, 0)
+                        pullRefreshActive = false
+                        updatePullRefreshHint(0f, false)
+                    }
                     if (!success) Log.i("SummitGecko", "Page load stopped with failure: ${tabManager.forSession(session)?.url}")
                     if (success) scheduleThumbnailCapture(session)
                 }
@@ -765,6 +849,40 @@ class GeckoPrototypeActivity : Activity() {
         })
     }
 
+    private fun updatePullRefreshHint(progress: Float, ready: Boolean) {
+        if (!::pullRefreshHint.isInitialized) return
+        if (pullRefreshActive) {
+            pullRefreshHint.text = "↻  Đang tải lại…"
+            pullRefreshHint.visibility = View.VISIBLE
+            pullRefreshHint.alpha = 1f
+            pullRefreshHint.translationY = 0f
+            return
+        }
+        if (progress <= 0f) {
+            pullRefreshHint.animate().cancel()
+            pullRefreshHint.alpha = 0f
+            pullRefreshHint.visibility = View.INVISIBLE
+            pullRefreshHint.translationY = 0f
+            return
+        }
+        pullRefreshHint.text = if (ready) "↑  Thả để tải lại" else "↓  Kéo xuống để tải lại"
+        pullRefreshHint.visibility = View.VISIBLE
+        pullRefreshHint.alpha = (progress / 0.75f).coerceIn(0f, 1f)
+        pullRefreshHint.translationY = dp(10) * progress.coerceIn(0f, 1f)
+    }
+
+    private fun performPullToRefresh() {
+        if (!::session.isInitialized || loadingBySession[session] == true || fullscreen) return
+        pullRefreshActive = true
+        updatePullRefreshHint(1f, true)
+        runCatching { session.reload() }.onFailure {
+            pullRefreshActive = false
+            updatePullRefreshHint(0f, false)
+            showToast("Không thể tải lại trang")
+            Log.w("SummitGecko", "Pull-to-refresh reload failed", it)
+        }
+    }
+
     private fun onSessionUrl(source: GeckoSession, url: String) {
         val tab = tabManager.forSession(source) ?: return
         if (tab.url != url) tab.title = ""
@@ -773,8 +891,10 @@ class GeckoPrototypeActivity : Activity() {
             if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
             currentUrl = url
             showAddress(url)
-            browserPrefs.edit().putString("last_url", url).apply()
-            addHistory(url)
+            if (!tab.isPrivate) {
+                browserPrefs.edit().putString("last_url", url).apply()
+                addHistory(url)
+            }
         }
     }
 
@@ -1106,8 +1226,10 @@ class GeckoPrototypeActivity : Activity() {
         }
         showAddress(url)
         tabManager.forSession(session)?.let { it.url = url; it.title = "" }
-        browserPrefs.edit().putString("last_url", url).apply()
-        addHistory(url)
+        if (tabManager.forSession(session)?.isPrivate != true) {
+            browserPrefs.edit().putString("last_url", url).apply()
+            addHistory(url)
+        }
         resetProbeState()
         session.loadUri(url)
     }
@@ -1119,6 +1241,7 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     private fun addHistory(url: String) {
+        if (tabManager.forSession(session)?.isPrivate == true) return
         if (!url.startsWith("http", ignoreCase = true) ||
             url.contains("127.0.0.1") || url.contains("localhost")
         ) return
@@ -1182,8 +1305,10 @@ class GeckoPrototypeActivity : Activity() {
                 currentUrl = url
                 tabManager.forSession(session)?.let { it.url = url; it.title = "" }
                 showAddress(url)
-                browserPrefs.edit().putString("last_url", url).apply()
-                addHistory(url)
+                if (tabManager.forSession(session)?.isPrivate != true) {
+                    browserPrefs.edit().putString("last_url", url).apply()
+                    addHistory(url)
+                }
                 session.loadUri(url)
             }.setNegativeButton("Đóng", null).show()
     }
@@ -1256,7 +1381,7 @@ class GeckoPrototypeActivity : Activity() {
         if (path.length > 1) host + path else host
     }.getOrDefault(url)
 
-    private fun createTab(url: String? = null) {
+    private fun createTab(url: String? = null, privateMode: Boolean = tabManager.isPrivateMode) {
         if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
         if (tabManager.count() >= TabManager.MAX_TABS) {
             showToast("Đã đạt giới hạn ${TabManager.MAX_TABS} tab")
@@ -1270,7 +1395,7 @@ class GeckoPrototypeActivity : Activity() {
 
         try {
             // Open/configure first. If this fails, the visible tab remains untouched.
-            val created = GeckoSession()
+            val created = newBrowserSession(privateMode)
             next = created
             configureSession(created)
             created.open(runtime(this))
@@ -1278,7 +1403,7 @@ class GeckoPrototypeActivity : Activity() {
 
             previous.setFocused(false)
             previous.setActive(false)
-            tabManager.add(created, targetUrl)
+            tabManager.add(created, targetUrl, isPrivate = privateMode)
             loadingBySession[created] = false
             progressBySession[created] = 0
             session = created
@@ -1291,7 +1416,7 @@ class GeckoPrototypeActivity : Activity() {
             addHistory(targetUrl)
             resetProbeState()
             created.loadUri(targetUrl)
-            browserPrefs.edit().putString("last_url", targetUrl).apply()
+            if (!privateMode) browserPrefs.edit().putString("last_url", targetUrl).apply()
             updateLayout()
         } catch (error: Exception) {
             next?.let { failed ->
@@ -1311,6 +1436,15 @@ class GeckoPrototypeActivity : Activity() {
             }
             showToast("Không tạo được tab: ${error.message ?: "lỗi không xác định"}")
         }
+    }
+
+    /** Edge swipe trên vùng hiển thị trang chuyển sang tab liền kề, không wrap vòng. */
+    private fun switchAdjacentTab(direction: Int) {
+        val tabs = tabManager.getAll()
+        if (tabs.size < 2) return
+        val index = tabs.indexOfFirst { it.isActive }
+        val targetIndex = (index + direction).coerceIn(0, tabs.lastIndex)
+        if (targetIndex != index && targetIndex in tabs.indices) activateTab(tabs[targetIndex])
     }
 
     /** Chuyển sang [tab] (gọi từ lưới tab hoặc khi popup của tab nền được mở). */
@@ -1424,14 +1558,15 @@ class GeckoPrototypeActivity : Activity() {
         return try {
             // Do not activate a background source just to create its popup. The new popup becomes
             // foreground, while the source tab retains its own session and navigation history.
-            val created = GeckoSession()
+            val sourcePrivate = tabManager.forSession(source)?.isPrivate == true
+            val created = newBrowserSession(sourcePrivate)
             next = created
             configureSession(created)
             created.open(runtime(this))
             attachProbeToSession(created)
             previous.setFocused(false)
             previous.setActive(false)
-            tabManager.add(created, uri)
+            tabManager.add(created, uri, isPrivate = sourcePrivate)
             loadingBySession[created] = false
             progressBySession[created] = 0
             session = created
@@ -1442,7 +1577,7 @@ class GeckoPrototypeActivity : Activity() {
             resetProbeState()
             created.setActive(true)
             created.setFocused(true)
-            browserPrefs.edit().putString("last_url", uri).apply()
+            if (!sourcePrivate) browserPrefs.edit().putString("last_url", uri).apply()
             updateLayout()
             created
         } catch (error: Exception) {
@@ -1651,6 +1786,7 @@ class GeckoPrototypeActivity : Activity() {
         tabManager.clear()
         loadingBySession.clear()
         progressBySession.clear()
+        scrollYBySession.clear()
         testServer?.close()
         testServer = null
         super.onDestroy()

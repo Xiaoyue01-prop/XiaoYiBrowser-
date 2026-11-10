@@ -37,8 +37,8 @@ class TabManager {
 
     private val tabs = mutableListOf<Tab>()
 
-    /** Private profiles are not implemented yet; never advertise a false private state. */
-    val isPrivateMode: Boolean get() = false
+    /** Privacy mode follows the active tab; private and regular tabs may coexist. */
+    val isPrivateMode: Boolean get() = getActive()?.isPrivate == true
 
     fun getAll(): List<Tab> = tabs.toList()
     fun getCurrentTabs(): List<Tab> = tabs.toList()
@@ -49,7 +49,7 @@ class TabManager {
     fun count(): Int = tabs.size
 
     /** Adds a session as the foreground tab. Duplicate sessions and over-limit tabs are rejected. */
-    fun add(session: GeckoSession, url: String = "", title: String = ""): Tab {
+    fun add(session: GeckoSession, url: String = "", title: String = "", isPrivate: Boolean = false): Tab {
         require(!contains(session)) { "GeckoSession already belongs to a tab" }
         require(tabs.size < MAX_TABS) { "Maximum tab count reached" }
         val now = System.nanoTime()
@@ -62,6 +62,7 @@ class TabManager {
             title = title,
             isActive = true,
             session = session,
+            isPrivate = isPrivate,
             lastActiveAt = now
         )
         tabs.add(tab)

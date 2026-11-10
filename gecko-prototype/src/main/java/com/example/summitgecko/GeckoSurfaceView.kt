@@ -27,6 +27,21 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
     private var insetLeft = 0
     private var toolbarMax = 0
 
+    /** Called with -1 for the previous tab and +1 for the next tab. */
+    var onTabSwipe: ((Int) -> Unit)? = null
+    /** Pull-to-refresh is allowed only when the active page is at its top edge. */
+    var canPullToRefresh: (() -> Boolean)? = null
+    var onPullProgress: ((Float, Boolean) -> Unit)? = null
+    var onPullToRefresh: (() -> Unit)? = null
+
+    private var edgeCandidate = false
+    private var edgeClaimed = false
+    private var pullCandidate = false
+    private var pullClaimed = false
+    private var downEvent: MotionEvent? = null
+    private var downX = 0f
+    private var downY = 0f
+
     /** True once the Surface exists and is valid; PixelCopy needs this. */
     val isSurfaceReady: Boolean
         get() = surfaceValid && holder.surface.isValid
@@ -46,6 +61,13 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
     }
 
     fun detach() {
+        downEvent?.recycle()
+        downEvent = null
+        edgeCandidate = false
+        edgeClaimed = false
+        pullCandidate = false
+        pullClaimed = false
+        onPullProgress?.invoke(0f, false)
         val d = display
         val s = session
         if (d != null && s != null) {
@@ -117,9 +139,137 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
         pushOrigin()
     }
 
+    private fun handPendingGestureToGecko(s: GeckoSession, event: MotionEvent) {
+        downEvent?.let {
+            s.panZoomController.onTouchEvent(it)
+            it.recycle()
+        }
+        downEvent = null
+        s.panZoomController.onTouchEvent(event)
+        edgeCandidate = false
+        pullCandidate = false
+        onPullProgress?.invoke(0f, false)
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val s = session ?: return false
-        s.panZoomController.onTouchEvent(event)
-        return true
+        val density = resources.displayMetrics.density
+        val edgeWidth = 28f * density
+        val edgeClaimDistance = 72f * density
+        val pullClaimDistance = 88f * density
+        val touchSlop = 12f * density
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = event.x
+                downY = event.y
+                edgeCandidate = event.x <= edgeWidth || event.x >= width - edgeWidth
+                edgeClaimed = false
+                pullCandidate = !edgeCandidate && (canPullToRefresh?.invoke() == true)
+                pullClaimed = false
+                downEvent?.recycle()
+                downEvent = if (edgeCandidate) MotionEvent.obtain(event) else null
+                if (!edgeCandidate) s.panZoomController.onTouchEvent(event)
+                return true
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.x - downX
+                val dy = event.y - downY
+                if (edgeCandidate && !edgeClaimed) {
+                    if (kotlin.math.abs(dx) >= edgeClaimDistance && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
+                        edgeClaimed = true
+                        downEvent?.recycle()
+                        downEvent = null
+                        return true
+                    }
+                    if (kotlin.math.abs(dy) > touchSlop && kotlin.math.abs(dy) > kotlin.math.abs(dx) * 0.8f) {
+                        handPendingGestureToGecko(s, event)
+                    }
+                    return true
+                }
+
+                if (edgeClaimed) return true
+
+                if (pullClaimed) {
+                    onPullProgress?.invoke((dy / pullClaimDistance).coerceIn(0f, 1.5f), dy >= pullClaimDistance)
+                    return true
+                }
+                if (pullCandidate) {
+                    if (dy >= pullClaimDistance && dy > kotlin.math.abs(dx) * 1.25f) {
+                        pullClaimed = true
+                        MotionEvent.obtain(event).also { cancel ->
+                            cancel.setAction(MotionEvent.ACTION_CANCEL)
+                            s.panZoomController.onTouchEvent(cancel)
+                            cancel.recycle()
+                        }
+                        onPullProgress?.invoke((dy / pullClaimDistance).coerceIn(0f, 1.5f), true)
+                        return true
+                    }
+                    onPullProgress?.invoke((dy / pullClaimDistance).coerceIn(0f, 1.5f), false)
+                    s.panZoomController.onTouchEvent(event)
+                    return true
+                }
+
+                s.panZoomController.onTouchEvent(event)
+                return true
+            }
+
+            MotionEvent.ACTION_UP -> {
+                val dy = event.y - downY
+                if (edgeClaimed) {
+                    val dx = event.x - downX
+                    onTabSwipe?.invoke(if (dx < 0f) 1 else -1)
+                } else if (pullClaimed) {
+                    onPullProgress?.invoke(0f, false)
+                    if (dy >= pullClaimDistance) onPullToRefresh?.invoke()
+                } else if (edgeCandidate) {
+                    handPendingGestureToGecko(s, event)
+                } else {
+                    s.panZoomController.onTouchEvent(event)
+                }
+                downEvent?.recycle()
+                downEvent = null
+                edgeCandidate = false
+                edgeClaimed = false
+                pullCandidate = false
+                pullClaimed = false
+                return true
+            }
+
+            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
+                if (edgeCandidate && !edgeClaimed) {
+                    handPendingGestureToGecko(s, event)
+                } else if (!edgeClaimed && !pullClaimed) {
+                    pullCandidate = false
+                    onPullProgress?.invoke(0f, false)
+                    s.panZoomController.onTouchEvent(event)
+                }
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                if (edgeCandidate && !edgeClaimed) {
+                    handPendingGestureToGecko(s, event)
+                } else if (!edgeClaimed && !pullClaimed) {
+                    s.panZoomController.onTouchEvent(event)
+                }
+                onPullProgress?.invoke(0f, false)
+                downEvent?.recycle()
+                downEvent = null
+                edgeCandidate = false
+                edgeClaimed = false
+                pullCandidate = false
+                pullClaimed = false
+                return true
+            }
+
+            else -> {
+                if (!edgeCandidate && !edgeClaimed && !pullCandidate && !pullClaimed) {
+                    s.panZoomController.onTouchEvent(event)
+                }
+                return true
+            }
+        }
     }
 }
