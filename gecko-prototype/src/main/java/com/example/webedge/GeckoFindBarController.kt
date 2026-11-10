@@ -208,11 +208,15 @@ internal class GeckoFindBarController(
             activeFinder.find(q, flags).accept({ result ->
                 activity.runOnUiThread {
                     if (generation != searchGeneration || q != activeQuery.trim()) return@runOnUiThread
-                    count.text = when {
-                        !result.found -> "0"
-                        result.total > 0 -> "${result.current}/${result.total}"
-                        result.current > 0 -> "${result.current}/…"
-                        else -> "Đã tìm"
+                    count.text = if (result == null) {
+                        "…"
+                    } else {
+                        when {
+                            !result.found -> "0"
+                            result.total > 0 -> "${result.current}/${result.total}"
+                            result.current > 0 -> "${result.current}/…"
+                            else -> "Đã tìm"
+                        }
                     }
                 }
             }, { error ->
