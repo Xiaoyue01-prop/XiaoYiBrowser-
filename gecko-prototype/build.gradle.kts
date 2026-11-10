@@ -15,8 +15,8 @@ android {
         minSdk = 36
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
-        versionCode = 4
-        versionName = "0.9-summit-tabs"
+        versionCode = 5
+        versionName = "0.10-summit-dialogs"
     }
 
     compileOptions {

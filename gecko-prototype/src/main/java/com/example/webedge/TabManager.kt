@@ -24,7 +24,9 @@ class TabManager {
         var thumbnailUrl: String? = null,
         var thumbnailVersion: Long = 0L,
         val isPrivate: Boolean = false,
-        var lastActiveAt: Long = 0L
+        var lastActiveAt: Long = 0L,
+        /** Trang web máy tính theo từng tab. */
+        var desktop: Boolean = false
     )
 
     private val tabs = mutableListOf<Tab>()

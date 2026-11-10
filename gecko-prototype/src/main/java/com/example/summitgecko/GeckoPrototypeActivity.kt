@@ -38,6 +38,10 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.example.webedge.Constants
 import com.example.webedge.GlassSystem
 import com.example.webedge.GeckoFindBarController
+import com.example.webedge.GeckoDownloadController
+import com.example.webedge.GeckoPermissionController
+import com.example.webedge.GeckoPromptController
+import com.example.webedge.GlassDialogController
 import com.example.webedge.Store
 import com.example.webedge.TabManager
 import com.example.webedge.TabSwitcherController
@@ -50,7 +54,10 @@ import eightbitlab.com.blurview.BlurView
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
+import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoSessionSettings
+import org.mozilla.geckoview.WebResponse
 import org.mozilla.geckoview.WebExtension
 
 /**
@@ -107,6 +114,10 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var session: GeckoSession
     private val tabManager = TabManager()
     private lateinit var tabSwitcher: TabSwitcherController
+    private lateinit var glassDialog: GlassDialogController
+    private lateinit var permissionController: GeckoPermissionController
+    private lateinit var promptController: GeckoPromptController
+    private lateinit var downloadController: GeckoDownloadController
     private val loadingBySession = HashMap<GeckoSession, Boolean>()
     private val progressBySession = HashMap<GeckoSession, Int>()
     private var testServer: LocalProbeTestServer? = null
@@ -339,6 +350,35 @@ class GeckoPrototypeActivity : Activity() {
             bottomBarHeightDp = Constants.BOTTOM_BAR_HEIGHT_DP
         )
 
+        // Summit glass dialog: website permissions, JS alert/confirm/prompt and download confirmation.
+        glassDialog = GlassDialogController(
+            activity = this,
+            root = root,
+            blurTarget = blurTarget,
+            d = d,
+            isNight = { GlassSystem.isDarkPage() },
+            fg = GlassSystem.pagePrimaryText(),
+            accent = accent
+        )
+        permissionController = GeckoPermissionController(
+            activity = this,
+            store = summitStore,
+            dialog = { glassDialog },
+            isActiveSession = { it === session },
+            isDestroyed = { isFinishing || isDestroyed }
+        )
+        promptController = GeckoPromptController(
+            dialog = { glassDialog },
+            isActiveSession = { it === session },
+            urlOf = { tabManager.forSession(it)?.url }
+        )
+        downloadController = GeckoDownloadController(
+            activity = this,
+            dialog = { glassDialog },
+            isActiveSession = { it === session },
+            notify = { showToast(it) }
+        )
+
         // Summit's tab grid (thumbnails, origin morph from the Tab button). Private mode is not
         // available in the Gecko prototype yet, so the "Riêng tư" segment explains and snaps back.
         tabSwitcher = TabSwitcherController(
@@ -419,6 +459,7 @@ class GeckoPrototypeActivity : Activity() {
             OnBackInvokedDispatcher.PRIORITY_DEFAULT
         ) {
             when {
+                ::glassDialog.isInitialized && glassDialog.isShowing -> glassDialog.cancelCurrent()
                 fullscreen -> session.exitFullScreen()
                 ::tabSwitcher.isInitialized && tabSwitcher.isShowing -> tabSwitcher.close()
                 ::findBarController.isInitialized && findBarController.isShown -> findBarController.close()
@@ -429,6 +470,7 @@ class GeckoPrototypeActivity : Activity() {
             }
         }
 
+        applyAdBlock()
         session = GeckoSession()
         configureSession(session)
         session.open(runtime(this))
@@ -501,6 +543,8 @@ class GeckoPrototypeActivity : Activity() {
     // ---- session configuration ------------------------------------------------------------
 
     private fun configureSession(target: GeckoSession) {
+        target.setPermissionDelegate(permissionController)
+        target.setPromptDelegate(promptController)
         target.setContentDelegate(object : GeckoSession.ContentDelegate {
             override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
                 runOnUiThread { setFullscreen(fullScreen) }
@@ -534,6 +578,10 @@ class GeckoPrototypeActivity : Activity() {
 
             override fun onCloseRequest(session: GeckoSession) {
                 runOnUiThread { closeSessionRequestedByPage(session) }
+            }
+
+            override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
+                runOnUiThread { downloadController.handle(session, response) }
             }
         })
         // Gecko reports page start/stop and percentage through the native ProgressDelegate.
@@ -991,7 +1039,10 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     private fun showBrowserMenu() {
-        val items = arrayOf("Tải lại trang", "Tìm trong trang", "Thêm dấu trang", "Dấu trang", "Lịch sử", "Thẻ mới", "Trang kiểm thử", "Chế độ Edge: ${MODE_NAMES[mode]}", "Thông tin engine", "Tiến")
+        val items = arrayOf("Tải lại trang", "Tìm trong trang", "Thêm dấu trang", "Dấu trang", "Lịch sử", "Thẻ mới", "Trang kiểm thử", "Chế độ Edge: ${MODE_NAMES[mode]}", "Thông tin engine", "Tiến",
+            "Chặn quảng cáo: ${if (summitStore.adBlockEnabled) "Bật" else "Tắt"}",
+            "Trang web máy tính: ${if (tabManager.forSession(session)?.desktop == true) "Bật" else "Tắt"}",
+            "Đặt lại quyền trang web")
         AlertDialog.Builder(this)
             .setTitle("Summit")
             .setItems(items) { _, which ->
@@ -1023,6 +1074,12 @@ class GeckoPrototypeActivity : Activity() {
                         updateInfo()
                     }
                     9 -> runCatching { session.goForward() }
+                    10 -> toggleAdBlock()
+                    11 -> toggleDesktopMode()
+                    12 -> {
+                        summitStore.clearSitePermissions(null)
+                        showToast("Đã đặt lại quyền trang web")
+                    }
                 }
             }.show()
     }
@@ -1249,6 +1306,55 @@ class GeckoPrototypeActivity : Activity() {
         closeTab(tab)
     }
 
+    /** Bộ lọc quảng cáo/theo dõi có sẵn của Gecko (Enhanced Tracking Protection), theo công tắc của Summit. */
+    private fun applyAdBlock() {
+        val flags = if (summitStore.adBlockEnabled) {
+            ContentBlocking.AntiTracking.AD or ContentBlocking.AntiTracking.ANALYTIC or
+                ContentBlocking.AntiTracking.SOCIAL or ContentBlocking.AntiTracking.CRYPTOMINING
+        } else {
+            ContentBlocking.AntiTracking.NONE
+        }
+        runCatching { runtime(this).settings.contentBlocking.setAntiTracking(flags) }
+            .onFailure { Log.w("SummitGecko", "Could not apply content blocking", it) }
+    }
+
+    private fun toggleAdBlock() {
+        summitStore.adBlockEnabled = !summitStore.adBlockEnabled
+        applyAdBlock()
+        showToast(if (summitStore.adBlockEnabled) "Đã bật chặn quảng cáo" else "Đã tắt chặn quảng cáo")
+        resetProbeState()
+        session.reload(GeckoSession.LOAD_FLAGS_BYPASS_CACHE)
+    }
+
+    private fun applyDesktopMode(target: GeckoSession, desktop: Boolean) {
+        val settings = target.settings
+        settings.setUserAgentMode(
+            if (desktop) GeckoSessionSettings.USER_AGENT_MODE_DESKTOP else GeckoSessionSettings.USER_AGENT_MODE_MOBILE
+        )
+        settings.setViewportMode(
+            if (desktop) GeckoSessionSettings.VIEWPORT_MODE_DESKTOP else GeckoSessionSettings.VIEWPORT_MODE_MOBILE
+        )
+    }
+
+    private fun toggleDesktopMode() {
+        val tab = tabManager.forSession(session) ?: return
+        tab.desktop = !tab.desktop
+        runCatching { applyDesktopMode(session, tab.desktop) }
+            .onFailure {
+                tab.desktop = !tab.desktop
+                showToast("Không đổi được chế độ trang web: ${it.message}")
+                return
+            }
+        showToast(if (tab.desktop) "Đã bật trang web máy tính" else "Đã về trang web di động")
+        resetProbeState()
+        session.reload(GeckoSession.LOAD_FLAGS_BYPASS_CACHE)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (::permissionController.isInitialized) permissionController.onRequestPermissionsResult(requestCode)
+    }
+
     private fun safeWebUri(value: String?): String? {
         val candidate = value?.trim().orEmpty()
         if (candidate.isEmpty()) return null
@@ -1377,6 +1483,8 @@ class GeckoPrototypeActivity : Activity() {
             tab.session?.let { s -> runCatching { if (s.isOpen) s.close() } }
             tab.thumbnail = null
         }
+        if (::glassDialog.isInitialized) glassDialog.cancelAll()
+        if (::permissionController.isInitialized) permissionController.cancelAll()
         tabManager.clear()
         loadingBySession.clear()
         progressBySession.clear()
