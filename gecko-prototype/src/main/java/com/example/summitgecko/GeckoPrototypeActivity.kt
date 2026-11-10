@@ -474,6 +474,7 @@ class GeckoPrototypeActivity : Activity() {
             density = d,
             isNight = { GlassSystem.isDarkPage() },
             foreground = { GlassSystem.pagePrimaryText() },
+            accent = accent,
             adBlockEnabled = { summitStore.adBlockEnabled },
             onToggleAdBlock = ::toggleAdBlock,
             onClearPermissions = { if (::permissionController.isInitialized) permissionController.cancelAll() },
