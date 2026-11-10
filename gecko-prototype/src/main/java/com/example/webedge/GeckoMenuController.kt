@@ -415,4 +415,10 @@ class GeckoMenuController(
 
     private fun shareCurrentUrl() {
         if (host.currentUrl.isBlank()) return
-        val send = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Int
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, host.currentUrl)
+        }
+        activity.startActivity(Intent.createChooser(send, "Chia sẻ"))
+    }
+}
