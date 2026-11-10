@@ -13,19 +13,14 @@ import android.util.Log
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.InputType
 import android.view.Gravity
 import android.view.PixelCopy
 import android.view.View
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
 import android.widget.Button
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import android.window.OnBackInvokedDispatcher
 import android.app.AlertDialog
 import android.graphics.drawable.GradientDrawable
@@ -35,10 +30,12 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.example.webedge.Constants
 import com.example.webedge.GlassSystem
+import com.example.webedge.GeckoFindBarController
 import com.example.webedge.Store
 import com.example.webedge.Theme
 import com.example.webedge.ToolbarController
 import com.example.webedge.ToolbarHost
+import com.example.webedge.ToastController
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 import org.json.JSONObject
@@ -91,6 +88,8 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var blurTarget: BlurTarget
     private lateinit var bottomFade: View
     private lateinit var toolbar: ToolbarController
+    private lateinit var findBarController: GeckoFindBarController
+    private lateinit var toaster: ToastController
     private lateinit var urlPillBlur: BlurView
     private lateinit var summitStore: Store
     private lateinit var info: TextView
@@ -208,7 +207,7 @@ class GeckoPrototypeActivity : Activity() {
         override val rootView: View get() = root
         override val bottomFade: View get() = this@GeckoPrototypeActivity.bottomFade
         override val isMenuOpen: Boolean get() = false
-        override val isFindBarShown: Boolean get() = false
+        override val isFindBarShown: Boolean get() = this@GeckoPrototypeActivity::findBarController.isInitialized && findBarController.isShown
         override val canGoBack: Boolean get() = canGoBackMap[session] == true
         override fun reload() {
             resetProbeState()
@@ -266,6 +265,16 @@ class GeckoPrototypeActivity : Activity() {
             )
         )
         blurTarget.source = surfaceView
+        toaster = ToastController(
+            context = this,
+            root = { root },
+            blurTarget = { blurTarget },
+            foreground = { toolbarHost.foreground },
+            density = { resources.displayMetrics.density },
+            isNight = { GlassSystem.isDarkPage() },
+            bottomInset = { maxOf(insetBottom, imeBottom) },
+            bottomBarHeightDp = Constants.BOTTOM_BAR_HEIGHT_DP
+        )
         root.addView(
             blurTarget,
             FrameLayout.LayoutParams(
@@ -309,6 +318,26 @@ class GeckoPrototypeActivity : Activity() {
             FrameLayout.LayoutParams(-1, dp(Constants.BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM)
         )
 
+        // Summit Find-in-Page UI backed by GeckoSession.SessionFinder (no WebView bridge).
+        findBarController = GeckoFindBarController(
+            activity = this,
+            finder = { session.getFinder() },
+            root = { root },
+            foreground = { toolbarHost.foreground },
+            muted = { Color.rgb(110, 110, 118) },
+            accent = accent,
+            hideOrbTemporarily = { /* Orb menu is not migrated in this prototype yet. */ },
+            onVisibilityChanged = {
+                if (::toolbar.isInitialized) toolbar.updateBarVisibility()
+                applyInsets()
+            }
+        )
+        findBarController.createBar()
+        root.addView(
+            findBarController.createContainer(blurTarget, d, false),
+            FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
+        )
+
         // Engine diagnostics (opened from the menu). Sits just above the bar.
         info = TextView(this).apply {
             setTextColor(Color.WHITE)
@@ -349,6 +378,7 @@ class GeckoPrototypeActivity : Activity() {
         ) {
             when {
                 fullscreen -> session.exitFullScreen()
+                ::findBarController.isInitialized && findBarController.isShown -> findBarController.close()
                 toolbar.urlBar.hasFocus() -> toolbar.leaveEdit()
                 canGoBackMap[session] == true -> session.goBack()
                 tabSessions.size > 1 -> closeCurrentTab()
@@ -381,6 +411,14 @@ class GeckoPrototypeActivity : Activity() {
             barLp.rightMargin = insetRight + dp(14)
             barLp.bottomMargin = bottom
             toolbar.bar.layoutParams = barLp
+        }
+
+        if (::findBarController.isInitialized && findBarController.hasContainer) {
+            val findLp = findBarController.container.layoutParams as FrameLayout.LayoutParams
+            findLp.leftMargin = insetLeft + dp(16)
+            findLp.rightMargin = insetRight + dp(16)
+            findLp.bottomMargin = bottom
+            findBarController.container.layoutParams = findLp
         }
 
         val fadeLp = bottomFade.layoutParams as FrameLayout.LayoutParams
@@ -449,6 +487,10 @@ class GeckoPrototypeActivity : Activity() {
         if (index !in tabUrls.indices) return
         tabUrls[index] = url
         if (source === session) {
+            // A real page navigation invalidates the old page's match set.
+            if (::findBarController.isInitialized && findBarController.isShown) {
+                findBarController.close()
+            }
             currentUrl = url
             showAddress(url)
             browserPrefs.edit().putString("last_url", url).apply()
@@ -766,6 +808,7 @@ class GeckoPrototypeActivity : Activity() {
 
     /** Called by Summit's toolbar when the user submits the address pill. */
     private fun loadInput(input: String) {
+        if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
         val t = input.trim()
         if (t.isEmpty() || !::session.isInitialized) return
         val url = when {
@@ -808,40 +851,46 @@ class GeckoPrototypeActivity : Activity() {
         browserPrefs.edit().putString("bookmarks", bookmarkItems.distinct().joinToString("\n")).apply()
     }
 
+    private fun openFindInPage() {
+        if (toolbar.urlBar.hasFocus()) toolbar.leaveEdit()
+        findBarController.open()
+    }
+
     private fun showBrowserMenu() {
-        val items = arrayOf("Tải lại trang", "Thêm dấu trang", "Dấu trang", "Lịch sử", "Thẻ mới", "Trang kiểm thử", "Chế độ Edge: ${MODE_NAMES[mode]}", "Thông tin engine", "Tiến")
+        val items = arrayOf("Tải lại trang", "Tìm trong trang", "Thêm dấu trang", "Dấu trang", "Lịch sử", "Thẻ mới", "Trang kiểm thử", "Chế độ Edge: ${MODE_NAMES[mode]}", "Thông tin engine", "Tiến")
         AlertDialog.Builder(this)
             .setTitle("Summit")
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> { resetProbeState(); session.reload() }
-                    1 -> {
+                    1 -> openFindInPage()
+                    2 -> {
                         if (currentUrl.isNotBlank()) {
                             if (!bookmarkItems.contains(currentUrl)) bookmarkItems.add(0, currentUrl)
                             persistBookmarks()
-                            Toast.makeText(this, "Đã thêm dấu trang", Toast.LENGTH_SHORT).show()
+                            toast("Đã thêm dấu trang")
                         }
                     }
-                    2 -> showSavedList("Dấu trang", bookmarkItems)
-                    3 -> showSavedList("Lịch sử", historyItems)
-                    4 -> createTab()
-                    5 -> loadTestPage()
-                    6 -> {
+                    3 -> showSavedList("Dấu trang", bookmarkItems)
+                    4 -> showSavedList("Lịch sử", historyItems)
+                    5 -> createTab()
+                    6 -> loadTestPage()
+                    7 -> {
                         mode = (mode + 1) % MODE_NAMES.size
                         resetProbeState(); updateLayout(); session.reload()
                     }
-                    7 -> {
+                    8 -> {
                         info.visibility = View.VISIBLE
                         updateInfo()
                     }
-                    8 -> runCatching { session.goForward() }
+                    9 -> runCatching { session.goForward() }
                 }
             }.show()
     }
 
     private fun showSavedList(title: String, values: List<String>) {
         if (values.isEmpty()) {
-            Toast.makeText(this, "Chưa có dữ liệu", Toast.LENGTH_SHORT).show()
+            toast("Chưa có dữ liệu")
             return
         }
         AlertDialog.Builder(this).setTitle(title)
@@ -873,6 +922,7 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     private fun createTab(url: String = "https://www.google.com/") {
+        if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
         runCatching {
             session.setActive(false)
             session.setFocused(false)
@@ -892,12 +942,13 @@ class GeckoPrototypeActivity : Activity() {
             browserPrefs.edit().putString("last_url", url).apply()
             updateLayout()
         }.onFailure {
-            Toast.makeText(this, "Không tạo được tab: ${it.message}", Toast.LENGTH_LONG).show()
+            toast("Không tạo được tab: ${it.message}")
         }
     }
 
     private fun switchTab(index: Int) {
         if (index !in tabSessions.indices || tabSessions[index] === session) return
+        if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
         runCatching {
             session.setFocused(false)
             session.setActive(false)
@@ -910,13 +961,14 @@ class GeckoPrototypeActivity : Activity() {
             resetProbeState()
             updateLayout()
         }.onFailure {
-            Toast.makeText(this, "Không chuyển được tab: ${it.message}", Toast.LENGTH_SHORT).show()
+            toast("Không chuyển được tab: ${it.message}")
         }
     }
 
     private fun closeCurrentTab() {
+        if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
         if (tabSessions.size <= 1) {
-            Toast.makeText(this, "Cần giữ ít nhất một tab", Toast.LENGTH_SHORT).show()
+            toast("Cần giữ ít nhất một tab")
             return
         }
         val index = tabSessions.indexOf(session).coerceAtLeast(0)
@@ -962,6 +1014,11 @@ class GeckoPrototypeActivity : Activity() {
         marginEnd = dp(3)
     }
 
+    private fun toast(message: String) {
+        if (::toaster.isInitialized) toaster.show(message)
+        else Log.i("SummitGecko", message)
+    }
+
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density + 0.5f).toInt()
 
@@ -988,6 +1045,7 @@ class GeckoPrototypeActivity : Activity() {
 
     override fun onDestroy() {
         ui.removeCallbacks(tick)
+        if (::findBarController.isInitialized) findBarController.dispose()
         if (::surfaceView.isInitialized) surfaceView.detach()
         tabSessions.toList().forEach { runCatching { if (it.isOpen) it.close() } }
         tabSessions.clear()

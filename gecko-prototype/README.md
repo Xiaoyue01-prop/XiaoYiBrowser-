@@ -65,3 +65,7 @@ The existing `:app` module, its WebView code, Summit UI, Frost Glass, tab system
 - YouTube watch/player/metadata/comment subtrees are excluded from header shifting.
 - Previously shifted nodes are restored when they stop qualifying after SPA navigation or layout changes.
 - Probe diagnostics report selected selectors, page kind, and excluded content-node count.
+
+
+## v2.2: Native Find in Page
+The prototype now includes Summit's glass Find in Page bar backed by GeckoView's native `SessionFinder`. Open it from Summit menu -> `Tìm trong trang`. Search highlights all matches, reports the current/total count when available, supports previous/next, and clears highlights when closed. This uses GeckoView APIs directly; it does not use WebView or a JavaScript search bridge.

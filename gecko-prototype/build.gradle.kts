@@ -15,8 +15,8 @@ android {
         minSdk = 36
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
-        versionCode = 1
-        versionName = "0.6-summit-glass"
+        versionCode = 2
+        versionName = "0.7-summit-find"
     }
 
     compileOptions {
