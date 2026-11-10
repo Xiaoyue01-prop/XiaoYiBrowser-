@@ -5,12 +5,18 @@ import org.mozilla.geckoview.GeckoSession
 import java.util.UUID
 
 /**
- * Danh sách tab của prototype Gecko. Mỗi tab giữ một [GeckoSession] (thay cho WebView của app chính),
- * cùng URL/tiêu đề/ảnh thu nhỏ để TabSwitcherController dùng nguyên bản của Summit.
- * Chưa có tab riêng tư: [isPrivateMode] luôn false.
+ * Gecko tab registry. Each tab owns one GeckoSession and lightweight UI metadata.
+ *
+ * Invariants:
+ * - At most one tab is active.
+ * - A tab is never removed by close() when it is the final tab.
+ * - Closing the active tab selects the most recently active remaining tab.
+ * - Session disposal remains the Activity's responsibility.
  */
 class TabManager {
     companion object {
+        const val MAX_TABS = 100
+
         fun newId(): Long = UUID.randomUUID().mostSignificantBits and Long.MAX_VALUE
     }
 
@@ -25,53 +31,76 @@ class TabManager {
         var thumbnailVersion: Long = 0L,
         val isPrivate: Boolean = false,
         var lastActiveAt: Long = 0L,
-        /** Trang web máy tính theo từng tab. */
+        /** Desktop-site preference belongs to an individual tab. */
         var desktop: Boolean = false
     )
 
     private val tabs = mutableListOf<Tab>()
 
+    /** Private profiles are not implemented yet; never advertise a false private state. */
     val isPrivateMode: Boolean get() = false
 
     fun getAll(): List<Tab> = tabs.toList()
     fun getCurrentTabs(): List<Tab> = tabs.toList()
     fun getActive(): Tab? = tabs.firstOrNull { it.isActive }
     fun forSession(session: GeckoSession): Tab? = tabs.firstOrNull { it.session === session }
+    fun findById(id: Long): Tab? = tabs.firstOrNull { it.id == id }
+    fun contains(session: GeckoSession): Boolean = forSession(session) != null
     fun count(): Int = tabs.size
 
-    /** Thêm tab mới gắn với [session] và đặt làm tab đang xem. */
+    /** Adds a session as the foreground tab. Duplicate sessions and over-limit tabs are rejected. */
     fun add(session: GeckoSession, url: String = "", title: String = ""): Tab {
+        require(!contains(session)) { "GeckoSession already belongs to a tab" }
+        require(tabs.size < MAX_TABS) { "Maximum tab count reached" }
         val now = System.nanoTime()
         tabs.forEach {
             if (it.isActive) it.lastActiveAt = now
             it.isActive = false
         }
-        val tab = Tab(url = url, title = title, isActive = true, session = session, lastActiveAt = now)
+        val tab = Tab(
+            url = url,
+            title = title,
+            isActive = true,
+            session = session,
+            lastActiveAt = now
+        )
         tabs.add(tab)
         return tab
     }
 
     fun switchTo(id: Long): Tab? {
-        val target = tabs.firstOrNull { it.id == id } ?: return null
+        val target = findById(id) ?: return null
         val now = System.nanoTime()
-        tabs.forEach { if (it.isActive) it.lastActiveAt = now }
-        tabs.forEach { it.isActive = (it === target) }
+        tabs.forEach { tab ->
+            if (tab.isActive && tab !== target) tab.lastActiveAt = now
+            tab.isActive = tab === target
+        }
         target.lastActiveAt = now
         return target
     }
 
-    /** Gỡ tab khỏi danh sách và trả về nó để Activity đóng GeckoSession. Không bao giờ gỡ tab cuối cùng. */
+    /**
+     * Removes a tab from the registry and returns it for Activity-owned session disposal.
+     * The final tab is retained. Active-tab fallback uses MRU order, not list position.
+     */
     fun close(id: Long): Tab? {
         if (tabs.size <= 1) return null
-        val idx = tabs.indexOfFirst { it.id == id }
-        if (idx < 0) return null
-        val removed = tabs.removeAt(idx)
+        val index = tabs.indexOfFirst { it.id == id }
+        if (index < 0) return null
+
+        val removed = tabs.removeAt(index)
         if (removed.isActive) {
-            val next = if (idx < tabs.size) tabs[idx] else tabs.last()
-            tabs.forEach { it.isActive = (it === next) }
+            val next = tabs.maxByOrNull { it.lastActiveAt } ?: tabs.getOrNull(index.coerceAtMost(tabs.lastIndex))
+            val now = System.nanoTime()
+            tabs.forEach { it.isActive = it === next }
+            next?.lastActiveAt = now
         }
+        removed.isActive = false
         return removed
     }
 
-    fun clear() = tabs.clear()
+    fun clear() {
+        tabs.forEach { it.isActive = false }
+        tabs.clear()
+    }
 }

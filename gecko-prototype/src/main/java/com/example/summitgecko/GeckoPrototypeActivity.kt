@@ -1254,53 +1254,94 @@ class GeckoPrototypeActivity : Activity() {
 
     private fun createTab(url: String? = null) {
         if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
-        val targetUrl = url?.takeIf { it.isNotBlank() } ?: summitStore.homeUrl.ifBlank { "https://www.google.com/" }
-        runCatching {
-            session.setActive(false)
-            session.setFocused(false)
-            val next = GeckoSession()
-            configureSession(next)
-            next.open(runtime(this))
-            attachProbeToSession(next)
-            tabManager.add(next, targetUrl)
-            loadingBySession[next] = false
-            progressBySession[next] = 0
-            session = next
-            surfaceView.attach(next)
-            next.setActive(true)
-            next.setFocused(true)
+        if (tabManager.count() >= TabManager.MAX_TABS) {
+            showToast("Đã đạt giới hạn ${TabManager.MAX_TABS} tab")
+            return
+        }
+
+        val targetUrl = url?.takeIf { it.isNotBlank() }
+            ?: summitStore.homeUrl.ifBlank { "https://www.google.com/" }
+        val previous = session
+        var next: GeckoSession? = null
+
+        try {
+            // Open/configure first. If this fails, the visible tab remains untouched.
+            val created = GeckoSession()
+            next = created
+            configureSession(created)
+            created.open(runtime(this))
+            attachProbeToSession(created)
+
+            previous.setFocused(false)
+            previous.setActive(false)
+            tabManager.add(created, targetUrl)
+            loadingBySession[created] = false
+            progressBySession[created] = 0
+            session = created
+            surfaceView.attach(created)
+            created.setActive(true)
+            created.setFocused(true)
             toolbar.setLoading(false, 0)
             currentUrl = targetUrl
             showAddress(targetUrl)
             addHistory(targetUrl)
             resetProbeState()
-            next.loadUri(targetUrl)
+            created.loadUri(targetUrl)
             browserPrefs.edit().putString("last_url", targetUrl).apply()
             updateLayout()
-        }.onFailure {
-            showToast("Không tạo được tab: ${it.message}")
+        } catch (error: Exception) {
+            next?.let { failed ->
+                tabManager.forSession(failed)?.let { failedTab -> tabManager.close(failedTab.id) }
+                runCatching { if (failed.isOpen) failed.close() }
+                loadingBySession.remove(failed)
+                progressBySession.remove(failed)
+                canGoBackMap.remove(failed)
+                canGoForwardMap.remove(failed)
+            }
+            // Roll back focus/active state if opening or navigation setup failed.
+            if (::session.isInitialized) {
+                session = previous
+                tabManager.forSession(previous)?.let { tabManager.switchTo(it.id) }
+                runCatching { previous.setActive(true); previous.setFocused(true) }
+                runCatching { surfaceView.attach(previous) }
+            }
+            showToast("Không tạo được tab: ${error.message ?: "lỗi không xác định"}")
         }
     }
 
     /** Chuyển sang [tab] (gọi từ lưới tab hoặc khi popup của tab nền được mở). */
     private fun activateTab(tab: TabManager.Tab) {
         val target = tab.session ?: return
-        if (target === session) return
+        if (target === session) {
+            tabManager.switchTo(tab.id)
+            return
+        }
+        if (!target.isOpen || !tabManager.contains(target)) {
+            showToast("Tab không còn khả dụng")
+            return
+        }
         if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
+
+        val previous = session
         runCatching {
-            session.setFocused(false)
-            session.setActive(false)
+            previous.setFocused(false)
+            previous.setActive(false)
             tabManager.switchTo(tab.id)
             session = target
             currentUrl = tab.url
             showAddress(currentUrl)
-            session.setActive(true)
-            session.setFocused(true)
-            surfaceView.attach(session)
-            toolbar.setLoading(loadingBySession[session] == true, progressBySession[session] ?: 0)
+            target.setActive(true)
+            target.setFocused(true)
+            surfaceView.attach(target)
+            toolbar.setLoading(loadingBySession[target] == true, progressBySession[target] ?: 0)
             resetProbeState()
             updateLayout()
         }.onFailure {
+            // Keep the old tab usable if Gecko rejects activation of the target session.
+            session = previous
+            tabManager.forSession(previous)?.let { tabManager.switchTo(it.id) }
+            runCatching { previous.setActive(true); previous.setFocused(true) }
+            runCatching { surfaceView.attach(previous) }
             showToast("Không chuyển được tab: ${it.message}")
         }
     }
@@ -1310,30 +1351,49 @@ class GeckoPrototypeActivity : Activity() {
         if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
         val closing = tab.session
         val wasActive = tab.isActive
-        tabManager.close(tab.id) ?: return
+        val removed = tabManager.close(tab.id) ?: return
+
         if (closing != null) {
-            loadingBySession.remove(closing)
-            progressBySession.remove(closing)
-            canGoBackMap.remove(closing)
-            canGoForwardMap.remove(closing)
+            runCatching {
+                closing.setFocused(false)
+                closing.setActive(false)
+            }
         }
+
         if (wasActive) {
             val nextTab = tabManager.getActive()
             val nextSession = nextTab?.session
-            if (nextTab != null && nextSession != null) {
+            if (nextTab != null && nextSession != null && nextSession.isOpen) {
                 session = nextSession
                 currentUrl = nextTab.url
                 showAddress(currentUrl)
-                session.setActive(true)
-                session.setFocused(true)
-                // GeckoSurfaceView releases the old GeckoDisplay before the old session is closed.
-                surfaceView.attach(session)
-                toolbar.setLoading(loadingBySession[session] == true, progressBySession[session] ?: 0)
+                runCatching { nextSession.setActive(true); nextSession.setFocused(true) }
+                // Release the old display before closing its GeckoSession.
+                surfaceView.attach(nextSession)
+                toolbar.setLoading(loadingBySession[nextSession] == true, progressBySession[nextSession] ?: 0)
                 resetProbeState()
                 updateLayout()
+            } else {
+                showToast("Không tìm thấy tab để chuyển")
             }
         }
-        closing?.let { runCatching { if (it.isOpen) it.close() } }
+
+        closing?.let { old ->
+            if (old === session) {
+                // Defensive fallback: never leave the Activity pointing at a disposed session.
+                tabManager.getActive()?.session?.takeIf { it.isOpen }?.let { replacement ->
+                    session = replacement
+                    runCatching { replacement.setActive(true); replacement.setFocused(true) }
+                    surfaceView.attach(replacement)
+                }
+            }
+            runCatching { if (old.isOpen) old.close() }
+            loadingBySession.remove(old)
+            progressBySession.remove(old)
+            canGoBackMap.remove(old)
+            canGoForwardMap.remove(old)
+        }
+        removed.thumbnail = null
     }
 
     private fun closeCurrentTab() {
@@ -1350,34 +1410,54 @@ class GeckoPrototypeActivity : Activity() {
      * after onNewSession returns; this method intentionally does not call loadUri().
      */
     private fun createPopupSession(source: GeckoSession, uri: String): GeckoSession? {
-        val sourceTab = tabManager.forSession(source) ?: return null
-        if (source !== session) activateTab(sourceTab)
+        if (!tabManager.contains(source) || tabManager.count() >= TabManager.MAX_TABS) {
+            showToast(if (tabManager.count() >= TabManager.MAX_TABS) "Đã đạt giới hạn tab" else "Tab nguồn không còn khả dụng")
+            return null
+        }
         if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
-        return runCatching {
-            session.setFocused(false)
-            session.setActive(false)
-            val next = GeckoSession()
-            configureSession(next)
-            next.open(runtime(this))
-            attachProbeToSession(next)
-            tabManager.add(next, uri)
-            loadingBySession[next] = false
-            progressBySession[next] = 0
-            session = next
-            surfaceView.attach(next)
+        val previous = session
+        var next: GeckoSession? = null
+        return try {
+            // Do not activate a background source just to create its popup. The new popup becomes
+            // foreground, while the source tab retains its own session and navigation history.
+            val created = GeckoSession()
+            next = created
+            configureSession(created)
+            created.open(runtime(this))
+            attachProbeToSession(created)
+            previous.setFocused(false)
+            previous.setActive(false)
+            tabManager.add(created, uri)
+            loadingBySession[created] = false
+            progressBySession[created] = 0
+            session = created
+            surfaceView.attach(created)
             currentUrl = uri
             showAddress(uri)
             toolbar.setLoading(false, 0)
             resetProbeState()
-            next.setActive(true)
-            next.setFocused(true)
+            created.setActive(true)
+            created.setFocused(true)
             browserPrefs.edit().putString("last_url", uri).apply()
             updateLayout()
-            next
-        }.onFailure {
-            Log.e("SummitGecko", "Unable to create popup GeckoSession", it)
-            showToast("Không mở được thẻ mới: ${it.message}")
-        }.getOrNull()
+            created
+        } catch (error: Exception) {
+            next?.let { failed ->
+                tabManager.forSession(failed)?.let { failedTab -> tabManager.close(failedTab.id) }
+                runCatching { if (failed.isOpen) failed.close() }
+                loadingBySession.remove(failed)
+                progressBySession.remove(failed)
+                canGoBackMap.remove(failed)
+                canGoForwardMap.remove(failed)
+            }
+            session = previous
+            tabManager.forSession(previous)?.let { tabManager.switchTo(it.id) }
+            runCatching { previous.setActive(true); previous.setFocused(true) }
+            runCatching { surfaceView.attach(previous) }
+            Log.e("SummitGecko", "Unable to create popup GeckoSession", error)
+            showToast("Không mở được thẻ mới: ${error.message ?: "lỗi không xác định"}")
+            null
+        }
     }
 
     private fun closeSessionRequestedByPage(target: GeckoSession) {
@@ -1530,7 +1610,10 @@ class GeckoPrototypeActivity : Activity() {
         if (::findBarController.isInitialized) findBarController.dispose()
         if (::surfaceView.isInitialized) surfaceView.detach()
         tabManager.getAll().forEach { tab ->
-            tab.session?.let { s -> runCatching { if (s.isOpen) s.close() } }
+            tab.session?.let { s ->
+                runCatching { s.setFocused(false); s.setActive(false) }
+                runCatching { if (s.isOpen) s.close() }
+            }
             tab.thumbnail = null
         }
         if (::glassDialog.isInitialized) glassDialog.cancelAll()
