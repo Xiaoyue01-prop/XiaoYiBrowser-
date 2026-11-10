@@ -1,6 +1,9 @@
 package com.example.summitgecko
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PorterDuff
@@ -13,10 +16,14 @@ import android.util.Log
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.Gravity
 import android.view.PixelCopy
 import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -98,6 +105,9 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var session: GeckoSession
     private val tabSessions = mutableListOf<GeckoSession>()
     private val tabUrls = mutableListOf<String>()
+    private val tabTitles = mutableListOf<String>()
+    private val loadingBySession = HashMap<GeckoSession, Boolean>()
+    private val progressBySession = HashMap<GeckoSession, Int>()
     private var testServer: LocalProbeTestServer? = null
     private var initialPageLoaded = false
     private var probeSetupFinished = false
@@ -207,11 +217,19 @@ class GeckoPrototypeActivity : Activity() {
         override val rootView: View get() = root
         override val bottomFade: View get() = this@GeckoPrototypeActivity.bottomFade
         override val isMenuOpen: Boolean get() = false
-        override val isFindBarShown: Boolean get() = this@GeckoPrototypeActivity::findBarController.isInitialized && findBarController.isShown
+        override val isFindBarShown: Boolean get() = ::findBarController.isInitialized && findBarController.isShown
+        override val isLoading: Boolean get() = loadingBySession[session] == true
         override val canGoBack: Boolean get() = canGoBackMap[session] == true
         override fun reload() {
+            if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
             resetProbeState()
             session.reload()
+        }
+        override fun stopLoading() {
+            session.stop()
+            loadingBySession[session] = false
+            progressBySession[session] = 0
+            if (::toolbar.isInitialized) toolbar.setLoading(false, 0)
         }
         override fun goBack() {
             runCatching { session.goBack() }
@@ -243,8 +261,8 @@ class GeckoPrototypeActivity : Activity() {
         insetsController.isAppearanceLightStatusBars = false
         insetsController.isAppearanceLightNavigationBars = false
 
-        loadBrowserLists()
         summitStore = Store(this)
+        loadBrowserLists()
         val d = resources.displayMetrics.density
 
         root = FrameLayout(this).apply {
@@ -265,16 +283,6 @@ class GeckoPrototypeActivity : Activity() {
             )
         )
         blurTarget.source = surfaceView
-        toaster = ToastController(
-            context = this,
-            root = { root },
-            blurTarget = { blurTarget },
-            foreground = { toolbarHost.foreground },
-            density = { resources.displayMetrics.density },
-            isNight = { GlassSystem.isDarkPage() },
-            bottomInset = { maxOf(insetBottom, imeBottom) },
-            bottomBarHeightDp = Constants.BOTTOM_BAR_HEIGHT_DP
-        )
         root.addView(
             blurTarget,
             FrameLayout.LayoutParams(
@@ -318,15 +326,27 @@ class GeckoPrototypeActivity : Activity() {
             FrameLayout.LayoutParams(-1, dp(Constants.BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM)
         )
 
-        // Summit Find-in-Page UI backed by GeckoSession.SessionFinder (no WebView bridge).
+        // Reuse Summit's glass banner for browser feedback instead of platform Toast.
+        toaster = ToastController(
+            context = this,
+            root = { root },
+            blurTarget = { blurTarget },
+            foreground = { GlassSystem.pagePrimaryText() },
+            density = { resources.displayMetrics.density },
+            isNight = { GlassSystem.isDarkPage() },
+            bottomInset = { maxOf(insetBottom, imeBottom) },
+            bottomBarHeightDp = Constants.BOTTOM_BAR_HEIGHT_DP
+        )
+
+        // Native Gecko find-in-page, styled with Summit's glass Find Bar.
         findBarController = GeckoFindBarController(
             activity = this,
             finder = { session.getFinder() },
             root = { root },
-            foreground = { toolbarHost.foreground },
-            muted = { Color.rgb(110, 110, 118) },
+            foreground = { GlassSystem.pagePrimaryText() },
+            muted = { GlassSystem.pageSecondaryText() },
             accent = accent,
-            hideOrbTemporarily = { /* Orb menu is not migrated in this prototype yet. */ },
+            hideOrbTemporarily = { /* Orb menu integration is a later migration step. */ },
             onVisibilityChanged = {
                 if (::toolbar.isInitialized) toolbar.updateBarVisibility()
                 applyInsets()
@@ -334,7 +354,7 @@ class GeckoPrototypeActivity : Activity() {
         )
         findBarController.createBar()
         root.addView(
-            findBarController.createContainer(blurTarget, d, false),
+            findBarController.createContainer(blurTarget, d, GlassSystem.isDarkPage()),
             FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
         )
 
@@ -391,6 +411,9 @@ class GeckoPrototypeActivity : Activity() {
         session.open(runtime(this))
         tabSessions.add(session)
         tabUrls.add("")
+        tabTitles.add("")
+        loadingBySession[session] = false
+        progressBySession[session] = 0
         surfaceView.attach(session)
         testServer = LocalProbeTestServer(assets)
         testServer?.start()
@@ -415,10 +438,14 @@ class GeckoPrototypeActivity : Activity() {
 
         if (::findBarController.isInitialized && findBarController.hasContainer) {
             val findLp = findBarController.container.layoutParams as FrameLayout.LayoutParams
-            findLp.leftMargin = insetLeft + dp(16)
-            findLp.rightMargin = insetRight + dp(16)
-            findLp.bottomMargin = bottom
-            findBarController.container.layoutParams = findLp
+            val findLeft = insetLeft + dp(16)
+            val findRight = insetRight + dp(16)
+            if (findLp.leftMargin != findLeft || findLp.rightMargin != findRight || findLp.bottomMargin != bottom) {
+                findLp.leftMargin = findLeft
+                findLp.rightMargin = findRight
+                findLp.bottomMargin = bottom
+                findBarController.container.layoutParams = findLp
+            }
         }
 
         val fadeLp = bottomFade.layoutParams as FrameLayout.LayoutParams
@@ -457,12 +484,65 @@ class GeckoPrototypeActivity : Activity() {
             override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
                 runOnUiThread { setFullscreen(fullScreen) }
             }
+
+            override fun onTitleChange(session: GeckoSession, title: String?) {
+                runOnUiThread {
+                    val index = tabSessions.indexOf(session)
+                    val cleanTitle = title?.trim().orEmpty().take(180)
+                    if (index in tabTitles.indices) tabTitles[index] = cleanTitle
+                    val url = tabUrls.getOrNull(index).orEmpty()
+                    // Update only the newest matching history item; never create a duplicate visit.
+                    val newestHistory = summitStore.list("history").firstOrNull()
+                    if (cleanTitle.isNotBlank() && url.isNotBlank() && newestHistory?.url == url) {
+                        summitStore.addHistory(cleanTitle, url)
+                        syncBrowserListsFromStore()
+                    }
+                }
+            }
+
+            override fun onContextMenu(
+                session: GeckoSession,
+                screenX: Int,
+                screenY: Int,
+                element: GeckoSession.ContentDelegate.ContextElement
+            ) {
+                runOnUiThread {
+                    if (session === this@GeckoPrototypeActivity.session) showContextMenu(element)
+                }
+            }
+
+            override fun onCloseRequest(session: GeckoSession) {
+                runOnUiThread { closeSessionRequestedByPage(session) }
+            }
         })
-        // Tracks every page start (typed URL, link tap, redirect) so the address bar, tab list
-        // and history stay current.
+        // Gecko reports page start/stop and percentage through the native ProgressDelegate.
         target.setProgressDelegate(object : GeckoSession.ProgressDelegate {
             override fun onPageStart(session: GeckoSession, url: String) {
-                runOnUiThread { onSessionUrl(session, url) }
+                runOnUiThread {
+                    loadingBySession[session] = true
+                    progressBySession[session] = 0
+                    onSessionUrl(session, url)
+                    if (session === this@GeckoPrototypeActivity.session) toolbar.setLoading(true, 0)
+                }
+            }
+
+            override fun onProgressChange(session: GeckoSession, progress: Int) {
+                runOnUiThread {
+                    val clamped = progress.coerceIn(0, 100)
+                    progressBySession[session] = clamped
+                    if (session === this@GeckoPrototypeActivity.session) {
+                        toolbar.setLoading(loadingBySession[session] == true, clamped)
+                    }
+                }
+            }
+
+            override fun onPageStop(session: GeckoSession, success: Boolean) {
+                runOnUiThread {
+                    loadingBySession[session] = false
+                    progressBySession[session] = if (success) 100 else 0
+                    if (session === this@GeckoPrototypeActivity.session) toolbar.setLoading(false, 0)
+                    if (!success) Log.i("SummitGecko", "Page load stopped with failure: ${tabUrls.getOrNull(tabSessions.indexOf(session))}")
+                }
             }
         })
         target.setNavigationDelegate(object : GeckoSession.NavigationDelegate {
@@ -479,18 +559,23 @@ class GeckoPrototypeActivity : Activity() {
                     refreshNavButtons()
                 }
             }
+
+            override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
+                // Gecko will load the supplied URI into the returned, newly-created session.
+                // Do not call loadUri() here (Mozilla's contract explicitly forbids it).
+                val created = createPopupSession(session, uri) ?: return null
+                return GeckoResult.fromValue(created)
+            }
         })
     }
 
     private fun onSessionUrl(source: GeckoSession, url: String) {
         val index = tabSessions.indexOf(source)
         if (index !in tabUrls.indices) return
+        if (tabUrls[index] != url) tabTitles[index] = ""
         tabUrls[index] = url
         if (source === session) {
-            // A real page navigation invalidates the old page's match set.
-            if (::findBarController.isInitialized && findBarController.isShown) {
-                findBarController.close()
-            }
+            if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
             currentUrl = url
             showAddress(url)
             browserPrefs.edit().putString("last_url", url).apply()
@@ -512,7 +597,7 @@ class GeckoPrototypeActivity : Activity() {
                             // Register both routes. Content scripts require the session-specific
                             // delegate; the extension-level delegate is for background scripts.
                             probeExtension = ext
-                            attachProbeToSession(session)
+                            tabSessions.toList().forEach(::attachProbeToSession)
                             ext.setMessageDelegate(probeDelegate, "browser")
                             probeState = "ext ok · delegates ready · waiting content script"
                             Log.i(PROBE_LOG_TAG, "Built-in extension installed; delegates registered")
@@ -554,7 +639,7 @@ class GeckoPrototypeActivity : Activity() {
             showAddress(restored)
             session.loadUri(restored)
         } else {
-            currentUrl = "https://www.google.com/"
+            currentUrl = summitStore.homeUrl.ifBlank { "https://www.google.com/" }
             tabUrls[0] = currentUrl
             showAddress(currentUrl)
             session.loadUri(currentUrl)
@@ -562,6 +647,7 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     private fun loadTestPage() {
+        if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
         if (!probeSetupFinished) {
             probeState = "waiting for extension setup"
             updateInfo()
@@ -813,12 +899,22 @@ class GeckoPrototypeActivity : Activity() {
         if (t.isEmpty() || !::session.isInitialized) return
         val url = when {
             t.contains("://") -> t
-            t.contains(' ') || !t.contains('.') -> "https://www.google.com/search?q=" + Uri.encode(t)
+            t.contains(' ') || !t.contains('.') -> {
+                val query = Uri.encode(t)
+                when (summitStore.searchEngine) {
+                    1 -> "https://www.bing.com/search?q=$query"
+                    2 -> "https://duckduckgo.com/?q=$query"
+                    else -> "https://www.google.com/search?q=$query"
+                }
+            }
             else -> "https://$t"
         }
         showAddress(url)
         val index = tabSessions.indexOf(session)
-        if (index in tabUrls.indices) tabUrls[index] = url
+        if (index in tabUrls.indices) {
+            tabUrls[index] = url
+            if (tabTitles.indices.contains(index)) tabTitles[index] = ""
+        }
         browserPrefs.edit().putString("last_url", url).apply()
         addHistory(url)
         resetProbeState()
@@ -832,23 +928,45 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     private fun addHistory(url: String) {
-        if (url.startsWith("http") && !url.contains("127.0.0.1") && !url.contains("localhost")) {
-            historyItems.remove(url)
-            historyItems.add(0, url)
-            while (historyItems.size > 200) historyItems.removeAt(historyItems.lastIndex)
-            browserPrefs.edit().putString("history", historyItems.joinToString("\n")).apply()
-        }
+        if (!url.startsWith("http", ignoreCase = true) ||
+            url.contains("127.0.0.1") || url.contains("localhost")
+        ) return
+        val activeIndex = tabSessions.indexOf(session)
+        val title = tabTitles.getOrNull(activeIndex).orEmpty().ifBlank { url }
+        summitStore.addHistory(title, url)
+        syncBrowserListsFromStore()
     }
 
+    /** One-time import of the prototype's flat lists, then use Summit's existing Store schema. */
     private fun loadBrowserLists() {
-        historyItems.clear()
-        historyItems.addAll(browserPrefs.getString("history", "").orEmpty().lines().filter { it.isNotBlank() })
-        bookmarkItems.clear()
-        bookmarkItems.addAll(browserPrefs.getString("bookmarks", "").orEmpty().lines().filter { it.isNotBlank() })
+        val migrationKey = "summit_store_lists_migrated_v1"
+        if (!browserPrefs.getBoolean(migrationKey, false)) {
+            val legacyHistory = browserPrefs.getString("history", "").orEmpty()
+                .lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
+            val legacyBookmarks = browserPrefs.getString("bookmarks", "").orEmpty()
+                .lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
+
+            if (summitStore.list("history").isEmpty() && legacyHistory.isNotEmpty()) {
+                legacyHistory.asReversed().forEach { summitStore.addHistory(it, it) }
+                summitStore.flush()
+            }
+            if (summitStore.list("bookmarks").isEmpty() && legacyBookmarks.isNotEmpty()) {
+                legacyBookmarks.asReversed().forEach { summitStore.toggleBookmark(it, it) }
+            }
+            browserPrefs.edit()
+                .putBoolean(migrationKey, true)
+                .remove("history")
+                .remove("bookmarks")
+                .apply()
+        }
+        syncBrowserListsFromStore()
     }
 
-    private fun persistBookmarks() {
-        browserPrefs.edit().putString("bookmarks", bookmarkItems.distinct().joinToString("\n")).apply()
+    private fun syncBrowserListsFromStore() {
+        historyItems.clear()
+        historyItems.addAll(summitStore.list("history").map { it.url })
+        bookmarkItems.clear()
+        bookmarkItems.addAll(summitStore.list("bookmarks").map { it.url })
     }
 
     private fun openFindInPage() {
@@ -862,13 +980,19 @@ class GeckoPrototypeActivity : Activity() {
             .setTitle("Summit")
             .setItems(items) { _, which ->
                 when (which) {
-                    0 -> { resetProbeState(); session.reload() }
+                    0 -> {
+                        if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
+                        resetProbeState()
+                        session.reload()
+                    }
                     1 -> openFindInPage()
                     2 -> {
                         if (currentUrl.isNotBlank()) {
-                            if (!bookmarkItems.contains(currentUrl)) bookmarkItems.add(0, currentUrl)
-                            persistBookmarks()
-                            toast("Đã thêm dấu trang")
+                            val activeIndex = tabSessions.indexOf(session)
+                            val title = tabTitles.getOrNull(activeIndex).orEmpty().ifBlank { currentUrl }
+                            val added = summitStore.toggleBookmark(title, currentUrl)
+                            syncBrowserListsFromStore()
+                            showToast(if (added) "Đã thêm dấu trang" else "Đã bỏ dấu trang")
                         }
                     }
                     3 -> showSavedList("Dấu trang", bookmarkItems)
@@ -889,16 +1013,22 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     private fun showSavedList(title: String, values: List<String>) {
-        if (values.isEmpty()) {
-            toast("Chưa có dữ liệu")
+        val snapshot = values.toList()
+        if (snapshot.isEmpty()) {
+            showToast("Chưa có dữ liệu")
             return
         }
         AlertDialog.Builder(this).setTitle(title)
-            .setItems(values.take(80).toTypedArray()) { _, index ->
-                val url = values[index]
+            .setItems(snapshot.take(80).toTypedArray()) { _, index ->
+                if (index !in snapshot.indices) return@setItems
+                if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
+                val url = snapshot[index]
                 currentUrl = url
                 val activeIndex = tabSessions.indexOf(session)
-                if (activeIndex in tabUrls.indices) tabUrls[activeIndex] = url
+                if (activeIndex in tabUrls.indices) {
+                    tabUrls[activeIndex] = url
+                    if (tabTitles.indices.contains(activeIndex)) tabTitles[activeIndex] = ""
+                }
                 showAddress(url)
                 browserPrefs.edit().putString("last_url", url).apply()
                 addHistory(url)
@@ -909,8 +1039,11 @@ class GeckoPrototypeActivity : Activity() {
     private fun showTabsDialog() {
         val labels = tabSessions.mapIndexed { index, tab ->
             val url = tabUrls.getOrNull(index).orEmpty()
-            val short = url.ifBlank { "Tab mới" }.removePrefix("https://").removePrefix("http://")
-            (if (tab === session) "● " else "") + short.take(42)
+            val title = tabTitles.getOrNull(index).orEmpty().trim()
+            val host = runCatching { Uri.parse(url).host }.getOrNull().orEmpty()
+            val primary = title.ifBlank { host.ifBlank { "Tab mới" } }
+            val secondary = if (title.isNotBlank() && host.isNotBlank() && !title.contains(host, ignoreCase = true)) " · $host" else ""
+            (if (tab === session) "● " else "") + primary.take(36) + secondary.take(24)
         }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("Thẻ Summit · ${tabSessions.size}")
@@ -921,8 +1054,9 @@ class GeckoPrototypeActivity : Activity() {
             .show()
     }
 
-    private fun createTab(url: String = "https://www.google.com/") {
+    private fun createTab(url: String? = null) {
         if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
+        val targetUrl = url?.takeIf { it.isNotBlank() } ?: summitStore.homeUrl.ifBlank { "https://www.google.com/" }
         runCatching {
             session.setActive(false)
             session.setFocused(false)
@@ -931,18 +1065,22 @@ class GeckoPrototypeActivity : Activity() {
             next.open(runtime(this))
             attachProbeToSession(next)
             tabSessions.add(next)
-            tabUrls.add(url)
+            tabUrls.add(targetUrl)
+            tabTitles.add("")
+            loadingBySession[next] = false
+            progressBySession[next] = 0
             session = next
             surfaceView.attach(next)
-            currentUrl = url
-            showAddress(url)
-            addHistory(url)
+            toolbar.setLoading(false, 0)
+            currentUrl = targetUrl
+            showAddress(targetUrl)
+            addHistory(targetUrl)
             resetProbeState()
-            next.loadUri(url)
-            browserPrefs.edit().putString("last_url", url).apply()
+            next.loadUri(targetUrl)
+            browserPrefs.edit().putString("last_url", targetUrl).apply()
             updateLayout()
         }.onFailure {
-            toast("Không tạo được tab: ${it.message}")
+            showToast("Không tạo được tab: ${it.message}")
         }
     }
 
@@ -958,33 +1096,166 @@ class GeckoPrototypeActivity : Activity() {
             session.setActive(true)
             session.setFocused(true)
             surfaceView.attach(session)
+            toolbar.setLoading(loadingBySession[session] == true, progressBySession[session] ?: 0)
             resetProbeState()
             updateLayout()
         }.onFailure {
-            toast("Không chuyển được tab: ${it.message}")
+            showToast("Không chuyển được tab: ${it.message}")
         }
     }
 
     private fun closeCurrentTab() {
         if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
         if (tabSessions.size <= 1) {
-            toast("Cần giữ ít nhất một tab")
+            showToast("Cần giữ ít nhất một tab")
             return
         }
         val index = tabSessions.indexOf(session).coerceAtLeast(0)
         val closing = session
         tabSessions.removeAt(index)
         if (index < tabUrls.size) tabUrls.removeAt(index)
-        runCatching { closing.close() }
+        if (index < tabTitles.size) tabTitles.removeAt(index)
+        loadingBySession.remove(closing)
+        progressBySession.remove(closing)
+        canGoBackMap.remove(closing)
+        canGoForwardMap.remove(closing)
         val nextIndex = (index - 1).coerceAtLeast(0)
         session = tabSessions[nextIndex]
         currentUrl = tabUrls.getOrNull(nextIndex).orEmpty()
         showAddress(currentUrl)
         session.setActive(true)
         session.setFocused(true)
+        // GeckoSurfaceView releases the old GeckoDisplay before the old session is closed.
         surfaceView.attach(session)
+        runCatching { closing.close() }
+        toolbar.setLoading(loadingBySession[session] == true, progressBySession[session] ?: 0)
         resetProbeState()
         updateLayout()
+    }
+
+    /**
+     * Create a fresh session for target=_blank/window.open. Gecko will navigate it to [uri]
+     * after onNewSession returns; this method intentionally does not call loadUri().
+     */
+    private fun createPopupSession(source: GeckoSession, uri: String): GeckoSession? {
+        if (tabSessions.indexOf(source) < 0) return null
+        if (source !== session) {
+            val sourceIndex = tabSessions.indexOf(source)
+            if (sourceIndex >= 0) switchTab(sourceIndex)
+        }
+        if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
+        return runCatching {
+            session.setFocused(false)
+            session.setActive(false)
+            val next = GeckoSession()
+            configureSession(next)
+            next.open(runtime(this))
+            attachProbeToSession(next)
+            tabSessions.add(next)
+            tabUrls.add(uri)
+            tabTitles.add("")
+            loadingBySession[next] = false
+            progressBySession[next] = 0
+            session = next
+            surfaceView.attach(next)
+            currentUrl = uri
+            showAddress(uri)
+            toolbar.setLoading(false, 0)
+            resetProbeState()
+            next.setActive(true)
+            next.setFocused(true)
+            browserPrefs.edit().putString("last_url", uri).apply()
+            updateLayout()
+            next
+        }.onFailure {
+            Log.e("SummitGecko", "Unable to create popup GeckoSession", it)
+            showToast("Không mở được thẻ mới: ${it.message}")
+        }.getOrNull()
+    }
+
+    private fun closeSessionRequestedByPage(target: GeckoSession) {
+        val index = tabSessions.indexOf(target)
+        if (index < 0 || tabSessions.size <= 1) return
+        if (target === session) {
+            closeCurrentTab()
+            return
+        }
+        tabSessions.removeAt(index)
+        if (index < tabUrls.size) tabUrls.removeAt(index)
+        if (index < tabTitles.size) tabTitles.removeAt(index)
+        loadingBySession.remove(target)
+        progressBySession.remove(target)
+        canGoBackMap.remove(target)
+        canGoForwardMap.remove(target)
+        runCatching { target.close() }
+    }
+
+    private fun safeWebUri(value: String?): String? {
+        val candidate = value?.trim().orEmpty()
+        if (candidate.isEmpty()) return null
+        val parsed = runCatching { Uri.parse(candidate) }.getOrNull() ?: return null
+        return candidate.takeIf {
+            parsed.scheme.equals("http", true) || parsed.scheme.equals("https", true)
+        }
+    }
+
+    /** Native Gecko long-press context menu; intentionally excludes downloads until a safe
+     * stream-to-storage lifecycle (progress, cancellation and response close) is implemented. */
+    private fun showContextMenu(element: GeckoSession.ContentDelegate.ContextElement) {
+        val link = safeWebUri(element.linkUri)
+        val media = safeWebUri(element.srcUri)
+        val typeLabel = when (element.type) {
+            GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE -> "Hình ảnh"
+            GeckoSession.ContentDelegate.ContextElement.TYPE_VIDEO -> "Video"
+            GeckoSession.ContentDelegate.ContextElement.TYPE_AUDIO -> "Âm thanh"
+            else -> "Nội dung"
+        }
+        val title = sequenceOf(element.title, element.linkText, element.altText)
+            .mapNotNull { it?.trim()?.takeIf(String::isNotEmpty) }
+            .firstOrNull()?.take(64) ?: typeLabel
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        if (link != null) {
+            actions += "Mở liên kết trong thẻ mới" to { createTab(link) }
+            actions += "Sao chép liên kết" to { copyToClipboard(link, "Liên kết") }
+            actions += "Chia sẻ liên kết" to { shareText(link) }
+        }
+        if (media != null && media != link) {
+            val mediaAction = when (element.type) {
+                GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE -> "Mở hình ảnh trong thẻ mới"
+                GeckoSession.ContentDelegate.ContextElement.TYPE_VIDEO -> "Mở video trong thẻ mới"
+                GeckoSession.ContentDelegate.ContextElement.TYPE_AUDIO -> "Mở âm thanh trong thẻ mới"
+                else -> "Mở nguồn trong thẻ mới"
+            }
+            actions += mediaAction to { createTab(media) }
+            actions += "Sao chép địa chỉ nguồn" to { copyToClipboard(media, "Nguồn media") }
+            actions += "Chia sẻ địa chỉ nguồn" to { shareText(media) }
+        }
+        if (actions.isEmpty()) return
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second.invoke() }
+            .setNegativeButton("Đóng", null)
+            .show()
+    }
+
+    private fun copyToClipboard(value: String, label: String) {
+        val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+        showToast("Đã sao chép")
+    }
+
+    private fun shareText(value: String) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, value)
+        }
+        runCatching { startActivity(Intent.createChooser(intent, "Chia sẻ liên kết")) }
+            .onFailure { showToast("Không thể mở chia sẻ: ${it.message}") }
+    }
+
+    private fun showToast(message: String) {
+        if (::toaster.isInitialized) toaster.show(message)
+        else Log.i("SummitGecko", message)
     }
 
     private fun roundedPanel(color: Int, radius: Float) = GradientDrawable().apply {
@@ -1014,11 +1285,6 @@ class GeckoPrototypeActivity : Activity() {
         marginEnd = dp(3)
     }
 
-    private fun toast(message: String) {
-        if (::toaster.isInitialized) toaster.show(message)
-        else Log.i("SummitGecko", message)
-    }
-
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density + 0.5f).toInt()
 
@@ -1036,6 +1302,7 @@ class GeckoPrototypeActivity : Activity() {
 
     override fun onPause() {
         ui.removeCallbacks(tick)
+        if (::summitStore.isInitialized) summitStore.flush()
         if (::session.isInitialized) {
             session.setFocused(false)
             session.setActive(false)
@@ -1050,6 +1317,9 @@ class GeckoPrototypeActivity : Activity() {
         tabSessions.toList().forEach { runCatching { if (it.isOpen) it.close() } }
         tabSessions.clear()
         tabUrls.clear()
+        tabTitles.clear()
+        loadingBySession.clear()
+        progressBySession.clear()
         testServer?.close()
         testServer = null
         super.onDestroy()

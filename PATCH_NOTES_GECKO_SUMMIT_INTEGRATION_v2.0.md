@@ -35,9 +35,3 @@
 - Browser history currently records typed or selected URLs, not every navigation performed by page links.
 - Tab labels use the last URL known to Summit; navigation inside a page may leave the label stale until the next explicit navigation.
 - The existing Gecko version / SDK requirements are unchanged from v1.9.
-
-
-## v2.2: Native Find in Page
-- Migrated Summit Find in Page UI to the Gecko prototype using `GeckoSession.SessionFinder`.
-- Added debounced search, next/previous navigation, match highlighting/count, clear-on-close, Back handling and menu entry.
-- `:app` remains unchanged. See `gecko-prototype/PATCH_NOTES_GECKO_SUMMIT_UI_v2.2.md` for device validation steps.

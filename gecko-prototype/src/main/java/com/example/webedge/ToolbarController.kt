@@ -26,7 +26,9 @@ import eightbitlab.com.blurview.BlurTarget
 internal interface ToolbarHost {
     /** Engine-neutral replacements for the old WebView member. */
     val canGoBack: Boolean
+    val isLoading: Boolean
     fun reload()
+    fun stopLoading()
     val store: Store
     val isNight: Boolean
     val density: Float
@@ -114,7 +116,10 @@ internal class ToolbarController(
         reloadBtn = ImageView(activity)
         reloadBtn.setImageDrawable(PathIcon(Icons.REFRESH, host.foreground))
         reloadBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
-        reloadBtn.setOnClickListener { host.reload() }
+        reloadBtn.contentDescription = "Tải lại trang"
+        reloadBtn.setOnClickListener {
+            if (host.isLoading) host.stopLoading() else host.reload()
+        }
         AnimationSystem.press(reloadBtn, Constants.PRESS_SCALE_SMALL)
         // === Nút Multi-tab (đối xứng với reloadBtn) ===
         tabBtn = ImageView(activity)
@@ -236,6 +241,20 @@ internal class ToolbarController(
             0,
             FrameLayout.LayoutParams(-1, -1)
         )
+    }
+
+    /** Reflect Gecko's native load lifecycle in the address-pill progress ring and action icon. */
+    fun setLoading(loading: Boolean, progress: Int) {
+        if (!::reloadBtn.isInitialized || !::pillProgress.isInitialized) return
+        if (loading) {
+            reloadBtn.setImageDrawable(PathIcon(Icons.STOP, host.foreground))
+            reloadBtn.contentDescription = "Dừng tải"
+            pillProgress.progress = progress.coerceIn(0, 99) / 100f
+        } else {
+            reloadBtn.setImageDrawable(PathIcon(Icons.REFRESH, host.foreground))
+            reloadBtn.contentDescription = "Tải lại trang"
+            pillProgress.progress = 0f
+        }
     }
 
     // "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi; chạm hoặc vuốt lên để mở lại

@@ -15,8 +15,8 @@ android {
         minSdk = 36
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
-        versionCode = 2
-        versionName = "0.7-summit-find"
+        versionCode = 3
+        versionName = "0.8-summit-browser"
     }
 
     compileOptions {
