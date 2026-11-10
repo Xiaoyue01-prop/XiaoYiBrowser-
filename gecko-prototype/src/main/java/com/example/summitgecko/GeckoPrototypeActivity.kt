@@ -26,6 +26,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import android.window.OnBackInvokedDispatcher
 import android.app.AlertDialog
 import android.graphics.drawable.GradientDrawable
 import androidx.core.view.ViewCompat
@@ -84,6 +85,10 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var urlField: EditText
     private lateinit var modeButton: Button
     private lateinit var tabsButton: Button
+    private lateinit var backButton: Button
+    private lateinit var forwardButton: Button
+    private val canGoBackMap = HashMap<GeckoSession, Boolean>()
+    private val canGoForwardMap = HashMap<GeckoSession, Boolean>()
     private lateinit var session: GeckoSession
     private val tabSessions = mutableListOf<GeckoSession>()
     private val tabUrls = mutableListOf<String>()
@@ -278,14 +283,30 @@ class GeckoPrototypeActivity : Activity() {
             gravity = Gravity.CENTER
             setPadding(0, dp(6), 0, 0)
         }
-        actionRow.addView(makeButton("‹") { runCatching { session.goBack() } }, weighted())
-        actionRow.addView(makeButton("›") { runCatching { session.goForward() } }, weighted())
+        backButton = makeButton("‹") { runCatching { session.goBack() } }
+        forwardButton = makeButton("›") { runCatching { session.goForward() } }
+        actionRow.addView(backButton, weighted())
+        actionRow.addView(forwardButton, weighted())
         tabsButton = makeButton("Tabs · 1") {
             showTabsDialog()
         }
         actionRow.addView(tabsButton, weighted(1.2f))
         actionRow.addView(makeButton("⋯") { showBrowserMenu() }, weighted())
         controls.addView(actionRow, LinearLayout.LayoutParams(-1, dp(46)))
+
+        // BUG FIX: the toolbar panel was built but never attached to the screen, so the app
+        // showed only the web page. Attach it at the bottom of the root layout.
+        root.addView(
+            controls,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
+            ).apply {
+                marginStart = dp(8)
+                marginEnd = dp(8)
+            }
+        )
 
         controls.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
             val h = bottom - top
@@ -309,12 +330,19 @@ class GeckoPrototypeActivity : Activity() {
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
 
-        session = GeckoSession()
-        session.setContentDelegate(object : GeckoSession.ContentDelegate {
-            override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
-                runOnUiThread { setFullscreen(fullScreen) }
+        onBackInvokedDispatcher.registerOnBackInvokedCallback(
+            OnBackInvokedDispatcher.PRIORITY_DEFAULT
+        ) {
+            when {
+                fullscreen -> session.exitFullScreen()
+                canGoBackMap[session] == true -> session.goBack()
+                tabSessions.size > 1 -> closeCurrentTab()
+                else -> finish()
             }
-        })
+        }
+
+        session = GeckoSession()
+        configureSession(session)
         session.open(runtime(this))
         tabSessions.add(session)
         tabUrls.add("")
@@ -323,6 +351,50 @@ class GeckoPrototypeActivity : Activity() {
         testServer?.start()
         installProbe()
         updateLayout()
+    }
+
+    // ---- session configuration ------------------------------------------------------------
+
+    private fun configureSession(target: GeckoSession) {
+        target.setContentDelegate(object : GeckoSession.ContentDelegate {
+            override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
+                runOnUiThread { setFullscreen(fullScreen) }
+            }
+        })
+        // Tracks every page start (typed URL, link tap, redirect) so the address bar, tab list
+        // and history stay current.
+        target.setProgressDelegate(object : GeckoSession.ProgressDelegate {
+            override fun onPageStart(session: GeckoSession, url: String) {
+                runOnUiThread { onSessionUrl(session, url) }
+            }
+        })
+        target.setNavigationDelegate(object : GeckoSession.NavigationDelegate {
+            override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
+                runOnUiThread {
+                    canGoBackMap[session] = canGoBack
+                    refreshNavButtons()
+                }
+            }
+
+            override fun onCanGoForward(session: GeckoSession, canGoForward: Boolean) {
+                runOnUiThread {
+                    canGoForwardMap[session] = canGoForward
+                    refreshNavButtons()
+                }
+            }
+        })
+    }
+
+    private fun onSessionUrl(source: GeckoSession, url: String) {
+        val index = tabSessions.indexOf(source)
+        if (index !in tabUrls.indices) return
+        tabUrls[index] = url
+        if (source === session) {
+            currentUrl = url
+            if (!urlField.hasFocus()) urlField.setText(url)
+            browserPrefs.edit().putString("last_url", url).apply()
+            addHistory(url)
+        }
     }
 
     // ---- WebExtension probe ---------------------------------------------------------------
@@ -477,7 +549,14 @@ class GeckoPrototypeActivity : Activity() {
         surfaceView.setDynamicToolbarMaxHeight(if (feedToolbar) statusTop else 0)
         modeButton.text = "Mode: ${MODE_NAMES[mode]}"
         if (::tabsButton.isInitialized) tabsButton.text = "Tabs · ${tabSessions.size}"
+        refreshNavButtons()
         updateInfo()
+    }
+
+    private fun refreshNavButtons() {
+        if (!::backButton.isInitialized || !::forwardButton.isInitialized) return
+        backButton.alpha = if (canGoBackMap[session] == true) 1f else 0.4f
+        forwardButton.alpha = if (canGoForwardMap[session] == true) 1f else 0.4f
     }
 
     private fun setFullscreen(on: Boolean) {
@@ -643,7 +722,7 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     private fun addHistory(url: String) {
-        if (url.startsWith("http")) {
+        if (url.startsWith("http") && !url.contains("127.0.0.1") && !url.contains("localhost")) {
             historyItems.remove(url)
             historyItems.add(0, url)
             while (historyItems.size > 200) historyItems.removeAt(historyItems.lastIndex)
@@ -711,10 +790,10 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     private fun showTabsDialog() {
-        val labels = tabSessions.mapIndexed { index, _ ->
+        val labels = tabSessions.mapIndexed { index, tab ->
             val url = tabUrls.getOrNull(index).orEmpty()
             val short = url.ifBlank { "Tab mới" }.removePrefix("https://").removePrefix("http://")
-            (if (index == tabSessions.lastIndex) "● " else "") + short.take(42)
+            (if (tab === session) "● " else "") + short.take(42)
         }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("Thẻ Summit · ${tabSessions.size}")
@@ -730,11 +809,7 @@ class GeckoPrototypeActivity : Activity() {
             session.setActive(false)
             session.setFocused(false)
             val next = GeckoSession()
-            next.setContentDelegate(object : GeckoSession.ContentDelegate {
-                override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
-                    runOnUiThread { setFullscreen(fullScreen) }
-                }
-            })
+            configureSession(next)
             next.open(runtime(this))
             attachProbeToSession(next)
             tabSessions.add(next)
@@ -747,8 +822,7 @@ class GeckoPrototypeActivity : Activity() {
             resetProbeState()
             next.loadUri(url)
             browserPrefs.edit().putString("last_url", url).apply()
-            updateInfo()
-            if (::tabsButton.isInitialized) tabsButton.text = "Tabs · ${tabSessions.size}"
+            updateLayout()
         }.onFailure {
             Toast.makeText(this, "Không tạo được tab: ${it.message}", Toast.LENGTH_LONG).show()
         }
