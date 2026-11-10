@@ -47,6 +47,7 @@ import com.example.webedge.GeckoDownloadController
 import com.example.webedge.GeckoBrowserToolsController
 import com.example.webedge.GeckoContextMenuController
 import com.example.webedge.GeckoPermissionController
+import com.example.webedge.GeckoPopupWindowController
 import com.example.webedge.GeckoPromptController
 import com.example.webedge.OrbMenuController
 import com.example.webedge.GlassDialogController
@@ -127,6 +128,7 @@ class GeckoPrototypeActivity : Activity() {
     private val tabManager = TabManager()
     private lateinit var tabSwitcher: TabSwitcherController
     private lateinit var glassDialog: GlassDialogController
+    private lateinit var popupController: GeckoPopupWindowController
     private lateinit var permissionController: GeckoPermissionController
     private lateinit var promptController: GeckoPromptController
     private lateinit var downloadController: GeckoDownloadController
@@ -437,6 +439,17 @@ class GeckoPrototypeActivity : Activity() {
         )
 
         // Summit glass dialog: website permissions, JS alert/confirm/prompt and download confirmation.
+                popupController = GeckoPopupWindowController(
+            activity = this,
+            getRuntime = { runtime(this) },
+            openExternal = { url, _ ->
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                runCatching { startActivity(intent) }
+                true
+            },
+            toast = { showToast(it) },
+            isNight = { GlassSystem.isDarkPage() }
+        )
         glassDialog = GlassDialogController(
             activity = this,
             root = root,
@@ -1562,55 +1575,7 @@ class GeckoPrototypeActivity : Activity() {
      * after onNewSession returns; this method intentionally does not call loadUri().
      */
     private fun createPopupSession(source: GeckoSession, uri: String): GeckoSession? {
-        if (!tabManager.contains(source) || tabManager.count() >= TabManager.MAX_TABS) {
-            showToast(if (tabManager.count() >= TabManager.MAX_TABS) "Đã đạt giới hạn tab" else "Tab nguồn không còn khả dụng")
-            return null
-        }
-        if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
-        val previous = session
-        var next: GeckoSession? = null
-        return try {
-            // Do not activate a background source just to create its popup. The new popup becomes
-            // foreground, while the source tab retains its own session and navigation history.
-            val sourcePrivate = tabManager.forSession(source)?.isPrivate == true
-            val created = newBrowserSession(sourcePrivate)
-            next = created
-            configureSession(created)
-            created.open(runtime(this))
-            attachProbeToSession(created)
-            previous.setFocused(false)
-            previous.setActive(false)
-            tabManager.add(created, uri, isPrivate = sourcePrivate)
-            loadingBySession[created] = false
-            progressBySession[created] = 0
-            session = created
-            surfaceView.attach(created)
-            currentUrl = uri
-            showAddress(uri)
-            toolbar.setLoading(false, 0)
-            resetProbeState()
-            created.setActive(true)
-            created.setFocused(true)
-            if (!sourcePrivate) browserPrefs.edit().putString("last_url", uri).apply()
-            updateLayout()
-            created
-        } catch (error: Exception) {
-            next?.let { failed ->
-                tabManager.forSession(failed)?.let { failedTab -> tabManager.close(failedTab.id) }
-                runCatching { if (failed.isOpen) failed.close() }
-                loadingBySession.remove(failed)
-                progressBySession.remove(failed)
-                canGoBackMap.remove(failed)
-                canGoForwardMap.remove(failed)
-            }
-            session = previous
-            tabManager.forSession(previous)?.let { tabManager.switchTo(it.id) }
-            runCatching { previous.setActive(true); previous.setFocused(true) }
-            runCatching { surfaceView.attach(previous) }
-            Log.e("SummitGecko", "Unable to create popup GeckoSession", error)
-            showToast("Không mở được thẻ mới: ${error.message ?: "lỗi không xác định"}")
-            null
-        }
+        return popupController.create(uri, source)
     }
 
     private fun closeSessionRequestedByPage(target: GeckoSession) {
@@ -1795,6 +1760,7 @@ class GeckoPrototypeActivity : Activity() {
             }
             tab.thumbnail = null
         }
+        popupController.close(immediate = true)
         if (::glassDialog.isInitialized) glassDialog.cancelAll()
         if (::permissionController.isInitialized) permissionController.cancelAll()
         tabManager.clear()
