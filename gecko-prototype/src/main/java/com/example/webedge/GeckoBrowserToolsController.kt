@@ -257,10 +257,4 @@ internal class GeckoBrowserToolsController(
             if (oldLayer.parent === root) root.removeView(oldLayer)
         }.start()
     }
-
-    fun dispose() {
-        card?.animate()?.cancel()
-        layer?.let { root.removeView(it) }
-        layer = null; card = null; body = null; titleView = null
-    }
 }
