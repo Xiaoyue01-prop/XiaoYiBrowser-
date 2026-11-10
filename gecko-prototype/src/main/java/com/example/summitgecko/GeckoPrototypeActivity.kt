@@ -272,7 +272,8 @@ class GeckoPrototypeActivity : Activity() {
             // Keep the Orb synchronized with Summit's actual toolbar, Find Bar and IME state.
             orbMenu.setToolbarAvailable(!fullscreen && toolbar.barPresent)
             orbMenu.setTemporarilyHidden(
-                (::findBarController.isInitialized && findBarController.isShown) || imeBottom > 0 || fullscreen
+            (::findBarController.isInitialized && findBarController.isShown) || imeBottom > 0 || fullscreen ||
+            (::menuController.isInitialized && menuController.isOpen)
             )
             orbMenu.setToolbarCompact(toolbar.barHidden, toolbar.urlPillFrame)
             if (::menuController.isInitialized) menuController.setToolbarCompact(toolbar.barHidden, toolbar.urlPillFrame)
@@ -414,6 +415,14 @@ class GeckoPrototypeActivity : Activity() {
             }
         )
         orbMenu.alignWith(toolbar.backBtn)
+        // Menu ba chấm mở: orb thu vào viên thuốc trước, rồi viên thuốc mới bị menu hút vào.
+        orbMenu.absorbTarget = {
+        if (::menuController.isInitialized && menuController.isOpen && ::toolbar.isInitialized) {
+        OriginTransitionController.boundsOnScreen(toolbar.urlPillFrame)?.let {
+        android.graphics.PointF(it.centerX(), it.centerY())
+        }
+        } else null
+        }
 
         // Reuse Summit's glass banner for browser feedback instead of platform Toast.
         toaster = ToastController(
@@ -549,6 +558,7 @@ class GeckoPrototypeActivity : Activity() {
             isNight = { GlassSystem.isDarkPage() },
             foreground = { GlassSystem.pagePrimaryText() },
             accent = accent,
+            onVisibilityChanged = { toolbarHost.syncOrbMenuVisibility() },
             host = object : GeckoMenuHost {
                 override val currentUrl: String get() = this@GeckoPrototypeActivity.currentUrl
                 override val currentTitle: String get() = tabManager.forSession(session)?.title.orEmpty()
