@@ -168,6 +168,7 @@ class GeckoMenuController(
         lp.rightMargin = dp(14); lp.bottomMargin = dp(10) + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
         card.layoutParams = lp
         root.addView(layer, FrameLayout.LayoutParams(-1, -1))
+        layer.visibility = View.INVISIBLE
         menuLayer = layer; menuCard = card; menuAnimationStarted = false
         showMainPage(false)
         fun startMenuAnimation() {
@@ -176,6 +177,7 @@ class GeckoMenuController(
             val radiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * density
             val morphOrigin = if (toolbarCompact) coverView else originView
             val canPop = !toolbarCompact && morphOrigin != null && morphOrigin.isShown && morphOrigin.alpha > 0.9f
+            layer.visibility = View.VISIBLE
             val morphed = OriginTransitionController.open(
                 card, morphOrigin, endCornerRadiusPx = radiusPx, springSpec = AnimationSystem.MENU_MORPH, fadeIn = false,
                 counterTransformView = glass, contentViews = { (0 until card.childCount).map { card.getChildAt(it) }.filter { it !== glass } },
