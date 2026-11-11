@@ -114,6 +114,7 @@ internal class GeckoBrowserToolsController(
         }.onFailure { onToast("Không đọc được danh sách tải xuống") }
         return items
     }
+
     private fun renderDownloadItems(container: LinearLayout, items: List<DownloadItem>) {
         if (items.isEmpty()) {
             if (downloadRows.isEmpty() && downloadEmptyView != null) return
