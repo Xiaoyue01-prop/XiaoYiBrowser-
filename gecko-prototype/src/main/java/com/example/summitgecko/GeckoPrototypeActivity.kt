@@ -815,7 +815,7 @@ class GeckoPrototypeActivity : Activity() {
                 element: GeckoSession.ContentDelegate.ContextElement
             ) {
                 runOnUiThread {
-                    if (session === this@GeckoPrototypeActivity.session) showContextMenu(element)
+                    if (session === this@GeckoPrototypeActivity.session) showContextMenu(element, screenX, screenY)
                 }
             }
 
@@ -1657,8 +1657,8 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     /** Native Gecko long-press is rendered with Summit Frost Glass rather than a platform AlertDialog. */
-    private fun showContextMenu(element: GeckoSession.ContentDelegate.ContextElement) {
-        if (::contextMenuController.isInitialized) contextMenuController.show(element)
+    private fun showContextMenu(element: GeckoSession.ContentDelegate.ContextElement, screenX: Int, screenY: Int) {
+        if (::contextMenuController.isInitialized) contextMenuController.show(element, screenX, screenY)
     }
 
     private fun copyToClipboard(value: String, label: String) {
