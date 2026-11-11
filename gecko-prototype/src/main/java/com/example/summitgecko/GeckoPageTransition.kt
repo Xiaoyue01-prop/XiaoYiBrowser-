@@ -59,6 +59,10 @@ internal class GeckoPageTransition(
         runCatching {
             surface.capturePixels().accept({ captured ->
                 ui.post {
+                    if (captured == null) {
+                        done?.invoke()
+                        return@post
+                    }
                     if (!captured.isRecycled) {
                         val compact = runCatching { captured.copy(Bitmap.Config.RGB_565, false) }.getOrNull()
                         val bitmap = compact ?: captured

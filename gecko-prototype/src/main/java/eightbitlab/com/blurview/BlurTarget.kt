@@ -110,6 +110,10 @@ open class BlurTarget(context: Context) : FrameLayout(context) {
         result.accept({ captured ->
             ui.post {
                 captureInFlight = false
+                if (captured == null) {
+                    scheduleNext(IDLE_MS)
+                    return@post
+                }
                 if (!isAttachedToWindow || captured.isRecycled || captured.width <= 0 || captured.height <= 0) {
                     if (!captured.isRecycled) captured.recycle()
                     return@post

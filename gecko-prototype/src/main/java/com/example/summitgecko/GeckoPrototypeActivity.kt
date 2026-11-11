@@ -1327,6 +1327,10 @@ class GeckoPrototypeActivity : Activity() {
         try {
             surfaceView.capturePixels().accept({ bitmap ->
                 ui.post {
+                    if (bitmap == null) {
+                        done(null)
+                        return@post
+                    }
                     if (isFinishing || isDestroyed || bitmap.isRecycled) {
                         if (!bitmap.isRecycled) bitmap.recycle()
                         done(null)
