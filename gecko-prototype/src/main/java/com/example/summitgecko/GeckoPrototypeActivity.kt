@@ -110,7 +110,7 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var root: FrameLayout
     private lateinit var surfaceView: GeckoSurfaceView
     private lateinit var pullRefreshHint: TextView
-    private lateinit var topStrip: ImageView
+    private lateinit var topStrip: View
     private lateinit var blurTarget: BlurTarget
     private lateinit var bottomFade: View
     private lateinit var toolbar: ToolbarController
@@ -1244,7 +1244,7 @@ class GeckoPrototypeActivity : Activity() {
                 copyState = "probe colour"
                 updateInfo()
             } else {
-                sampleGlass()
+                sampleFade()
             }
         } catch (e: Exception) {
             copyState = "error ${e.javaClass.simpleName}"
@@ -1300,7 +1300,7 @@ class GeckoPrototypeActivity : Activity() {
         }
     }
 
-    private fun sampleGlass() {
+    private fun sampleFade() {
         val w = surfaceView.width
         val h = statusTop
         if (h <= 0 || surfaceView.height < h) return
