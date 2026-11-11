@@ -125,6 +125,7 @@ class GeckoPrototypeActivity : Activity() {
     private val scrollYBySession = HashMap<GeckoSession, Int>()
     private var pullRefreshActive = false
     private lateinit var pageTransition: GeckoPageTransition
+    private lateinit var tabSwipe: GeckoTabSwipe
     private lateinit var pullRefresh: GeckoPullToRefresh
     private lateinit var session: GeckoSession
     private val tabManager = TabManager()
@@ -413,6 +414,27 @@ class GeckoPrototypeActivity : Activity() {
             this, blurTarget, GlassSystem.Preset.ADDRESS_BAR, d, false
         )
         toolbar.urlPillFrame.addView(urlPillBlur, 0, FrameLayout.LayoutParams(-1, -1))
+        tabSwipe = GeckoTabSwipe(
+            host = blurTarget, surface = surfaceView,
+            pill = toolbar.urlPillFrame, pillContent = toolbar.urlBar,
+            d = d, tabs = tabManager,
+            pageBg = { GlassSystem.pageSurfaceColor() },
+            canStart = {
+                ::session.isInitialized && !fullscreen && !toolbar.barHidden &&
+                !toolbar.urlBar.hasFocus() &&
+                !(::pageTransition.isInitialized && pageTransition.isRunning) &&
+                !(::menuController.isInitialized && menuController.isOpen) &&
+                !(::findBarController.isInitialized && findBarController.isShown) &&
+                !(::tabSwitcher.isInitialized && tabSwitcher.isShowing) &&
+                !(::glassDialog.isInitialized && glassDialog.isShowing) &&
+                !(::browserToolsController.isInitialized && browserToolsController.isShowing) &&
+                !(::contextMenuController.isInitialized && contextMenuController.isShowing)
+            },
+            stripH = { if (fullscreen) 0 else statusTop },
+            stripColor = { if (probeHasFixed) probeColor else null },
+            hideStrip = { h -> topStrip.visibility = if (h) View.INVISIBLE else View.VISIBLE },
+            onSwitch = { t -> if (t == null) createTab() else activateTab(t) }
+        )
         root.addView(
             toolbar.bar,
             FrameLayout.LayoutParams(-1, dp(Constants.BOTTOM_BAR_HEIGHT_DP), Gravity.BOTTOM)
@@ -873,6 +895,7 @@ class GeckoPrototypeActivity : Activity() {
                     }
                     if (!success) Log.i("SummitGecko", "Page load stopped with failure: ${tabManager.forSession(session)?.url}")
                     if (session === this@GeckoPrototypeActivity.session && ::pageTransition.isInitialized) pageTransition.onPageReady()
+                    if (session === this@GeckoPrototypeActivity.session && ::tabSwipe.isInitialized) tabSwipe.onPageReady()
                     if (success) scheduleThumbnailCapture(session)
                 }
             }
@@ -1549,6 +1572,7 @@ class GeckoPrototypeActivity : Activity() {
             target.setFocused(true)
             surfaceView.attach(target)
             if (::pageTransition.isInitialized) pageTransition.cancelNow()
+            if (::tabSwipe.isInitialized) tabSwipe.cancelNow()
             toolbar.setLoading(loadingBySession[target] == true, progressBySession[target] ?: 0)
             resetProbeState()
             updateLayout()
@@ -1749,6 +1773,23 @@ class GeckoPrototypeActivity : Activity() {
         (value * resources.displayMetrics.density + 0.5f).toInt()
 
     // ---- lifecycle ------------------------------------------------------------------------
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (::tabSwipe.isInitialized) {
+            when (tabSwipe.onTouch(ev)) {
+                GeckoTabSwipe.Touch.BEGAN -> {
+                    val cancel = android.view.MotionEvent.obtain(ev)
+                    cancel.action = android.view.MotionEvent.ACTION_CANCEL
+                    super.dispatchTouchEvent(cancel)
+                    cancel.recycle()
+                    return true
+                }
+                GeckoTabSwipe.Touch.CONSUMED -> return true
+                GeckoTabSwipe.Touch.IGNORED -> Unit
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
 
     override fun onResume() {
         super.onResume()
