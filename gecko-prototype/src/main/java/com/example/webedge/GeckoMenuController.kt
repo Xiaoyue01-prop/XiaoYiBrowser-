@@ -61,6 +61,10 @@ class GeckoMenuController(
     private var backAction: (() -> Unit)? = null
     private var toolbarCompact = false
     private var compactLayerWasHidden = false
+    // Pill absorb: viên thuốc bị thẻ menu trên không hút vào khi mở, nảy ra khi đóng
+    private var pillBase: FloatArray? = null
+    private var pillAbsorbed = false
+    private var pillClipHold: List<ViewGroup>? = null
     private var menuAnimationStarted = false
     
     var originView: View? = null
@@ -69,6 +73,84 @@ class GeckoMenuController(
 
     private val blurSync = GlassSystem.BlurSync(blurTarget)
     private fun syncBlurFor(durationMs: Long) = blurSync.hold(durationMs)
+
+    private fun cardCenterOnScreen(): android.graphics.PointF? {
+        val b = card?.let { OriginTransitionController.boundsOnScreen(it) } ?: return null
+        return android.graphics.PointF(b.centerX(), b.centerY())
+    }
+
+    private fun startPillAbsorb(targetCard: View) {
+        val pill = coverView ?: return
+        if (toolbarCompact || !pill.isShown || pill.alpha < 0.9f) return
+        val pillB = OriginTransitionController.boundsOnScreen(pill) ?: return
+        val air = OriginTransitionController.popCenterOnScreen(targetCard) ?: cardCenterOnScreen() ?: return
+        val base = floatArrayOf(pill.translationX, pill.translationY, pill.scaleX, pill.scaleY, pill.alpha)
+        pillBase = base
+        if (pillClipHold == null) pillClipHold = OriginTransitionController.holdUnclipped(pill)
+        val dx = air.x - pillB.centerX()
+        val dy = air.y - pillB.centerY()
+        pill.postDelayed({
+            if (card === targetCard && pillBase === base) {
+                pillAbsorbed = true
+                AnimationSystem.spring(pill, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, base[0] + dx, AnimationSystem.MENU_MORPH)
+                AnimationSystem.spring(pill, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, base[1] + dy, AnimationSystem.MENU_MORPH)
+                AnimationSystem.scaleTo(pill, base[2] * Constants.ABSORB_SCALE, base[3] * Constants.ABSORB_SCALE, AnimationSystem.MENU_MORPH)
+                AnimationSystem.fade(pill, 0f, AnimationSystem.MENU_MORPH)
+            }
+        }, Constants.PILL_ABSORB_DELAY_MS)
+    }
+
+    private fun springPillOut() {
+        val pill = coverView
+        val b = pillBase
+        pillBase = null
+        pillAbsorbed = false
+        if (pill == null || b == null) { releasePillClip(); return }
+        val btn = originView?.let { OriginTransitionController.boundsOnScreen(it) }
+        val pillB = OriginTransitionController.boundsOnScreen(pill)
+        AnimationSystem.cancel(pill)
+        pill.translationX = b[0] + if (btn != null && pillB != null) btn.centerX() - pillB.centerX() else 0f
+        pill.translationY = b[1] + if (btn != null && pillB != null) btn.centerY() - pillB.centerY() else 0f
+        pill.scaleX = b[2] * Constants.ABSORB_SCALE
+        pill.scaleY = b[3] * Constants.ABSORB_SCALE
+        pill.alpha = 0f
+        AnimationSystem.spring(pill, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, b[0], AnimationSystem.MENU_POP_BACK)
+        AnimationSystem.spring(pill, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, b[1], AnimationSystem.MENU_POP_BACK)
+        AnimationSystem.scaleTo(pill, b[2], b[3], AnimationSystem.MENU_POP_BACK)
+        AnimationSystem.fade(pill, b[4], AnimationSystem.QUICK)
+        releasePillClip()
+    }
+
+    private fun returnAbsorbed() {
+        if (pillAbsorbed) {
+            springPillOut()
+            (card?.parent as? View)?.postDelayed({ onVisibilityChanged() }, Constants.ORB_RETURN_DELAY_MS)
+        } else {
+            restorePillNow()
+            onVisibilityChanged()
+        }
+    }
+
+    private fun restorePillNow() {
+        val pill = coverView
+        val b = pillBase
+        pillBase = null
+        pillAbsorbed = false
+        if (pill != null && b != null) {
+            AnimationSystem.cancel(pill)
+            pill.translationX = b[0]
+            pill.translationY = b[1]
+            pill.scaleX = b[2]
+            pill.scaleY = b[3]
+            pill.alpha = b[4]
+        }
+        releasePillClip()
+    }
+
+    private fun releasePillClip() {
+        pillClipHold?.let { OriginTransitionController.releaseUnclipped(it) }
+        pillClipHold = null
+    }
 
     private fun px(v: Int) = (v * density + 0.5f).toInt()
     private fun textColor() = foreground()
