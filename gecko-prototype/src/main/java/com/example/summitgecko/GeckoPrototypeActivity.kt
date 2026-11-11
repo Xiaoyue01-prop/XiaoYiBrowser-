@@ -49,6 +49,7 @@ import com.example.webedge.GeckoContextMenuController
 import com.example.webedge.GeckoPermissionController
 import com.example.webedge.GeckoPopupWindowController
 import com.example.webedge.GeckoPromptController
+import com.example.webedge.GeckoSuggestionController
 import com.example.webedge.OrbMenuController
 import com.example.webedge.GlassDialogController
 import com.example.webedge.Store
@@ -118,6 +119,9 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var findBarController: GeckoFindBarController
     private lateinit var toaster: ToastController
     private lateinit var urlPillBlur: BlurView
+    private lateinit var suggestBox: LinearLayout
+    private lateinit var suggestBlur: BlurView
+    private lateinit var suggestionController: GeckoSuggestionController
     private lateinit var summitStore: Store
     private lateinit var info: TextView
     private val canGoBackMap = HashMap<GeckoSession, Boolean>()
@@ -270,8 +274,8 @@ class GeckoPrototypeActivity : Activity() {
         override fun toggleMenu() { if (::menuController.isInitialized) menuController.toggle() else showBrowserMenu() }
         override fun openTabSwitcher() = showTabSwitcher()
         override fun load(input: String) = loadInput(input)
-        override fun scheduleSuggest(query: String) {}
-        override fun hideSuggestions() {}
+        override fun scheduleSuggest(query: String) { if (::suggestionController.isInitialized) suggestionController.schedule(query) }
+        override fun hideSuggestions() { if (::suggestionController.isInitialized) suggestionController.hide() }
         override fun syncOrbMenuVisibility() {
             if (!::orbMenu.isInitialized || !::toolbar.isInitialized) return
             // Keep the Orb synchronized with Summit's actual toolbar, Find Bar and IME state.
@@ -442,6 +446,32 @@ class GeckoPrototypeActivity : Activity() {
 
         // Native Summit Orb navigation: reuse the original controller and its spring/glass
         // behavior, anchored to the Gecko toolbar's back button.
+        suggestBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+            setPadding(0, dp(6), 0, dp(6))
+            visibility = View.GONE
+        }
+        suggestBlur = GlassSystem.createBlurView(this, blurTarget, GlassSystem.Preset.SUGGESTIONS, d, false).apply {
+            isClickable = false; isFocusable = false; visibility = View.GONE
+        }
+        root.addView(suggestBlur, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        root.addView(suggestBox, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        suggestBox.elevation = dp(1).toFloat()
+        suggestBox.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, _ ->
+            val h = bottom - suggestBox.top
+            val lp = suggestBlur.layoutParams as FrameLayout.LayoutParams
+            if (lp.height != h) { lp.height = h; suggestBlur.layoutParams = lp }
+        }
+        suggestionController = GeckoSuggestionController(
+            activity = this,
+            input = toolbar.urlBar,
+            container = suggestBox,
+            blurView = suggestBlur,
+            searchEngine = { summitStore.searchEngine },
+            mutedColor = { GlassSystem.pageSecondaryText() },
+            onOpen = { value -> loadInput(value); toolbar.leaveEdit() }
+        )
         orbMenu = OrbMenuController(
             rootLayout = root,
             blurTarget = blurTarget,
@@ -763,6 +793,16 @@ class GeckoPrototypeActivity : Activity() {
             }
         }
 
+        if (::suggestBox.isInitialized) {
+            val sugLp = suggestBox.layoutParams as FrameLayout.LayoutParams
+            sugLp.leftMargin = insetLeft + dp(16)
+            sugLp.rightMargin = insetRight + dp(16)
+            sugLp.bottomMargin = bottom + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
+            suggestBox.layoutParams = sugLp
+            val sbLp = suggestBlur.layoutParams as FrameLayout.LayoutParams
+            sbLp.leftMargin = sugLp.leftMargin; sbLp.rightMargin = sugLp.rightMargin; sbLp.bottomMargin = sugLp.bottomMargin
+            suggestBlur.layoutParams = sbLp
+        }
         val fadeLp = bottomFade.layoutParams as FrameLayout.LayoutParams
         val fadeH = maxOf(insetBottom, imeBottom) + dp(80)
         if (fadeLp.height != fadeH) {
@@ -1844,6 +1884,7 @@ class GeckoPrototypeActivity : Activity() {
         if (::browserToolsController.isInitialized) browserToolsController.dispose()
         if (::findBarController.isInitialized) findBarController.dispose()
         if (::downloadController.isInitialized) downloadController.dispose()
+        if (::suggestionController.isInitialized) suggestionController.destroy()
         if (::pullRefresh.isInitialized) pullRefresh.destroy()
         if (::pageTransition.isInitialized) pageTransition.cancelNow()
         if (::surfaceView.isInitialized) surfaceView.detach()
