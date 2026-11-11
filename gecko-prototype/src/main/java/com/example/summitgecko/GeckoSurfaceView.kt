@@ -41,6 +41,8 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
     private var downEvent: MotionEvent? = null
     private var downX = 0f
     private var downY = 0f
+    var lastTouchScreenX = 0
+    var lastTouchScreenY = 0
 
     /** True once the Surface exists and is valid; PixelCopy needs this. */
     val isSurfaceReady: Boolean
@@ -163,6 +165,8 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x
                 downY = event.y
+                val tl0 = IntArray(2); getLocationOnScreen(tl0)
+                lastTouchScreenX = tl0[0] + event.x.toInt(); lastTouchScreenY = tl0[1] + event.y.toInt()
                 edgeCandidate = event.x <= edgeWidth || event.x >= width - edgeWidth
                 edgeClaimed = false
                 pullCandidate = !edgeCandidate && (canPullToRefresh?.invoke() == true)
@@ -176,6 +180,8 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.x - downX
                 val dy = event.y - downY
+                val tl0 = IntArray(2); getLocationOnScreen(tl0)
+                lastTouchScreenX = tl0[0] + event.x.toInt(); lastTouchScreenY = tl0[1] + event.y.toInt()
                 if (edgeCandidate && !edgeClaimed) {
                     if (kotlin.math.abs(dx) >= edgeClaimDistance && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
                         edgeClaimed = true

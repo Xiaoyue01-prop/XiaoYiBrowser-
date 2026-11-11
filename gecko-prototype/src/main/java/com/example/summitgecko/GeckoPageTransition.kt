@@ -43,6 +43,7 @@ internal class GeckoPageTransition(
 
     private var current: Run? = null
     private var lastUrl: String? = null
+    private var prevUrl: String? = null
     private var revealAt = Long.MAX_VALUE
     private val revealTask = Runnable { current?.let { reveal(it) } }
 
@@ -68,6 +69,7 @@ internal class GeckoPageTransition(
     /** Goi o moi onPageStart cua khung chinh: nho lai trang sap roi. */
     fun onPageStart(url: String?) {
         val prev = lastUrl
+        prevUrl = prev
         lastUrl = url
         val r = current
         if (r != null && r.holding) {
@@ -103,6 +105,7 @@ internal class GeckoPageTransition(
         if (current != null) return
         val r = createRun(0, sign) ?: return
         r.interactive = true
+        prevUrl?.let { cache[it] }?.let { r.layer.setImageBitmap(it.bmp) }
     }
     
     fun updateSwipe(progress: Float) {

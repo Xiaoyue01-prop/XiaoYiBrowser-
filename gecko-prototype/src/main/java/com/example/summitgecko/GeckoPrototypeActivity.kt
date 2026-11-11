@@ -821,7 +821,11 @@ class GeckoPrototypeActivity : Activity() {
                 element: GeckoSession.ContentDelegate.ContextElement
             ) {
                 runOnUiThread {
-                    if (session === this@GeckoPrototypeActivity.session) showContextMenu(element, screenX, screenY)
+                    if (session === this@GeckoPrototypeActivity.session) {
+                        val ax = if (surfaceView.lastTouchScreenX > 0) surfaceView.lastTouchScreenX else screenX
+                        val ay = if (surfaceView.lastTouchScreenY > 0) surfaceView.lastTouchScreenY else screenY
+                        showContextMenu(element, ax, ay)
+                    }
                 }
             }
 
