@@ -375,7 +375,7 @@ class GeckoMenuController(
         fun addRow(label: String, value: String, onClick: () -> Unit) {
             val r = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(22), 0, dp(22), 0); background = ripple() }
             r.addView(TextView(activity).apply { text = label; textSize = 16f; setTextColor(textColor()); typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            r.addView(TextView(activity).apply { text = value; textSize = 14f; setTextColor(GlassSystem.pageSecondaryText()); gravity = Gravity.END; setSingleLine(); ellipsize = TextUtils.TruncateAt.END; maxWidth = dp(120) })
+            r.addView(TextView(activity).apply { text = value; textSize = 14f; setTextColor(GlassSystem.pageSecondaryText()); gravity = Gravity.END; setSingleLine(); ellipsize = TextUtils.TruncateAt.END; setMaxWidth(dp(120)) })
             r.setOnClickListener { onClick() }; AnimationSystem.press(r, Constants.PRESS_SCALE_ROW)
             p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
         }
