@@ -562,7 +562,8 @@ class GeckoPrototypeActivity : Activity() {
             adBlockEnabled = { summitStore.adBlockEnabled },
             onToggleAdBlock = ::toggleAdBlock,
             onClearPermissions = { if (::permissionController.isInitialized) permissionController.cancelAll() },
-            onToast = ::showToast
+            onToast = ::showToast,
+    currentUrl = { currentUrl }
         )
         contextMenuController = GeckoContextMenuController(
             activity = this,
