@@ -223,9 +223,12 @@ class GeckoPopupWindowController(
             ViewCompat.requestApplyInsets(root)
             BrowserSheetMotion.show(sheetView, scrimView)
             
-            sv.attach(newSession)
-            newSession.open(getRuntime())
-            newSession.loadUri(uri)
+            sv.post {
+                if (closing) return@post
+                sv.attach(newSession)
+                newSession.open(getRuntime())
+                newSession.loadUri(uri)
+            }
         }
         
         return newSession
