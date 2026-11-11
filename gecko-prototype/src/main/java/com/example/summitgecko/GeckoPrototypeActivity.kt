@@ -669,22 +669,28 @@ class GeckoPrototypeActivity : Activity() {
         ViewCompat.requestApplyInsets(root)
 
         onBackInvokedDispatcher.registerOnBackInvokedCallback(
-            OnBackInvokedDispatcher.PRIORITY_DEFAULT
-        ) {
-            when {
-                ::glassDialog.isInitialized && glassDialog.isShowing -> glassDialog.cancelCurrent()
-                ::contextMenuController.isInitialized && contextMenuController.isShowing -> contextMenuController.dismiss()
-                ::browserToolsController.isInitialized && browserToolsController.isShowing -> browserToolsController.close()
-                fullscreen -> session.exitFullScreen()
-                ::tabSwitcher.isInitialized && tabSwitcher.isShowing -> tabSwitcher.close()
-                ::menuController.isInitialized && menuController.isOpen -> menuController.handleBack()
-                ::findBarController.isInitialized && findBarController.isShown -> findBarController.close()
-                toolbar.urlBar.hasFocus() -> toolbar.leaveEdit()
-                canGoBackMap[session] == true -> session.goBack()
-                tabManager.count() > 1 -> closeCurrentTab()
-                else -> finish()
+            OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+            object : android.window.OnBackAnimationCallback {
+                override fun onBackStarted(backEvent: android.window.BackEvent) {
+                    if (!pageSwipeAvailable()) return
+                    val sign = if (backEvent.swipeEdge == android.window.BackEvent.EDGE_RIGHT) -1f else 1f
+                    pageTransition.beginSwipe(sign)
+                }
+                override fun onBackProgressed(backEvent: android.window.BackEvent) {
+                    if (::pageTransition.isInitialized) pageTransition.updateSwipe(backEvent.progress)
+                }
+                override fun onBackCancelled() {
+                    if (::pageTransition.isInitialized) pageTransition.cancelSwipe()
+                }
+                override fun onBackInvoked() {
+                    if (::pageTransition.isInitialized && pageTransition.isSwiping) {
+                        pageTransition.commitSwipe()
+                        return
+                    }
+                    handleBackInvoked()
+                }
             }
-        }
+        )
 
         applyAdBlock()
         session = newBrowserSession(privateMode = false)
@@ -889,6 +895,33 @@ class GeckoPrototypeActivity : Activity() {
                 return GeckoResult.fromValue(created)
             }
         })
+    }
+
+    private fun pageSwipeAvailable(): Boolean =
+        ::pageTransition.isInitialized && ::session.isInitialized &&
+        canGoBackMap[session] == true && !fullscreen &&
+        !(::glassDialog.isInitialized && glassDialog.isShowing) &&
+        !(::contextMenuController.isInitialized && contextMenuController.isShowing) &&
+        !(::browserToolsController.isInitialized && browserToolsController.isShowing) &&
+        !(::tabSwitcher.isInitialized && tabSwitcher.isShowing) &&
+        !(::menuController.isInitialized && menuController.isOpen) &&
+        !(::findBarController.isInitialized && findBarController.isShown) &&
+        !(::toolbar.isInitialized && toolbar.urlBar.hasFocus())
+
+    private fun handleBackInvoked() {
+        when {
+            ::glassDialog.isInitialized && glassDialog.isShowing -> glassDialog.cancelCurrent()
+            ::contextMenuController.isInitialized && contextMenuController.isShowing -> contextMenuController.dismiss()
+            ::browserToolsController.isInitialized && browserToolsController.isShowing -> browserToolsController.close()
+            fullscreen -> session.exitFullScreen()
+            ::tabSwitcher.isInitialized && tabSwitcher.isShowing -> tabSwitcher.close()
+            ::menuController.isInitialized && menuController.isOpen -> menuController.handleBack()
+            ::findBarController.isInitialized && findBarController.isShown -> findBarController.close()
+            toolbar.urlBar.hasFocus() -> toolbar.leaveEdit()
+            canGoBackMap[session] == true -> goBackAnimated()
+            tabManager.count() > 1 -> closeCurrentTab()
+            else -> finish()
+        }
     }
 
     private fun goBackAnimated() {

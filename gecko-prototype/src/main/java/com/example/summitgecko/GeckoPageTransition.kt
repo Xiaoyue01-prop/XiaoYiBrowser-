@@ -33,10 +33,12 @@ internal class GeckoPageTransition(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Snap>?): Boolean = size > 4
     }
 
-    private class Run(val dir: Int, val layer: ImageView, val scrim: View) {
+    private class Run(val dir: Int, val sign: Float, val layer: ImageView, val scrim: View) {
         var p = 0f
         var spring: AnimationSystem.FloatSpringHandle? = null
         var holding = false
+        var interactive = false
+        var committed = false
     }
 
     private var current: Run? = null
@@ -45,6 +47,7 @@ internal class GeckoPageTransition(
     private val revealTask = Runnable { current?.let { reveal(it) } }
 
     val isRunning: Boolean get() = current != null
+    val isSwiping: Boolean get() = current?.let { it.interactive && !it.committed } == true
 
     private fun capture(url: String?, done: (() -> Unit)? = null) {
         if (url.isNullOrBlank() || !surface.isSurfaceReady || surface.width <= 0 || surface.height <= 0) {
@@ -80,11 +83,54 @@ internal class GeckoPageTransition(
         if (r.holding) schedule(60L)
     }
 
-    fun back(): Boolean = start(0)
-    fun forward(): Boolean = start(1)
+    fun back(): Boolean {
+        val e = current
+        if (e != null) {
+            if (e.dir == 0 && e.interactive && !e.committed) { commit(e); return true }
+            return false
+        }
+        val r = createRun(0, 1f) ?: return false
+        commit(r); return true
+    }
+    
+    fun forward(): Boolean {
+        if (current != null) return false
+        val r = createRun(1, 1f) ?: return false
+        commit(r); return true
+    }
+    
+    fun beginSwipe(sign: Float) {
+        if (current != null) return
+        val r = createRun(0, sign) ?: return
+        r.interactive = true
+    }
+    
+    fun updateSwipe(progress: Float) {
+        val r = current ?: return
+        if (!r.interactive || r.committed) return
+        r.spring?.cancel(); r.spring = null
+        render(r, progress)
+    }
+    
+    fun cancelSwipe() {
+        val r = current ?: return
+        if (!r.interactive || r.committed) return
+        r.spring?.cancel()
+        r.spring = AnimationSystem.springFloat(
+            from = r.p, to = 0f, spec = AnimationSystem.DISMISS,
+            minimumVisibleChange = AnimationSystem.NORMALIZED_VALUE_MIN_CHANGE,
+            onUpdate = { render(r, it) },
+            onEnd = { canceled, _, _ -> if (!canceled && current === r) teardown(r) }
+        )
+    }
+    
+    fun commitSwipe() {
+        val r = current ?: return
+        if (!r.interactive || r.committed) return
+    }
 
-    private fun start(dir: Int): Boolean {
-        if (current != null || surface.width <= 0 || surface.height <= 0) return false
+    private fun createRun(dir: Int, sign: Float): Run? {
+        if (current != null || surface.width <= 0 || surface.height <= 0) return null
         val layer = ImageView(host.context).apply {
             scaleType = ImageView.ScaleType.FIT_XY
             setBackgroundColor(pageBg())
@@ -102,20 +148,20 @@ internal class GeckoPageTransition(
             host.addView(scrim, frame())
             host.addView(layer, frame())
         }
-        val r = Run(dir, layer, scrim)
+        val r = Run(dir, sign, layer, scrim)
         current = r
         revealAt = Long.MAX_VALUE
         render(r, 0f)
         commit(r)
-        return true
+        return r
     }
 
     private fun render(r: Run, raw: Float) {
         val p = raw.coerceIn(0f, 1f)
         val w = surface.width.toFloat()
         if (r.dir == 0) {
-            surface.translationX = w * p
-            r.layer.translationX = -w * 0.3f * (1f - p)
+            surface.translationX = r.sign * w * p
+            r.layer.translationX = -r.sign * w * 0.3f * (1f - p)
             r.scrim.translationX = r.layer.translationX
             r.scrim.alpha = 0.18f * (1f - p)
         } else {
@@ -128,6 +174,7 @@ internal class GeckoPageTransition(
     }
 
     private fun commit(r: Run) {
+    r.committed = true
         r.spring?.cancel()
         r.spring = AnimationSystem.springFloat(
             from = r.p, to = 1f, spec = AnimationSystem.DISMISS,
