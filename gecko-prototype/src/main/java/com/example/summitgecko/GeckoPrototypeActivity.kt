@@ -124,6 +124,7 @@ class GeckoPrototypeActivity : Activity() {
     private val canGoForwardMap = HashMap<GeckoSession, Boolean>()
     private val scrollYBySession = HashMap<GeckoSession, Int>()
     private var pullRefreshActive = false
+    private lateinit var pullRefresh: GeckoPullToRefresh
     private lateinit var session: GeckoSession
     private val tabManager = TabManager()
     private lateinit var tabSwitcher: TabSwitcherController
@@ -352,6 +353,16 @@ class GeckoPrototypeActivity : Activity() {
             pullRefreshHint,
             FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
                 topMargin = dp(18)
+            }
+        )
+        pullRefresh = GeckoPullToRefresh(
+            this, root, blurTarget, d, GlassSystem.pagePrimaryText(),
+            onRefresh = {
+                runCatching { session.reload() }.onFailure {
+                    pullRefreshActive = false
+                    pullRefresh.finish()
+                    showToast("Không thể tải lại trang")
+                }
             }
         )
         surfaceView.canPullToRefresh = {
@@ -871,37 +882,16 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     private fun updatePullRefreshHint(progress: Float, ready: Boolean) {
-        if (!::pullRefreshHint.isInitialized) return
-        if (pullRefreshActive) {
-            pullRefreshHint.text = "↻  Đang tải lại…"
-            pullRefreshHint.visibility = View.VISIBLE
-            pullRefreshHint.alpha = 1f
-            pullRefreshHint.translationY = 0f
-            return
-        }
-        if (progress <= 0f) {
-            pullRefreshHint.animate().cancel()
-            pullRefreshHint.alpha = 0f
-            pullRefreshHint.visibility = View.INVISIBLE
-            pullRefreshHint.translationY = 0f
-            return
-        }
-        pullRefreshHint.text = if (ready) "↑  Thả để tải lại" else "↓  Kéo xuống để tải lại"
-        pullRefreshHint.visibility = View.VISIBLE
-        pullRefreshHint.alpha = (progress / 0.75f).coerceIn(0f, 1f)
-        pullRefreshHint.translationY = dp(10) * progress.coerceIn(0f, 1f)
+        if (!::pullRefresh.isInitialized) return
+        if (pullRefreshActive) return
+        if (progress <= 0f) pullRefresh.finish()
+        pullRefresh.onProgress(progress, ready)
     }
 
     private fun performPullToRefresh() {
         if (!::session.isInitialized || loadingBySession[session] == true || fullscreen) return
         pullRefreshActive = true
-        updatePullRefreshHint(1f, true)
-        runCatching { session.reload() }.onFailure {
-            pullRefreshActive = false
-            updatePullRefreshHint(0f, false)
-            showToast("Không thể tải lại trang")
-            Log.w("SummitGecko", "Pull-to-refresh reload failed", it)
-        }
+        pullRefresh.start()
     }
 
     private fun onSessionUrl(source: GeckoSession, url: String) {
@@ -1753,6 +1743,7 @@ class GeckoPrototypeActivity : Activity() {
         if (::browserToolsController.isInitialized) browserToolsController.dispose()
         if (::findBarController.isInitialized) findBarController.dispose()
         if (::downloadController.isInitialized) downloadController.dispose()
+        if (::pullRefresh.isInitialized) pullRefresh.destroy()
         if (::surfaceView.isInitialized) surfaceView.detach()
         tabManager.getAll().forEach { tab ->
             tab.session?.let { s ->
