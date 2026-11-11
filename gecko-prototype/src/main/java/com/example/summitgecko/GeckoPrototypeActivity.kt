@@ -732,6 +732,7 @@ class GeckoPrototypeActivity : Activity() {
 
         toolbar.updateBarVisibility()
         if (::orbMenu.isInitialized) toolbarHost.syncOrbMenuVisibility()
+        if (::menuController.isInitialized) menuController.relayout()
         updateLayout()
     }
 

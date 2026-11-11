@@ -164,12 +164,10 @@ class GeckoMenuController(
         val glass = GlassSystem.createBlurView(activity, blurTarget, GlassSystem.Preset.MENU_CARD, density, isNight(), rim = false).apply { isClickable = false; isFocusable = false }
         card.addView(glass, FrameLayout.LayoutParams(-1, -1))
         layer.addView(card, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END))
-        val lp = card.layoutParams as FrameLayout.LayoutParams
-        lp.rightMargin = dp(14); lp.bottomMargin = dp(10) + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
-        card.layoutParams = lp
         root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         layer.visibility = View.INVISIBLE
         menuLayer = layer; menuCard = card; menuAnimationStarted = false
+        relayout()
         showMainPage(false)
         fun startMenuAnimation() {
             if (menuCard !== card || menuAnimationStarted) return
@@ -247,6 +245,7 @@ class GeckoMenuController(
         } else {
             if (!menuWasOpenBeforeCompact) return
             menuWasOpenBeforeCompact = false; layer.visibility = View.VISIBLE; syncBlurFor(900)
+            relayout()
             val morphed = OriginTransitionController.expandFromSource(card, AnimationSystem.MENU_MORPH) {
                 if (menuLayer === layer && !toolbarCompact) originView?.let { source ->
                     AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
@@ -259,9 +258,30 @@ class GeckoMenuController(
         }
     }
 
-    private fun setMenuPage(page: View, widthDp: Int, animate: Boolean) {
+    fun relayout() {
+val layer = menuLayer ?: return
+val card = menuCard ?: return
+val ins = androidx.core.view.ViewCompat.getRootWindowInsets(root)
+val bars = ins?.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+val ime = ins?.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())?.bottom ?: 0
+val t = bars?.top ?: 0; val l = bars?.left ?: 0; val r = bars?.right ?: 0; val b = bars?.bottom ?: 0
+layer.setPadding(0, t + dp(12), 0, 0)
+val lp = card.layoutParams as FrameLayout.LayoutParams
+val ob = originView?.takeIf { !toolbarCompact }?.let { OriginTransitionController.boundsOnScreen(it) }
+if (ob != null && root.width > 0 && root.height > 0) {
+val loc = IntArray(2); root.getLocationOnScreen(loc)
+lp.rightMargin = maxOf((loc[0] + root.width - ob.right).toInt(), r + dp(8))
+lp.bottomMargin = maxOf((loc[1] + root.height - ob.bottom).toInt() - dp(2), maxOf(b, ime) + dp(4))
+} else {
+lp.rightMargin = r + dp(14)
+lp.bottomMargin = maxOf(b, ime) + dp(10) + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
+}
+card.layoutParams = lp
+}
+private fun setMenuPage(page: View, widthDp: Int, animate: Boolean) {
         val layer = menuLayer ?: return; val card = menuCard ?: return
-        val maxW = activity.resources.displayMetrics.widthPixels - dp(28)
+        val bi = androidx.core.view.ViewCompat.getRootWindowInsets(root)?.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+val maxW = activity.resources.displayMetrics.widthPixels - dp(28) - (bi?.left ?: 0) - (bi?.right ?: 0)
         val w = maxOf(minOf(dp(widthDp), maxW), minOf(coverMinWidthPx(), maxW))
         card.dropLeavingPages(); val oldW = card.width; val oldH = card.height
         val leaving = (1 until card.childCount).map { card.getChildAt(it) }
@@ -275,7 +295,8 @@ class GeckoMenuController(
             if (card.childCount > 1) card.removeViews(1, card.childCount - 1)
             card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-    }
+        androidx.core.view.WindowCompat.getInsetsController(activity.window, layer).hide(androidx.core.view.WindowInsetsCompat.Type.ime())
+}
 
     private fun makePanel(title: String, hint: String?, widthDp: Int, onBack: (() -> Unit)?): Panel {
         val page = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
