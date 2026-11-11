@@ -110,7 +110,7 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var root: FrameLayout
     private lateinit var surfaceView: GeckoSurfaceView
     private lateinit var pullRefreshHint: TextView
-    private lateinit var topStrip: View
+    private lateinit var topStrip: ImageView
     private lateinit var blurTarget: BlurTarget
     private lateinit var bottomFade: View
     private lateinit var toolbar: ToolbarController
