@@ -13,8 +13,10 @@ import org.mozilla.geckoview.GeckoSession.PromptDelegate
  */
 internal class GeckoPromptController(
     private val dialog: () -> GlassDialogController,
+    private val context: () -> android.content.Context,
     private val isActiveSession: (GeckoSession) -> Boolean,
-    private val urlOf: (GeckoSession) -> String?
+    private val urlOf: (GeckoSession) -> String?,
+    private val launchFilePicker: (Array<String>?, Boolean, (Array<Uri>?) -> Unit) -> Boolean
 ) : PromptDelegate {
 
     companion object {
@@ -23,6 +25,43 @@ internal class GeckoPromptController(
     }
 
     private var pendingCount = 0
+
+    private var filePromptPending = false
+
+    override fun onFilePrompt(
+        session: GeckoSession,
+        prompt: PromptDelegate.FilePrompt
+    ): GeckoResult<PromptDelegate.PromptResponse>? {
+        if (!canShow(session) || filePromptPending ||
+            prompt.type == PromptDelegate.FilePrompt.Type.FOLDER
+        ) {
+            return GeckoResult.fromValue(prompt.dismiss())
+        }
+
+        val result = GeckoResult<PromptDelegate.PromptResponse>()
+        filePromptPending = true
+        val multiple = prompt.type == PromptDelegate.FilePrompt.Type.MULTIPLE
+        val launched = runCatching {
+            launchFilePicker(prompt.mimeTypes, multiple) { uris ->
+                filePromptPending = false
+                val response = if (uris.isNullOrEmpty()) {
+                    prompt.dismiss()
+                } else if (multiple) {
+                    prompt.confirm(context(), uris)
+                } else {
+                    prompt.confirm(context(), uris.first())
+                }
+                result.complete(response)
+            }
+        }.getOrDefault(false)
+
+        if (!launched) {
+            filePromptPending = false
+            return GeckoResult.fromValue(prompt.dismiss())
+        }
+        return result
+    }
+
 
     private fun canShow(session: GeckoSession) = isActiveSession(session) && pendingCount < MAX_PENDING
 

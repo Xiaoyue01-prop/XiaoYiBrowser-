@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.ClipData
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PorterDuff
@@ -164,6 +165,9 @@ class GeckoPrototypeActivity : Activity() {
     private val historyItems = mutableListOf<String>()
     private val bookmarkItems = mutableListOf<String>()
     private var currentUrl = ""
+
+    private val FILE_PICKER_REQUEST = 4107
+    private var pendingFilePickerResult: ((Array<Uri>?) -> Unit)? = null
 
     // Probe (WebExtension) state
     private var probeState = "starting"
@@ -540,8 +544,10 @@ class GeckoPrototypeActivity : Activity() {
         )
         promptController = GeckoPromptController(
             dialog = { glassDialog },
+            context = { this },
             isActiveSession = { it === session },
-            urlOf = { tabManager.forSession(it)?.url }
+            urlOf = { tabManager.forSession(it)?.url },
+            launchFilePicker = ::launchGeckoFilePicker
         )
         downloadController = GeckoDownloadController(
             activity = this,
@@ -839,6 +845,59 @@ class GeckoPrototypeActivity : Activity() {
     // ---- session configuration ------------------------------------------------------------
 
     /** Private mode is fixed at GeckoSession construction time (read-only after open). */
+    private fun launchGeckoFilePicker(
+        requestedMimeTypes: Array<String>?,
+        allowMultiple: Boolean,
+        onResult: (Array<Uri>?) -> Unit
+    ): Boolean {
+        if (pendingFilePickerResult != null || isFinishing || isDestroyed) return false
+
+        val mimeTypes = requestedMimeTypes
+            ?.filter { it.isNotBlank() }
+            ?.distinct()
+            ?.toTypedArray()
+            ?.takeIf { it.isNotEmpty() }
+            ?: arrayOf("*/*")
+
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = if (mimeTypes.size == 1) mimeTypes[0] else "*/*"
+            if (mimeTypes.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple)
+        }
+
+        return try {
+            pendingFilePickerResult = onResult
+            startActivityForResult(intent, FILE_PICKER_REQUEST)
+            true
+        } catch (_: Exception) {
+            pendingFilePickerResult = null
+            false
+        }
+    }
+
+    @Deprecated("Deprecated by Android; retained for the platform Activity result callback")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != FILE_PICKER_REQUEST) return
+
+        val callback = pendingFilePickerResult
+        pendingFilePickerResult = null
+        if (callback == null) return
+
+        val uris = if (resultCode == Activity.RESULT_OK && data != null) {
+            val clip = data.clipData
+            when {
+                clip != null -> Array(clip.itemCount) { index -> clip.getItemAt(index).uri }
+                data.data != null -> arrayOf(data.data!!)
+                else -> emptyArray()
+            }
+        } else {
+            null
+        }
+        callback(uris)
+    }
+
     private fun newBrowserSession(privateMode: Boolean): GeckoSession {
         val settings = GeckoSessionSettings.Builder()
             .usePrivateMode(privateMode)
@@ -1888,6 +1947,8 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     override fun onDestroy() {
+        pendingFilePickerResult?.invoke(null)
+        pendingFilePickerResult = null
         ui.removeCallbacks(tick)
         if (::orbMenu.isInitialized) orbMenu.destroy()
         if (::menuController.isInitialized) menuController.dispose()
