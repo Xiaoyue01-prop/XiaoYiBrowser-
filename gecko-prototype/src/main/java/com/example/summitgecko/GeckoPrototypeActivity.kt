@@ -535,6 +535,7 @@ class GeckoPrototypeActivity : Activity() {
             store = summitStore,
             dialog = { glassDialog },
             isActiveSession = { it === session },
+            isPrivateSession = { tabManager.forSession(it)?.isPrivate == true },
             isDestroyed = { isFinishing || isDestroyed }
         )
         promptController = GeckoPromptController(
@@ -1081,7 +1082,8 @@ class GeckoPrototypeActivity : Activity() {
     private fun loadInitialTestPage() {
         if (initialPageLoaded || !::session.isInitialized) return
         initialPageLoaded = true
-        val restored = browserPrefs.getString("last_url", null)
+        val externalUrl = safeWebUri(intent?.data?.toString())
+        val restored = externalUrl ?: browserPrefs.getString("last_url", null)
         if (!restored.isNullOrBlank()) {
             currentUrl = restored
             tabManager.forSession(session)?.url = restored
@@ -1093,6 +1095,14 @@ class GeckoPrototypeActivity : Activity() {
             showAddress(currentUrl)
             session.loadUri(currentUrl)
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val externalUrl = safeWebUri(intent.data?.toString()) ?: return
+        if (!::session.isInitialized || isFinishing || isDestroyed) return
+        createTab(externalUrl, privateMode = false)
     }
 
     private fun loadTestPage() {

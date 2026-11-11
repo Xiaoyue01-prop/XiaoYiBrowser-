@@ -23,6 +23,7 @@ internal class GeckoPermissionController(
     private val store: Store,
     private val dialog: () -> GlassDialogController,
     private val isActiveSession: (GeckoSession) -> Boolean,
+    private val isPrivateSession: (GeckoSession) -> Boolean,
     private val isDestroyed: () -> Boolean
 ) : PermissionDelegate {
 
@@ -121,7 +122,12 @@ internal class GeckoPermissionController(
                 return@runOnUiThread
             }
             val origin = originKey(uri)
-            when (store.getGeoPermission(origin)) {
+            // Capture privacy mode before showing an asynchronous dialog; the tab may close meanwhile.
+            val privateRequest = isPrivateSession(session)
+            // Private tabs never consume or persist per-origin permission decisions.
+            val savedPermission = if (privateRequest) PermissionState.ASK
+                else store.getGeoPermission(origin)
+            when (savedPermission) {
                 PermissionState.ALLOW -> result.complete(allow)
                 PermissionState.DENY -> result.complete(deny)
                 PermissionState.ASK -> dialog().show(
@@ -131,7 +137,9 @@ internal class GeckoPermissionController(
                     neutral = "Chỉ lần này",
                     onNeutral = { result.complete(allow) }
                 ) { allowed, _ ->
-                    store.setGeoPermission(origin, if (allowed) PermissionState.ALLOW else PermissionState.DENY)
+                    if (!privateRequest) {
+                        store.setGeoPermission(origin, if (allowed) PermissionState.ALLOW else PermissionState.DENY)
+                    }
                     result.complete(if (allowed) allow else deny)
                 }
             }
@@ -165,7 +173,12 @@ internal class GeckoPermissionController(
                     if (ok) callback.grant(videoSource, audioSource) else callback.reject()
                 }
             }
-            when (store.getMediaPermission(origin)) {
+            // Capture this before the async prompt so closing the tab cannot turn a private request regular.
+            val privateRequest = isPrivateSession(session)
+            // Private tabs always ask again and never alter the regular profile's saved choice.
+            val savedPermission = if (privateRequest) PermissionState.ASK
+                else store.getMediaPermission(origin)
+            when (savedPermission) {
                 PermissionState.ALLOW -> grant()
                 PermissionState.DENY -> callback.reject()
                 PermissionState.ASK -> {
@@ -180,7 +193,9 @@ internal class GeckoPermissionController(
                         neutral = "Chỉ lần này",
                         onNeutral = { grant() }
                     ) { allowed, _ ->
-                        store.setMediaPermission(origin, if (allowed) PermissionState.ALLOW else PermissionState.DENY)
+                        if (!privateRequest) {
+                            store.setMediaPermission(origin, if (allowed) PermissionState.ALLOW else PermissionState.DENY)
+                        }
                         if (allowed) grant() else callback.reject()
                     }
                 }
