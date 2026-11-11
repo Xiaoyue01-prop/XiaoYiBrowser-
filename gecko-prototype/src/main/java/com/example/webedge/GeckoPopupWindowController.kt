@@ -37,6 +37,7 @@ class GeckoPopupWindowController(
     private var scrim: View? = null
     private var titleView: TextView? = null
     private var closing = false
+    private var currentUrl: String? = null
     private var canGoBack = false
 
     val isShowing: Boolean get() = dialog?.isShowing == true
@@ -130,7 +131,7 @@ class GeckoPopupWindowController(
         newSession.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onTitleChange(session: GeckoSession, title: String?) {
                 val clean = title?.trim().orEmpty().take(180)
-                val host = runCatching { Uri.parse(session.url ?: "").host }.getOrNull()?.removePrefix("www.")
+                val host = runCatching { Uri.parse(currentUrl ?: "").host }.getOrNull()?.removePrefix("www.")
                 activity.runOnUiThread {
                     titleView?.text = clean.ifBlank { host ?: "Cửa sổ mới" }
                 }
@@ -144,7 +145,8 @@ class GeckoPopupWindowController(
             override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
                 this@GeckoPopupWindowController.canGoBack = canGoBack
             }
-            override fun onLocationChange(session: GeckoSession, url: String?) {
+            override fun onLocationChange(session: GeckoSession, url: String?, permissions: MutableList<GeckoSession.PermissionDelegate.ContentPermission>, hasUserGesture: Boolean) {
+                currentUrl = url
                 if (titleView?.text == "Cửa sổ mới" && !url.isNullOrBlank()) {
                     val host = runCatching { Uri.parse(url).host }.getOrNull()?.removePrefix("www.")
                     activity.runOnUiThread { titleView?.text = host ?: url }
