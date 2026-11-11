@@ -124,6 +124,7 @@ class GeckoPrototypeActivity : Activity() {
     private val canGoForwardMap = HashMap<GeckoSession, Boolean>()
     private val scrollYBySession = HashMap<GeckoSession, Int>()
     private var pullRefreshActive = false
+    private lateinit var pageTransition: GeckoPageTransition
     private lateinit var pullRefresh: GeckoPullToRefresh
     private lateinit var session: GeckoSession
     private val tabManager = TabManager()
@@ -263,7 +264,7 @@ class GeckoPrototypeActivity : Activity() {
             if (::toolbar.isInitialized) toolbar.setLoading(false, 0)
         }
         override fun goBack() {
-            runCatching { session.goBack() }
+            goBackAnimated()
         }
         override fun toggleMenu() { if (::menuController.isInitialized) menuController.toggle() else showBrowserMenu() }
         override fun openTabSwitcher() = showTabSwitcher()
@@ -375,6 +376,13 @@ class GeckoPrototypeActivity : Activity() {
         }
         surfaceView.onPullToRefresh = ::performPullToRefresh
 
+        pageTransition = GeckoPageTransition(
+            host = blurTarget,
+            surface = surfaceView,
+            pageBg = { GlassSystem.pageSurfaceColor() },
+            navigateBack = { runCatching { session.goBack() } },
+            navigateForward = { runCatching { session.goForward() } }
+        )
         topStrip = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_XY
             setBackgroundColor(Color.BLACK)
@@ -418,8 +426,8 @@ class GeckoPrototypeActivity : Activity() {
             d = d,
             isNight = GlassSystem.isDarkPage(),
             BOTTOM_BAR_HEIGHT_DP = Constants.BOTTOM_BAR_HEIGHT_DP,
-            onBack = { if (canGoBackMap[session] == true) session.goBack() },
-            onForward = { if (canGoForwardMap[session] == true) session.goForward() },
+            onBack = { goBackAnimated() },
+            onForward = { goForwardAnimated() },
             onHome = {
                 val home = summitStore.homeUrl.ifBlank { "https://www.google.com/" }
                 currentUrl = home
@@ -828,6 +836,7 @@ class GeckoPrototypeActivity : Activity() {
                     if (session === this@GeckoPrototypeActivity.session && !pullRefreshActive) {
                         updatePullRefreshHint(0f, false)
                     }
+                    if (session === this@GeckoPrototypeActivity.session && ::pageTransition.isInitialized) pageTransition.onPageStart(url)
                     onSessionUrl(session, url)
                     if (session === this@GeckoPrototypeActivity.session) toolbar.setLoading(true, 0)
                 }
@@ -853,6 +862,7 @@ class GeckoPrototypeActivity : Activity() {
                         updatePullRefreshHint(0f, false)
                     }
                     if (!success) Log.i("SummitGecko", "Page load stopped with failure: ${tabManager.forSession(session)?.url}")
+                    if (session === this@GeckoPrototypeActivity.session && ::pageTransition.isInitialized) pageTransition.onPageReady()
                     if (success) scheduleThumbnailCapture(session)
                 }
             }
@@ -881,6 +891,18 @@ class GeckoPrototypeActivity : Activity() {
         })
     }
 
+    private fun goBackAnimated() {
+        if (canGoBackMap[session] != true) return
+        if (::pageTransition.isInitialized && pageTransition.back()) return
+        runCatching { session.goBack() }
+    }
+    
+    private fun goForwardAnimated() {
+        if (canGoForwardMap[session] != true) return
+        if (::pageTransition.isInitialized && pageTransition.forward()) return
+        runCatching { session.goForward() }
+    }
+    
     private fun updatePullRefreshHint(progress: Float, ready: Boolean) {
         if (!::pullRefresh.isInitialized) return
         if (pullRefreshActive) return
@@ -1489,6 +1511,7 @@ class GeckoPrototypeActivity : Activity() {
             target.setActive(true)
             target.setFocused(true)
             surfaceView.attach(target)
+            if (::pageTransition.isInitialized) pageTransition.cancelNow()
             toolbar.setLoading(loadingBySession[target] == true, progressBySession[target] ?: 0)
             resetProbeState()
             updateLayout()
@@ -1744,6 +1767,7 @@ class GeckoPrototypeActivity : Activity() {
         if (::findBarController.isInitialized) findBarController.dispose()
         if (::downloadController.isInitialized) downloadController.dispose()
         if (::pullRefresh.isInitialized) pullRefresh.destroy()
+        if (::pageTransition.isInitialized) pageTransition.cancelNow()
         if (::surfaceView.isInitialized) surfaceView.detach()
         tabManager.getAll().forEach { tab ->
             tab.session?.let { s ->
