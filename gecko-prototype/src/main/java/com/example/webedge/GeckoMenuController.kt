@@ -9,6 +9,8 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
+import androidx.dynamicanimation.animation.DynamicAnimation
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -41,6 +43,8 @@ interface GeckoMenuHost {
     fun toast(message: String)
 }
 
+private const val EDGE_ZONE_DP = 16
+
 class GeckoMenuController(
     private val activity: Activity,
     private val root: FrameLayout,
@@ -53,47 +57,54 @@ class GeckoMenuController(
     private val accent: Int,
     private val onVisibilityChanged: () -> Unit = {}
 ) {
-    private var layer: FrameLayout? = null
-    private var card: FrameLayout? = null
-    private var scroll: ScrollView? = null
-    private var content: LinearLayout? = null
-    private var glass: View? = null
-    private var backAction: (() -> Unit)? = null
+    private class Panel(
+        val page: LinearLayout,
+        val body: LinearLayout,
+        val buttons: LinearLayout,
+        val widthDp: Int,
+        val onBack: (() -> Unit)?
+    )
+
+    private var menuLayer: FrameLayout? = null
+    private var menuCard: MenuCardLayout? = null
+    private var menuBackAction: (() -> Unit)? = null
+    private var menuAnimationStarted = false
     private var toolbarCompact = false
-    private var compactLayerWasHidden = false
-    // Pill absorb: viên thuốc bị thẻ menu trên không hút vào khi mở, nảy ra khi đóng
+    private var menuWasOpenBeforeCompact = false
     private var pillBase: FloatArray? = null
     private var pillAbsorbed = false
     private var pillClipHold: List<ViewGroup>? = null
-    private var menuAnimationStarted = false
-    
+
     var originView: View? = null
     var coverView: View? = null
-    val isOpen: Boolean get() = layer != null
+    val isOpen: Boolean get() = menuLayer != null
 
     private val blurSync = GlassSystem.BlurSync(blurTarget)
     private fun syncBlurFor(durationMs: Long) = blurSync.hold(durationMs)
+    private fun dp(v: Int) = (v * density + 0.5f).toInt()
+    private fun textColor() = foreground()
+    private fun ripple() = activity.roundedPressBackground(GlassSystem.isDarkPage())
 
     private fun cardCenterOnScreen(): android.graphics.PointF? {
-        val b = card?.let { OriginTransitionController.boundsOnScreen(it) } ?: return null
+        val b = menuCard?.let { OriginTransitionController.boundsOnScreen(it) } ?: return null
         return android.graphics.PointF(b.centerX(), b.centerY())
     }
 
-    private fun startPillAbsorb(targetCard: View) {
+    private fun startPillAbsorb(card: View) {
         val pill = coverView ?: return
         if (toolbarCompact || !pill.isShown || pill.alpha < 0.9f) return
         val pillB = OriginTransitionController.boundsOnScreen(pill) ?: return
-        val air = OriginTransitionController.popCenterOnScreen(targetCard) ?: cardCenterOnScreen() ?: return
+        val air = OriginTransitionController.popCenterOnScreen(card) ?: cardCenterOnScreen() ?: return
         val base = floatArrayOf(pill.translationX, pill.translationY, pill.scaleX, pill.scaleY, pill.alpha)
         pillBase = base
         if (pillClipHold == null) pillClipHold = OriginTransitionController.holdUnclipped(pill)
         val dx = air.x - pillB.centerX()
         val dy = air.y - pillB.centerY()
         pill.postDelayed({
-            if (card === targetCard && pillBase === base) {
+            if (menuCard === card && pillBase === base) {
                 pillAbsorbed = true
-                AnimationSystem.spring(pill, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, base[0] + dx, AnimationSystem.MENU_MORPH)
-                AnimationSystem.spring(pill, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, base[1] + dy, AnimationSystem.MENU_MORPH)
+                AnimationSystem.spring(pill, DynamicAnimation.TRANSLATION_X, base[0] + dx, AnimationSystem.MENU_MORPH)
+                AnimationSystem.spring(pill, DynamicAnimation.TRANSLATION_Y, base[1] + dy, AnimationSystem.MENU_MORPH)
                 AnimationSystem.scaleTo(pill, base[2] * Constants.ABSORB_SCALE, base[3] * Constants.ABSORB_SCALE, AnimationSystem.MENU_MORPH)
                 AnimationSystem.fade(pill, 0f, AnimationSystem.MENU_MORPH)
             }
@@ -101,403 +112,310 @@ class GeckoMenuController(
     }
 
     private fun springPillOut() {
-        val pill = coverView
-        val b = pillBase
-        pillBase = null
-        pillAbsorbed = false
+        val pill = coverView; val b = pillBase; pillBase = null; pillAbsorbed = false
         if (pill == null || b == null) { releasePillClip(); return }
         val btn = originView?.let { OriginTransitionController.boundsOnScreen(it) }
         val pillB = OriginTransitionController.boundsOnScreen(pill)
         AnimationSystem.cancel(pill)
         pill.translationX = b[0] + if (btn != null && pillB != null) btn.centerX() - pillB.centerX() else 0f
         pill.translationY = b[1] + if (btn != null && pillB != null) btn.centerY() - pillB.centerY() else 0f
-        pill.scaleX = b[2] * Constants.ABSORB_SCALE
-        pill.scaleY = b[3] * Constants.ABSORB_SCALE
-        pill.alpha = 0f
-        AnimationSystem.spring(pill, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, b[0], AnimationSystem.MENU_POP_BACK)
-        AnimationSystem.spring(pill, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, b[1], AnimationSystem.MENU_POP_BACK)
+        pill.scaleX = b[2] * Constants.ABSORB_SCALE; pill.scaleY = b[3] * Constants.ABSORB_SCALE; pill.alpha = 0f
+        AnimationSystem.spring(pill, DynamicAnimation.TRANSLATION_X, b[0], AnimationSystem.MENU_POP_BACK)
+        AnimationSystem.spring(pill, DynamicAnimation.TRANSLATION_Y, b[1], AnimationSystem.MENU_POP_BACK)
         AnimationSystem.scaleTo(pill, b[2], b[3], AnimationSystem.MENU_POP_BACK)
         AnimationSystem.fade(pill, b[4], AnimationSystem.QUICK)
         releasePillClip()
     }
 
     private fun returnAbsorbed() {
-        if (pillAbsorbed) {
-            springPillOut()
-            (card?.parent as? View)?.postDelayed({ onVisibilityChanged() }, Constants.ORB_RETURN_DELAY_MS)
-        } else {
-            restorePillNow()
-            onVisibilityChanged()
-        }
+        if (pillAbsorbed) { springPillOut(); root.postDelayed({ onVisibilityChanged() }, Constants.ORB_RETURN_DELAY_MS) }
+        else { restorePillNow(); onVisibilityChanged() }
     }
 
     private fun restorePillNow() {
-        val pill = coverView
-        val b = pillBase
-        pillBase = null
-        pillAbsorbed = false
+        val pill = coverView; val b = pillBase; pillBase = null; pillAbsorbed = false
         if (pill != null && b != null) {
-            AnimationSystem.cancel(pill)
-            pill.translationX = b[0]
-            pill.translationY = b[1]
-            pill.scaleX = b[2]
-            pill.scaleY = b[3]
-            pill.alpha = b[4]
+            AnimationSystem.cancel(pill); pill.translationX = b[0]; pill.translationY = b[1]
+            pill.scaleX = b[2]; pill.scaleY = b[3]; pill.alpha = b[4]
         }
         releasePillClip()
     }
 
-    private fun releasePillClip() {
-        pillClipHold?.let { OriginTransitionController.releaseUnclipped(it) }
-        pillClipHold = null
+    private fun releasePillClip() { pillClipHold?.let { OriginTransitionController.releaseUnclipped(it) }; pillClipHold = null }
+
+    private fun coverMinWidthPx(): Int {
+        if (toolbarCompact) return 0
+        val o = originView?.let { OriginTransitionController.boundsOnScreen(it) } ?: return 0
+        val c = coverView?.let { OriginTransitionController.boundsOnScreen(it) } ?: return 0
+        return (o.right - c.left).toInt() + dp(6)
     }
-
-    private fun px(v: Int) = (v * density + 0.5f).toInt()
-    private fun textColor() = foreground()
-
-    private fun shortUrl(value: String): String = runCatching {
-        val uri = android.net.Uri.parse(value)
-        val host = uri.host?.removePrefix("www.") ?: return@runCatching value
-        val path = uri.path.orEmpty()
-        if (path.length > 1) host + path else host
-    }.getOrDefault(value)
-
-    private fun toUrl(value: String): String {
-        val t = value.trim()
-        return when {
-            t.startsWith("http://", true) || t.startsWith("https://", true) -> t
-            t.contains('.') && !t.contains(' ') -> "https://$t"
-            else -> when (store.searchEngine) {
-                1 -> "https://www.bing.com/search?q=${android.net.Uri.encode(t)}"
-                2 -> "https://duckduckgo.com/?q=${android.net.Uri.encode(t)}"
-                else -> "https://www.google.com/search?q=${android.net.Uri.encode(t)}"
-            }
-        }
-    }
-
-    private fun ripple() = activity.roundedPressBackground(isNight())
 
     fun toggle() { if (isOpen) close() else open() }
+    fun handleBack() { val back = menuBackAction; if (back != null) back() else close() }
 
     private fun open() {
-        val hostLayer = FrameLayout(activity).apply { setOnClickListener { close() } }
-        val menuCard = MenuCardLayout(activity).apply {
+        val layer = FrameLayout(activity).apply { setOnClickListener { close() } }
+        val card = MenuCardLayout(activity).apply {
             maxHeightPx = (activity.resources.displayMetrics.heightPixels * Constants.MENU_MAX_HEIGHT_FRACTION).toInt()
             background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, density, isNight())
+            clipToOutline = true; clipChildren = true; clipToPadding = true; isClickable = true
             foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, density, isNight())
-            clipToOutline = true; clipChildren = true; clipToPadding = true
-            isClickable = true
-            alpha = 0f 
         }
-        val blur = GlassSystem.createBlurView(
-            activity, blurTarget, GlassSystem.Preset.MENU_CARD, density, isNight(), rim = false
-        ).apply { isClickable = false; isFocusable = false }
-        
-        val scroller = ScrollView(activity).apply {
-            isFillViewport = true; clipToPadding = false; overScrollMode = View.OVER_SCROLL_NEVER
-            setPadding(0, px(4), 0, px(8))
-        }
-        val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        scroller.addView(body, ViewGroup.LayoutParams(-1, -2))
-        menuCard.addView(blur, FrameLayout.LayoutParams(-1, -1))
-        menuCard.addView(scroller, FrameLayout.LayoutParams(px(300), ViewGroup.LayoutParams.WRAP_CONTENT))
-        
-        hostLayer.addView(
-            menuCard,
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply {
-                rightMargin = px(10)
-                bottomMargin = px(Constants.BOTTOM_BAR_HEIGHT_DP + 10)
-            }
-        )
-        root.addView(hostLayer, FrameLayout.LayoutParams(-1, -1))
-        layer = hostLayer; card = menuCard; scroll = scroller; content = body; glass = blur
-        
-        menuAnimationStarted = false
+        val glass = GlassSystem.createBlurView(activity, blurTarget, GlassSystem.Preset.MENU_CARD, density, isNight(), rim = false).apply { isClickable = false; isFocusable = false }
+        card.addView(glass, FrameLayout.LayoutParams(-1, -1))
+        layer.addView(card, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END))
+        val lp = card.layoutParams as FrameLayout.LayoutParams
+        lp.rightMargin = dp(14); lp.bottomMargin = dp(10) + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
+        card.layoutParams = lp
+        root.addView(layer, FrameLayout.LayoutParams(-1, -1))
+        menuLayer = layer; menuCard = card; menuAnimationStarted = false
         showMainPage(false)
+        fun startMenuAnimation() {
+            if (menuCard !== card || menuAnimationStarted) return
+            menuAnimationStarted = true; onVisibilityChanged()
+            val radiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * density
+            val morphOrigin = if (toolbarCompact) coverView else originView
+            val canPop = !toolbarCompact && morphOrigin != null && morphOrigin.isShown && morphOrigin.alpha > 0.9f
+            val morphed = OriginTransitionController.open(
+                card, morphOrigin, endCornerRadiusPx = radiusPx, springSpec = AnimationSystem.MENU_MORPH, fadeIn = false,
+                counterTransformView = glass, contentViews = { (0 until card.childCount).map { card.getChildAt(it) }.filter { it !== glass } },
+                contentStart = 0f, contentSpan = 0.25f,
+                popScale = if (canPop) Constants.MENU_POP_SCALE else 1f,
+                popTowardTarget = if (canPop) Constants.MENU_POP_TOWARD else 0f,
+                popDelayMs = if (canPop) Constants.MENU_POP_DELAY_MS else 0L
+            )
+            if (morphed) startPillAbsorb(card)
+            if (!morphed) { restorePillNow(); card.pivotX = card.width.toFloat(); card.pivotY = card.height.toFloat(); AnimationSystem.enter(card, spec = AnimationSystem.MENU_MORPH) }
+            syncBlurFor(850)
+        }
         syncBlurFor(1000)
-        
-        hostLayer.post {
-            if (card !== menuCard) return@post
-            fun startMenuAnimation() {
-                if (card !== menuCard || menuAnimationStarted) return
-                if (menuCard.width <= 0 || menuCard.height <= 0) return
-                menuAnimationStarted = true
-                syncBlurFor(850)
-                onVisibilityChanged()
-                
-                val morphOrigin = if (toolbarCompact) coverView else originView
-                val morphed = OriginTransitionController.open(
-                    menuCard, morphOrigin,
-                    endCornerRadiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * density,
-                    springSpec = AnimationSystem.MENU_MORPH,
-                    fadeIn = false,
-                    counterTransformView = blur,
-                    contentViews = { listOf(scroller) },
-                    contentStart = 0f, contentSpan = 0.24f,
-                    popScale = if (toolbarCompact) 1f else Constants.MENU_POP_SCALE,
-                    popTowardTarget = if (toolbarCompact) 0f else Constants.MENU_POP_TOWARD,
-                    popDelayMs = Constants.MENU_POP_DELAY_MS
-                )
-                if (!morphed) AnimationSystem.enter(menuCard, spec = AnimationSystem.MENU_MORPH)
-            }
-            
-            val observer = blur.viewTreeObserver
-            if (observer.isAlive) observer.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+        val glassObserver = glass.viewTreeObserver
+        if (glassObserver.isAlive) {
+            glassObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
                 override fun onPreDraw(): Boolean {
-                    if (blur.viewTreeObserver.isAlive) blur.viewTreeObserver.removeOnPreDrawListener(this)
-                    android.view.Choreographer.getInstance().postFrameCallback {
-                        android.view.Choreographer.getInstance().postFrameCallback { startMenuAnimation() }
-                    }
+                    if (glass.viewTreeObserver.isAlive) glass.viewTreeObserver.removeOnPreDrawListener(this)
+                    val choreographer = android.view.Choreographer.getInstance()
+                    choreographer.postFrameCallback { choreographer.postFrameCallback { startMenuAnimation() } }
                     return true
                 }
             })
-            menuCard.postDelayed({ if (!menuAnimationStarted) startMenuAnimation() }, 220L)
         }
-    }
-
-    fun handleBack() { val back = backAction; if (back != null) back() else close() }
-
-    fun dispose() {
-        val currentCard = card; val currentLayer = layer
-        if (currentCard != null) OriginTransitionController.cancel(currentCard)
-        if (currentLayer != null) root.removeView(currentLayer)
-        layer = null; card = null; scroll = null; content = null; glass = null; backAction = null
+        card.postDelayed({ startMenuAnimation() }, 200L)
     }
 
     fun close() {
-        val currentLayer = layer ?: return; val currentCard = card
-        backAction = null; menuAnimationStarted = false
-        if (currentCard == null) { removeLayer(currentLayer); return }
-        OriginTransitionController.close(currentCard, AnimationSystem.MENU_MORPH_CLOSE) {
-            if (layer === currentLayer) removeLayer(currentLayer)
+        val layer = menuLayer ?: return; val card = menuCard
+        menuLayer = null; menuCard = null; menuBackAction = null; menuAnimationStarted = false; menuWasOpenBeforeCompact = false
+        if (card == null) { restorePillNow(); root.removeView(layer); onVisibilityChanged(); return }
+        if (toolbarCompact && layer.visibility != View.VISIBLE) {
+            OriginTransitionController.cancel(card); restorePillNow(); root.removeView(layer); onVisibilityChanged()
+            originView?.let { source -> AnimationSystem.scaleTo(source, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE); AnimationSystem.fade(source, 0f, AnimationSystem.QUICK) }
+            return
         }
-        currentLayer.postDelayed({ if (layer === currentLayer) removeLayer(currentLayer) }, 650L)
-    }
-
-    private fun removeLayer(target: FrameLayout) {
-        if (layer !== target) return
-        OriginTransitionController.cancel(card ?: return)
-        root.removeView(target)
-        layer = null; card = null; scroll = null; content = null; glass = null; backAction = null
-        onVisibilityChanged()
-    }
-
-    fun setToolbarCompact(compact: Boolean, pill: View) {
-        if (toolbarCompact == compact) return
-        toolbarCompact = compact
-        val currentCard = card ?: return; val currentLayer = layer ?: return
-        if (compact) {
-            compactLayerWasHidden = true
-            val changed = OriginTransitionController.retargetSource(
-                currentCard, pill, hideNewSource = false, sourceScaleX = 0.58f, sourceScaleY = 0.62f
-            )
-            if (changed) OriginTransitionController.collapseToSource(currentCard, AnimationSystem.MENU_MORPH_CLOSE) {
-                if (layer === currentLayer && toolbarCompact) currentLayer.visibility = View.GONE
-            } else {
-                AnimationSystem.fade(currentCard, 0f, AnimationSystem.MENU_MORPH_CLOSE) {
-                    if (layer === currentLayer && toolbarCompact) currentLayer.visibility = View.GONE
+        syncBlurFor(600)
+        OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
+            root.removeView(layer); returnAbsorbed()
+            originView?.let { source ->
+                if (toolbarCompact) { AnimationSystem.scaleTo(source, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE); AnimationSystem.fade(source, 0f, AnimationSystem.QUICK) }
+                else {
+                    AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
+                    AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+                    AnimationSystem.scaleTo(source, 1f, 1f, AnimationSystem.MENU_MORPH); AnimationSystem.fade(source, 1f, AnimationSystem.QUICK)
                 }
             }
-        } else if (compactLayerWasHidden) {
-            compactLayerWasHidden = false
-            currentLayer.visibility = View.VISIBLE
-            val source = originView
-            if (source != null) OriginTransitionController.retargetSource(currentCard, source, hideNewSource = true)
-            val expanded = OriginTransitionController.expandFromSource(currentCard, AnimationSystem.MENU_MORPH)
-            if (!expanded) AnimationSystem.fade(currentCard, 1f, AnimationSystem.QUICK)
         }
     }
 
-    private fun clearBody() { content?.removeAllViews() }
-    private fun gap() { content?.addView(View(activity).apply { setBackgroundColor(Theme.gapColor(isNight())) }, LinearLayout.LayoutParams(-1, px(6))) }
-
-    private fun addItem(label: String, icon: String? = null, action: () -> Unit) {
-        val r = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(px(22), 0, px(22), 0); background = ripple(); setOnClickListener { action() }
-        }
-        val t = TextView(activity).apply {
-            text = label; textSize = 15f; setTextColor(textColor())
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        }
-        r.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (icon != null) {
-            val iv = ImageView(activity).apply { setImageDrawable(PathIcon(icon, textColor())) }
-            r.addView(iv, LinearLayout.LayoutParams(px(22), px(22)))
-        }
-        AnimationSystem.press(r, Constants.PRESS_SCALE_ROW)
-        content?.addView(r, LinearLayout.LayoutParams(-1, px(50)))
+    fun dispose() {
+        val card = menuCard; val layer = menuLayer
+        if (card != null) OriginTransitionController.cancel(card)
+        if (layer != null) root.removeView(layer)
+        restorePillNow(); menuLayer = null; menuCard = null; menuBackAction = null; menuAnimationStarted = false
     }
 
-    private fun addCell(row: LinearLayout, label: String, icon: String, action: () -> Unit) {
-        val c = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            background = ripple(); setOnClickListener { close(); action() }
+    fun setToolbarCompact(compact: Boolean, pillAnchor: View) {
+        if (toolbarCompact == compact) return
+        toolbarCompact = compact; val layer = menuLayer ?: return; val card = menuCard ?: return
+        if (compact) {
+            menuWasOpenBeforeCompact = true; syncBlurFor(700)
+            val retargeted = OriginTransitionController.retargetSource(card, pillAnchor, hideNewSource = false, sourceScaleX = 0.58f, sourceScaleY = 0.62f)
+            if (retargeted) originView?.let { source -> AnimationSystem.fade(source, 0f, AnimationSystem.QUICK); AnimationSystem.scaleTo(source, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE) }
+            val morphed = retargeted && OriginTransitionController.collapseToSource(card, AnimationSystem.MENU_MORPH_CLOSE) { if (menuLayer === layer && toolbarCompact) layer.visibility = View.GONE }
+            if (!morphed) { OriginTransitionController.cancel(card); AnimationSystem.fade(card, 0f, AnimationSystem.MENU_MORPH_CLOSE) { if (menuLayer === layer && toolbarCompact) layer.visibility = View.GONE } }
+        } else {
+            if (!menuWasOpenBeforeCompact) return
+            menuWasOpenBeforeCompact = false; layer.visibility = View.VISIBLE; syncBlurFor(900)
+            val morphed = OriginTransitionController.expandFromSource(card, AnimationSystem.MENU_MORPH) {
+                if (menuLayer === layer && !toolbarCompact) originView?.let { source ->
+                    AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
+                    AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+                    AnimationSystem.scaleTo(source, 1f, 1f, AnimationSystem.MENU_MORPH)
+                    OriginTransitionController.retargetSource(card, source, hideNewSource = true)
+                }
+            }
+            if (!morphed) AnimationSystem.fade(card, 1f, AnimationSystem.QUICK)
         }
-        val iv = ImageView(activity).apply { setImageDrawable(PathIcon(icon, textColor())) }
-        c.addView(iv, LinearLayout.LayoutParams(px(20), px(20)))
-        val t = TextView(activity).apply {
-            text = label; textSize = 11.5f; setTextColor(textColor()); gravity = Gravity.CENTER
-            setPadding(0, px(5), 0, 0)
-        }
-        c.addView(t, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        AnimationSystem.press(c, Constants.PRESS_SCALE_CELL)
-        row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
     }
 
-    private fun addHeader(title: String, back: () -> Unit) {
-        val head = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            clipChildren = false; clipToPadding = false
-            setPadding(px(14), px(12), px(22), px(2))
+    private fun setMenuPage(page: View, widthDp: Int, animate: Boolean) {
+        val layer = menuLayer ?: return; val card = menuCard ?: return
+        val maxW = activity.resources.displayMetrics.widthPixels - dp(28)
+        val w = maxOf(minOf(dp(widthDp), maxW), minOf(coverMinWidthPx(), maxW))
+        card.dropLeavingPages(); val oldW = card.width; val oldH = card.height
+        val leaving = (1 until card.childCount).map { card.getChildAt(it) }
+        if (animate && oldW > 0 && oldH > 0 && leaving.isNotEmpty()) {
+            card.holdLeaving(leaving)
+            leaving.forEach { old -> AnimationSystem.fade(old, 0f, AnimationSystem.QUICK) { card.removeLeaving(old) } }
+            card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
+            page.alpha = 0f; page.postDelayed({ AnimationSystem.fade(page, 1f, AnimationSystem.SETTLE) }, 40L)
+            card.animateSizeFrom(oldW, oldH); syncBlurFor(900)
+        } else {
+            if (card.childCount > 1) card.removeViews(1, card.childCount - 1)
+            card.addView(page, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        val backBtn = GlassSystem.createGlassIconButton(
-            activity, blurTarget, PathIcon(Icons.ARROW_BACK, GlassSystem.pagePrimaryText()), density, isNight(), "Quay lại"
-        )
-        backBtn.setOnClickListener { back() }
-        AnimationSystem.press(backBtn, Constants.PRESS_SCALE_PILL)
-        head.addView(backBtn, LinearLayout.LayoutParams(px(40), px(40)))
-        
-        val t = TextView(activity).apply {
-            text = title; textSize = 18f; setTextColor(textColor())
-            setTypeface(null, Typeface.BOLD); setPadding(px(12), 0, 0, 0)
-        }
-        head.addView(t)
-        content?.addView(head, LinearLayout.LayoutParams(-1, -2))
     }
 
-    private fun addMessage(message: String) {
-        content?.addView(TextView(activity).apply {
-            text = message; textSize = 14f; setTextColor(textColor()); gravity = Gravity.CENTER
-            setPadding(px(20), px(24), px(20), px(24))
-        }, LinearLayout.LayoutParams(-1, -2))
+    private fun makePanel(title: String, hint: String?, widthDp: Int, onBack: (() -> Unit)?): Panel {
+        val page = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val head = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false; setPadding(if (onBack != null) dp(14) else dp(22), dp(12), dp(22), dp(2)) }
+        if (onBack != null) {
+            val back = GlassSystem.createGlassIconButton(activity, blurTarget, PathIcon(Icons.ARROW_BACK, GlassSystem.pagePrimaryText()), density, isNight(), "Quay lại")
+            back.setOnClickListener { onBack() }; AnimationSystem.press(back, Constants.PRESS_SCALE_PILL)
+            head.addView(back, LinearLayout.LayoutParams(dp(40), dp(40)))
+        }
+        head.addView(TextView(activity).apply { text = title; textSize = 18f; setTextColor(textColor()); setTypeface(null, Typeface.BOLD); setPadding(if (onBack != null) dp(12) else 0, 0, 0, 0) })
+        page.addView(head)
+        if (hint != null) page.addView(TextView(activity).apply { text = hint; textSize = 12f; setTextColor(GlassSystem.pageSecondaryText()); setPadding(dp(22), 0, dp(22), dp(6)) })
+        val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = ScrollView(activity).apply { clipToPadding = false; setPadding(0, dp(EDGE_ZONE_DP), 0, dp(EDGE_ZONE_DP)) }
+        GlassSystem.installEdgeBlur(scroll, dp(EDGE_ZONE_DP), dp(EDGE_ZONE_DP), dp(7).toFloat(), 0f, 0.9f)
+        scroll.addView(body); page.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(6), dp(16), dp(14)); clipChildren = false; clipToPadding = false }
+        page.addView(buttons)
+        return Panel(page, body, buttons, widthDp, onBack)
     }
 
-    private fun addFooterAction(label: String, color: Int, action: () -> Unit) {
-        val button = TextView(activity).apply {
-            text = label; textSize = 14f; gravity = Gravity.CENTER; setTextColor(color)
-            background = ripple(); setOnClickListener { action() }
-        }
-        content?.addView(button, LinearLayout.LayoutParams(-1, px(48)))
+    private fun showPanel(p: Panel) { menuBackAction = p.onBack; setMenuPage(p.page, p.widthDp, true) }
+    private fun panelButton(text: String, color: Int, onClick: () -> Unit): View {
+        val b = GlassSystem.createGlassButton(activity, blurTarget, text, color, density, isNight())
+        b.setOnClickListener { onClick() }; AnimationSystem.press(b, Constants.PRESS_SCALE_PILL); return b
+    }
+    private fun addButtons(p: Panel, left: View?, right: View) {
+        val h = dp(44)
+        if (left != null) p.buttons.addView(left, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, h))
+        p.buttons.addView(View(activity), LinearLayout.LayoutParams(0, 1, 1f))
+        p.buttons.addView(right, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, h))
     }
 
     private fun showMainPage(animate: Boolean = true) {
-        clearBody()
-        val quick = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL; setPadding(px(8), 0, px(8), 0)
+        val box = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(8)) }
+        fun cell(row: LinearLayout, label: String, path: String, action: () -> Unit) {
+            val c = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = ripple() }
+            c.addView(ImageView(activity).apply { setImageDrawable(PathIcon(path, textColor())) }, LinearLayout.LayoutParams(dp(20), dp(20)))
+            c.addView(TextView(activity).apply { text = label; textSize = 11.5f; setTextColor(textColor()); gravity = Gravity.CENTER; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setPadding(0, dp(5), 0, 0) })
+            c.setOnClickListener { close(); action() }; AnimationSystem.press(c, Constants.PRESS_SCALE_CELL)
+            row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
-        addCell(quick, "Chia sẻ", Icons.SHARE) { shareCurrentUrl() }
-        addCell(quick, if (store.isBookmarked(host.currentUrl)) "Bỏ lưu" else "Lưu trang",
-            if (store.isBookmarked(host.currentUrl)) Icons.BOOKMARK else Icons.BOOKMARK_OUTLINE) { toggleBookmark() }
-        addCell(quick, "Tải lại", Icons.REFRESH) { host.reload() }
-        content?.addView(quick, LinearLayout.LayoutParams(-1, px(70)))
-        gap()
-        addItem("Dấu trang", Icons.BOOKMARK_OUTLINE) { showSavedList("Dấu trang", "bookmarks") }
-        addItem("Lịch sử", Icons.HISTORY) { showSavedList("Lịch sử", "history") }
-        addItem("Tải xuống", Icons.DOWNLOAD) { host.showDownloads() }
-        addItem("Privacy Dashboard", Icons.SHIELD) { host.showPrivacy() }
-        gap()
-        addItem("Tìm trong trang", Icons.SEARCH) { close(); host.openFind() }
-        addItem("Trang web máy tính", if (host.isDesktopMode) Icons.CHECK else null) { close(); host.toggleDesktopMode() }
-        addItem("Thẻ đang mở · ${host.tabCount}", Icons.TABS) { close(); host.openTabs() }
-        gap()
-        addItem("Cài đặt", Icons.TUNE) { showSettings() }
-        backAction = null
-        if (animate) animatePage()
+        fun item(label: String, path: String?, closes: Boolean, action: () -> Unit) {
+            val r = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(22), 0, dp(22), 0); background = ripple() }
+            r.addView(TextView(activity).apply { text = label; textSize = 15f; setTextColor(textColor()); typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (path != null) r.addView(ImageView(activity).apply { setImageDrawable(PathIcon(path, textColor())) }, LinearLayout.LayoutParams(dp(22), dp(22)))
+            r.setOnClickListener { if (closes) close(); action() }; AnimationSystem.press(r, Constants.PRESS_SCALE_ROW)
+            box.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)))
+        }
+        fun gap() { box.addView(View(activity).apply { setBackgroundColor(Theme.gapColor(isNight())) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6))) }
+        val marked = store.isBookmarked(host.currentUrl)
+        val quick = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), 0, dp(8), 0) }
+        cell(quick, "Chia sẻ", Icons.SHARE) { shareCurrentUrl() }
+        cell(quick, if (marked) "Bỏ lưu" else "Lưu trang", if (marked) Icons.BOOKMARK else Icons.BOOKMARK_OUTLINE) { toggleBookmark() }
+        cell(quick, "Tải lại", Icons.REFRESH) { host.reload() }
+        box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70))); gap()
+        item("Dấu trang", Icons.BOOKMARK_OUTLINE, false) { showList("Dấu trang", "bookmarks") }
+        item("Lịch sử", Icons.HISTORY, false) { showList("Lịch sử", "history") }
+        item("Tải xuống", Icons.DOWNLOAD, true) { host.showDownloads() }
+        item("Privacy Dashboard", Icons.SHIELD, true) { host.showPrivacy() }; gap()
+        item("Tìm trong trang", Icons.SEARCH, true) { host.openFind() }
+        item("Trang web máy tính", if (host.isDesktopMode) Icons.CHECK else null, true) { host.toggleDesktopMode() }; gap()
+        item("Cài đặt", Icons.TUNE, false) { showSettings() }
+        menuBackAction = null; setMenuPage(box, 280, animate)
     }
 
-    private fun animatePage() {
-        val body = content ?: return
-        body.alpha = 0f; body.translationY = px(8).toFloat()
-        AnimationSystem.fade(body, 1f, AnimationSystem.QUICK)
-        AnimationSystem.spring(body, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.QUICK)
-    }
-
-    private fun showSavedList(title: String, key: String) {
-        clearBody()
-        val entries = store.list(key).toList()
-        addHeader(title) { showMainPage() }
-        if (entries.isEmpty()) {
-            addMessage(if (key == "history") "Chưa có lịch sử duyệt web" else "Chưa có dấu trang")
-        } else {
-            entries.take(100).forEach { entry ->
-                addItem(entry.title.ifBlank { entry.url }, Icons.OPEN_IN_NEW) { close(); host.load(entry.url) }
-            }
-            if (key == "history") addFooterAction("Xóa lịch sử", Theme.DANGER_RED) {
-                store.clearHistory(); host.clearBrowserHistory(); showSavedList(title, key)
+    private fun showList(title: String, key: String) {
+        val p = makePanel(title, "Chạm để mở, giữ lâu để xóa", 340) { showMainPage() }
+        var allItems = store.list(key); var displayedCount = 0; val chunkSize = 30
+        fun buildRow(entry: Entry) {
+            val row = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(10), dp(22), dp(10)); background = ripple() }
+            row.addView(TextView(activity).apply { text = if (entry.title.isBlank() || entry.title == entry.url) shortUrl(entry.url) else entry.title; textSize = 15f; setTextColor(textColor()); setSingleLine(); ellipsize = TextUtils.TruncateAt.END; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) })
+            row.addView(TextView(activity).apply { text = shortUrl(entry.url); textSize = 12f; setTextColor(GlassSystem.pageSecondaryText()); setSingleLine(); ellipsize = TextUtils.TruncateAt.END })
+            row.setOnClickListener { close(); host.load(entry.url) }
+            row.setOnLongClickListener { store.remove(key, entry.url); showList(title, key); true }
+            AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
+            p.body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        fun loadMore() { val end = minOf(displayedCount + chunkSize, allItems.size); for (i in displayedCount until end) buildRow(allItems[i]); displayedCount = end }
+        fun fill() {
+            p.body.removeAllViews(); displayedCount = 0; allItems = store.list(key)
+            if (allItems.isEmpty()) { p.body.addView(TextView(activity).apply { text = "Chưa có gì"; textSize = 15f; setTextColor(GlassSystem.pageSecondaryText()); setPadding(dp(22), dp(16), dp(22), dp(16)) }); return }
+            loadMore()
+            if (displayedCount < allItems.size) {
+                val moreBtn = TextView(activity).apply { text = "Xem thêm ${allItems.size - displayedCount} mục..."; textSize = 14f; setTextColor(accent); typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); gravity = Gravity.CENTER; setPadding(dp(22), dp(12), dp(22), dp(12)); setOnClickListener { p.body.removeView(this); loadMore(); if (displayedCount < allItems.size) { text = "Xem thêm ${allItems.size - displayedCount} mục..."; p.body.addView(this) } } }
+                AnimationSystem.press(moreBtn, Constants.PRESS_SCALE_ROW); p.body.addView(moreBtn)
             }
         }
-        backAction = { showMainPage() }
-        animatePage()
+        fill()
+        val left: View? = if (key == "history") panelButton("Xóa tất cả", accent) { store.clearHistory(); host.clearBrowserHistory(); showList(title, key) } else null
+        addButtons(p, left, panelButton("Xong", accent) { close() }); showPanel(p)
     }
 
     private fun showSettings() {
-        clearBody()
-        addHeader("Cài đặt") { showMainPage() }
-        val engines = listOf("Google", "Bing", "DuckDuckGo")
-        addSetting("Công cụ tìm kiếm", engines.getOrElse(store.searchEngine) { "Google" }) { chooseEngine() }
-        addSetting("Trang chủ", shortUrl(store.homeUrl)) { editHome() }
-        addSetting("Header tràn viền", if (host.isHeaderScrollEnabled) "Cuộn cùng nội dung" else "Đứng yên") { host.toggleHeaderScroll(); showSettings() }
-        addSetting("Chặn quảng cáo / theo dõi", if (host.isAdBlockEnabled) "Bật" else "Tắt") { host.toggleAdBlock(); showSettings() }
-        addSetting("Thu gọn thanh địa chỉ khi cuộn", if (host.isAutoHideEnabled) "Bật" else "Tắt") { host.toggleAutoHide(); showSettings() }
-        gap()
-        addFooterAction("Đặt lại quyền trang web", textColor()) { host.clearSitePermissions(); host.toast("Đã đặt lại quyền trang web"); showSettings() }
-        addFooterAction("Xóa lịch sử duyệt web", Theme.DANGER_RED) { store.clearHistory(); host.clearBrowserHistory(); host.toast("Đã xóa lịch sử"); showSettings() }
-        backAction = { showMainPage() }
-        animatePage()
-    }
-
-    private fun addSetting(label: String, value: String, action: () -> Unit) {
-        val row = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(px(22), 0, px(18), 0); background = ripple(); setOnClickListener { action() }
+        val screenWidth = activity.resources.displayMetrics.widthPixels; val maxWidth = dp(400)
+        val dynamicWidth = minOf((screenWidth * 0.8f).toInt(), maxWidth)
+        val p = makePanel("Cài đặt", null, (dynamicWidth / density).toInt().coerceAtLeast(240)) { showMainPage() }
+        val engines = arrayOf("Google", "Bing", "DuckDuckGo")
+        fun addRow(label: String, value: String, onClick: () -> Unit) {
+            val r = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(22), 0, dp(22), 0); background = ripple() }
+            r.addView(TextView(activity).apply { text = label; textSize = 16f; setTextColor(textColor()); typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            r.addView(TextView(activity).apply { text = value; textSize = 14f; setTextColor(GlassSystem.pageSecondaryText()); gravity = Gravity.END; setSingleLine(); ellipsize = TextUtils.TruncateAt.END; maxWidth = dp(120) })
+            r.setOnClickListener { onClick() }; AnimationSystem.press(r, Constants.PRESS_SCALE_ROW)
+            p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
         }
-        row.addView(TextView(activity).apply { text = label; textSize = 14.5f; setTextColor(textColor()) },
-            LinearLayout.LayoutParams(0, px(50), 1f))
-        row.addView(TextView(activity).apply {
-            text = value; textSize = 13f; setTextColor(if (isNight()) Color.LTGRAY else Color.DKGRAY)
-            maxWidth = px(130); maxLines = 1; ellipsize = TextUtils.TruncateAt.END
-        })
-        content?.addView(row, LinearLayout.LayoutParams(-1, px(50)))
+        addRow("Công cụ tìm kiếm", engines[store.searchEngine]) { chooseEngine() }
+        addRow("Trang chủ", shortUrl(store.homeUrl)) { editHome() }
+        addRow("Header tràn viền", if (host.isHeaderScrollEnabled) "Cuộn như nội dung" else "Đứng yên") { host.toggleHeaderScroll(); showSettings() }
+        addRow("Chặn quảng cáo", if (host.isAdBlockEnabled) "Bật" else "Tắt") { host.toggleAdBlock(); showSettings() }
+        addRow("Thu gọn thanh địa chỉ", if (host.isAutoHideEnabled) "Bật" else "Tắt") { host.toggleAutoHide(); showSettings() }
+        addButtons(p, panelButton("Xóa dữ liệu", Theme.DANGER_RED) { confirmClear() }, panelButton("Xong", accent) { close() }); showPanel(p)
     }
 
     private fun chooseEngine() {
-        clearBody(); addHeader("Công cụ tìm kiếm") { showSettings() }
-        listOf("Google", "Bing", "DuckDuckGo").forEachIndexed { index, name ->
-            addItem(name, if (store.searchEngine == index) Icons.CHECK else null) { store.searchEngine = index; showSettings() }
+        val p = makePanel("Công cụ tìm kiếm", null, 340) { showSettings() }
+        val names = arrayOf("Google", "Bing", "DuckDuckGo")
+        for (i in names.indices) {
+            val r = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(22), 0, dp(22), 0); background = ripple() }
+            r.addView(TextView(activity).apply { text = names[i]; textSize = 16f; setTextColor(textColor()); typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (store.searchEngine == i) r.addView(ImageView(activity).apply { setImageDrawable(PathIcon(Icons.CHECK, accent)) }, LinearLayout.LayoutParams(dp(22), dp(22)))
+            r.setOnClickListener { store.searchEngine = i; showSettings() }; AnimationSystem.press(r, Constants.PRESS_SCALE_ROW)
+            p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
         }
-        backAction = { showSettings() }; animatePage()
+        addButtons(p, null, panelButton("Xong", accent) { close() }); showPanel(p)
     }
 
     private fun editHome() {
-        clearBody(); addHeader("Trang chủ") { showSettings() }
-        val input = EditText(activity).apply {
-            setSingleLine(); inputType = InputType.TYPE_TEXT_VARIATION_URI; setText(store.homeUrl)
-            textColor().let { setTextColor(it) }; textSize = 15f; setPadding(px(12), 0, px(12), 0)
-            background = GlassSystem.createInputField(12, density, isNight())
-        }
-        content?.addView(input, LinearLayout.LayoutParams(-1, px(46)).apply { setMargins(px(18), px(8), px(18), px(8)) })
-        addFooterAction("Lưu trang chủ", accent) {
-            val value = input.text.toString().trim()
-            if (value.isNotEmpty()) store.homeUrl = toUrl(value)
-            showSettings()
-        }
-        backAction = { showSettings() }; animatePage()
+        val p = makePanel("Trang chủ", null, 340) { showSettings() }
+        val input = EditText(activity).apply { setSingleLine(); inputType = InputType.TYPE_TEXT_VARIATION_URI; setText(store.homeUrl); setTextColor(Color.BLACK); typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); textSize = 15f; setPadding(dp(14), 0, dp(14), 0); background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT) }
+        val inputGlass = FrameLayout(activity).apply { clipToOutline = true; background = GlassSystem.createInputField(12, density, false); addView(GlassSystem.createInputBlurView(activity, blurTarget, density), FrameLayout.LayoutParams(-1, -1)); addView(input, FrameLayout.LayoutParams(-1, -1)) }
+        p.body.addView(inputGlass, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { setMargins(dp(22), dp(4), dp(22), dp(8)) })
+        addButtons(p, panelButton("Hủy", accent) { showSettings() }, panelButton("Lưu", accent) { val t = input.text.toString().trim(); if (t.isNotEmpty()) store.homeUrl = toUrl(t); showSettings() }); showPanel(p)
     }
 
-    private fun toggleBookmark() {
-        if (host.currentUrl.isBlank()) return
-        val added = store.toggleBookmark(host.currentTitle.ifBlank { host.currentUrl }, host.currentUrl)
-        host.toast(if (added) "Đã thêm dấu trang" else "Đã bỏ dấu trang")
-        if (isOpen) showMainPage(false)
+    private fun confirmClear() {
+        val p = makePanel("Xóa dữ liệu app?", null, 340) { showSettings() }
+        p.body.addView(TextView(activity).apply { text = "Xóa toàn bộ lịch sử, cookie, bộ nhớ đệm, quyền trang web đã nhớ và mọi dữ liệu khác của Summit. Hành động này không thể hoàn tác."; textSize = 14f; setTextColor(GlassSystem.pageSecondaryText()); setPadding(dp(22), dp(4), dp(22), dp(12)) })
+        addButtons(p, panelButton("Hủy", accent) { showSettings() }, panelButton("Xóa", Theme.DANGER_RED) { store.clearHistory(); host.clearBrowserHistory(); host.clearSitePermissions(); close(); host.toast("Đã xóa dữ liệu") }); showPanel(p)
     }
 
-    private fun shareCurrentUrl() {
-        if (host.currentUrl.isBlank()) return
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, host.currentUrl)
-        }
-        activity.startActivity(Intent.createChooser(send, "Chia sẻ"))
-    }
+    private fun toggleBookmark() { if (host.currentUrl.isBlank()) return; val added = store.toggleBookmark(host.currentTitle.ifBlank { host.currentUrl }, host.currentUrl); host.toast(if (added) "Đã thêm dấu trang" else "Đã bỏ dấu trang") }
+    private fun shareCurrentUrl() { if (host.currentUrl.isBlank()) return; val i = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, host.currentUrl) }; activity.startActivity(Intent.createChooser(i, "Chia sẻ")) }
+    private fun shortUrl(value: String): String = runCatching { val uri = android.net.Uri.parse(value); val host = uri.host?.removePrefix("www.") ?: return@runCatching value; val path = uri.path.orEmpty(); if (path.length > 1) host + path else host }.getOrDefault(value)
+    private fun toUrl(value: String): String { val t = value.trim(); return when { t.startsWith("http://", true) || t.startsWith("https://", true) -> t; t.contains('.') && !t.contains(' ') -> "https://$t"; else -> when (store.searchEngine) { 1 -> "https://www.bing.com/search?q=${android.net.Uri.encode(t)}"; 2 -> "https://duckduckgo.com/?q=${android.net.Uri.encode(t)}"; else -> "https://www.google.com/search?q=${android.net.Uri.encode(t)}" } } }
 }
