@@ -2,30 +2,18 @@ package com.example.summitgecko
 
 import android.content.Context
 import android.view.MotionEvent
-import android.view.SurfaceHolder
-import android.view.SurfaceView
-import org.mozilla.geckoview.GeckoDisplay
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoView
 
 /**
- * Replaces the stock GeckoView widget. It owns the GeckoDisplay (via the public
- * GeckoSession.acquireDisplay()), so the app, not the widget, decides which safe-area
- * insets Gecko sees. No reflection, public API only.
+ * Summit's gesture-aware GeckoView host.
  *
- * Spike scope: surface lifecycle, origin, insets and touch forwarding. No IME,
- * accessibility, generic motion events or NewSurfaceProvider yet.
+ * GeckoView now owns the display lifecycle instead of the app manually acquiring a
+ * GeckoDisplay. That is important: GeckoView connects the session's TextInput and
+ * Accessibility controllers to the Android View, and dispatches IME, key, generic-motion,
+ * hover and accessibility events through its supported widget implementation.
  */
-class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
-
-    private var session: GeckoSession? = null
-    private var display: GeckoDisplay? = null
-    private var surfaceValid = false
-
-    private var insetTop = 0
-    private var insetRight = 0
-    private var insetBottom = 0
-    private var insetLeft = 0
-    private var toolbarMax = 0
+class GeckoSurfaceView(context: Context) : GeckoView(context) {
 
     /** Called with -1 for the previous tab and +1 for the next tab. */
     var onTabSwipe: ((Int) -> Unit)? = null
@@ -39,30 +27,57 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
     private var pullCandidate = false
     private var pullClaimed = false
     private var downEvent: MotionEvent? = null
+    private var extraBottomClip = 0
     private var downX = 0f
     private var downY = 0f
-    var lastTouchScreenX = 0
-    var lastTouchScreenY = 0
 
-    /** True once the Surface exists and is valid; PixelCopy needs this. */
+    var lastTouchScreenX = 0
+        private set
+    var lastTouchScreenY = 0
+        private set
+
+    /** True when GeckoView has an attached, open session and a laid-out display host. */
     val isSurfaceReady: Boolean
-        get() = surfaceValid && holder.surface.isValid
+        get() = isAttachedToWindow && width > 0 && height > 0 && getSession()?.isOpen == true
 
     init {
-        holder.addCallback(this)
+        // Summit animates the page during interactive back/forward and tab-swipe transitions.
+        // GeckoView documents TextureView as the backend that supports view animation.
+        setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
     }
 
     fun attach(newSession: GeckoSession) {
+        if (getSession() === newSession) return
         detach()
-        session = newSession
-        display = newSession.acquireDisplay()
-        if (surfaceValid) pushSurface(width, height)
-        pushOrigin()
-        pushInsets()
-        pushToolbar()
+        setSession(newSession)
+        requestFocus()
     }
 
+    /** Releases the view's ownership only; the Activity remains responsible for closing sessions. */
     fun detach() {
+        clearPendingGesture()
+        runCatching { releaseSession() }
+    }
+
+    /**
+     * GeckoView forwards physical system-bar and display-cutout insets itself.
+     * Summit's additional bottom overlay is represented as vertical clipping, so fixed page
+     * controls are kept above the floating address pill without taking over Gecko's display.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun setSafeInsets(top: Int, right: Int, bottom: Int, left: Int) {
+        extraBottomClip = bottom.coerceAtLeast(0)
+        super.setVerticalClipping(extraBottomClip)
+    }
+
+    override fun setDynamicToolbarMaxHeight(height: Int) {
+        super.setDynamicToolbarMaxHeight(height.coerceAtLeast(0))
+        // GeckoView resets vertical clipping when the dynamic toolbar maximum changes.
+        // Reapply Summit's persistent bottom overlay reserve after that reset.
+        super.setVerticalClipping(extraBottomClip)
+    }
+
+    private fun clearPendingGesture() {
         downEvent?.recycle()
         downEvent = null
         edgeCandidate = false
@@ -70,91 +85,23 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
         pullCandidate = false
         pullClaimed = false
         onPullProgress?.invoke(0f, false)
-        val d = display
-        val s = session
-        if (d != null && s != null) {
-            if (surfaceValid) d.surfaceDestroyed()
-            s.releaseDisplay(d)
-        }
-        display = null
-        session = null
     }
 
-    /** Values are in device pixels, same unit as the surface. */
-    fun setSafeInsets(top: Int, right: Int, bottom: Int, left: Int) {
-        insetTop = top
-        insetRight = right
-        insetBottom = bottom
-        insetLeft = left
-        pushInsets()
-    }
-
-    /** Experiment: tell Gecko a dynamic toolbar of this height (device px) exists. */
-    fun setDynamicToolbarMaxHeight(height: Int) {
-        if (height == toolbarMax) return
-        toolbarMax = height
-        pushToolbar()
-    }
-
-    private fun pushToolbar() {
-        display?.setDynamicToolbarMaxHeight(toolbarMax)
-    }
-
-    private fun pushInsets() {
-        display?.safeAreaInsetsChanged(insetTop, insetRight, insetBottom, insetLeft)
-    }
-
-    private fun pushOrigin() {
-        val loc = IntArray(2)
-        getLocationOnScreen(loc)
-        display?.screenOriginChanged(loc[0], loc[1])
-    }
-
-    private fun pushSurface(w: Int, h: Int) {
-        val d = display ?: return
-        val info = GeckoDisplay.SurfaceInfo.Builder(holder.surface)
-            .surfaceControl(surfaceControl) // required for SurfaceView on SDK 29+
-            .size(w, h)
-            .build()
-        d.surfaceChanged(info)
-    }
-
-    override fun surfaceCreated(holder: SurfaceHolder) {
-        // surfaceChanged() always follows; the real work happens there.
-    }
-
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        surfaceValid = true
-        pushToolbar()
-        pushSurface(width, height)
-        pushOrigin()
-        pushInsets()
-    }
-
-    override fun surfaceDestroyed(holder: SurfaceHolder) {
-        display?.surfaceDestroyed()
-        surfaceValid = false
-    }
-
-    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
-        super.onLayout(changed, l, t, r, b)
-        pushOrigin()
-    }
-
-    private fun handPendingGestureToGecko(s: GeckoSession, event: MotionEvent) {
-        downEvent?.let {
-            s.panZoomController.onTouchEvent(it)
-            it.recycle()
+    private fun handPendingGestureToGecko(event: MotionEvent) {
+        downEvent?.let { pending ->
+            super.onTouchEvent(pending)
+            pending.recycle()
         }
         downEvent = null
-        s.panZoomController.onTouchEvent(event)
+        super.onTouchEvent(event)
         edgeCandidate = false
         pullCandidate = false
         onPullProgress?.invoke(0f, false)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val s = session ?: return false
+        if (getSession() == null) return super.onTouchEvent(event)
+
         val density = resources.displayMetrics.density
         val edgeWidth = 28f * density
         val edgeClaimDistance = 72f * density
@@ -165,23 +112,30 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x
                 downY = event.y
-                val tl0 = IntArray(2); getLocationOnScreen(tl0)
-                lastTouchScreenX = tl0[0] + event.x.toInt(); lastTouchScreenY = tl0[1] + event.y.toInt()
+                val location = IntArray(2)
+                getLocationOnScreen(location)
+                lastTouchScreenX = location[0] + event.x.toInt()
+                lastTouchScreenY = location[1] + event.y.toInt()
                 edgeCandidate = event.x <= edgeWidth || event.x >= width - edgeWidth
                 edgeClaimed = false
                 pullCandidate = !edgeCandidate && (canPullToRefresh?.invoke() == true)
                 pullClaimed = false
                 downEvent?.recycle()
                 downEvent = if (edgeCandidate) MotionEvent.obtain(event) else null
-                if (!edgeCandidate) s.panZoomController.onTouchEvent(event)
+                if (!edgeCandidate) return super.onTouchEvent(event)
+                // Delay only edge-origin touches until direction is known. A tap or vertical
+                // scroll is replayed to Gecko in order; a horizontal edge swipe stays native.
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.x - downX
                 val dy = event.y - downY
-                val tl0 = IntArray(2); getLocationOnScreen(tl0)
-                lastTouchScreenX = tl0[0] + event.x.toInt(); lastTouchScreenY = tl0[1] + event.y.toInt()
+                val location = IntArray(2)
+                getLocationOnScreen(location)
+                lastTouchScreenX = location[0] + event.x.toInt()
+                lastTouchScreenY = location[1] + event.y.toInt()
+
                 if (edgeCandidate && !edgeClaimed) {
                     if (kotlin.math.abs(dx) >= edgeClaimDistance && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
                         edgeClaimed = true
@@ -190,7 +144,7 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
                         return true
                     }
                     if (kotlin.math.abs(dy) > touchSlop && kotlin.math.abs(dy) > kotlin.math.abs(dx) * 0.8f) {
-                        handPendingGestureToGecko(s, event)
+                        handPendingGestureToGecko(event)
                     }
                     return true
                 }
@@ -204,21 +158,15 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
                 if (pullCandidate) {
                     if (dy >= pullClaimDistance && dy > kotlin.math.abs(dx) * 1.25f) {
                         pullClaimed = true
-                        MotionEvent.obtain(event).also { cancel ->
-                            cancel.setAction(MotionEvent.ACTION_CANCEL)
-                            s.panZoomController.onTouchEvent(cancel)
-                            cancel.recycle()
-                        }
+                        val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                        super.onTouchEvent(cancel)
+                        cancel.recycle()
                         onPullProgress?.invoke((dy / pullClaimDistance).coerceIn(0f, 1.5f), true)
                         return true
                     }
                     onPullProgress?.invoke((dy / pullClaimDistance).coerceIn(0f, 1.5f), false)
-                    s.panZoomController.onTouchEvent(event)
-                    return true
                 }
-
-                s.panZoomController.onTouchEvent(event)
-                return true
+                return super.onTouchEvent(event)
             }
 
             MotionEvent.ACTION_UP -> {
@@ -230,52 +178,46 @@ class GeckoSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.C
                     onPullProgress?.invoke(0f, false)
                     if (dy >= pullClaimDistance) onPullToRefresh?.invoke()
                 } else if (edgeCandidate) {
-                    handPendingGestureToGecko(s, event)
+                    handPendingGestureToGecko(event)
                 } else {
-                    s.panZoomController.onTouchEvent(event)
+                    super.onTouchEvent(event)
                 }
-                downEvent?.recycle()
-                downEvent = null
-                edgeCandidate = false
-                edgeClaimed = false
-                pullCandidate = false
-                pullClaimed = false
+                clearPendingGesture()
                 return true
             }
 
             MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
                 if (edgeCandidate && !edgeClaimed) {
-                    handPendingGestureToGecko(s, event)
+                    handPendingGestureToGecko(event)
                 } else if (!edgeClaimed && !pullClaimed) {
                     pullCandidate = false
                     onPullProgress?.invoke(0f, false)
-                    s.panZoomController.onTouchEvent(event)
+                    super.onTouchEvent(event)
                 }
                 return true
             }
 
             MotionEvent.ACTION_CANCEL -> {
                 if (edgeCandidate && !edgeClaimed) {
-                    handPendingGestureToGecko(s, event)
+                    handPendingGestureToGecko(event)
                 } else if (!edgeClaimed && !pullClaimed) {
-                    s.panZoomController.onTouchEvent(event)
+                    super.onTouchEvent(event)
                 }
-                onPullProgress?.invoke(0f, false)
-                downEvent?.recycle()
-                downEvent = null
-                edgeCandidate = false
-                edgeClaimed = false
-                pullCandidate = false
-                pullClaimed = false
+                clearPendingGesture()
                 return true
             }
 
             else -> {
                 if (!edgeCandidate && !edgeClaimed && !pullCandidate && !pullClaimed) {
-                    s.panZoomController.onTouchEvent(event)
+                    return super.onTouchEvent(event)
                 }
                 return true
             }
         }
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        // GeckoView handles mouse, trackpad, stylus and accessibility motion events.
+        return super.onGenericMotionEvent(event)
     }
 }

@@ -5,7 +5,6 @@ import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -15,7 +14,7 @@ import com.example.webedge.AnimationSystem
 /**
  * Chuyen trang kieu Safari cho Gecko (nut Back/Forward).
  * Trang dang xem la chinh surface (chi dich translationX). Trang lien ke la anh
- * PixelCopy chup luc roi trang. Gecko khong co back/forward list cong khai, nen
+ * GeckoView.capturePixels chup luc roi trang. Gecko khong co back/forward list cong khai, nen
  * anh duoc luu theo URL va doi vao lop phu ngay khi biet URL dich.
  */
 internal class GeckoPageTransition(
@@ -30,6 +29,8 @@ internal class GeckoPageTransition(
     private class Snap(val url: String, val bmp: Bitmap)
 
     private val cache = object : LinkedHashMap<String, Snap>(8, 0.75f, true) {
+        // Let a bitmap already assigned to an ImageView be reclaimed normally; eagerly
+        // recycling an evicted entry could invalidate a frame still being drawn.
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Snap>?): Boolean = size > 4
     }
 
@@ -52,17 +53,24 @@ internal class GeckoPageTransition(
 
     private fun capture(url: String?, done: (() -> Unit)? = null) {
         if (url.isNullOrBlank() || !surface.isSurfaceReady || surface.width <= 0 || surface.height <= 0) {
-            done?.invoke(); return
+            done?.invoke()
+            return
         }
-        val bmp = runCatching {
-            Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.RGB_565)
-        }.getOrNull()
-        if (bmp == null) { done?.invoke(); return }
         runCatching {
-            PixelCopy.request(surface, bmp, { code ->
-                if (code == PixelCopy.SUCCESS) cache[url] = Snap(url, bmp)
-                done?.invoke()
-            }, ui)
+            surface.capturePixels().accept({ captured ->
+                ui.post {
+                    if (!captured.isRecycled) {
+                        val compact = runCatching { captured.copy(Bitmap.Config.RGB_565, false) }.getOrNull()
+                        val bitmap = compact ?: captured
+                        if (bitmap !== captured && !captured.isRecycled) captured.recycle()
+                        val previous = cache.put(url, Snap(url, bitmap))
+                        previous?.bmp?.let { if (it !== bitmap && !it.isRecycled) it.recycle() }
+                    }
+                    done?.invoke()
+                }
+            }, {
+                ui.post { done?.invoke() }
+            })
         }.onFailure { done?.invoke() }
     }
 
@@ -228,5 +236,8 @@ internal class GeckoPageTransition(
 
     fun cancelNow() { current?.let { teardown(it) } }
 
-    fun clear() { cache.clear() }
+    fun clear() {
+        cache.values.forEach { if (!it.bmp.isRecycled) it.bmp.recycle() }
+        cache.clear()
+    }
 }

@@ -77,13 +77,10 @@ import org.mozilla.geckoview.WebExtension
  * controllers are deliberately not imported into this module.
  *
  * Three rendering modes (menu cycles them):
- *  0 Below       Gecko sits under the status bar (like Chrome). Strip colour = sampled page top.
- *  1 Edge JS     Gecko extends under the status bar, safeAreaInsetsChanged is fed, and the
- *                bundled WebExtension ("Summit Probe") offsets pinned headers and adds a
- *                reversible normal-flow top margin when a scrolling header starts under it.
- *  2 Edge Native Gecko extends under the status bar, insets are 0 and
- *                setDynamicToolbarMaxHeight is tested as a separate dynamic-toolbar experiment.
- *                This API is not documented as a status-bar/header offset.
+ * GeckoView owns its rendering, system-window-inset, IME and accessibility integration.
+ * The bundled WebExtension ("Summit Probe") offsets pinned headers and adds a reversible
+ * normal-flow top margin when a scrolling header starts under the status bar. Summit additionally
+ * reports the bottom floating-toolbar reserve through GeckoView vertical clipping.
  *
  * In both Edge modes the strip above the page is the header colour when the extension reports a
  * pinned header, and a blurred copy of the page top otherwise. Normal-flow headers remain in the
@@ -335,6 +332,7 @@ class GeckoPrototypeActivity : Activity() {
             )
         )
         blurTarget.source = surfaceView
+        blurTarget.snapshotProvider = { surfaceView.capturePixels() }
         root.addView(
             blurTarget,
             FrameLayout.LayoutParams(
@@ -1321,25 +1319,54 @@ class GeckoPrototypeActivity : Activity() {
         }
     }
 
-    private fun sampleColor() {
-        val w = surfaceView.width
-        val h = minOf(6, surfaceView.height)
-        if (h <= 0) return
-        val bmp = Bitmap.createBitmap(8, 1, Bitmap.Config.ARGB_8888)
-        PixelCopy.request(
-            surfaceView,
-            Rect(0, 0, w, h),
-            bmp,
-            PixelCopy.OnPixelCopyFinishedListener { code ->
-                if (code == PixelCopy.SUCCESS) {
-                    copyState = "surface ok"
-                    applyColor(bmp)
-                } else {
-                    sampleColorFromWindow(code)
+    private fun capturePagePixels(done: (Bitmap?) -> Unit) {
+        if (!::surfaceView.isInitialized || !surfaceView.isSurfaceReady) {
+            done(null)
+            return
+        }
+        try {
+            surfaceView.capturePixels().accept({ bitmap ->
+                ui.post {
+                    if (isFinishing || isDestroyed || bitmap.isRecycled) {
+                        if (!bitmap.isRecycled) bitmap.recycle()
+                        done(null)
+                    } else {
+                        done(bitmap)
+                    }
                 }
-            },
-            ui
-        )
+            }, { error ->
+                ui.post {
+                    Log.w("SummitGecko", "Gecko page capture failed", error)
+                    done(null)
+                }
+            })
+        } catch (e: Exception) {
+            Log.w("SummitGecko", "Unable to request Gecko page capture", e)
+            done(null)
+        }
+    }
+
+    private fun sampleColor() {
+        capturePagePixels { page ->
+            if (page == null) {
+                sampleColorFromWindow(PixelCopy.ERROR_SOURCE_NO_DATA)
+                return@capturePagePixels
+            }
+            try {
+                val cropHeight = minOf(6, page.height)
+                val strip = Bitmap.createBitmap(page, 0, 0, page.width, cropHeight)
+                val tiny = Bitmap.createScaledBitmap(strip, 8, 1, true)
+                copyState = "Gecko capture"
+                applyColor(tiny)
+                if (tiny !== strip) tiny.recycle()
+                if (strip !== page) strip.recycle()
+            } catch (e: Exception) {
+                copyState = "Gecko capture failed ${e.javaClass.simpleName}"
+                sampleColorFromWindow(PixelCopy.ERROR_SOURCE_NO_DATA)
+            } finally {
+                if (!page.isRecycled) page.recycle()
+            }
+        }
     }
 
     private fun sampleColorFromWindow(surfaceCode: Int) {
@@ -1354,49 +1381,58 @@ class GeckoPrototypeActivity : Activity() {
                 bmp,
                 PixelCopy.OnPixelCopyFinishedListener { code ->
                     if (code == PixelCopy.SUCCESS) {
-                        copyState = "window ok (surface=$surfaceCode)"
-                        applyColor(bmp)
+                        copyState = "window ok (Gecko=$surfaceCode)"
+                        try { applyColor(bmp) } finally { bmp.recycle() }
                     } else {
-                        copyState = "failed surface=$surfaceCode window=$code"
+                        copyState = "failed Gecko=$surfaceCode window=$code"
+                        bmp.recycle()
                         updateInfo()
                     }
                 },
                 ui
             )
         } catch (e: Exception) {
-            copyState = "failed surface=$surfaceCode window=${e.javaClass.simpleName}"
+            copyState = "failed Gecko=$surfaceCode window=${e.javaClass.simpleName}"
             updateInfo()
         }
     }
 
     private fun sampleFade() {
-        val w = surfaceView.width
-        val h = statusTop
-        if (h <= 0 || surfaceView.height < h) return
-        val bmp = Bitmap.createBitmap(maxOf(1, w / 8), maxOf(1, h / 8), Bitmap.Config.ARGB_8888)
-        PixelCopy.request(
-            surfaceView,
-            Rect(0, 0, w, h),
-            bmp,
-            PixelCopy.OnPixelCopyFinishedListener { code ->
-                if (code == PixelCopy.SUCCESS) {
-                    copyState = "glass ok"
-                    topStrip.setImageBitmap(bmp)
-                    topStrip.setBackgroundColor(Color.TRANSPARENT)
-                    topStrip.setRenderEffect(
-                        RenderEffect.createBlurEffect(16f, 16f, Shader.TileMode.CLAMP)
-                    )
-                    topStrip.colorFilter = PorterDuffColorFilter(
-                        Color.argb(60, 18, 22, 30),
-                        PorterDuff.Mode.SRC_ATOP
-                    )
-                } else {
-                    copyState = "glass failed surface=$code"
-                }
+        if (statusTop <= 0 || surfaceView.height < statusTop) return
+        capturePagePixels { page ->
+            if (page == null) {
+                copyState = "Gecko capture unavailable"
+                sampleColorFromWindow(PixelCopy.ERROR_SOURCE_NO_DATA)
+                return@capturePagePixels
+            }
+            try {
+                val cropHeight = minOf(statusTop, page.height)
+                val crop = Bitmap.createBitmap(page, 0, 0, page.width, cropHeight)
+                val scaled = Bitmap.createScaledBitmap(
+                    crop,
+                    maxOf(1, surfaceView.width / 8),
+                    maxOf(1, cropHeight / 8),
+                    true
+                )
+                if (crop !== page && crop !== scaled) crop.recycle()
+                copyState = "Gecko glass ok"
+                topStrip.setImageBitmap(scaled)
+                topStrip.setBackgroundColor(Color.TRANSPARENT)
+                topStrip.setRenderEffect(
+                    RenderEffect.createBlurEffect(16f, 16f, Shader.TileMode.CLAMP)
+                )
+                topStrip.colorFilter = PorterDuffColorFilter(
+                    Color.argb(60, 18, 22, 30),
+                    PorterDuff.Mode.SRC_ATOP
+                )
                 updateInfo()
-            },
-            ui
-        )
+            } catch (e: Exception) {
+                copyState = "Gecko glass failed ${e.javaClass.simpleName}"
+                updateInfo()
+            } finally {
+                if (!page.isRecycled) page.recycle()
+            }
+        }
     }
 
     private fun applyColor(bmp: Bitmap) {
@@ -1534,7 +1570,7 @@ class GeckoPrototypeActivity : Activity() {
         }
     }
 
-    /** Chụp bề mặt Gecko (PixelCopy) thành ảnh thu nhỏ cho tab đang xem. [done] luôn được gọi. */
+    /** Capture the visible Gecko page into the active tab thumbnail. [done] is always called. */
     private fun captureThumbnail(tab: TabManager.Tab?, done: () -> Unit = {}) {
         val target = tab
         if (target == null || !target.isActive || fullscreen || !::surfaceView.isInitialized ||
@@ -1543,31 +1579,29 @@ class GeckoPrototypeActivity : Activity() {
             done()
             return
         }
-        val width = (180f * resources.displayMetrics.density).toInt().coerceAtLeast(1)
-        val height = (width.toFloat() * surfaceView.height / surfaceView.width).toInt().coerceAtLeast(1)
-        val bitmap = runCatching { Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888) }.getOrNull()
-        if (bitmap == null) {
-            done()
-            return
-        }
         val url = target.url
-        try {
-            PixelCopy.request(
-                surfaceView,
-                bitmap,
-                PixelCopy.OnPixelCopyFinishedListener { code ->
-                    if (code == PixelCopy.SUCCESS && tabManager.getAll().any { it === target }) {
-                        // Không recycle ảnh cũ: lưới tab có thể đang hiển thị nó.
-                        target.thumbnail = bitmap
-                        target.thumbnailUrl = url
-                        target.thumbnailVersion = maxOf(System.currentTimeMillis(), target.thumbnailVersion + 1L)
-                    }
-                    done()
-                },
-                ui
-            )
-        } catch (e: Exception) {
-            Log.w("SummitGecko", "Thumbnail capture failed", e)
+        capturePagePixels { captured ->
+            if (captured == null) {
+                done()
+                return@capturePagePixels
+            }
+            try {
+                val width = (180f * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+                val height = (width.toFloat() * captured.height / captured.width).toInt().coerceAtLeast(1)
+                val bitmap = Bitmap.createScaledBitmap(captured, width, height, true)
+                if (bitmap !== captured) captured.recycle()
+                if (tabManager.getAll().any { it === target }) {
+                    // Do not recycle the previous image; the tab grid may still be drawing it.
+                    target.thumbnail = bitmap
+                    target.thumbnailUrl = url
+                    target.thumbnailVersion = maxOf(System.currentTimeMillis(), target.thumbnailVersion + 1L)
+                } else if (!bitmap.isRecycled) {
+                    bitmap.recycle()
+                }
+            } catch (e: Exception) {
+                Log.w("SummitGecko", "Thumbnail capture failed", e)
+                if (!captured.isRecycled) captured.recycle()
+            }
             done()
         }
     }
