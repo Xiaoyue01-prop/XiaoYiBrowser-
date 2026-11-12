@@ -10,7 +10,7 @@
   const MAX_NODES = 6000;
   const MAX_HEADER_TOP = 240;
   const MAX_FLOW_HEADER_DOC_TOP = 260;
-  const timerState = { id: null };
+  const timerState = { id: null, due: 0, pending: false };
   let lastScan = 0;
   let lastKey = '';
   let scanStarted = false;
@@ -62,17 +62,18 @@
   // fixed/sticky and sit near the top of the viewport, so exclude them explicitly.
   const EXCLUDED_CONTEXT_RE = /(watch-metadata|video-primary-info|video-secondary-info|video-player|comments-entry|watch-next|movie_player|player-container|html5-video|ytp-chrome|ytp-title|ytp-gradient|ytp-tooltip|ytp-progress|ytp-controls)/i;
 
+  let insetEl = null;
   function readInset() {
     if (!edgeModeEnabled) return 0;
     try {
-      const d = document.createElement('div');
-      d.style.cssText =
-        'position:absolute;left:-9999px;top:0;width:1px;height:1px;visibility:hidden;' +
-        'padding-top:env(safe-area-inset-top,0px)';
-      (document.body || document.documentElement).appendChild(d);
-      const v = parseFloat(getComputedStyle(d).paddingTop) || 0;
-      d.remove();
-      return v;
+      if (!insetEl) {
+        insetEl = document.createElement('div');
+        insetEl.style.cssText =
+          'position:absolute;left:-9999px;top:0;width:1px;height:1px;visibility:hidden;' +
+          'pointer-events:none;padding-top:env(safe-area-inset-top,0px)';
+      }
+      if (!insetEl.isConnected) (document.body || document.documentElement).appendChild(insetEl);
+      return parseFloat(getComputedStyle(insetEl).paddingTop) || 0;
     } catch (e) {
       return 0;
     }
@@ -134,9 +135,13 @@
     } catch (_) {}
   }
 
+  const VOLATILE = new Set(['scanMs', 'timestamp', 'nodes', 'excluded']);
+  const HEARTBEAT_MS = 4000;
+  let lastSentAt = 0;
   function send(msg) {
-    const key = JSON.stringify(msg);
-    if (key === lastKey || inFlight.has(key)) return;
+    const key = JSON.stringify(msg, (k, v) => (VOLATILE.has(k) ? undefined : v));
+    if (inFlight.has(key)) return;
+    if (key === lastKey && Date.now() - lastSentAt < HEARTBEAT_MS) return;
 
     if (typeof browser === 'undefined' ||
         !browser.runtime ||
@@ -151,6 +156,7 @@
       Promise.resolve(browser.runtime.sendNativeMessage('browser', msg)).then(
         () => {
           lastKey = key;
+          lastSentAt = Date.now();
           inFlight.delete(key);
           window.__summitProbeStatus = 'native-message-sent';
         },
@@ -443,13 +449,17 @@
     return { shifted, selector: selectorSummary, offset: Math.round(totalOffset) };
   }
 
+  let pageKindCache = { at: 0, value: 'web' };
   function pageKind() {
+    const now = Date.now();
+    if (now - pageKindCache.at < 400) return pageKindCache.value;
     const host = location.hostname.toLowerCase();
-    if (host.includes('youtube.com') && document.querySelector('ytd-watch-flexy, ytm-watch')) {
-      return 'watch';
+    let value = 'web';
+    if (host.includes('youtube.com')) {
+      value = document.querySelector('ytd-watch-flexy, ytm-watch') ? 'watch' : 'youtube';
     }
-    if (host.includes('youtube.com')) return 'youtube';
-    return 'web';
+    pageKindCache = { at: now, value };
+    return value;
   }
 
   // Send this before waiting for document.body or running the DOM scanner.
@@ -465,6 +475,7 @@
   function scan() {
     const startedAt = Date.now();
     lastScan = startedAt;
+    timerState.pending = false;
     try {
       if (lastHeaderScrollMode !== headerScrollEnabled) {
         for (const [el, state] of Array.from(activeShifts.entries())) restoreElement(el, state);
@@ -684,6 +695,7 @@
   }
 
   function run() {
+    timerState.pending = true;
     try {
       if (typeof window.requestIdleCallback === 'function') {
         window.requestIdleCallback.call(window, scan, { timeout: 800 });
@@ -704,9 +716,13 @@
   }
 
   function schedule(delay) {
-    clearTimeout(timerState.id);
+    if (timerState.pending) return;
     const wait = Math.max(delay || 350, lastScan + MIN_GAP_MS - Date.now());
-    timerState.id = setTimeout(run, wait);
+    const due = Date.now() + wait;
+    if (timerState.id !== null && timerState.due <= due) return;
+    clearTimeout(timerState.id);
+    timerState.due = due;
+    timerState.id = setTimeout(() => { timerState.id = null; run(); }, wait);
   }
 
   document.addEventListener('DOMContentLoaded', () => schedule(150));
@@ -716,7 +732,12 @@
   document.addEventListener('pointerdown', () => schedule(250), { passive: true });
   document.addEventListener('touchstart', () => schedule(250), { passive: true });
   try {
-    new MutationObserver(() => schedule(600)).observe(document.documentElement, {
+    new MutationObserver(records => {
+      if (insetEl && records.every(r => r.type === 'childList' &&
+          Array.prototype.every.call(r.addedNodes, n => n === insetEl) &&
+          Array.prototype.every.call(r.removedNodes, n => n === insetEl))) return;
+      schedule(600);
+    }).observe(document.documentElement, {
       childList: true,
       subtree: true,
       attributes: true,
