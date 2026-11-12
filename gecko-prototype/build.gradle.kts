@@ -15,8 +15,16 @@ android {
         minSdk = 36
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
-        versionCode = 10
-        versionName = "0.15-tabs-media-prompts"
+        versionCode = 11
+        versionName = "0.16-stable-parity"
+    }
+
+    buildTypes {
+        release {
+            // App dùng cá nhân: ký bằng khóa debug để cài trực tiếp như :app.
+            // Không bật minify: GeckoView cần bộ proguard rules riêng.
+            signingConfig = signingConfigs.getByName("debug")
+        }
     }
 
     compileOptions {

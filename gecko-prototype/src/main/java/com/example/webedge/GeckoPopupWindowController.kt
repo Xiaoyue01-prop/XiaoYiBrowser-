@@ -18,14 +18,20 @@ import android.widget.TextView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.example.summitgecko.GeckoSurfaceView
+import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
+import org.mozilla.geckoview.WebResponse
 
 class GeckoPopupWindowController(
     private val activity: Activity,
     private val getRuntime: () -> GeckoRuntime,
     private val openExternal: (String, GeckoSession) -> Boolean,
+    private val configureSession: (GeckoSession) -> Unit,
+    private val onDownload: (WebResponse) -> Unit,
+    private val onFullscreen: (Boolean) -> Unit,
+    private val onClosed: () -> Unit = {},
     private val toast: (String) -> Unit,
     private val isNight: () -> Boolean = { GlassSystem.isDarkPage() }
 ) {
@@ -41,7 +47,9 @@ class GeckoPopupWindowController(
     private var canGoBack = false
 
     val isShowing: Boolean get() = dialog?.isShowing == true
+    fun currentUrl(): String? = currentUrl
 
+    @Suppress("UNUSED_PARAMETER")
     fun create(uri: String, sourceSession: GeckoSession): GeckoSession? {
         if (session != null) return null
         
@@ -127,6 +135,7 @@ class GeckoPopupWindowController(
             .usePrivateMode(isPrivate)
             .build()
         val newSession = GeckoSession(settings)
+        configureSession(newSession)
         
         newSession.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onTitleChange(session: GeckoSession, title: String?) {
@@ -139,12 +148,27 @@ class GeckoPopupWindowController(
             override fun onCloseRequest(session: GeckoSession) {
                 activity.runOnUiThread { animateClose() }
             }
+            override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
+                activity.runOnUiThread { onDownload(response) }
+            }
+            override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
+                activity.runOnUiThread { onFullscreen(fullScreen) }
+            }
         }
         
         newSession.navigationDelegate = object : GeckoSession.NavigationDelegate {
             override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
                 this@GeckoPopupWindowController.canGoBack = canGoBack
             }
+            override fun onLoadRequest(
+                session: GeckoSession,
+                request: GeckoSession.NavigationDelegate.LoadRequest
+            ): GeckoResult<GeckoSession.NavigationDelegate.AllowOrDeny>? {
+                if (request.isRedirect) return null
+                return if (openExternal(request.uri, session))
+                    GeckoResult.fromValue(GeckoSession.NavigationDelegate.AllowOrDeny.DENY) else null
+            }
+
             override fun onLocationChange(session: GeckoSession, url: String?, permissions: MutableList<GeckoSession.PermissionDelegate.ContentPermission>, hasUserGesture: Boolean) {
                 currentUrl = url
                 if (titleView?.text == "Cửa sổ mới" && !url.isNullOrBlank()) {
@@ -155,7 +179,9 @@ class GeckoPopupWindowController(
         }
         
         val sv = GeckoSurfaceView(activity)
-        pageHost.addView(sv, FrameLayout.LayoutParams(-1, -1))
+        pageHost.addView(sv, FrameLayout.LayoutParams(-1, -1).apply {
+            topMargin = dp(BrowserSheetMotion.HEADER_HEIGHT_DP)
+        })
         pageHost.addView(dragZone, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
         
         sheetView.addView(pageHost, LinearLayout.LayoutParams(-1, -1))
@@ -190,6 +216,7 @@ class GeckoPopupWindowController(
                 dialog = null
                 sheet = null
                 scrim = null
+                onClosed()
                 closing = false
             }
         }
@@ -226,8 +253,7 @@ class GeckoPopupWindowController(
             sv.post {
                 if (closing) return@post
                 sv.attach(newSession)
-                newSession.open(getRuntime())
-                newSession.loadUri(uri)
+                if (!newSession.isOpen) newSession.open(getRuntime())
             }
         }
         

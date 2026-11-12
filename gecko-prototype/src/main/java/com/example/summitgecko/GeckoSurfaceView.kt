@@ -15,18 +15,13 @@ import org.mozilla.geckoview.GeckoView
  */
 class GeckoSurfaceView(context: Context) : GeckoView(context) {
 
-    /** Called with -1 for the previous tab and +1 for the next tab. */
-    var onTabSwipe: ((Int) -> Unit)? = null
     /** Pull-to-refresh is allowed only when the active page is at its top edge. */
     var canPullToRefresh: (() -> Boolean)? = null
     var onPullProgress: ((Float, Boolean) -> Unit)? = null
     var onPullToRefresh: (() -> Unit)? = null
 
-    private var edgeCandidate = false
-    private var edgeClaimed = false
     private var pullCandidate = false
     private var pullClaimed = false
-    private var downEvent: MotionEvent? = null
     private var extraBottomClip = 0
     private var downX = 0f
     private var downY = 0f
@@ -44,6 +39,7 @@ class GeckoSurfaceView(context: Context) : GeckoView(context) {
         // Summit animates the page during interactive back/forward and tab-swipe transitions.
         // GeckoView documents TextureView as the backend that supports view animation.
         setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
+        systemGestureExclusionRects = emptyList()
     }
 
     fun attach(newSession: GeckoSession) {
@@ -78,141 +74,69 @@ class GeckoSurfaceView(context: Context) : GeckoView(context) {
     }
 
     private fun clearPendingGesture() {
-        downEvent?.recycle()
-        downEvent = null
-        edgeCandidate = false
-        edgeClaimed = false
         pullCandidate = false
         pullClaimed = false
         onPullProgress?.invoke(0f, false)
     }
 
-    private fun handPendingGestureToGecko(event: MotionEvent) {
-        downEvent?.let { pending ->
-            super.onTouchEvent(pending)
-            pending.recycle()
-        }
-        downEvent = null
-        super.onTouchEvent(event)
-        edgeCandidate = false
-        pullCandidate = false
-        onPullProgress?.invoke(0f, false)
-    }
-
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (getSession() == null) return super.onTouchEvent(event)
-
         val density = resources.displayMetrics.density
-        val edgeWidth = 28f * density
-        val edgeClaimDistance = 72f * density
-        val pullClaimDistance = 88f * density
-        val touchSlop = 12f * density
-
+        val claim = 88f * density
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = event.x
-                downY = event.y
-                val location = IntArray(2)
-                getLocationOnScreen(location)
-                lastTouchScreenX = location[0] + event.x.toInt()
-                lastTouchScreenY = location[1] + event.y.toInt()
-                edgeCandidate = event.x <= edgeWidth || event.x >= width - edgeWidth
-                edgeClaimed = false
-                pullCandidate = !edgeCandidate && (canPullToRefresh?.invoke() == true)
+                downX = event.x; downY = event.y
+                val loc = IntArray(2); getLocationOnScreen(loc)
+                lastTouchScreenX = loc[0] + event.x.toInt()
+                lastTouchScreenY = loc[1] + event.y.toInt()
+                pullCandidate = canPullToRefresh?.invoke() == true
                 pullClaimed = false
-                downEvent?.recycle()
-                downEvent = if (edgeCandidate) MotionEvent.obtain(event) else null
-                if (!edgeCandidate) return super.onTouchEvent(event)
-                // Delay only edge-origin touches until direction is known. A tap or vertical
-                // scroll is replayed to Gecko in order; a horizontal edge swipe stays native.
-                return true
+                return super.onTouchEvent(event)
             }
-
             MotionEvent.ACTION_MOVE -> {
-                val dx = event.x - downX
-                val dy = event.y - downY
-                val location = IntArray(2)
-                getLocationOnScreen(location)
-                lastTouchScreenX = location[0] + event.x.toInt()
-                lastTouchScreenY = location[1] + event.y.toInt()
-
-                if (edgeCandidate && !edgeClaimed) {
-                    if (kotlin.math.abs(dx) >= edgeClaimDistance && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
-                        edgeClaimed = true
-                        downEvent?.recycle()
-                        downEvent = null
-                        return true
-                    }
-                    if (kotlin.math.abs(dy) > touchSlop && kotlin.math.abs(dy) > kotlin.math.abs(dx) * 0.8f) {
-                        handPendingGestureToGecko(event)
-                    }
-                    return true
-                }
-
-                if (edgeClaimed) return true
-
+                val loc = IntArray(2); getLocationOnScreen(loc)
+                lastTouchScreenX = loc[0] + event.x.toInt()
+                lastTouchScreenY = loc[1] + event.y.toInt()
+                val dx = event.x - downX; val dy = event.y - downY
                 if (pullClaimed) {
-                    onPullProgress?.invoke((dy / pullClaimDistance).coerceIn(0f, 1.5f), dy >= pullClaimDistance)
+                    onPullProgress?.invoke((dy / claim).coerceIn(0f, 1.5f), dy >= claim)
                     return true
                 }
                 if (pullCandidate) {
-                    if (dy >= pullClaimDistance && dy > kotlin.math.abs(dx) * 1.25f) {
+                    if (dy >= claim && dy > kotlin.math.abs(dx) * 1.25f) {
                         pullClaimed = true
                         val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
-                        super.onTouchEvent(cancel)
-                        cancel.recycle()
-                        onPullProgress?.invoke((dy / pullClaimDistance).coerceIn(0f, 1.5f), true)
+                        super.onTouchEvent(cancel); cancel.recycle()
+                        onPullProgress?.invoke((dy / claim).coerceIn(0f, 1.5f), true)
                         return true
                     }
-                    onPullProgress?.invoke((dy / pullClaimDistance).coerceIn(0f, 1.5f), false)
+                    onPullProgress?.invoke((dy / claim).coerceIn(0f, 1.5f), false)
                 }
                 return super.onTouchEvent(event)
             }
-
             MotionEvent.ACTION_UP -> {
                 val dy = event.y - downY
-                if (edgeClaimed) {
-                    val dx = event.x - downX
-                    onTabSwipe?.invoke(if (dx < 0f) 1 else -1)
-                } else if (pullClaimed) {
+                if (pullClaimed) {
                     onPullProgress?.invoke(0f, false)
-                    if (dy >= pullClaimDistance) onPullToRefresh?.invoke()
-                } else if (edgeCandidate) {
-                    handPendingGestureToGecko(event)
-                } else {
-                    super.onTouchEvent(event)
-                }
+                    if (dy >= claim) onPullToRefresh?.invoke()
+                } else super.onTouchEvent(event)
                 clearPendingGesture()
                 return true
             }
-
             MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
-                if (edgeCandidate && !edgeClaimed) {
-                    handPendingGestureToGecko(event)
-                } else if (!edgeClaimed && !pullClaimed) {
+                if (!pullClaimed) {
                     pullCandidate = false
                     onPullProgress?.invoke(0f, false)
                     super.onTouchEvent(event)
                 }
                 return true
             }
-
             MotionEvent.ACTION_CANCEL -> {
-                if (edgeCandidate && !edgeClaimed) {
-                    handPendingGestureToGecko(event)
-                } else if (!edgeClaimed && !pullClaimed) {
-                    super.onTouchEvent(event)
-                }
+                if (!pullClaimed) super.onTouchEvent(event)
                 clearPendingGesture()
                 return true
             }
-
-            else -> {
-                if (!edgeCandidate && !edgeClaimed && !pullCandidate && !pullClaimed) {
-                    return super.onTouchEvent(event)
-                }
-                return true
-            }
+            else -> return super.onTouchEvent(event)
         }
     }
 

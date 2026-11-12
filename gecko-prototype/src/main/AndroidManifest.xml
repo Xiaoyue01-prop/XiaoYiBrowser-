@@ -14,7 +14,8 @@
         android:allowBackup="false"
         android:enableOnBackInvokedCallback="true"
         android:label="Summit Gecko"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:hardwareAccelerated="true"
+        android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
         <activity
             android:name=".GeckoPrototypeActivity"

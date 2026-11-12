@@ -30,6 +30,9 @@ internal class GeckoContextMenuController(
     private val foreground: () -> Int,
     private val onOpenCurrent: (String) -> Unit,
     private val onOpenNewTab: (String) -> Unit,
+    private val onOpenBackground: (String) -> Unit,
+    private val onDownloadImage: (String) -> Unit,
+    private val onOpenExternal: (String) -> Unit,
     private val onToast: (String) -> Unit
 ) {
     private var layer: FrameLayout? = null
@@ -57,12 +60,14 @@ internal class GeckoContextMenuController(
         val actions = ArrayList<Action>()
         link?.let { url ->
             actions += Action("Mở trong tab mới", Icons.TABS) { onOpenNewTab(url) }
-            actions += Action("Mở ở tab hiện tại", Icons.OPEN_IN_NEW) { onOpenCurrent(url) }
+            actions += Action("Mở ở tab nền", Icons.TABS) { onOpenBackground(url) }
             actions += Action("Sao chép liên kết", Icons.COPY) { copy(url) }
             actions += Action("Chia sẻ", Icons.SHARE) { share(url) }
+            actions += Action("Mở bằng ứng dụng khác", Icons.OPEN_IN_NEW) { onOpenExternal(url) }
         }
         if (media != null && media != link) {
             actions += Action("Mở hình ảnh", Icons.TABS) { onOpenNewTab(media) }
+            actions += Action("Lưu hình ảnh", Icons.DOWNLOAD) { onDownloadImage(media) }
             actions += Action("Sao chép địa chỉ ảnh", Icons.COPY) { copy(media) }
             actions += Action("Chia sẻ ảnh", Icons.SHARE) { share(media) }
             actions += Action("Tìm bằng Google Lens", Icons.SEARCH) {

@@ -25,7 +25,7 @@ object GeckoDownloadLiveUpdate {
 
     /** Controller gán khi đang chạy; nút Hủy trong thông báo gọi vào đây. */
     @Volatile
-    var cancelHook: (() -> Unit)? = null
+    var cancelHook: ((Int) -> Unit)? = null
 
     private val progressColor = Color.rgb(64, 170, 120)
 
@@ -150,15 +150,10 @@ object GeckoDownloadLiveUpdate {
 class GeckoDownloadActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != GeckoDownloadLiveUpdate.ACTION_CANCEL_DOWNLOAD) return
+        val id = intent.getIntExtra(GeckoDownloadLiveUpdate.EXTRA_DOWNLOAD_ID, -1)
+        if (id < 0) return
         val hook = GeckoDownloadLiveUpdate.cancelHook
-        if (hook != null) {
-            hook()
-        } else {
-            // App đã bị kill giữa chừng: lượt tải không còn, gỡ thông báo treo.
-            val id = intent.getIntExtra(GeckoDownloadLiveUpdate.EXTRA_DOWNLOAD_ID, -1)
-            if (id >= 0) {
-                (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(id)
-            }
-        }
+        if (hook != null) hook(id)
+        else (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(id)
     }
 }

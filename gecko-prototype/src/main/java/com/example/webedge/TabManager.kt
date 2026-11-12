@@ -4,19 +4,10 @@ import android.graphics.Bitmap
 import org.mozilla.geckoview.GeckoSession
 import java.util.UUID
 
-/**
- * Gecko tab registry. Each tab owns one GeckoSession and lightweight UI metadata.
- *
- * Invariants:
- * - At most one tab is active.
- * - A tab is never removed by close() when it is the final tab.
- * - Closing the active tab selects the most recently active remaining tab.
- * - Session disposal remains the Activity's responsibility.
- */
+/** Hai vùng tab độc lập: thường và riêng tư (giống :app). Session mở lười theo tab. */
 class TabManager {
     companion object {
         const val MAX_TABS = 100
-
         fun newId(): Long = UUID.randomUUID().mostSignificantBits and Long.MAX_VALUE
     }
 
@@ -31,122 +22,118 @@ class TabManager {
         var thumbnailVersion: Long = 0L,
         val isPrivate: Boolean = false,
         var lastActiveAt: Long = 0L,
-        /** Desktop-site preference belongs to an individual tab. */
         var desktop: Boolean = false
     )
 
-    private val tabs = mutableListOf<Tab>()
+    private val normalTabs = mutableListOf<Tab>()
+    private val privateTabs = mutableListOf<Tab>()
+    private var privateMode = false
 
-    /** Privacy mode follows the active tab; private and regular tabs may coexist. */
-    val isPrivateMode: Boolean get() = getActive()?.isPrivate == true
+    val isPrivateMode: Boolean get() = privateMode
+    private fun currentList(): MutableList<Tab> = if (privateMode) privateTabs else normalTabs
+    private fun listFor(tab: Tab): MutableList<Tab> = if (tab.isPrivate) privateTabs else normalTabs
+    private fun listFor(usePrivate: Boolean): MutableList<Tab> = if (usePrivate) privateTabs else normalTabs
 
-    fun getAll(): List<Tab> = tabs.toList()
-    fun getCurrentTabs(): List<Tab> = tabs.toList()
-    fun getActive(): Tab? = tabs.firstOrNull { it.isActive }
-    fun forSession(session: GeckoSession): Tab? = tabs.firstOrNull { it.session === session }
-    fun findById(id: Long): Tab? = tabs.firstOrNull { it.id == id }
+    fun getAll(): List<Tab> = normalTabs.toList() + privateTabs.toList()
+    fun getCurrentTabs(): List<Tab> = currentList().toList()
+    fun getActive(): Tab? = currentList().find { it.isActive }
+    fun forSession(session: GeckoSession): Tab? = getAll().find { it.session === session }
+    fun findById(id: Long): Tab? = getAll().find { it.id == id }
     fun contains(session: GeckoSession): Boolean = forSession(session) != null
-    fun count(): Int = tabs.size
+    fun count(): Int = currentList().size
+    fun privateCount(): Int = privateTabs.size
+    fun totalCount(): Int = normalTabs.size + privateTabs.size
 
-    /** Adds a session as the foreground tab. Duplicate sessions and over-limit tabs are rejected. */
-    fun add(session: GeckoSession, url: String = "", title: String = "", isPrivate: Boolean = false): Tab {
+    /** Đổi vùng đang xem; vùng trống thì tạo tab metadata (session mở khi hiển thị). */
+    fun switchMode(usePrivate: Boolean): Tab? {
+        if (privateMode == usePrivate) return getActive()
+        privateMode = usePrivate
+        val list = currentList()
+        var target = list.firstOrNull { it.isActive } ?: list.firstOrNull()
+        if (target == null) {
+            target = Tab(title = "Tab mới", isActive = true, isPrivate = usePrivate,
+                lastActiveAt = System.nanoTime())
+            list.add(target)
+        } else target.isActive = true
+        target.lastActiveAt = System.nanoTime()
+        return target
+    }
+
+    fun add(session: GeckoSession, url: String = "", title: String = "",
+            isPrivate: Boolean = privateMode): Tab {
         require(!contains(session)) { "GeckoSession already belongs to a tab" }
-        require(tabs.size < MAX_TABS) { "Maximum tab count reached" }
+        require(totalCount() < MAX_TABS) { "Maximum tab count reached" }
+        privateMode = isPrivate
+        val list = listFor(isPrivate)
         val now = System.nanoTime()
-        tabs.forEach {
-            if (it.isActive) it.lastActiveAt = now
-            it.isActive = false
-        }
-        val tab = Tab(
-            url = url,
-            title = title,
-            isActive = true,
-            session = session,
-            isPrivate = isPrivate,
-            lastActiveAt = now
-        )
-        tabs.add(tab)
+        list.forEach { if (it.isActive) it.lastActiveAt = now; it.isActive = false }
+        val tab = Tab(url = url, title = title, isActive = true, session = session,
+            isPrivate = isPrivate, lastActiveAt = now)
+        list.add(tab)
+        return tab
+    }
+
+    /** Tab nền: chỉ metadata, không mở session, không cướp tab đang xem. */
+    fun addBackground(url: String, title: String = url): Tab {
+        require(totalCount() < MAX_TABS) { "Maximum tab count reached" }
+        val tab = Tab(url = url, title = title, isActive = false,
+            isPrivate = privateMode, lastActiveAt = System.nanoTime())
+        currentList().add(tab)
         return tab
     }
 
     fun switchTo(id: Long): Tab? {
         val target = findById(id) ?: return null
+        privateMode = target.isPrivate
+        val list = listFor(target)
         val now = System.nanoTime()
-        tabs.forEach { tab ->
-            if (tab.isActive && tab !== target) tab.lastActiveAt = now
-            tab.isActive = tab === target
-        }
+        list.forEach { if (it.isActive && it !== target) it.lastActiveAt = now; it.isActive = it === target }
         target.lastActiveAt = now
         return target
     }
 
-    /**
-     * Removes a tab from the registry and returns it for Activity-owned session disposal.
-     * The final tab is retained. Active-tab fallback uses MRU order, not list position.
-     */
+    /** Giữ tab thường cuối; đóng tab riêng tư cuối thì kết thúc phiên, về vùng thường. */
     fun close(id: Long): Tab? {
-        if (tabs.size <= 1) return null
-        val index = tabs.indexOfFirst { it.id == id }
+        val owner = findById(id) ?: return null
+        val list = listFor(owner)
+        if (!owner.isPrivate && list.size <= 1) return null
+        val index = list.indexOf(owner)
         if (index < 0) return null
-
-        val removed = tabs.removeAt(index)
-        if (removed.isActive) {
-            val next = tabs.maxByOrNull { it.lastActiveAt } ?: tabs.getOrNull(index.coerceAtMost(tabs.lastIndex))
-            val now = System.nanoTime()
-            tabs.forEach { it.isActive = it === next }
-            next?.lastActiveAt = now
+        val removed = list.removeAt(index)
+        if (removed.isActive && list.isNotEmpty()) {
+            val next = if (index < list.size) list[index] else list.last()
+            list.forEach { it.isActive = it === next }
+            next.lastActiveAt = System.nanoTime()
+        }
+        if (removed.isPrivate && list.isEmpty()) {
+            privateMode = false
+            if (normalTabs.none { it.isActive }) normalTabs.firstOrNull()?.isActive = true
         }
         removed.isActive = false
         return removed
     }
 
     fun clear() {
-        tabs.forEach { it.isActive = false }
-        tabs.clear()
+        getAll().forEach { it.isActive = false }
+        normalTabs.clear(); privateTabs.clear(); privateMode = false
     }
 
-    /**
-     * Adds a regular tab restored from disk. It has no GeckoSession yet: the Activity creates one
-     * lazily the first time the tab is shown, so hundreds of idle sessions are never opened at startup.
-     */
     fun addRestored(saved: PersistedTab): Tab {
-        require(tabs.size < MAX_TABS) { "Maximum tab count reached" }
+        require(totalCount() < MAX_TABS) { "Maximum tab count reached" }
         val tab = Tab(
             id = saved.id.takeIf { it > 0L && findById(it) == null } ?: newId(),
-            url = saved.url,
-            title = saved.title,
-            isActive = false,
-            session = null,
-            thumbnail = saved.thumbnail,
-            thumbnailUrl = saved.thumbnailUrl.ifBlank { null },
-            thumbnailVersion = saved.thumbnailVersion,
-            isPrivate = false,
-            lastActiveAt = 0L,
-            desktop = saved.desktop
+            url = saved.url, title = saved.title, isActive = false, session = null,
+            thumbnail = saved.thumbnail, thumbnailUrl = saved.thumbnailUrl.ifBlank { null },
+            thumbnailVersion = saved.thumbnailVersion, isPrivate = false,
+            lastActiveAt = 0L, desktop = saved.desktop
         )
-        tabs.add(tab)
+        normalTabs.add(tab)
         return tab
     }
 
-    /**
-     * Snapshot of regular tabs for disk. Private tabs are never exported. When the foreground tab is
-     * private, the most recently used regular tab is flagged active so the next launch has a sane start.
-     */
-    fun exportTabs(): List<PersistedTab> {
-        val regular = tabs.filter { !it.isPrivate }
-        if (regular.isEmpty()) return emptyList()
-        val front = regular.firstOrNull { it.isActive } ?: regular.maxByOrNull { it.lastActiveAt }
-        return regular.map {
-            PersistedTab(
-                id = it.id,
-                url = it.url,
-                title = it.title,
-                isActive = it === front,
-                thumbnail = it.thumbnail,
-                thumbnailUrl = it.thumbnailUrl.orEmpty(),
-                thumbnailVersion = it.thumbnailVersion,
-                desktop = it.desktop
-            )
-        }
+    /** Chỉ tab thường được ghi xuống đĩa; tab riêng tư không bao giờ lưu. */
+    fun exportTabs(): List<PersistedTab> = normalTabs.map {
+        PersistedTab(it.id, it.url, it.title, it.isActive, it.thumbnail,
+            it.thumbnailUrl.orEmpty(), it.thumbnailVersion, it.desktop)
     }
 }

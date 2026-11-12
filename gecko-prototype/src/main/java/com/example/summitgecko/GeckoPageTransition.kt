@@ -142,6 +142,7 @@ internal class GeckoPageTransition(
     fun commitSwipe() {
         val r = current ?: return
         if (!r.interactive || r.committed) return
+        commit(r)
     }
 
     private fun createRun(dir: Int, sign: Float): Run? {
@@ -164,10 +165,10 @@ internal class GeckoPageTransition(
             host.addView(layer, frame())
         }
         val r = Run(dir, sign, layer, scrim)
+        if (dir == 0) prevUrl?.let { cache[it] }?.let { layer.setImageBitmap(it.bmp) }
         current = r
         revealAt = Long.MAX_VALUE
         render(r, 0f)
-        commit(r)
         return r
     }
 

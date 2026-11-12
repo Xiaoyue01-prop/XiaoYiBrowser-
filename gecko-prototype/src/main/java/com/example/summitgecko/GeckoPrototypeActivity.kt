@@ -57,6 +57,7 @@ import com.example.webedge.Theme
 import com.example.webedge.ToolbarController
 import com.example.webedge.ToolbarHost
 import com.example.webedge.ToastController
+import com.example.webedge.WebMediaHub
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 import org.json.JSONObject
@@ -67,6 +68,7 @@ import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.WebResponse
 import org.mozilla.geckoview.WebExtension
+import org.mozilla.geckoview.StorageController
 
 /**
  * Summit Gecko integration preview (public API only).
@@ -104,7 +106,6 @@ class GeckoPrototypeActivity : Activity() {
 
     private lateinit var root: FrameLayout
     private lateinit var surfaceView: GeckoSurfaceView
-    private lateinit var pullRefreshHint: TextView
     private lateinit var topStrip: ImageView
     private lateinit var topFadeController: GeckoTopFadeController
     private lateinit var sessionLifecycleController: GeckoSessionLifecycleController
@@ -120,7 +121,6 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var suggestBlur: BlurView
     private lateinit var suggestionController: GeckoSuggestionController
     private lateinit var summitStore: Store
-    private lateinit var info: TextView
     private val canGoBackMap = HashMap<GeckoSession, Boolean>()
     private val canGoForwardMap = HashMap<GeckoSession, Boolean>()
     private val scrollYBySession = HashMap<GeckoSession, Int>()
@@ -157,7 +157,6 @@ class GeckoPrototypeActivity : Activity() {
     private var insetLeft = 0
     private var insetRight = 0
     private var imeBottom = 0
-    private var toneDark: Boolean? = null
     private val accent = Theme.ACCENT_BLUE
     private var fullscreen = false
     private var copyState = "waiting"
@@ -175,6 +174,9 @@ class GeckoPrototypeActivity : Activity() {
     private var probeHasFixed = false
     private var probeColor: Int? = null
     private var probePageColor: Int? = null
+    private var activityResumed = false
+    private var lastTone: Int? = null
+    private var popupPermission: GeckoPermissionController? = null
     private var probeShifted = 0
     private var probeInset = 0.0
     // Message delivery is asynchronous: late startup handshakes must not overwrite scan results.
@@ -301,7 +303,7 @@ class GeckoPrototypeActivity : Activity() {
             orbMenu.setToolbarCompact(toolbar.barHidden, toolbar.urlPillFrame)
             if (::menuController.isInitialized) menuController.setToolbarCompact(toolbar.barHidden, toolbar.urlPillFrame)
         }
-        override fun pushBottomReserve() {}
+        override fun pushBottomReserve() { if (::surfaceView.isInitialized) updateLayout() }
     }
 
     private val tick = object : Runnable {
@@ -334,9 +336,7 @@ class GeckoPrototypeActivity : Activity() {
 
         // Summit layout: the page fills the screen inside a BlurTarget, glass floats above it.
         // (BlurTarget here is the Gecko-compatible one: it snapshots the Gecko surface.)
-        surfaceView = GeckoSurfaceView(this).apply {
-            onTabSwipe = ::switchAdjacentTab
-        }
+        surfaceView = GeckoSurfaceView(this)
         blurTarget = BlurTarget(this)
         blurTarget.addView(
             surfaceView,
@@ -355,27 +355,6 @@ class GeckoPrototypeActivity : Activity() {
             )
         )
 
-        pullRefreshHint = TextView(this).apply {
-            text = "↓  Kéo xuống để tải lại"
-            textSize = 12f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(9), dp(16), dp(9))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(22).toFloat()
-                setColor(Color.argb(220, 35, 39, 48))
-                setStroke(dp(1), Color.argb(55, 255, 255, 255))
-            }
-            alpha = 0f
-            visibility = View.INVISIBLE
-            elevation = dp(18).toFloat()
-        }
-        root.addView(
-            pullRefreshHint,
-            FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
-                topMargin = dp(18)
-            }
-        )
         pullRefresh = GeckoPullToRefresh(
             this, root, blurTarget, d, GlassSystem.pagePrimaryText(),
             onRefresh = {
@@ -534,11 +513,11 @@ class GeckoPrototypeActivity : Activity() {
                 popupController = GeckoPopupWindowController(
             activity = this,
             getRuntime = { runtime(this) },
-            openExternal = { url, _ ->
-                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                runCatching { startActivity(intent) }
-                true
-            },
+            configureSession = ::configurePopupSession,
+            onDownload = { response -> downloadController.handleResponse(response) },
+            onFullscreen = { on -> setFullscreen(on) },
+            onClosed = { popupPermission?.cancelAll(); popupPermission = null },
+            openExternal = { url, _ -> openExternalUrl(url) },
             toast = { showToast(it) },
             isNight = { GlassSystem.isDarkPage() }
         )
@@ -605,6 +584,14 @@ class GeckoPrototypeActivity : Activity() {
             accent = accent,
             adBlockEnabled = { summitStore.adBlockEnabled },
             onToggleAdBlock = ::toggleAdBlock,
+            youtubeAdBlockEnabled = { summitStore.youtubeAdBlockEnabled },
+            onToggleYoutubeAdBlock = ::toggleYoutubeAdBlock,
+            isPrivateMode = { tabManager.isPrivateMode },
+            onClearCookies = { clearWebData(StorageController.ClearFlags.COOKIES) },
+            onClearCache = { clearWebData(StorageController.ClearFlags.NETWORK_CACHE or StorageController.ClearFlags.IMAGE_CACHE) },
+            onClearSiteData = { clearWebData(StorageController.ClearFlags.ALL) },
+            activeDownloads = { downloadController.activeDownloads() },
+            onCancelDownload = { name -> downloadController.cancelByName(name) },
             onClearPermissions = { if (::permissionController.isInitialized) permissionController.cancelAll() },
             onToast = ::showToast,
     currentUrl = { currentUrl }
@@ -618,6 +605,9 @@ class GeckoPrototypeActivity : Activity() {
             foreground = { GlassSystem.pagePrimaryText() },
             onOpenCurrent = ::loadInput,
             onOpenNewTab = { targetUrl -> createTab(targetUrl) },
+            onOpenBackground = ::openLinkInBackgroundTab,
+            onDownloadImage = { downloadController.downloadUrl(it) },
+            onOpenExternal = { openExternalUrl(it) },
             onToast = ::showToast
         )
 
@@ -696,6 +686,7 @@ class GeckoPrototypeActivity : Activity() {
                 override val isAdBlockEnabled: Boolean get() = summitStore.adBlockEnabled
                 override val isHeaderScrollEnabled: Boolean get() = summitStore.headerScroll
                 override val isAutoHideEnabled: Boolean get() = summitStore.autoHideBar
+                override val isEdgeModeEnabled: Boolean get() = summitStore.edgeMode
                 override val canGoForward: Boolean get() = canGoForwardMap[session] == true
                 override val tabCount: Int get() = tabManager.count()
                 override fun reload() {
@@ -716,37 +707,24 @@ class GeckoPrototypeActivity : Activity() {
                     if (!summitStore.autoHideBar) toolbar.setBarHidden(false)
                     toolbar.updateBarVisibility()
                 }
+                override fun toggleEdgeMode() {
+                    summitStore.edgeMode = !summitStore.edgeMode
+                    updateLayout(); resetProbeState(); session.reload()
+                }
                 override fun showDownloads() = browserToolsController.showDownloads()
                 override fun showPrivacy() = browserToolsController.showPrivacy()
                 override fun clearSitePermissions() {
                     summitStore.clearSitePermissions(null)
                     if (::permissionController.isInitialized) permissionController.cancelAll()
                 }
-                override fun clearBrowserHistory() { syncBrowserListsFromStore() }
+                override fun clearBrowserHistory() { summitStore.flush() }
+                override fun clearAllWebsiteData() { clearWebData(StorageController.ClearFlags.ALL) }
                 override fun toast(message: String) = showToast(message)
             }
         ).also {
             it.originView = toolbar.menuBtn
             it.coverView = toolbar.urlPillFrame
         }
-
-        // Engine diagnostics (opened from the menu). Sits just above the bar.
-        info = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 10.5f
-            maxLines = 5
-            visibility = View.GONE
-            background = roundedPanel(Color.argb(224, 17, 20, 28), dp(14).toFloat())
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            setOnClickListener { visibility = View.GONE }
-        }
-        root.addView(
-            info,
-            FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
-                leftMargin = dp(14)
-                rightMargin = dp(14)
-            }
-        )
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(
@@ -806,8 +784,6 @@ class GeckoPrototypeActivity : Activity() {
             progressBySession[session] = 0
         }
         surfaceView.attach(session)
-        testServer = LocalProbeTestServer(assets)
-        testServer?.start()
         installProbe()
         applyInsets()
     }
@@ -815,13 +791,6 @@ class GeckoPrototypeActivity : Activity() {
     /** Same placement rules as Summit's MainActivity.applyInsets. */
     private fun applyInsets() {
         if (!::toolbar.isInitialized) return
-        if (::pullRefreshHint.isInitialized) {
-            val hintLp = pullRefreshHint.layoutParams as FrameLayout.LayoutParams
-            val hintTop = (if (fullscreen) 0 else statusTop) + dp(12)
-            if (hintLp.topMargin != hintTop) {
-                hintLp.topMargin = hintTop
-                pullRefreshHint.layoutParams = hintLp
-            }
         }
         val bottom = maxOf(insetBottom, imeBottom) + dp(10)
 
@@ -864,12 +833,6 @@ class GeckoPrototypeActivity : Activity() {
             bottomFade.layoutParams = fadeLp
         }
 
-        val infoLp = info.layoutParams as FrameLayout.LayoutParams
-        val infoBottom = bottom + dp(Constants.BOTTOM_BAR_HEIGHT_DP) + dp(8)
-        if (infoLp.bottomMargin != infoBottom) {
-            infoLp.bottomMargin = infoBottom
-            info.layoutParams = infoLp
-        }
 
         toolbar.updateBarVisibility()
         if (::orbMenu.isInitialized) toolbarHost.syncOrbMenuVisibility()
@@ -877,19 +840,15 @@ class GeckoPrototypeActivity : Activity() {
         updateLayout()
     }
 
-    /** Relative luminance approximation used to adapt the glass tint to page tone. */
-    private fun luminance(color: Int): Double =
-        0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)
-
-    /** Adapt the glass tint and icon colours to the page behind it (dark / light). */
+    /** Kính đổi tông theo MỌI thay đổi màu nền, không chỉ khi lật sáng/tối. */
     private fun syncPageTone() {
         if (!::blurTarget.isInitialized) return
         val tone = blurTarget.pageTone ?: return
-        val dark = luminance(tone) < 110
-        if (toneDark != dark) {
-            toneDark = dark
-            GlassSystem.setPageBackground(tone, root)
-            if (::topFadeController.isInitialized) topFadeController.update(statusTop, fullscreen, summitStore.edgeMode)
+        if (tone == lastTone) return
+        lastTone = tone
+        GlassSystem.setPageBackground(tone, root)
+        if (::topFadeController.isInitialized) {
+            topFadeController.update(statusTop, fullscreen, summitStore.edgeMode)
         }
     }
 
@@ -960,7 +919,17 @@ class GeckoPrototypeActivity : Activity() {
         target.setScrollDelegate(object : GeckoSession.ScrollDelegate {
             override fun onScrollChanged(session: GeckoSession, scrollX: Int, scrollY: Int) {
                 runOnUiThread {
-                    scrollYBySession[session] = scrollY.coerceAtLeast(0)
+                    val y = scrollY.coerceAtLeast(0)
+                    val old = scrollYBySession[session] ?: y
+                    scrollYBySession[session] = y
+                    if (session === this@GeckoPrototypeActivity.session && ::toolbar.isInitialized &&
+                        !toolbar.urlBar.hasFocus() && !fullscreen &&
+                        !(::menuController.isInitialized && menuController.isOpen)
+                    ) {
+                        val dy = y - old
+                        if (dy > 12) toolbar.setBarHidden(true)
+                        else if (dy < -12 || y < 10) toolbar.setBarHidden(false)
+                    }
                 }
             }
         })
@@ -1024,7 +993,7 @@ class GeckoPrototypeActivity : Activity() {
                     }
                     if (session === this@GeckoPrototypeActivity.session && ::pageTransition.isInitialized) pageTransition.onPageStart(url)
                     onSessionUrl(session, url)
-                    if (session === this@GeckoPrototypeActivity.session) toolbar.setLoading(true, 0)
+                    if (session === this@GeckoPrototypeActivity.session) { toolbar.setLoading(true, 0); toolbar.setBarHidden(false) }
                 }
             }
 
@@ -1047,7 +1016,7 @@ class GeckoPrototypeActivity : Activity() {
                         pullRefreshActive = false
                         updatePullRefreshHint(0f, false)
                     }
-                    if (!success) Log.i("SummitGecko", "Page load stopped with failure: ${tabManager.forSession(session)?.url}")
+                    if (!success && session === this@GeckoPrototypeActivity.session) showToast("Không tải được trang")
                     if (session === this@GeckoPrototypeActivity.session && ::pageTransition.isInitialized) pageTransition.onPageReady()
                     if (session === this@GeckoPrototypeActivity.session && ::tabSwipe.isInitialized) tabSwipe.onPageReady()
                     if (success) scheduleThumbnailCapture(session)
@@ -1069,6 +1038,15 @@ class GeckoPrototypeActivity : Activity() {
                 }
             }
 
+            override fun onLoadRequest(
+                session: GeckoSession,
+                request: GeckoSession.NavigationDelegate.LoadRequest
+            ): GeckoResult<GeckoSession.NavigationDelegate.AllowOrDeny>? {
+                if (request.isRedirect) return null
+                return if (openExternalUrl(request.uri))
+                    GeckoResult.fromValue(GeckoSession.NavigationDelegate.AllowOrDeny.DENY) else null
+            }
+
             override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
                 // Gecko will load the supplied URI into the returned, newly-created session.
                 // Do not call loadUri() here (Mozilla's contract explicitly forbids it).
@@ -1078,9 +1056,122 @@ class GeckoPrototypeActivity : Activity() {
         })
     }
 
+    private fun closeCurrentTabOrFinish() {
+        val active = tabManager.getActive()
+        when {
+            active == null -> finish()
+            active.isPrivate || tabManager.count() > 1 -> closeTab(active)
+            else -> finish()
+        }
+    }
+
+    private fun applyPrivateViewState(isPrivate: Boolean) {
+        val autofill = if (isPrivate) View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+        else View.IMPORTANT_FOR_AUTOFILL_AUTO
+        if (::toolbar.isInitialized) {
+            toolbar.urlBar.isSaveEnabled = !isPrivate
+            toolbar.urlBar.importantForAutofill = autofill
+        }
+        if (::findBarController.isInitialized) {
+            findBarController.input.isSaveEnabled = !isPrivate
+            findBarController.input.importantForAutofill = autofill
+        }
+    }
+
+    private fun onPrivateSessionEnded() {
+        applyPrivateViewState(false)
+        if (::toolbar.isInitialized) toolbar.setUrlText("")
+        if (::suggestionController.isInitialized) suggestionController.hide()
+        if (::pageTransition.isInitialized) { pageTransition.cancelNow(); pageTransition.clear() }
+        if (::tabSwipe.isInitialized) tabSwipe.cancelNow()
+    }
+
+    /** Link khong phai web (tel:, mailto:, intent:, app links) -> mo bang app tuong ung. */
+    private fun openExternalUrl(url: String): Boolean {
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase(java.util.Locale.ROOT) ?: return false
+        if (scheme in setOf("http", "https", "about", "javascript", "data", "blob", "file")) return false
+        return try {
+            val intent = if (scheme == "intent") Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+            else Intent(Intent.ACTION_VIEW, uri)
+            intent.component = null
+            if (scheme == "intent") intent.addCategory(Intent.CATEGORY_BROWSABLE)
+            val fallback = intent.getStringExtra("browser_fallback_url")?.takeIf {
+                val s = runCatching { Uri.parse(it).scheme }.getOrNull()
+                s.equals("https", true) || s.equals("http", true)
+            }
+            when {
+                intent.resolveActivity(packageManager) != null -> startActivity(intent)
+                !fallback.isNullOrBlank() -> { if (::session.isInitialized) session.loadUri(fallback) }
+                else -> runCatching { startActivity(intent) }
+                    .onFailure { showToast("Không tìm thấy ứng dụng để mở liên kết này") }
+            }
+            true
+        } catch (_: Exception) { showToast("Không thể mở liên kết bên ngoài"); true }
+    }
+
+    /** Popup: prompt / quyền / media riêng theo session; tải xuống dùng chung bộ tải. */
+    private fun configurePopupSession(s: GeckoSession) {
+        popupPermission?.cancelAll()
+        val perm = GeckoPermissionController(
+            activity = this, store = summitStore, dialog = { glassDialog },
+            isActiveSession = { it === s },
+            isPrivateSession = { s.settings.usePrivateMode },
+            isDestroyed = { isFinishing || isDestroyed }
+        )
+        popupPermission = perm
+        s.setPermissionDelegate(perm)
+        s.setPromptDelegate(GeckoPromptController(
+            dialog = { glassDialog }, context = { this },
+            isActiveSession = { it === s },
+            urlOf = { popupController.currentUrl() },
+            launchFilePicker = ::launchGeckoFilePicker
+        ))
+        s.setMediaSessionDelegate(mediaController.delegate)
+        attachProbeToSession(s)
+    }
+
+    private fun clearWebData(flags: Long) {
+        runCatching { runtime(this).storageController.clearData(flags) }
+            .onFailure { Log.w("SummitGecko", "Could not clear web data", it) }
+    }
+
+    private fun toggleYoutubeAdBlock() {
+        summitStore.youtubeAdBlockEnabled = !summitStore.youtubeAdBlockEnabled
+        showToast(if (summitStore.youtubeAdBlockEnabled) "Đã bật YouTube AdBlock" else "Đã tắt YouTube AdBlock")
+        resetProbeState()
+        session.reload(GeckoSession.LOAD_FLAGS_BYPASS_CACHE)
+    }
+
+    /** Xin màn hình tần số quét cao nhất cùng độ phân giải (animation 120Hz thay vì 60Hz). */
+    private fun requestHighRefreshRate() {
+        runCatching {
+            val disp = display ?: return
+            val cur = disp.mode
+            val best = disp.supportedModes
+                .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
+                .maxByOrNull { it.refreshRate } ?: return
+            val a = window.attributes
+            a.preferredDisplayModeId = best.modeId
+            a.preferredRefreshRate = best.refreshRate
+            window.attributes = a
+            window.decorView.requestedFrameRate = View.REQUESTED_FRAME_RATE_CATEGORY_HIGH
+        }
+    }
+
+    /** Một số ROM hiện lại system bars sau khi xoay màn hình / resume. */
+    private fun reapplyImmersiveIfShowing() {
+        if (fullscreen && !isFinishing && !isDestroyed) {
+            insetsController.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            insetsController.hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
     private fun pageSwipeAvailable(): Boolean =
         ::pageTransition.isInitialized && ::session.isInitialized &&
         canGoBackMap[session] == true && !fullscreen &&
+        !(::tabSwipe.isInitialized && tabSwipe.isRunning) &&
         !(::glassDialog.isInitialized && glassDialog.isShowing) &&
         !(::contextMenuController.isInitialized && contextMenuController.isShowing) &&
         !(::browserToolsController.isInitialized && browserToolsController.isShowing) &&
@@ -1100,8 +1191,7 @@ class GeckoPrototypeActivity : Activity() {
             ::findBarController.isInitialized && findBarController.isShown -> findBarController.close()
             toolbar.urlBar.hasFocus() -> toolbar.leaveEdit()
             canGoBackMap[session] == true -> goBackAnimated()
-            tabManager.count() > 1 -> closeCurrentTab()
-            else -> finish()
+            else -> closeCurrentTabOrFinish()
         }
     }
 
@@ -1362,6 +1452,7 @@ class GeckoPrototypeActivity : Activity() {
             insetsController.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         } else {
+            insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
             insetsController.show(WindowInsetsCompat.Type.systemBars())
         }
         updateLayout()
@@ -1410,11 +1501,7 @@ class GeckoPrototypeActivity : Activity() {
         }
     }
 
-    private fun updateInfo() {
-        if (!::info.isInitialized) return
-        info.text = "GeckoView 159 · Edge JS · bar ${statusTop}px · copy: $copyState\n" +
-            "probe: $probeState"
-    }
+    private fun updateInfo() { }
 
     // ---- navigation -----------------------------------------------------------------------
 
@@ -1677,6 +1764,17 @@ class GeckoPrototypeActivity : Activity() {
         }
     }
 
+    /** Mở liên kết ở tab nền: chỉ tạo metadata, session mở khi người dùng chọn tab. */
+    private fun openLinkInBackgroundTab(url: String) {
+        if (tabManager.totalCount() >= TabManager.MAX_TABS) {
+            showToast("Đã đạt giới hạn ${TabManager.MAX_TABS} tab")
+            return
+        }
+        tabManager.addBackground(url)
+        scheduleSaveTabs()
+        showToast("Đã mở ở tab nền")
+    }
+
     private fun createTab(url: String? = null, privateMode: Boolean = tabManager.isPrivateMode) {
         if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
         if (tabManager.count() >= TabManager.MAX_TABS) {
@@ -1709,6 +1807,7 @@ class GeckoPrototypeActivity : Activity() {
             toolbar.setLoading(false, 0)
             currentUrl = targetUrl
             showAddress(targetUrl)
+            applyPrivateViewState(privateMode)
             addHistory(targetUrl)
             resetProbeState()
             created.loadUri(targetUrl)
@@ -1738,7 +1837,7 @@ class GeckoPrototypeActivity : Activity() {
 
     /** Edge swipe trên vùng hiển thị trang chuyển sang tab liền kề, không wrap vòng. */
     private fun switchAdjacentTab(direction: Int) {
-        val tabs = tabManager.getAll()
+        val tabs = tabManager.getCurrentTabs()
         if (tabs.size < 2) return
         val index = tabs.indexOfFirst { it.isActive }
         val targetIndex = (index + direction).coerceIn(0, tabs.lastIndex)
@@ -1751,6 +1850,7 @@ class GeckoPrototypeActivity : Activity() {
         val target = tab.session ?: ensureSession(tab, loadNow = true) ?: return
         if (target === session) {
             tabManager.switchTo(tab.id)
+            applyPrivateViewState(tab.isPrivate)
             return
         }
         if (!target.isOpen || !tabManager.contains(target)) {
@@ -1773,6 +1873,7 @@ class GeckoPrototypeActivity : Activity() {
             if (::pageTransition.isInitialized) pageTransition.cancelNow()
             if (::tabSwipe.isInitialized) tabSwipe.cancelNow()
             toolbar.setLoading(loadingBySession[target] == true, progressBySession[target] ?: 0)
+            applyPrivateViewState(tab.isPrivate)
             resetProbeState()
             updateLayout()
             scheduleSaveTabs()
@@ -1801,6 +1902,7 @@ class GeckoPrototypeActivity : Activity() {
             }
         }
 
+        if (removed.isPrivate && tabManager.privateCount() == 0) onPrivateSessionEnded()
         if (wasActive) {
             val nextTab = tabManager.getActive()
             val nextSession = nextTab?.let { it.session ?: ensureSession(it, loadNow = true) }
@@ -1812,6 +1914,7 @@ class GeckoPrototypeActivity : Activity() {
                 // Release the old display before closing its GeckoSession.
                 surfaceView.attach(nextSession)
                 toolbar.setLoading(loadingBySession[nextSession] == true, progressBySession[nextSession] ?: 0)
+                applyPrivateViewState(nextTab.isPrivate)
                 resetProbeState()
                 updateLayout()
             } else {
@@ -1838,13 +1941,14 @@ class GeckoPrototypeActivity : Activity() {
         }
         removed.session = null
         removed.thumbnail = null
+        removed.thumbnailUrl = null
         scheduleSaveTabs()
         trimLiveSessionsSoon()
     }
 
     private fun closeCurrentTab() {
         if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
-        if (tabManager.count() <= 1) {
+        if (!tabManager.isPrivateMode && tabManager.count() <= 1) {
             showToast("Cần giữ ít nhất một tab")
             return
         }
@@ -1861,7 +1965,7 @@ class GeckoPrototypeActivity : Activity() {
 
     private fun closeSessionRequestedByPage(target: GeckoSession) {
         val tab = tabManager.forSession(target) ?: return
-        if (tabManager.count() <= 1) return
+        if (!tab.isPrivate && tabManager.count() <= 1) return
         closeTab(tab)
     }
 
@@ -1913,6 +2017,7 @@ class GeckoPrototypeActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (::permissionController.isInitialized) permissionController.onRequestPermissionsResult(requestCode)
+        popupPermission?.onRequestPermissionsResult(requestCode)
     }
 
     private fun safeWebUri(value: String?): String? {
@@ -2000,6 +2105,9 @@ class GeckoPrototypeActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        activityResumed = true
+        requestHighRefreshRate()
+        reapplyImmersiveIfShowing()
         if (::session.isInitialized) {
             session.setActive(true)
             session.setFocused(true)
@@ -2009,6 +2117,7 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     override fun onPause() {
+        activityResumed = false
         ui.removeCallbacks(tick)
         if (::summitStore.isInitialized) summitStore.flush()
         saveTabsNow()
@@ -2026,12 +2135,35 @@ class GeckoPrototypeActivity : Activity() {
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         if (isInPictureInPictureMode) {
-            // The system owns the small window; hide Summit chrome without exiting Gecko fullscreen.
             if (!fullscreen) setFullscreen(true)
-        } else if (::session.isInitialized) {
-            session.setActive(true)
-            session.setFocused(true)
+        } else {
+            // Bấm X để đóng PiP: Activity bị dừng -> tạm dừng video và thoát toàn màn hình.
+            // Bấm vào cửa sổ PiP để mở lại app: giữ nguyên toàn màn hình.
+            if (fullscreen && !activityResumed) {
+                WebMediaHub.commandRunner?.invoke("pause", 0.0)
+                runCatching { session.exitFullScreen() }
+                setFullscreen(false)
+            } else if (::session.isInitialized) {
+                session.setActive(true); session.setFocused(true)
+            }
+            if (!fullscreen && ::pip.isInitialized) pip.setVideoActive(false)
         }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) reapplyImmersiveIfShowing()
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        reapplyImmersiveIfShowing()
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        if (::sessionLifecycleController.isInitialized) sessionLifecycleController.trim(2)
+        if (::pageTransition.isInitialized) pageTransition.clear()
     }
 
     override fun onDestroy() {
@@ -2058,6 +2190,7 @@ class GeckoPrototypeActivity : Activity() {
             tab.thumbnail = null
         }
         popupController.close(immediate = true)
+        popupPermission?.cancelAll()
         if (::glassDialog.isInitialized) glassDialog.cancelAll()
         if (::permissionController.isInitialized) permissionController.cancelAll()
         tabManager.clear()

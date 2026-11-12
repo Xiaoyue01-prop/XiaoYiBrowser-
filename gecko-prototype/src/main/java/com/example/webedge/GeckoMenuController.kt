@@ -26,6 +26,7 @@ interface GeckoMenuHost {
     val isAdBlockEnabled: Boolean
     val isHeaderScrollEnabled: Boolean
     val isAutoHideEnabled: Boolean
+    val isEdgeModeEnabled: Boolean
     val canGoForward: Boolean
     val tabCount: Int
     fun reload()
@@ -36,10 +37,12 @@ interface GeckoMenuHost {
     fun toggleAdBlock()
     fun toggleHeaderScroll()
     fun toggleAutoHide()
+    fun toggleEdgeMode()
     fun showDownloads()
     fun showPrivacy()
     fun clearSitePermissions()
     fun clearBrowserHistory()
+    fun clearAllWebsiteData()
     fun toast(message: String)
 }
 
@@ -404,6 +407,7 @@ val maxW = activity.resources.displayMetrics.widthPixels - dp(28) - (bi?.left ?:
         }
         addRow("Công cụ tìm kiếm", engines[store.searchEngine]) { chooseEngine() }
         addRow("Trang chủ", shortUrl(store.homeUrl)) { editHome() }
+        addRow("Tràn viền nội dung", if (host.isEdgeModeEnabled) "Bật" else "Tắt") { host.toggleEdgeMode(); showSettings() }
         addRow("Header tràn viền", if (host.isHeaderScrollEnabled) "Cuộn như nội dung" else "Đứng yên") { host.toggleHeaderScroll(); showSettings() }
         addRow("Chặn quảng cáo", if (host.isAdBlockEnabled) "Bật" else "Tắt") { host.toggleAdBlock(); showSettings() }
         addRow("Thu gọn thanh địa chỉ", if (host.isAutoHideEnabled) "Bật" else "Tắt") { host.toggleAutoHide(); showSettings() }
@@ -434,7 +438,7 @@ val maxW = activity.resources.displayMetrics.widthPixels - dp(28) - (bi?.left ?:
     private fun confirmClear() {
         val p = makePanel("Xóa dữ liệu app?", null, 340) { showSettings() }
         p.body.addView(TextView(activity).apply { text = "Xóa toàn bộ lịch sử, cookie, bộ nhớ đệm, quyền trang web đã nhớ và mọi dữ liệu khác của Summit. Hành động này không thể hoàn tác."; textSize = 14f; setTextColor(GlassSystem.pageSecondaryText()); setPadding(dp(22), dp(4), dp(22), dp(12)) })
-        addButtons(p, panelButton("Hủy", accent) { showSettings() }, panelButton("Xóa", Theme.DANGER_RED) { store.clearHistory(); host.clearBrowserHistory(); host.clearSitePermissions(); close(); host.toast("Đã xóa dữ liệu") }); showPanel(p)
+        addButtons(p, panelButton("Hủy", accent) { showSettings() }, panelButton("Xóa", Theme.DANGER_RED) { store.clearHistory(); host.clearBrowserHistory(); host.clearSitePermissions(); host.clearAllWebsiteData(); close(); host.toast("Đã xóa dữ liệu") }); showPanel(p)
     }
 
     private fun toggleBookmark() { if (host.currentUrl.isBlank()) return; val added = store.toggleBookmark(host.currentTitle.ifBlank { host.currentUrl }, host.currentUrl); host.toast(if (added) "Đã thêm dấu trang" else "Đã bỏ dấu trang") }

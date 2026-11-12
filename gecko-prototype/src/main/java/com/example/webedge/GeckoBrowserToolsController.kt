@@ -37,6 +37,14 @@ internal class GeckoBrowserToolsController(
     private val accent: Int,
     private val adBlockEnabled: () -> Boolean,
     private val onToggleAdBlock: () -> Unit,
+    private val youtubeAdBlockEnabled: () -> Boolean,
+    private val onToggleYoutubeAdBlock: () -> Unit,
+    private val isPrivateMode: () -> Boolean,
+    private val onClearCookies: () -> Unit,
+    private val onClearCache: () -> Unit,
+    private val onClearSiteData: () -> Unit,
+    private val activeDownloads: () -> List<GeckoDownloadController.ActiveDownload>,
+    private val onCancelDownload: (String) -> Unit,
     private val onClearPermissions: () -> Unit,
     private val onToast: (String) -> Unit,
     private val currentUrl: () -> String
@@ -53,7 +61,7 @@ internal class GeckoBrowserToolsController(
     }
     private fun clearActiveToneUpdates() { activeToneUpdates.clear() }
 
-    private data class DownloadItem(val id: Long, val title: String, val mime: String, val uri: Uri, val size: Long, val isPending: Boolean, val modifiedAt: Long)
+    private data class DownloadItem(val id: Long, val title: String, val mime: String, val uri: Uri, val size: Long, val isPending: Boolean, val modifiedAt: Long, val read: Long = 0L, val total: Long = -1L)
     private data class DownloadRowViews(val card: LinearLayout, val title: TextView, val status: TextView, val progress: ProgressBar, val size: TextView, val actions: LinearLayout, var actionType: String = "")
     private val downloadRows = mutableMapOf<Long, DownloadRowViews>()
     private var downloadEmptyView: View? = null
@@ -95,6 +103,7 @@ internal class GeckoBrowserToolsController(
 
     private fun queryDownloads(): List<DownloadItem> {
         val items = mutableListOf<DownloadItem>()
+        val active = activeDownloads()
         val projection = arrayOf(MediaStore.Downloads._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.SIZE, MediaStore.Downloads.IS_PENDING, MediaStore.MediaColumns.DATE_ADDED)
         val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
         runCatching {
@@ -108,7 +117,11 @@ internal class GeckoBrowserToolsController(
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
                     val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
-                    items += DownloadItem(id, cursor.getString(nameCol).orEmpty().ifBlank { "Tệp tải xuống" }, cursor.getString(mimeCol).orEmpty(), uri, cursor.getLong(sizeCol), cursor.getInt(pendingCol) == 1, cursor.getLong(dateCol) * 1000L)
+                    val nm = cursor.getString(nameCol).orEmpty().ifBlank { "Tệp tải xuống" }
+                    val mt = active.firstOrNull { it.name == nm }
+                    items += DownloadItem(id, nm, cursor.getString(mimeCol).orEmpty(), uri,
+                        cursor.getLong(sizeCol), cursor.getInt(pendingCol) == 1,
+                        cursor.getLong(dateCol) * 1000L, mt?.read ?: 0L, mt?.total ?: -1L)
                 }
             }
         }.onFailure { onToast("Không đọc được danh sách tải xuống") }
@@ -158,9 +171,17 @@ internal class GeckoBrowserToolsController(
 
     private fun bindDownloadRow(row: DownloadRowViews, item: DownloadItem) {
         row.title.text = item.title
-        row.status.text = if (item.isPending) "Đang tải xuống..." else "Đã tải xong · ${formatDate(item.modifiedAt)}"
+        val percent = if (item.total > 0L) ((item.read * 100L) / item.total).toInt().coerceIn(0, 100) else null
+        row.status.text = when {
+            item.isPending && percent != null -> "Đang tải xuống · $percent%"
+            item.isPending -> "Đang tải xuống..."
+            else -> "Đã tải xong · ${formatDate(item.modifiedAt)}"
+        }
         row.progress.visibility = if (item.isPending) View.VISIBLE else View.GONE
-        row.size.visibility = View.VISIBLE; row.size.text = formatBytes(item.size)
+        row.progress.isIndeterminate = item.isPending && percent == null
+        if (percent != null) row.progress.progress = percent
+        row.size.visibility = View.VISIBLE
+        row.size.text = if (item.isPending && item.total > 0L) "${formatBytes(item.read)} / ${formatBytes(item.total)}" else formatBytes(item.size)
         val actionType = if (item.isPending) "pending" else "complete"
         if (row.actionType != actionType) {
             row.actions.removeAllViews()
@@ -168,7 +189,7 @@ internal class GeckoBrowserToolsController(
                 row.actions.addView(actionButton("Mở", accent) { openFile(item.uri, item.mime) }, LinearLayout.LayoutParams(-2, dp(38)).apply { marginEnd = dp(6) })
                 row.actions.addView(actionButton("Chia sẻ", muted) { shareFile(item.uri, item.mime) }, LinearLayout.LayoutParams(-2, dp(38)).apply { marginEnd = dp(6) })
             }
-            row.actions.addView(actionButton("Xóa", if (item.isPending) muted else Theme.DANGER_RED) { confirmRemove(item) }, LinearLayout.LayoutParams(-2, dp(38)))
+            row.actions.addView(actionButton(if (item.isPending) "Hủy tải" else "Xóa", if (item.isPending) muted else Theme.DANGER_RED) { confirmRemove(item) }, LinearLayout.LayoutParams(-2, dp(38)))
             row.actionType = actionType
         }
     }
@@ -177,9 +198,12 @@ internal class GeckoBrowserToolsController(
     private fun shareFile(uri: Uri, mime: String) { runCatching { val intent = Intent(Intent.ACTION_SEND).apply { type = mime.ifBlank { "*/*" }; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }; activity.startActivity(Intent.createChooser(intent, "Chia sẻ tệp")) }.onFailure { onToast("Không thể chia sẻ tệp này") } }
     private fun confirmRemove(item: DownloadItem) {
         sheet.confirm(title = if (item.isPending) "Hủy tải xuống?" else "Xóa tệp tải xuống?", message = if (item.isPending) "Summit sẽ hủy tiến trình tải ${item.title}." else "Tệp ${item.title} sẽ bị xóa khỏi danh sách tải xuống và thiết bị.", positive = if (item.isPending) "Hủy tải" else "Xóa", negative = "Giữ lại") {
-            val deleted = runCatching { activity.contentResolver.delete(item.uri, null, null) }.getOrDefault(0)
-            onToast(if (deleted > 0) (if (item.isPending) "Đã hủy tải xuống" else "Đã xóa tệp tải xuống") else "Không xóa được tệp")
-            handler.removeCallbacksAndMessages(null); showDownloads()
+            if (item.isPending) {
+                onCancelDownload(item.title)
+            } else {
+                val deleted = runCatching { activity.contentResolver.delete(item.uri, null, null) }.getOrDefault(0)
+                onToast(if (deleted > 0) "Đã xóa tệp tải xuống" else "Không xóa được tệp")
+            }
         }
     }
 
@@ -209,6 +233,18 @@ internal class GeckoBrowserToolsController(
         val enabled = Switch(activity).apply { isChecked = adBlockEnabled(); setOnCheckedChangeListener { _: CompoundButton, checked: Boolean -> onToggleAdBlock(); onToast(if (checked) "Đã bật chặn quảng cáo" else "Đã tắt chặn quảng cáo") } }
         filterRow.addView(enabled); filterCard.addView(filterRow)
         body.addView(filterCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+        val ytCard = card()
+        val ytRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val ytTexts = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        ytTexts.addView(text("YouTube AdBlock", 14f, foreground(), true))
+        ytTexts.addView(text("Lọc quảng cáo YouTube qua Summit Probe (cần bật chặn quảng cáo).", 11f, muted).apply { setPadding(0, dp(3), 0, 0) })
+        ytRow.addView(ytTexts, LinearLayout.LayoutParams(0, -2, 1f))
+        ytRow.addView(Switch(activity).apply {
+            isChecked = youtubeAdBlockEnabled()
+            setOnCheckedChangeListener { _: CompoundButton, _: Boolean -> onToggleYoutubeAdBlock() }
+        })
+        ytCard.addView(ytRow)
+        body.addView(ytCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
 
         addSectionTitle(body, "Quyền của website hiện tại")
         val origin = originFrom(currentUrl())
@@ -219,13 +255,17 @@ internal class GeckoBrowserToolsController(
             val currentCard = card()
             currentCard.addView(text(displayOrigin(origin), 13f, foreground(), true))
             currentCard.addView(text("Cài đặt bên dưới áp dụng cho origin hiện tại. Quyền hệ thống Android vẫn được kiểm tra riêng.", 11f, muted).apply { setPadding(0, dp(4), 0, dp(8)) })
-            addPermissionControl(currentCard, "Camera và microphone", store.getMediaPermission(origin)) { store.setMediaPermission(origin, it) }
-            addPermissionControl(currentCard, "Vị trí", store.getGeoPermission(origin)) { store.setGeoPermission(origin, it) }
+            if (isPrivateMode()) {
+                currentCard.addView(text("Phiên riêng tư: camera, micro và vị trí luôn hỏi lại; lựa chọn không được lưu.", 12f, muted).apply { setPadding(0, dp(4), 0, dp(4)) })
+            } else {
+                addPermissionControl(currentCard, "Camera và microphone", store.getMediaPermission(origin)) { store.setMediaPermission(origin, it) }
+                addPermissionControl(currentCard, "Vị trí", store.getGeoPermission(origin)) { store.setGeoPermission(origin, it) }
+            }
             body.addView(currentCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         }
 
         addSectionTitle(body, "Quyền đã lưu cho website khác")
-        val otherPermissions = store.sitePermissionEntries().filter { it.origin != origin }
+        val otherPermissions = if (isPrivateMode()) emptyList() else store.sitePermissionEntries().filter { it.origin != origin }
         if (otherPermissions.isEmpty()) {
             val empty = card(); empty.addView(text("Chưa có quyền nào được lưu cho website khác.", 12f, muted))
             body.addView(empty, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
@@ -243,6 +283,22 @@ internal class GeckoBrowserToolsController(
                 sheet.confirm(title = "Đặt lại mọi quyền website?", message = "Tất cả lựa chọn cho phép/từ chối của website sẽ trở về trạng thái hỏi lại.", positive = "Đặt lại") { store.clearSitePermissions(null); onClearPermissions(); renderPrivacy(body) }
             }, LinearLayout.LayoutParams(-2, dp(38)).apply { topMargin = dp(8); bottomMargin = dp(12) })
         }
+        addSectionTitle(body, "Dữ liệu website")
+        val dataCard = card()
+        dataCard.addView(text("Cookie và dữ liệu trang", 13f, foreground(), true))
+        dataCard.addView(text("Xóa dữ liệu duyệt web trong Gecko. Thao tác không thể hoàn tác.", 11f, muted).apply { setPadding(0, dp(4), 0, dp(8)) })
+        val dataRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        dataRow.addView(actionButton("Xóa cookie", Theme.DANGER_RED) {
+            sheet.confirm(title = "Xóa tất cả cookie?", message = "Thao tác này đăng xuất các website trong Summit.", positive = "Xóa cookie") { onClearCookies(); onToast("Đã xóa cookie") }
+        }, LinearLayout.LayoutParams(0, dp(38), 1f).apply { marginEnd = dp(8) })
+        dataRow.addView(actionButton("Xóa cache", muted) {
+            sheet.confirm(title = "Xóa cache?", message = "Cache tài nguyên bị xóa; đăng nhập giữ nguyên.", positive = "Xóa cache") { onClearCache(); onToast("Đã xóa cache") }
+        }, LinearLayout.LayoutParams(0, dp(38), 1f))
+        dataCard.addView(dataRow)
+        dataCard.addView(actionButton("Xóa toàn bộ dữ liệu trang", Theme.DANGER_RED) {
+            sheet.confirm(title = "Xóa toàn bộ?", message = "Cookie, cache và storage của mọi website sẽ bị xóa.", positive = "Xóa tất cả") { onClearSiteData(); onToast("Đã xóa dữ liệu trang") }
+        }, LinearLayout.LayoutParams(-2, dp(38)).apply { topMargin = dp(8) })
+        body.addView(dataCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         applyActivePageTone(GlassSystem.currentPageBackground())
     }
 

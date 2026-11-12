@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.View
 import android.widget.FrameLayout
 import org.mozilla.geckoview.GeckoResult
@@ -40,6 +41,14 @@ open class BlurTarget(context: Context) : FrameLayout(context) {
     private var captureInFlight = false
     private var lastSignature = 0L
     private var stillFrames = 0
+
+    private var motionUntil = 0L
+
+    /** BlurSync invalidate liên tục mỗi frame khi kính đang morph -> chuyển sang nhịp chụp nhanh. */
+    override fun invalidate() {
+        super.invalidate()
+        if (isAttachedToWindow) motionUntil = SystemClock.uptimeMillis() + 140L
+    }
 
     private val tick = Runnable {
         running = false
@@ -137,8 +146,10 @@ open class BlurTarget(context: Context) : FrameLayout(context) {
                 glass.forEach { ref ->
                     ref.get()?.let { if (it.isShown) it.invalidate() }
                 }
+                val now = SystemClock.uptimeMillis()
                 scheduleNext(
                     when {
+                        now < motionUntil -> MOTION_MS
                         stillFrames == 0 -> FAST_MS
                         stillFrames < 4 -> MID_MS
                         else -> SLOW_MS
@@ -183,6 +194,7 @@ open class BlurTarget(context: Context) : FrameLayout(context) {
     companion object {
         /** Snapshot scale relative to the surface; blur hides the loss of detail anyway. */
         private const val SCALE = 0.2f
+        private const val MOTION_MS = 33L
         private const val FAST_MS = 100L
         private const val MID_MS = 250L
         private const val SLOW_MS = 750L

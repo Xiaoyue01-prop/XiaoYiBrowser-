@@ -22,7 +22,7 @@ internal class GeckoSessionLifecycleController(
     }
 
     /** Returns the number of sessions successfully evicted. Must be called on the UI thread. */
-    fun trim(): Int {
+    fun trim(max: Int = maxLiveSessions): Int {
         val active = activeSession()
         val live = tabs.getAll().mapNotNull { tab ->
             val session = tab.session ?: return@mapNotNull null
@@ -33,7 +33,7 @@ internal class GeckoSessionLifecycleController(
             }
             tab to session
         }
-        var excess = live.size - maxLiveSessions.coerceAtLeast(1)
+        var excess = live.size - max.coerceAtLeast(1)
         if (excess <= 0) return 0
 
         var evicted = 0
