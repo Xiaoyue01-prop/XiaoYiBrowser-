@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <application
         android:allowBackup="false"
         android:enableOnBackInvokedCallback="true"
@@ -14,7 +18,7 @@
         android:usesCleartextTraffic="false">
         <activity
             android:name=".GeckoPrototypeActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
             android:exported="true"
             android:launchMode="singleTask"
             android:supportsPictureInPicture="true"
@@ -36,5 +40,19 @@
                 <category android:name="android.intent.category.APP_BROWSER" />
             </intent-filter>
         </activity>
+
+        <!-- Media3 MediaSessionService: thông báo điều khiển media, màn hình khóa, nút trong PiP. -->
+        <service
+            android:name="com.example.webedge.WebMediaService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name="com.example.webedge.GeckoDownloadActionReceiver"
+            android:exported="false" />
     </application>
 </manifest>

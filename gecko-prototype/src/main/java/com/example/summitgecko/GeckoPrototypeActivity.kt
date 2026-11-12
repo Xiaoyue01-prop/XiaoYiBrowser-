@@ -44,6 +44,8 @@ import com.example.webedge.GeckoFindBarController
 import com.example.webedge.GeckoMenuController
 import com.example.webedge.GeckoMenuHost
 import com.example.webedge.GeckoDownloadController
+import com.example.webedge.GeckoMediaController
+import com.example.webedge.PictureInPictureController
 import com.example.webedge.GeckoBrowserToolsController
 import com.example.webedge.GeckoContextMenuController
 import com.example.webedge.GeckoPermissionController
@@ -136,6 +138,11 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var permissionController: GeckoPermissionController
     private lateinit var promptController: GeckoPromptController
     private lateinit var downloadController: GeckoDownloadController
+    private lateinit var mediaController: GeckoMediaController
+    private lateinit var pip: PictureInPictureController
+    private var restoredTabs = false
+    private var notificationPermissionAsked = false
+    private val saveTabsRunnable = Runnable { saveTabsNow() }
     private lateinit var browserToolsController: GeckoBrowserToolsController
     private lateinit var contextMenuController: GeckoContextMenuController
     private val loadingBySession = HashMap<GeckoSession, Boolean>()
@@ -551,7 +558,14 @@ class GeckoPrototypeActivity : Activity() {
             root = root,
             dialog = { glassDialog },
             isActiveSession = { it === session },
-            notify = { showToast(it) }
+            notify = { showToast(it) },
+            requestNotificationPermission = ::ensureNotificationPermission
+        )
+        pip = PictureInPictureController(this)
+        mediaController = GeckoMediaController(
+            activity = this,
+            requestNotificationPermission = ::ensureNotificationPermission,
+            onVideoInfo = { w, h, title, subtitle -> pip.setVideoInfo(w, h, title, subtitle) }
         )
         browserToolsController = GeckoBrowserToolsController(
             activity = this,
@@ -750,12 +764,21 @@ class GeckoPrototypeActivity : Activity() {
         )
 
         applyAdBlock()
-        session = newBrowserSession(privateMode = false)
-        configureSession(session)
-        session.open(runtime(this))
-        tabManager.add(session, isPrivate = false)
-        loadingBySession[session] = false
-        progressBySession[session] = 0
+        restoreSavedTabs()
+        val restoredActive = if (restoredTabs) tabManager.getActive() else null
+        val restoredSession = restoredActive?.let { ensureSession(it, loadNow = false) }
+        if (restoredSession != null) {
+            session = restoredSession
+        } else {
+            // Không có tab đã lưu (hoặc không dựng lại được): bắt đầu bằng một tab mới như trước.
+            if (restoredTabs) { tabManager.clear(); restoredTabs = false }
+            session = newBrowserSession(privateMode = false)
+            configureSession(session)
+            session.open(runtime(this))
+            tabManager.add(session, isPrivate = false)
+            loadingBySession[session] = false
+            progressBySession[session] = 0
+        }
         surfaceView.attach(session)
         testServer = LocalProbeTestServer(assets)
         testServer?.start()
@@ -912,6 +935,7 @@ class GeckoPrototypeActivity : Activity() {
         })
         target.setPermissionDelegate(permissionController)
         target.setPromptDelegate(promptController)
+        target.setMediaSessionDelegate(mediaController.delegate)
         target.setContentDelegate(object : GeckoSession.ContentDelegate {
             override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
                 runOnUiThread { setFullscreen(fullScreen) }
@@ -922,6 +946,7 @@ class GeckoPrototypeActivity : Activity() {
                     val tab = tabManager.forSession(session)
                     val cleanTitle = title?.trim().orEmpty().take(180)
                     tab?.title = cleanTitle
+                    scheduleSaveTabs()
                     val url = tab?.url.orEmpty()
                     // Private browsing never writes titles or visits into persistent history.
                     if (tab?.isPrivate == true) return@runOnUiThread
@@ -1078,6 +1103,7 @@ class GeckoPrototypeActivity : Activity() {
         val tab = tabManager.forSession(source) ?: return
         if (tab.url != url) tab.title = ""
         tab.url = url
+        scheduleSaveTabs()
         if (source === session) {
             if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
             currentUrl = url
@@ -1139,6 +1165,20 @@ class GeckoPrototypeActivity : Activity() {
         if (initialPageLoaded || !::session.isInitialized) return
         initialPageLoaded = true
         val externalUrl = safeWebUri(intent?.data?.toString())
+        if (restoredTabs) {
+            // Tab đã được dựng lại từ lần chạy trước: tải trang của tab đang xem, link ngoài mở thành tab mới.
+            if (externalUrl != null) {
+                createTab(externalUrl, privateMode = false)
+            } else {
+                val active = tabManager.forSession(session)
+                val target = active?.url.orEmpty().ifBlank { summitStore.homeUrl.ifBlank { "https://www.google.com/" } }
+                currentUrl = target
+                active?.url = target
+                showAddress(target)
+                session.loadUri(target)
+            }
+            return
+        }
         val restored = externalUrl ?: browserPrefs.getString("last_url", null)
         if (!restored.isNullOrBlank()) {
             currentUrl = restored
@@ -1277,6 +1317,7 @@ class GeckoPrototypeActivity : Activity() {
 
     private fun setFullscreen(on: Boolean) {
         fullscreen = on
+        if (::pip.isInitialized && ::surfaceView.isInitialized) pip.setVideoActive(on, surfaceView)
         if (on) {
             insetsController.hide(WindowInsetsCompat.Type.systemBars())
             insetsController.systemBarsBehavior =
@@ -1599,6 +1640,7 @@ class GeckoPrototypeActivity : Activity() {
                     target.thumbnail = bitmap
                     target.thumbnailUrl = url
                     target.thumbnailVersion = maxOf(System.currentTimeMillis(), target.thumbnailVersion + 1L)
+                    scheduleSaveTabs()
                 } else if (!bitmap.isRecycled) {
                     bitmap.recycle()
                 }
@@ -1627,6 +1669,68 @@ class GeckoPrototypeActivity : Activity() {
         val path = parsed.path.orEmpty()
         if (path.length > 1) host + path else host
     }.getOrDefault(url)
+
+    // ---- Lưu / khôi phục tab -------------------------------------------------------------------
+
+    /** Dựng lại danh sách tab thường từ lần chạy trước (chưa mở session nào). Tab riêng tư không bao giờ được lưu. */
+    private fun restoreSavedTabs() {
+        val saved = runCatching { summitStore.loadTabs() }.getOrDefault(emptyList()).takeLast(TabManager.MAX_TABS)
+        if (saved.isEmpty()) return
+        var activeId: Long? = null
+        saved.forEach { persisted ->
+            val tab = runCatching { tabManager.addRestored(persisted) }.getOrNull() ?: return@forEach
+            if (persisted.isActive) activeId = tab.id
+        }
+        val front = activeId ?: tabManager.getAll().lastOrNull()?.id ?: return
+        tabManager.switchTo(front)
+        restoredTabs = true
+    }
+
+    /** Tạo GeckoSession cho tab chưa có (tab khôi phục). Trả về null nếu Gecko không mở được. */
+    private fun ensureSession(tab: TabManager.Tab, loadNow: Boolean): GeckoSession? {
+        tab.session?.let { return it }
+        return try {
+            val created = newBrowserSession(tab.isPrivate)
+            configureSession(created)
+            created.open(runtime(this))
+            attachProbeToSession(created)
+            tab.session = created
+            loadingBySession[created] = false
+            progressBySession[created] = 0
+            if (tab.desktop) applyDesktopMode(created, true)
+            if (loadNow && tab.url.isNotBlank()) created.loadUri(tab.url)
+            created
+        } catch (error: Exception) {
+            Log.w("SummitGecko", "Could not create session for restored tab", error)
+            null
+        }
+    }
+
+    private fun scheduleSaveTabs() {
+        if (!::summitStore.isInitialized) return
+        ui.removeCallbacks(saveTabsRunnable)
+        ui.postDelayed(saveTabsRunnable, 1500L)
+    }
+
+    private fun saveTabsNow() {
+        ui.removeCallbacks(saveTabsRunnable)
+        if (!::summitStore.isInitialized || tabManager.count() == 0) return
+        val tabs = tabManager.exportTabs()
+        if (tabs.isEmpty()) return
+        runCatching { summitStore.saveTabs(tabs) }
+            .onFailure { Log.w("SummitGecko", "Could not save tabs", it) }
+    }
+
+    /** Xin quyền thông báo một lần (cần cho thông báo media và Live Update tải xuống). */
+    private fun ensureNotificationPermission() {
+        if (notificationPermissionAsked) return
+        notificationPermissionAsked = true
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4108)
+        }
+    }
 
     private fun createTab(url: String? = null, privateMode: Boolean = tabManager.isPrivateMode) {
         if (::findBarController.isInitialized && findBarController.isShown) findBarController.close()
@@ -1665,6 +1769,7 @@ class GeckoPrototypeActivity : Activity() {
             created.loadUri(targetUrl)
             if (!privateMode) browserPrefs.edit().putString("last_url", targetUrl).apply()
             updateLayout()
+            scheduleSaveTabs()
         } catch (error: Exception) {
             next?.let { failed ->
                 tabManager.forSession(failed)?.let { failedTab -> tabManager.close(failedTab.id) }
@@ -1696,7 +1801,8 @@ class GeckoPrototypeActivity : Activity() {
 
     /** Chuyển sang [tab] (gọi từ lưới tab hoặc khi popup của tab nền được mở). */
     private fun activateTab(tab: TabManager.Tab) {
-        val target = tab.session ?: return
+        // Tab dựng lại từ đĩa chưa có session: tạo và tải trang ngay lúc được mở lần đầu.
+        val target = tab.session ?: ensureSession(tab, loadNow = true) ?: return
         if (target === session) {
             tabManager.switchTo(tab.id)
             return
@@ -1723,6 +1829,7 @@ class GeckoPrototypeActivity : Activity() {
             toolbar.setLoading(loadingBySession[target] == true, progressBySession[target] ?: 0)
             resetProbeState()
             updateLayout()
+            scheduleSaveTabs()
         }.onFailure {
             // Keep the old tab usable if Gecko rejects activation of the target session.
             session = previous
@@ -1774,6 +1881,7 @@ class GeckoPrototypeActivity : Activity() {
                     surfaceView.attach(replacement)
                 }
             }
+            if (::mediaController.isInitialized) mediaController.forget(old)
             runCatching { if (old.isOpen) old.close() }
             loadingBySession.remove(old)
             progressBySession.remove(old)
@@ -1781,6 +1889,7 @@ class GeckoPrototypeActivity : Activity() {
             canGoForwardMap.remove(old)
         }
         removed.thumbnail = null
+        scheduleSaveTabs()
     }
 
     private fun closeCurrentTab() {
@@ -1846,6 +1955,7 @@ class GeckoPrototypeActivity : Activity() {
                 return
             }
         showToast(if (tab.desktop) "Đã bật trang web máy tính" else "Đã về trang web di động")
+        scheduleSaveTabs()
         resetProbeState()
         session.reload(GeckoSession.LOAD_FLAGS_BYPASS_CACHE)
     }
@@ -1951,6 +2061,7 @@ class GeckoPrototypeActivity : Activity() {
     override fun onPause() {
         ui.removeCallbacks(tick)
         if (::summitStore.isInitialized) summitStore.flush()
+        saveTabsNow()
         // Keep Gecko's media pipeline alive while Android displays this Activity in PiP.
         if (::session.isInitialized && !isInPictureInPictureMode) {
             session.setFocused(false)
@@ -1959,18 +2070,8 @@ class GeckoPrototypeActivity : Activity() {
         super.onPause()
     }
 
-    /** Enter system PiP only while Gecko has an active fullscreen video surface. */
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && fullscreen && !isInPictureInPictureMode) {
-            runCatching {
-                val params = PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(16, 9))
-                    .build()
-                enterPictureInPictureMode(params)
-            }.onFailure { Log.w("SummitGecko", "Unable to enter PiP", it) }
-        }
-    }
+    // Vào PiP do PictureInPictureController đảm nhiệm (setAutoEnterEnabled khi video đang toàn màn hình),
+    // nên không gọi enterPictureInPictureMode thủ công ở đây nữa.
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
@@ -1986,6 +2087,8 @@ class GeckoPrototypeActivity : Activity() {
     override fun onDestroy() {
         pendingFilePickerResult?.invoke(null)
         pendingFilePickerResult = null
+        saveTabsNow()
+        if (::mediaController.isInitialized) mediaController.release()
         ui.removeCallbacks(tick)
         if (::orbMenu.isInitialized) orbMenu.destroy()
         if (::menuController.isInitialized) menuController.dispose()

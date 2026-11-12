@@ -104,4 +104,49 @@ class TabManager {
         tabs.forEach { it.isActive = false }
         tabs.clear()
     }
+
+    /**
+     * Adds a regular tab restored from disk. It has no GeckoSession yet: the Activity creates one
+     * lazily the first time the tab is shown, so hundreds of idle sessions are never opened at startup.
+     */
+    fun addRestored(saved: PersistedTab): Tab {
+        require(tabs.size < MAX_TABS) { "Maximum tab count reached" }
+        val tab = Tab(
+            id = saved.id.takeIf { it > 0L && findById(it) == null } ?: newId(),
+            url = saved.url,
+            title = saved.title,
+            isActive = false,
+            session = null,
+            thumbnail = saved.thumbnail,
+            thumbnailUrl = saved.thumbnailUrl.ifBlank { null },
+            thumbnailVersion = saved.thumbnailVersion,
+            isPrivate = false,
+            lastActiveAt = 0L,
+            desktop = saved.desktop
+        )
+        tabs.add(tab)
+        return tab
+    }
+
+    /**
+     * Snapshot of regular tabs for disk. Private tabs are never exported. When the foreground tab is
+     * private, the most recently used regular tab is flagged active so the next launch has a sane start.
+     */
+    fun exportTabs(): List<PersistedTab> {
+        val regular = tabs.filter { !it.isPrivate }
+        if (regular.isEmpty()) return emptyList()
+        val front = regular.firstOrNull { it.isActive } ?: regular.maxByOrNull { it.lastActiveAt }
+        return regular.map {
+            PersistedTab(
+                id = it.id,
+                url = it.url,
+                title = it.title,
+                isActive = it === front,
+                thumbnail = it.thumbnail,
+                thumbnailUrl = it.thumbnailUrl.orEmpty(),
+                thumbnailVersion = it.thumbnailVersion,
+                desktop = it.desktop
+            )
+        }
+    }
 }

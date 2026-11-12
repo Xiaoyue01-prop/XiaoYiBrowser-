@@ -15,8 +15,8 @@ android {
         minSdk = 36
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
-        versionCode = 9
-        versionName = "0.14-final-browser"
+        versionCode = 10
+        versionName = "0.15-tabs-media-prompts"
     }
 
     compileOptions {
@@ -34,5 +34,7 @@ kotlin {
 dependencies {
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.dynamicanimation:dynamicanimation:1.1.0")
+    // Media3 (cùng bản với :app): MediaSessionService + MediaSession cho media của trang web
+    implementation("androidx.media3:media3-session:1.11.1")
     implementation("org.mozilla.geckoview:geckoview:159.0.20261022150525")
 }

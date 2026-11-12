@@ -28,7 +28,8 @@ internal class GeckoDownloadController(
     private val root: FrameLayout,
     private val dialog: () -> GlassDialogController,
     private val isActiveSession: (GeckoSession) -> Boolean,
-    private val notify: (String) -> Unit
+    private val notify: (String) -> Unit,
+    private val requestNotificationPermission: () -> Unit = {}
 ) {
     companion object {
         private const val TAG = "SummitGeckoDownload"
@@ -42,6 +43,11 @@ internal class GeckoDownloadController(
     @Volatile private var progressBar: ProgressBar? = null
     @Volatile private var progressLabel: TextView? = null
     @Volatile private var busy = false
+
+    init {
+        // Nút "Hủy" trong thông báo Live Update chạy trên luồng chính của tiến trình app.
+        GeckoDownloadLiveUpdate.cancelHook = { main.post { cancelActive() } }
+    }
 
     private fun header(headers: Map<String, String>?, name: String): String? =
         headers?.entries?.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
@@ -160,6 +166,10 @@ internal class GeckoDownloadController(
         if (busy) { runCatching { body.close() }; notify("Đang có lượt tải xuống khác"); return }
         busy = true; cancelled.set(false); activeBody = body
         showProgress(name)
+        requestNotificationPermission()
+        val notifyId = (System.currentTimeMillis() and 0x3fffffffL).toInt()
+        var lastNotifyAt = 0L
+        GeckoDownloadLiveUpdate.progress(activity, notifyId, name, 0L, total)
         Thread {
             val resolver = activity.contentResolver
             var target: Uri? = null
@@ -185,11 +195,17 @@ internal class GeckoDownloadController(
                             copied += count
                             val current = copied
                             main.post { updateProgress(current, total) }
+                            val nowMs = android.os.SystemClock.elapsedRealtime()
+                            if (nowMs - lastNotifyAt >= 700L) {
+                                lastNotifyAt = nowMs
+                                GeckoDownloadLiveUpdate.progress(activity, notifyId, name, current, total)
+                            }
                         }
                     }
                 }
                 if (cancelled.get()) throw InterruptedException("Cancelled")
                 resolver.update(target, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+                GeckoDownloadLiveUpdate.finish(activity, notifyId, name, "Tải xuống hoàn tất · ${formatBytes(copied)}", true)
                 main.post {
                     busy = false; activeBody = null
                     progressLabel?.text = "Đã tải xong · ${formatBytes(copied)}"
@@ -199,10 +215,15 @@ internal class GeckoDownloadController(
                 }
             } catch (e: InterruptedException) {
                 target?.let { runCatching { resolver.delete(it, null, null) } }
+                GeckoDownloadLiveUpdate.finish(activity, notifyId, name, "Đã hủy tải xuống", false)
                 main.post { busy = false; activeBody = null; removeProgress(); notify("Đã hủy tải xuống") }
             } catch (e: Exception) {
                 target?.let { runCatching { resolver.delete(it, null, null) } }
                 runCatching { body.close() }
+                GeckoDownloadLiveUpdate.finish(
+                    activity, notifyId, name,
+                    if (cancelled.get()) "Đã hủy tải xuống" else "Tải xuống không thành công", false
+                )
                 if (cancelled.get()) {
                     main.post { busy = false; activeBody = null; removeProgress(); notify("Đã hủy tải xuống") }
                 } else {
@@ -223,6 +244,7 @@ internal class GeckoDownloadController(
     }
 
     fun dispose() {
+        GeckoDownloadLiveUpdate.cancelHook = null
         cancelActive()
         removeProgress()
     }

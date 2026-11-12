@@ -3,6 +3,7 @@ package com.example.webedge
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
+import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -40,6 +41,11 @@ class GlassDialogController(
         val defaultInput: String?,
         val neutral: String?,
         val onNeutral: (() -> Unit)?,
+        val secondInput: String?,
+        val choices: List<String>?,
+        val choiceMulti: Boolean,
+        val choiceSelected: Set<Int>,
+        val choiceDisabled: Set<Int>,
         val onResult: (confirmed: Boolean, input: String?) -> Unit
     )
 
@@ -48,7 +54,17 @@ class GlassDialogController(
     private var activeLayer: FrameLayout? = null
     private var activeCard: View? = null
     private var activeInput: EditText? = null
+    private var activeInput2: EditText? = null
+    private val activeChoices = mutableSetOf<Int>()
     private var finishing = false
+
+    /** Ô nhập thứ hai (mật khẩu) của hộp thoại xác thực; chỉ hợp lệ bên trong onResult khi confirmed. */
+    var lastSecondInput: String? = null
+        private set
+
+    /** Chỉ số các mục đã chọn của hộp thoại danh sách; chỉ hợp lệ bên trong onResult khi confirmed. */
+    var lastChoiceIndices: List<Int> = emptyList()
+        private set
 
     val isShowing: Boolean get() = active != null
 
@@ -66,9 +82,19 @@ class GlassDialogController(
         defaultInput: String? = null,
         neutral: String? = null,
         onNeutral: (() -> Unit)? = null,
+        secondInput: String? = null,
+        choices: List<String>? = null,
+        choiceMulti: Boolean = false,
+        choiceSelected: Set<Int> = emptySet(),
+        choiceDisabled: Set<Int> = emptySet(),
         onResult: (confirmed: Boolean, input: String?) -> Unit
     ) {
-        queue.addLast(Request(title, message, positive, negative, defaultInput, neutral, onNeutral, onResult))
+        queue.addLast(
+            Request(
+                title, message, positive, negative, defaultInput, neutral, onNeutral,
+                secondInput, choices, choiceMulti, choiceSelected, choiceDisabled, onResult
+            )
+        )
         if (active == null) showNext()
     }
 
@@ -90,6 +116,7 @@ class GlassDialogController(
         activeLayer = null
         activeCard = null
         activeInput = null
+        activeInput2 = null
         for (r in pending) runCatching { r.onResult(false, null) }
     }
 
@@ -162,44 +189,108 @@ class GlassDialogController(
         }
 
         // Nội dung dài (alert của trang) cuộn được thay vì tràn khỏi màn hình.
-        val messageView = TextView(activity).apply {
-            text = req.message
-            textSize = 14f
-            setTextColor(GlassSystem.pagePrimaryText())
-            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-            gravity = Gravity.CENTER
-            val top = if (req.title != null) dp(8) else dp(22)
-            val bottom = if (req.defaultInput != null) dp(12) else dp(20)
-            setPadding(dp(22), top, dp(22), bottom)
+        val hasFields = req.defaultInput != null || req.secondInput != null
+        val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        if (req.message.isNotBlank() || req.choices == null) {
+            body.addView(TextView(activity).apply {
+                text = req.message
+                textSize = 14f
+                setTextColor(GlassSystem.pagePrimaryText())
+                setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+                gravity = Gravity.CENTER
+                val top = if (req.title != null) dp(8) else dp(22)
+                val bottom = if (hasFields) dp(12) else if (req.choices != null) dp(8) else dp(20)
+                setPadding(dp(22), top, dp(22), bottom)
+            })
+        }
+
+        // Danh sách lựa chọn (thẻ <select> của trang): chọn một mục là xong, nhiều mục thì bấm "Xong".
+        activeChoices.clear()
+        if (req.choices != null) {
+            activeChoices.addAll(req.choiceSelected)
+            val rows = mutableListOf<Pair<TextView, TextView>>()
+            fun refreshRows() {
+                rows.forEachIndexed { i, (_, mark) -> mark.text = if (i in activeChoices) "✓" else "" }
+            }
+            req.choices.forEachIndexed { index, label ->
+                val disabled = index in req.choiceDisabled
+                val row = FrameLayout(activity).apply {
+                    if (!disabled) background = ripple()
+                    minimumHeight = dp(46)
+                }
+                val text = TextView(activity).apply {
+                    this.text = label
+                    textSize = 16f
+                    setTextColor(if (disabled) GlassSystem.pageSecondaryText() else GlassSystem.pagePrimaryText())
+                    setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+                    gravity = Gravity.CENTER_VERTICAL
+                    maxLines = 3
+                    setPadding(dp(22), dp(10), dp(52), dp(10))
+                }
+                val mark = TextView(activity).apply {
+                    textSize = 17f
+                    setTextColor(accent)
+                    gravity = Gravity.CENTER
+                }
+                row.addView(text, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER_VERTICAL))
+                row.addView(mark, FrameLayout.LayoutParams(dp(40), -2, Gravity.END or Gravity.CENTER_VERTICAL))
+                rows.add(text to mark)
+                if (!disabled) {
+                    row.setOnClickListener {
+                        if (req.choiceMulti) {
+                            if (!activeChoices.add(index)) activeChoices.remove(index)
+                            refreshRows()
+                        } else {
+                            activeChoices.clear()
+                            activeChoices.add(index)
+                            finish(true)
+                        }
+                    }
+                }
+                body.addView(row, LinearLayout.LayoutParams(-1, -2))
+            }
+            refreshRows()
         }
         val scroll = ScrollView(activity)
-        scroll.addView(messageView)
+        scroll.addView(body)
         content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        if (req.defaultInput != null) {
-            val input = EditText(activity).apply {
-                setSingleLine()
-                setText(req.defaultInput)
-                setSelectAllOnFocus(true)
-                setTextColor(GlassSystem.pagePrimaryText())
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                textSize = 15f
-                setPadding(dp(14), 0, dp(14), 0)
-                background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+        if (hasFields) {
+            fun field(initial: String, password: Boolean, last: Boolean): EditText {
+                val input = EditText(activity).apply {
+                    setSingleLine()
+                    setText(initial)
+                    if (password) {
+                        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                        hint = "Mật khẩu"
+                        setHintTextColor(GlassSystem.pageSecondaryText())
+                    } else {
+                        setSelectAllOnFocus(true)
+                    }
+                    setTextColor(GlassSystem.pagePrimaryText())
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    textSize = 15f
+                    setPadding(dp(14), 0, dp(14), 0)
+                    background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+                }
+                val inputGlass = FrameLayout(activity).apply {
+                    clipToOutline = true
+                    background = GlassSystem.createInputField(12, d, night)
+                    addView(GlassSystem.createInputBlurView(activity, blurTarget, d), FrameLayout.LayoutParams(-1, -1))
+                    addView(input, FrameLayout.LayoutParams(-1, -1))
+                }
+                content.addView(
+                    inputGlass,
+                    LinearLayout.LayoutParams(-1, dp(44)).apply { setMargins(dp(22), 0, dp(22), if (last) dp(18) else dp(10)) }
+                )
+                return input
             }
-            activeInput = input
-            val inputGlass = FrameLayout(activity).apply {
-                clipToOutline = true
-                background = GlassSystem.createInputField(12, d, night)
-                addView(GlassSystem.createInputBlurView(activity, blurTarget, d), FrameLayout.LayoutParams(-1, -1))
-                addView(input, FrameLayout.LayoutParams(-1, -1))
-            }
-            content.addView(
-                inputGlass,
-                LinearLayout.LayoutParams(-1, dp(44)).apply { setMargins(dp(22), 0, dp(22), dp(18)) }
-            )
+            val hasSecond = req.secondInput != null
+            activeInput = req.defaultInput?.let { field(it, false, last = !hasSecond) }
+            activeInput2 = req.secondInput?.let { field(it, true, last = true) }
         } else {
             activeInput = null
+            activeInput2 = null
         }
 
         content.addView(gapView(), LinearLayout.LayoutParams(-1, 1))
@@ -217,7 +308,12 @@ class GlassDialogController(
             return b
         }
 
-        if (req.neutral != null) {
+        if (req.choices != null && !req.choiceMulti) {
+            content.addView(
+                button(req.negative ?: req.positive, true) { finish(false) },
+                LinearLayout.LayoutParams(-1, dp(50))
+            )
+        } else if (req.neutral != null) {
             // Ba lựa chọn xếp dọc (như alert iOS): khẳng định, chỉ lần này, từ chối.
             val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
             column.addView(button(req.positive, true) { finish(true) }, LinearLayout.LayoutParams(-1, dp(50)))
@@ -257,7 +353,7 @@ class GlassDialogController(
         card.alpha = 0f
         card.post { AnimationSystem.enter(card) }
 
-        activeInput?.let { input ->
+        (activeInput ?: activeInput2)?.let { input ->
             input.post {
                 input.requestFocus()
                 WindowCompat.getInsetsController(activity.window, input).show(WindowInsetsCompat.Type.ime())
@@ -271,8 +367,11 @@ class GlassDialogController(
         finishing = true
         val layer = activeLayer
         val input = activeInput
+        val input2 = activeInput2
         val text = if (confirmed) input?.text?.toString() else null
-        if (input != null && layer != null) {
+        lastSecondInput = if (confirmed) input2?.text?.toString() else null
+        lastChoiceIndices = if (confirmed) activeChoices.sorted() else emptyList()
+        if ((input != null || input2 != null) && layer != null) {
             WindowCompat.getInsetsController(activity.window, layer).hide(WindowInsetsCompat.Type.ime())
         }
 
@@ -295,6 +394,7 @@ class GlassDialogController(
                 activeLayer = null
                 activeCard = null
                 activeInput = null
+                activeInput2 = null
             }
             showNext()
         }
