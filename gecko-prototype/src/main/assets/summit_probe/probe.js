@@ -7,6 +7,12 @@
   window.__summitProbe = true;
 
   const MIN_GAP_MS = 1200;
+  // Boot phase: right after injection/page load, scan fast so the header is moved
+  // below the status bar almost immediately instead of ~1s later.
+  const BOOT_MS = 4000;
+  const BOOT_GAP_MS = 180;
+  const bootAt = Date.now();
+  const booting = () => Date.now() - bootAt < BOOT_MS;
   const MAX_NODES = 6000;
   const MAX_HEADER_TOP = 240;
   const MAX_FLOW_HEADER_DOC_TOP = 260;
@@ -487,7 +493,7 @@
       }
 
       const root = document.body;
-      if (!root) return schedule(500);
+      if (!root) return schedule(40);
       const inset = readInset();
       const vw = window.innerWidth;
       const vh = window.innerHeight;
@@ -697,8 +703,10 @@
   function run() {
     timerState.pending = true;
     try {
-      if (typeof window.requestIdleCallback === 'function') {
-        window.requestIdleCallback.call(window, scan, { timeout: 800 });
+      if (booting() && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(() => scan());
+      } else if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback.call(window, scan, { timeout: 400 });
       } else {
         scan();
       }
@@ -717,7 +725,8 @@
 
   function schedule(delay) {
     if (timerState.pending) return;
-    const wait = Math.max(delay || 350, lastScan + MIN_GAP_MS - Date.now());
+    const gap = booting() ? BOOT_GAP_MS : MIN_GAP_MS;
+    const wait = Math.max(delay === undefined ? 350 : delay, lastScan + gap - Date.now());
     const due = Date.now() + wait;
     if (timerState.id !== null && timerState.due <= due) return;
     clearTimeout(timerState.id);
@@ -725,8 +734,9 @@
     timerState.id = setTimeout(() => { timerState.id = null; run(); }, wait);
   }
 
-  document.addEventListener('DOMContentLoaded', () => schedule(150));
-  window.addEventListener('load', () => schedule(300));
+  document.addEventListener('DOMContentLoaded', () => schedule(0));
+  document.addEventListener('readystatechange', () => schedule(0));
+  window.addEventListener('load', () => schedule(0));
   window.addEventListener('resize', () => schedule(400));
   window.addEventListener('scroll', () => schedule(900), { passive: true });
   document.addEventListener('pointerdown', () => schedule(250), { passive: true });
@@ -736,7 +746,7 @@
       if (insetEl && records.every(r => r.type === 'childList' &&
           Array.prototype.every.call(r.addedNodes, n => n === insetEl) &&
           Array.prototype.every.call(r.removedNodes, n => n === insetEl))) return;
-      schedule(600);
+      schedule(booting() ? 40 : 600);
     }).observe(document.documentElement, {
       childList: true,
       subtree: true,
@@ -746,5 +756,5 @@
   } catch (e) {
     console.warn('[Summit Probe] MutationObserver unavailable:', e);
   }
-  schedule(200);
+  schedule(0);
 })();
