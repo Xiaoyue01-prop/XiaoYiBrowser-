@@ -6,11 +6,6 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffColorFilter
-import android.graphics.Rect
-import android.graphics.RenderEffect
-import android.graphics.Shader
 import android.net.Uri
 import android.util.Log
 import android.util.Rational
@@ -20,7 +15,6 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
-import android.view.PixelCopy
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -85,7 +79,7 @@ import org.mozilla.geckoview.WebExtension
  * reports the bottom floating-toolbar reserve through GeckoView vertical clipping.
  *
  * In both Edge modes the strip above the page is the header colour when the extension reports a
- * pinned header, and a blurred copy of the page top otherwise. Normal-flow headers remain in the
+ * pinned header, and a page-colour gradient otherwise. Normal-flow headers remain in the
  * document and scroll naturally; only their initial flow position is inset below the status bar.
  */
 class GeckoPrototypeActivity : Activity() {
@@ -110,6 +104,8 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var surfaceView: GeckoSurfaceView
     private lateinit var pullRefreshHint: TextView
     private lateinit var topStrip: ImageView
+    private lateinit var topFadeController: GeckoTopFadeController
+    private lateinit var sessionLifecycleController: GeckoSessionLifecycleController
     private lateinit var blurTarget: BlurTarget
     private lateinit var bottomFade: View
     private lateinit var toolbar: ToolbarController
@@ -162,7 +158,6 @@ class GeckoPrototypeActivity : Activity() {
     private var toneDark: Boolean? = null
     private val accent = Theme.ACCENT_BLUE
     private var fullscreen = false
-    private var sampledColor = Color.BLACK
     private var copyState = "waiting"
     private val browserPrefs by lazy { getSharedPreferences("summit_gecko_browser", MODE_PRIVATE) }
     private val historyItems = mutableListOf<String>()
@@ -177,6 +172,7 @@ class GeckoPrototypeActivity : Activity() {
     private var probeMessages = 0
     private var probeHasFixed = false
     private var probeColor: Int? = null
+    private var probePageColor: Int? = null
     private var probeShifted = 0
     private var probeInset = 0.0
     // Message delivery is asynchronous: late startup handshakes must not overwrite scan results.
@@ -197,6 +193,15 @@ class GeckoPrototypeActivity : Activity() {
             )
 
             val payload = message as? JSONObject
+            // Synchronous settings response for the Gecko content-script bridge.
+            if (payload != null && payload.optString("type") == "settingsQuery") {
+                return GeckoResult.fromValue(
+                    JSONObject()
+                        .put("youtubeAdBlockEnabled", summitStore.adBlockEnabled && summitStore.youtubeAdBlockEnabled)
+                        .put("edgeMode", summitStore.edgeMode)
+                        .put("headerScroll", summitStore.headerScroll)
+                )
+            }
             // Bottom-lift poll của content script: trả lời ngay, không log để khỏi spam logcat.
             if (payload != null && payload.optString("type") == "bottomQuery") {
                 return GeckoResult.fromValue(bottomPayload())
@@ -408,6 +413,12 @@ class GeckoPrototypeActivity : Activity() {
                 Gravity.TOP
             )
         )
+        topFadeController = GeckoTopFadeController(
+            activity = this,
+            strip = topStrip,
+            insets = insetsController,
+            fallbackPageColor = { GlassSystem.pageSurfaceColor() }
+        )
 
         bottomFade = View(this).apply {
             background = GradientDrawable(
@@ -444,7 +455,7 @@ class GeckoPrototypeActivity : Activity() {
             },
             stripH = { if (fullscreen) 0 else statusTop },
             stripColor = { if (probeHasFixed) probeColor else null },
-            hideStrip = { h -> topStrip.visibility = if (h) View.INVISIBLE else View.VISIBLE },
+            hideStrip = { h -> topFadeController.setHidden(h) },
             onSwitch = { t -> if (t == null) createTab() else activateTab(t) }
         )
         root.addView(
@@ -566,6 +577,19 @@ class GeckoPrototypeActivity : Activity() {
             activity = this,
             requestNotificationPermission = ::ensureNotificationPermission,
             onVideoInfo = { w, h, title, subtitle -> pip.setVideoInfo(w, h, title, subtitle) }
+        )
+        sessionLifecycleController = GeckoSessionLifecycleController(
+            tabs = tabManager,
+            activeSession = { if (::session.isInitialized) session else null },
+            isMediaPlaying = { mediaController.isPlaying(it) },
+            beforeClose = { mediaController.forget(it) },
+            afterClose = { closed ->
+                loadingBySession.remove(closed)
+                progressBySession.remove(closed)
+                canGoBackMap.remove(closed)
+                canGoForwardMap.remove(closed)
+                scrollYBySession.remove(closed)
+            }
         )
         browserToolsController = GeckoBrowserToolsController(
             activity = this,
@@ -859,6 +883,7 @@ class GeckoPrototypeActivity : Activity() {
         if (toneDark != dark) {
             toneDark = dark
             GlassSystem.setPageBackground(tone, root)
+            if (::topFadeController.isInitialized) topFadeController.update(statusTop, fullscreen, summitStore.edgeMode)
         }
     }
 
@@ -1217,6 +1242,13 @@ class GeckoPrototypeActivity : Activity() {
         probeMessages++
         probeHasFixed = m.optBoolean("hasFixed", false)
         probeColor = parseCssColor(m.optString("color", ""))
+        probePageColor = parseCssColor(m.optString("pageColor", ""))
+        if (::topFadeController.isInitialized) {
+            topFadeController.setColors(
+                page = probePageColor,
+                fixedHeader = if (probeHasFixed) probeColor else null
+            )
+        }
         probeShifted = m.optInt("shifted", 0)
         probeInset = m.optDouble("inset", 0.0)
         val layerInfo = m.optJSONArray("layerInfo")
@@ -1245,6 +1277,8 @@ class GeckoPrototypeActivity : Activity() {
         probeMessages = 0
         probeHasFixed = false
         probeColor = null
+        probePageColor = null
+        if (::topFadeController.isInitialized) topFadeController.setColors(null, null)
         probeShifted = 0
         probeInset = 0.0
         probeScanStarted = false
@@ -1278,12 +1312,11 @@ class GeckoPrototypeActivity : Activity() {
             surfaceView.layoutParams = lp
         }
 
-        val stripHeight = if (fullscreen) 0 else statusTop
-        val sp = topStrip.layoutParams
-        if (sp.height != stripHeight) {
-            sp.height = stripHeight
-            topStrip.layoutParams = sp
-        }
+        topFadeController.update(
+            insetTop = statusTop,
+            isFullscreen = fullscreen,
+            edgeToEdge = summitStore.edgeMode
+        )
 
         val chrome = if (fullscreen) View.GONE else View.VISIBLE
         toolbar.bar.visibility = chrome
@@ -1328,36 +1361,16 @@ class GeckoPrototypeActivity : Activity() {
         updateLayout()
     }
 
-    // ---- status bar strip -----------------------------------------------------------------
+    // ---- status bar / Top Fade ------------------------------------------------------------
 
-    private fun luminance(c: Int): Double =
-        0.299 * Color.red(c) + 0.587 * Color.green(c) + 0.114 * Color.blue(c)
-
-    private fun setStripSolid(c: Int) {
-        sampledColor = c
-        topStrip.setImageDrawable(null)
-        topStrip.setRenderEffect(null)
-        topStrip.colorFilter = null
-        topStrip.setBackgroundColor(c)
-        insetsController.isAppearanceLightStatusBars = luminance(c) > 150
-    }
-
+    /** No screenshot blur here: the page-colour gradient is owned by GeckoTopFadeController. */
     private fun sampleTop() {
-        if (fullscreen || !::surfaceView.isInitialized) return
-        if (!surfaceView.isSurfaceReady || surfaceView.width <= 0 || statusTop <= 0) return
-        try {
-            val c = probeColor
-            if (probeHasFixed && c != null) {
-                setStripSolid(c)
-                copyState = "probe colour"
-                updateInfo()
-            } else {
-                sampleFade()
-            }
-        } catch (e: Exception) {
-            copyState = "error ${e.javaClass.simpleName}"
-            updateInfo()
-        }
+        if (fullscreen || !::topFadeController.isInitialized) return
+        topFadeController.update(
+            insetTop = statusTop,
+            isFullscreen = fullscreen,
+            edgeToEdge = summitStore.edgeMode
+        )
     }
 
     private fun capturePagePixels(done: (Bitmap?) -> Unit) {
@@ -1389,104 +1402,6 @@ class GeckoPrototypeActivity : Activity() {
             Log.w("SummitGecko", "Unable to request Gecko page capture", e)
             done(null)
         }
-    }
-
-    private fun sampleColor() {
-        capturePagePixels { page ->
-            if (page == null) {
-                sampleColorFromWindow(PixelCopy.ERROR_SOURCE_NO_DATA)
-                return@capturePagePixels
-            }
-            try {
-                val cropHeight = minOf(6, page.height)
-                val strip = Bitmap.createBitmap(page, 0, 0, page.width, cropHeight)
-                val tiny = Bitmap.createScaledBitmap(strip, 8, 1, true)
-                copyState = "Gecko capture"
-                applyColor(tiny)
-                if (tiny !== strip) tiny.recycle()
-                if (strip !== page) strip.recycle()
-            } catch (e: Exception) {
-                copyState = "Gecko capture failed ${e.javaClass.simpleName}"
-                sampleColorFromWindow(PixelCopy.ERROR_SOURCE_NO_DATA)
-            } finally {
-                if (!page.isRecycled) page.recycle()
-            }
-        }
-    }
-
-    private fun sampleColorFromWindow(surfaceCode: Int) {
-        try {
-            val loc = IntArray(2)
-            surfaceView.getLocationInWindow(loc)
-            val rect = Rect(loc[0], loc[1], loc[0] + surfaceView.width, loc[1] + 6)
-            val bmp = Bitmap.createBitmap(8, 1, Bitmap.Config.ARGB_8888)
-            PixelCopy.request(
-                window,
-                rect,
-                bmp,
-                PixelCopy.OnPixelCopyFinishedListener { code ->
-                    if (code == PixelCopy.SUCCESS) {
-                        copyState = "window ok (Gecko=$surfaceCode)"
-                        try { applyColor(bmp) } finally { bmp.recycle() }
-                    } else {
-                        copyState = "failed Gecko=$surfaceCode window=$code"
-                        bmp.recycle()
-                        updateInfo()
-                    }
-                },
-                ui
-            )
-        } catch (e: Exception) {
-            copyState = "failed Gecko=$surfaceCode window=${e.javaClass.simpleName}"
-            updateInfo()
-        }
-    }
-
-    private fun sampleFade() {
-        if (statusTop <= 0 || surfaceView.height < statusTop) return
-        capturePagePixels { page ->
-            if (page == null) {
-                copyState = "Gecko capture unavailable"
-                sampleColorFromWindow(PixelCopy.ERROR_SOURCE_NO_DATA)
-                return@capturePagePixels
-            }
-            try {
-                val cropHeight = minOf(statusTop, page.height)
-                val crop = Bitmap.createBitmap(page, 0, 0, page.width, cropHeight)
-                val scaled = Bitmap.createScaledBitmap(
-                    crop,
-                    maxOf(1, surfaceView.width / 8),
-                    maxOf(1, cropHeight / 8),
-                    true
-                )
-                if (crop !== page && crop !== scaled) crop.recycle()
-                copyState = "Gecko glass ok"
-                topStrip.setImageBitmap(scaled)
-                topStrip.setBackgroundColor(Color.TRANSPARENT)
-                topStrip.setRenderEffect(
-                    RenderEffect.createBlurEffect(16f, 16f, Shader.TileMode.CLAMP)
-                )
-                topStrip.colorFilter = PorterDuffColorFilter(
-                    Color.argb(60, 18, 22, 30),
-                    PorterDuff.Mode.SRC_ATOP
-                )
-                updateInfo()
-            } catch (e: Exception) {
-                copyState = "Gecko glass failed ${e.javaClass.simpleName}"
-                updateInfo()
-            } finally {
-                if (!page.isRecycled) page.recycle()
-            }
-        }
-    }
-
-    private fun applyColor(bmp: Bitmap) {
-        val px = IntArray(8)
-        bmp.getPixels(px, 0, 8, 0, 0, 8, 1)
-        // Median by luminance: ignores a logo or button sitting in the sampled row.
-        val c = px.sortedBy { luminance(it) }[4] or (0xFF shl 24)
-        setStripSolid(c)
-        updateInfo()
     }
 
     private fun updateInfo() {
@@ -1688,7 +1603,17 @@ class GeckoPrototypeActivity : Activity() {
 
     /** Tạo GeckoSession cho tab chưa có (tab khôi phục). Trả về null nếu Gecko không mở được. */
     private fun ensureSession(tab: TabManager.Tab, loadNow: Boolean): GeckoSession? {
-        tab.session?.let { return it }
+        val existing = tab.session
+        if (existing != null && runCatching { existing.isOpen }.getOrDefault(false)) return existing
+        if (existing != null) {
+            tab.session = null
+            mediaController.forget(existing)
+            loadingBySession.remove(existing)
+            progressBySession.remove(existing)
+            canGoBackMap.remove(existing)
+            canGoForwardMap.remove(existing)
+            scrollYBySession.remove(existing)
+        }
         return try {
             val created = newBrowserSession(tab.isPrivate)
             configureSession(created)
@@ -1714,11 +1639,25 @@ class GeckoPrototypeActivity : Activity() {
 
     private fun saveTabsNow() {
         ui.removeCallbacks(saveTabsRunnable)
-        if (!::summitStore.isInitialized || tabManager.count() == 0) return
+        if (!::summitStore.isInitialized) return
+        // An empty regular-tab export is meaningful (for example, only private tabs remain).
+        // Persist [] so stale regular tabs are not resurrected on the next launch.
         val tabs = tabManager.exportTabs()
-        if (tabs.isEmpty()) return
         runCatching { summitStore.saveTabs(tabs) }
             .onFailure { Log.w("SummitGecko", "Could not save tabs", it) }
+    }
+
+    /** Trim inactive GeckoSessions after tab switching has finished on the UI thread. */
+    private fun trimLiveSessionsSoon() {
+        if (!::sessionLifecycleController.isInitialized) return
+        ui.post {
+            if (isFinishing || isDestroyed || !::sessionLifecycleController.isInitialized) return@post
+            val evicted = sessionLifecycleController.trim()
+            if (evicted > 0) {
+                Log.i("SummitGeckoSessions", "Evicted $evicted background session(s); cap=${GeckoSessionLifecycleController.MAX_LIVE_SESSIONS}")
+                scheduleSaveTabs()
+            }
+        }
     }
 
     /** Xin quyền thông báo một lần (cần cho thông báo media và Live Update tải xuống). */
@@ -1770,6 +1709,7 @@ class GeckoPrototypeActivity : Activity() {
             if (!privateMode) browserPrefs.edit().putString("last_url", targetUrl).apply()
             updateLayout()
             scheduleSaveTabs()
+            trimLiveSessionsSoon()
         } catch (error: Exception) {
             next?.let { failed ->
                 tabManager.forSession(failed)?.let { failedTab -> tabManager.close(failedTab.id) }
@@ -1838,6 +1778,7 @@ class GeckoPrototypeActivity : Activity() {
             runCatching { surfaceView.attach(previous) }
             showToast("Không chuyển được tab: ${it.message}")
         }
+        trimLiveSessionsSoon()
     }
 
     /** Đóng một tab bất kỳ, kể cả tab nền. [TabManager] không gỡ tab cuối cùng. */
@@ -1856,7 +1797,7 @@ class GeckoPrototypeActivity : Activity() {
 
         if (wasActive) {
             val nextTab = tabManager.getActive()
-            val nextSession = nextTab?.session
+            val nextSession = nextTab?.let { it.session ?: ensureSession(it, loadNow = true) }
             if (nextTab != null && nextSession != null && nextSession.isOpen) {
                 session = nextSession
                 currentUrl = nextTab.url
@@ -1887,9 +1828,12 @@ class GeckoPrototypeActivity : Activity() {
             progressBySession.remove(old)
             canGoBackMap.remove(old)
             canGoForwardMap.remove(old)
+            scrollYBySession.remove(old)
         }
+        removed.session = null
         removed.thumbnail = null
         scheduleSaveTabs()
+        trimLiveSessionsSoon()
     }
 
     private fun closeCurrentTab() {

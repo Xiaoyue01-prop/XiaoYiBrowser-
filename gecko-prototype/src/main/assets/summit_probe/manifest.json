@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "Summit Probe",
   "version": "2.0",
-  "description": "Detects pinned and normal-flow top headers, offsets ordinary page flow with a reversible spacer margin, protects YouTube watch-player overlays, restores modified styles on route changes, and reports diagnostics.",
+  "description": "Detects pinned and normal-flow top headers, reports page colours, protects YouTube player overlays, applies safe YouTube ad cosmetics, and reports diagnostics.",
   "browser_specific_settings": {
     "gecko": {
       "id": "summit-probe@example.com"
@@ -15,7 +15,8 @@
       ],
       "js": [
         "probe.js",
-        "reserve.js"
+        "reserve.js",
+        "youtube.js"
       ],
       "run_at": "document_start",
       "all_frames": false

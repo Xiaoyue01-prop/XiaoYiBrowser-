@@ -27,6 +27,9 @@
   // the Android status bar, add a reversible margin to the page's top-level flow root.
   // The header remains in normal flow and continues to scroll with the document.
   const activeFlowOffsets = new Map();
+  let edgeModeEnabled = true;
+  let headerScrollEnabled = false;
+  let lastHeaderScrollMode = null;
   const PLAYER_TOP_OVERLAY_SELECTOR =
     '#movie_player .ytp-chrome-top, .html5-video-player .ytp-chrome-top, ' +
     '.ytm-player-control-overlay-top, .ytm-player-controls-top';
@@ -60,6 +63,7 @@
   const EXCLUDED_CONTEXT_RE = /(watch-metadata|video-primary-info|video-secondary-info|video-player|comments-entry|watch-next|movie_player|player-container|html5-video|ytp-chrome|ytp-title|ytp-gradient|ytp-tooltip|ytp-progress|ytp-controls)/i;
 
   function readInset() {
+    if (!edgeModeEnabled) return 0;
     try {
       const d = document.createElement('div');
       d.style.cssText =
@@ -98,6 +102,36 @@
       p = p.parentElement;
     }
     return '';
+  }
+
+  function pageBackgroundColor() {
+    const body = document.body;
+    const html = document.documentElement;
+    const candidates = [body, html, body && body.firstElementChild];
+    for (const el of candidates) {
+      if (!el) continue;
+      const own = getComputedStyle(el).backgroundColor;
+      if (alphaOf(own) > 0.5) return own;
+      const nested = solidBackground(el);
+      if (nested && alphaOf(nested) > 0.5) return nested;
+    }
+    return '';
+  }
+
+  function requestPageSettings() {
+    try {
+      if (typeof browser === 'undefined' || !browser.runtime ||
+          typeof browser.runtime.sendNativeMessage !== 'function') return;
+      browser.runtime.sendNativeMessage('browser', { type: 'settingsQuery' }).then(settings => {
+        if (!settings) return;
+        const nextEdge = settings.edgeMode !== false;
+        const nextHeader = settings.headerScroll === true;
+        const changed = nextEdge !== edgeModeEnabled || nextHeader !== headerScrollEnabled;
+        edgeModeEnabled = nextEdge;
+        headerScrollEnabled = nextHeader;
+        if (changed) schedule(100);
+      }).catch(() => {});
+    } catch (_) {}
   }
 
   function send(msg) {
@@ -303,6 +337,10 @@
 
   function restoreElement(el, state) {
     try {
+      if (state.inlinePosition !== undefined) {
+        if (state.inlinePosition) el.style.setProperty('position', state.inlinePosition, state.inlinePositionPriority || '');
+        else el.style.removeProperty('position');
+      }
       if (state.inlineTop) {
         el.style.setProperty('top', state.inlineTop, state.inlinePriority || '');
       } else {
@@ -416,6 +454,7 @@
 
   // Send this before waiting for document.body or running the DOM scanner.
   window.__summitProbeStatus = 'injected';
+  requestPageSettings();
   send({
     type: 'probe-start',
     href: location.href,
@@ -427,6 +466,10 @@
     const startedAt = Date.now();
     lastScan = startedAt;
     try {
+      if (lastHeaderScrollMode !== headerScrollEnabled) {
+        for (const [el, state] of Array.from(activeShifts.entries())) restoreElement(el, state);
+        lastHeaderScrollMode = headerScrollEnabled;
+      }
       if (!scanStarted) {
         scanStarted = true;
         send({ type: 'scan-start', href: location.href, timestamp: startedAt });
@@ -529,6 +572,13 @@
       }).sort((a, b) => a.top - b.top || b.width - a.width);
 
       const selected = new Set(candidates.map(c => c.el));
+      if (headerScrollEnabled) {
+        for (const [el, state] of activeShifts.entries()) {
+          if (!state.headerScrollConverted || !root.contains(el)) continue;
+          const style = getComputedStyle(el);
+          if (style.display !== 'none' && style.visibility !== 'hidden') selected.add(el);
+        }
+      }
       // Restore elements which stopped being pinned/header-like after a route or layout change.
       for (const [el, state] of Array.from(activeShifts.entries())) {
         if (!selected.has(el) || inset <= 0) restoreElement(el, state);
@@ -553,12 +603,37 @@
               baseTop: candidate.top,
               inlineTop: el.style.getPropertyValue('top'),
               inlinePriority: el.style.getPropertyPriority('top'),
-              appliedInset: 0
+              inlinePosition: el.style.getPropertyValue('position'),
+              inlinePositionPriority: el.style.getPropertyPriority('position'),
+              appliedInset: 0,
+              headerScrollConverted: false
             };
             activeShifts.set(el, state);
           }
-          const target = state.baseTop + inset;
-          el.style.setProperty('top', target + 'px', 'important');
+          if (headerScrollEnabled) {
+            const position = getComputedStyle(el).position;
+            if (position === 'fixed') {
+              const target = state.baseTop + inset;
+              el.style.setProperty('position', 'absolute', 'important');
+              el.style.setProperty('top', target + 'px', 'important');
+              const expectedViewportTop = target - (window.scrollY || 0);
+              if (Math.abs(el.getBoundingClientRect().top - expectedViewportTop) > 7) {
+                restoreElement(el, state);
+                continue;
+              }
+              state.headerScrollConverted = true;
+            } else if (position === 'sticky' && Math.abs(state.baseTop) < 0.5) {
+              el.style.setProperty('position', 'relative', 'important');
+              el.style.setProperty('top', '0px', 'important');
+              state.headerScrollConverted = true;
+            } else {
+              restoreElement(el, state);
+              continue;
+            }
+          } else {
+            const target = state.baseTop + inset;
+            el.style.setProperty('top', target + 'px', 'important');
+          }
           state.appliedInset = inset;
           shifted++;
         }
@@ -583,6 +658,7 @@
         type: 'top',
         hasFixed: candidates.length > 0,
         color: topLayer ? solidBackground(topLayer) : '',
+        pageColor: pageBackgroundColor(),
         shifted,
         layers: candidates.length,
         layerInfo: layers.slice(0, 5),

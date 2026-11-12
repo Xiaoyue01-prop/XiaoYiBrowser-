@@ -294,7 +294,11 @@ internal class GeckoMediaController(
         }
     }
 
-    /** Tab bị đóng: nếu đang theo dõi media của nó thì bỏ. */
+    /** True only while this session owns actively playing media; paused media may be evicted. */
+    fun isPlaying(session: GeckoSession): Boolean =
+        currentSession === session && info.active && info.playing
+
+    /** Tab bị đóng hoặc session bị evict: nếu đang theo dõi media của nó thì bỏ. */
     fun forget(session: GeckoSession) {
         if (currentSession === session) reset()
     }
