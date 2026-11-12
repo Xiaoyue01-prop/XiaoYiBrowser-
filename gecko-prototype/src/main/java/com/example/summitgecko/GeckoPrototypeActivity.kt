@@ -13,8 +13,6 @@ import android.net.Uri
 import android.os.Build
 import android.util.Rational
 import android.util.Log
-import android.util.Rational
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -31,7 +29,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.window.OnBackInvokedDispatcher
 import android.app.AlertDialog
-import android.app.PictureInPictureParams
 import android.graphics.drawable.GradientDrawable
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -73,8 +70,6 @@ import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.WebResponse
 import org.mozilla.geckoview.WebExtension
-import com.example.webedge.GeckoDialogProvider
-import com.example.webedge.GeckoCookieController
 import org.mozilla.geckoview.StorageController
 
 /**
@@ -93,7 +88,7 @@ import org.mozilla.geckoview.StorageController
  * pinned header, and a page-colour gradient otherwise. Normal-flow headers remain in the
  * document and scroll naturally; only their initial flow position is inset below the status bar.
  */
-class GeckoPrototypeActivity : Activity(), GeckoDialogProvider {
+class GeckoPrototypeActivity : Activity() {
 
     companion object {
         @Volatile
@@ -127,6 +122,7 @@ class GeckoPrototypeActivity : Activity(), GeckoDialogProvider {
     private lateinit var menuController: GeckoMenuController
     private lateinit var findBarController: GeckoFindBarController
     private lateinit var toaster: ToastController
+    private lateinit var glassDialog: GlassDialogController
     private lateinit var urlPillBlur: BlurView
     private lateinit var suggestBox: LinearLayout
     private lateinit var suggestBlur: BlurView
@@ -585,11 +581,12 @@ class GeckoPrototypeActivity : Activity(), GeckoDialogProvider {
         )
         downloadController = GeckoDownloadController(
             activity = this,
-            runtime = { runtime(this,
-            getRuntime = { runtime(this) }) },
+            root = root,
+            dialog = { glassDialog },
             isActiveSession = { it === session },
-            notify = { showToast(it) },
-            requestNotificationPermission = ::ensureNotificationPermission
+            notify = ::showToast,
+            requestNotificationPermission = ::ensureNotificationPermission,
+            getRuntime = { runtime(this) }
         )
         pip = PictureInPictureController(this)
         mediaController = GeckoMediaController(
@@ -612,31 +609,23 @@ class GeckoPrototypeActivity : Activity(), GeckoDialogProvider {
             }
         )
         browserToolsController = GeckoBrowserToolsController(
-            activity = this,
-            root = root,
-            blurTarget = blurTarget,
-            store = summitStore,
-            dialog = { glassDialog },
-            density = d,
+            activity = this, root = root, blurTarget = blurTarget, store = summitStore,
+            dialog = { glassDialog }, density = d,
             isNight = { GlassSystem.isDarkPage() },
-            foreground = { GlassSystem.pagePrimaryText() },
-            accent = accent,
+            foreground = { GlassSystem.pagePrimaryText() }, accent = accent,
             adBlockEnabled = { summitStore.adBlockEnabled },
             onToggleAdBlock = ::toggleAdBlock,
-            adStats = { adBlockedCount to adBlockedHosts },
-            onResetAdStats = { adBlockedCount = 0; adBlockedHosts = 0 },
             youtubeAdBlockEnabled = { summitStore.youtubeAdBlockEnabled },
             onToggleYoutubeAdBlock = ::toggleYoutubeAdBlock,
             isPrivateMode = { tabManager.isPrivateMode },
+            onClearPermissions = { permissionController.cancelAll() },
             onClearCookies = { clearWebData(StorageController.ClearFlags.COOKIES) },
             onClearCache = { clearWebData(StorageController.ClearFlags.NETWORK_CACHE or StorageController.ClearFlags.IMAGE_CACHE) },
             onClearSiteData = { clearWebData(StorageController.ClearFlags.ALL) },
             activeDownloads = { downloadController.activeDownloads() },
             onCancelDownload = { name -> downloadController.cancelByName(name) },
             cancelDownload = { id -> downloadController.cancel(id) },
-            onClearPermissions = { if (::permissionController.isInitialized) permissionController.cancelAll() },
-            onToast = ::showToast,
-    currentUrl = { currentUrl }
+            onToast = ::showToast, currentUrl = { currentUrl }
         )
         contextMenuController = GeckoContextMenuController(
             activity = this,
@@ -1023,10 +1012,6 @@ class GeckoPrototypeActivity : Activity(), GeckoDialogProvider {
             override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
                 runOnUiThread { downloadController.handle(session, response) }
             }
-
-            override fun onCrashed(session: GeckoSession) {
-                runOnUiThread { recoverCrashedSession(session) }
-            }
         })
         // Gecko reports page start/stop and percentage through the native ProgressDelegate.
         target.setProgressDelegate(object : GeckoSession.ProgressDelegate {
@@ -1345,74 +1330,65 @@ class GeckoPrototypeActivity : Activity(), GeckoDialogProvider {
     private fun installAdBlock() {
         if (!summitStore.adBlockEnabled) return
         runCatching {
-            runtime(this).webExtensionController.ensureBuiltIn(ADBLOCK_URI, ADBLOCK_ID)
-                .accept({ ext ->
-                    runOnUiThread {
-                        if (ext != null) {
-                            adBlockExtension = ext
-                            ext.setMessageDelegate(adBlockDelegate, "browser")
-                            tabManager.getAll().mapNotNull { it.session }.forEach { sess ->
-                                runCatching { sess.webExtensionController.registerWebExtension(ext, ADBLOCK_ID) }
-                            }
+            runtime(this).webExtensionController.ensureBuiltIn(ADBLOCK_URI, ADBLOCK_ID).accept({ ext ->
+                runOnUiThread {
+                    if (ext != null) {
+                        adBlockExtension = ext
+                        runCatching { ext.setMessageDelegate(adBlockDelegate, "summit_adblock") }
+                        tabManager.getAll().mapNotNull { it.session }.forEach { sess ->
+                            runCatching { sess.webExtensionController.setMessageDelegate(ext, adBlockDelegate, "summit_adblock") }
                         }
                     }
-                }, { err -> Log.w("SummitGecko", "AdBlock ext install failed", err) })
+                }
+            }, { err -> Log.w("SummitGecko", "AdBlock install failed", err) })
         }.onFailure { Log.w("SummitGecko", "AdBlock install error", it) }
     }
 
     private fun uninstallAdBlock() {
-        adBlockExtension?.let { ext ->
-            tabManager.getAll().mapNotNull { it.session }.forEach { sess ->
-                runCatching { sess.webExtensionController.unregisterWebExtension(ADBLOCK_ID) }
-            }
-            runCatching { runtime(this).webExtensionController.unbootstrap(ext) }
-        }
         adBlockExtension = null
-        adBlockedCount = 0; adBlockedHosts = 0
+        adBlockedCount = 0
+        adBlockedHosts = 0
     }
 
     private fun attachAdBlockToSession(target: GeckoSession) {
         val ext = adBlockExtension ?: return
-        runCatching { target.webExtensionController.registerWebExtension(ext, ADBLOCK_ID) }
-            .onFailure { Log.w("SummitGecko", "Could not attach AdBlock to session", it) }
+        runCatching { target.webExtensionController.setMessageDelegate(ext, adBlockDelegate, "summit_adblock") }
+            .onFailure { Log.w("SummitGecko", "Could not attach AdBlock delegate", it) }
     }
 
     private fun installPip() {
         runCatching {
-            runtime(this).webExtensionController.ensureBuiltIn(PIP_URI, PIP_ID)
-                .accept({ ext ->
-                    runOnUiThread {
-                        if (ext != null) {
-                            pipExtension = ext
-                            ext.setMessageDelegate(pipDelegate, "browser")
-                            tabManager.getAll().mapNotNull { it.session }.forEach { sess ->
-                                runCatching { sess.webExtensionController.registerWebExtension(ext, PIP_ID) }
-                            }
+            runtime(this).webExtensionController.ensureBuiltIn(PIP_URI, PIP_ID).accept({ ext ->
+                runOnUiThread {
+                    if (ext != null) {
+                        pipExtension = ext
+                        runCatching { ext.setMessageDelegate(pipDelegate, "summit_pip") }
+                        tabManager.getAll().mapNotNull { it.session }.forEach { sess ->
+                            runCatching { sess.webExtensionController.setMessageDelegate(ext, pipDelegate, "summit_pip") }
                         }
                     }
-                }, { err -> Log.w("SummitGecko", "PiP bridge install failed", err) })
+                }
+            }, { err -> Log.w("SummitGecko", "PiP bridge install failed", err) })
         }.onFailure { Log.w("SummitGecko", "PiP bridge install error", it) }
     }
 
     private fun attachPipToSession(target: GeckoSession) {
         val ext = pipExtension ?: return
-        runCatching { target.webExtensionController.registerWebExtension(ext, PIP_ID) }
-            .onFailure { Log.w("SummitGecko", "Could not attach PiP bridge", it) }
+        runCatching { target.webExtensionController.setMessageDelegate(ext, pipDelegate, "summit_pip") }
+            .onFailure { Log.w("SummitGecko", "Could not attach PiP delegate", it) }
     }
 
-    /** Nut PiP cua web -> vao PiP Android bang API chuan (khong phu thuoc ham cua PictureInPictureController). */
     private fun enterPipFromWeb() {
         if (isFinishing || isDestroyed || isInPictureInPictureMode) return
         runCatching {
             val b = PictureInPictureParams.Builder()
-            if (lastVideoW > 0 && lastVideoH > 0)
-                b.setAspectRatio(Rational(lastVideoW, lastVideoH))
+            if (lastVideoW > 0 && lastVideoH > 0) b.setAspectRatio(Rational(lastVideoW, lastVideoH))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) b.setAutoEnterEnabled(true)
             enterPictureInPictureMode(b.build())
         }.onFailure { Log.w("SummitGecko", "enterPipFromWeb failed", it) }
     }
 
-    private fun installProbe() {
+        private fun installProbe() {
         try {
             runtime(this).webExtensionController
                 .ensureBuiltIn(PROBE_URI, PROBE_ID)

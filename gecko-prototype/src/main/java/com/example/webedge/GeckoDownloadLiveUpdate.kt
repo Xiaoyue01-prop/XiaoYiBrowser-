@@ -39,7 +39,7 @@ object GeckoDownloadLiveUpdate {
     }
 
     /** Đang tải: [total] <= 0 nghĩa là chưa biết dung lượng (thanh chạy vô hạn). */
-    fun progress(context: Context, id: Long, name: String, downloaded: Long, total: Long) {
+    fun progress(context: Context, id: Int, name: String, downloaded: Long, total: Long) {
         runCatching {
             val appContext = context.applicationContext
             ensureChannel(appContext)
@@ -79,12 +79,12 @@ object GeckoDownloadLiveUpdate {
                 .setExtras(extras)
                 .setStyle(progressStyle)
                 .build()
-            manager.notify(id.toInt(), notification)
+            manager.notify(id, notification)
         }
     }
 
     /** Kết thúc (xong, hủy hoặc lỗi): thay thông báo đang chạy bằng thông báo thường, vuốt bỏ được. */
-    fun finish(context: Context, id: Long, name: String, message: String, success: Boolean) {
+    fun finish(context: Context, id: Int, name: String, message: String, success: Boolean) {
         runCatching {
             val appContext = context.applicationContext
             ensureChannel(appContext)
@@ -99,11 +99,11 @@ object GeckoDownloadLiveUpdate {
                 .setAutoCancel(true)
                 .setOngoing(false)
                 .build()
-            manager.notify(id.toInt(), notification)
+            manager.notify(id, notification)
         }
     }
 
-    private fun openAppPendingIntent(context: Context, id: Long): PendingIntent {
+    private fun openAppPendingIntent(context: Context, id: Int): PendingIntent {
         val intent = Intent().setClassName(context, "com.example.summitgecko.GeckoPrototypeActivity").apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -112,7 +112,7 @@ object GeckoDownloadLiveUpdate {
         )
     }
 
-    private fun cancelPendingIntent(context: Context, id: Long): PendingIntent {
+    private fun cancelPendingIntent(context: Context, id: Int): PendingIntent {
         val intent = Intent(context, GeckoDownloadActionReceiver::class.java).apply {
             action = ACTION_CANCEL_DOWNLOAD
             putExtra(EXTRA_DOWNLOAD_ID, id)

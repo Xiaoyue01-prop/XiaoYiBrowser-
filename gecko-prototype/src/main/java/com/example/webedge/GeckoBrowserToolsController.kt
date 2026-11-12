@@ -110,63 +110,33 @@ internal class GeckoBrowserToolsController(
         val dm = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val items = mutableListOf<DownloadItem>()
         runCatching {
-            dm.query(DownloadManager.Query()
-                .setSortOrder(DownloadManager.COLUMN_LAST_MODIFIED_TIMESTAMP + " DESC")).use { c ->
+            dm.query(DownloadManager.Query()).use { c ->
                 if (c == null) return@use
                 val idC = c.getColumnIndex(DownloadManager.COLUMN_ID)
-                val tiC = c.getColumnIndex(DownloadManager.COLUMN_TITLE)
-                val miC = c.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
-                val szC = c.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
-                val dlC = c.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-                val stC = c.getColumnIndex(DownloadManager.COLUMN_STATUS)
-                val urC = c.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
-                val ltC = c.getColumnIndex(DownloadManager.COLUMN_LAST_MODIFIED_TIMESTAMP)
+                val titleC = c.getColumnIndex(DownloadManager.COLUMN_TITLE)
+                val mimeC = c.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
+                val sizeC = c.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+                val downC = c.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+                val statusC = c.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                val uriC = c.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+                val timeC = c.getColumnIndex(DownloadManager.COLUMN_LAST_MODIFIED_TIMESTAMP)
                 while (c.moveToNext()) {
-                    val st = c.getInt(stC)
+                    val st = c.getInt(statusC)
                     val done = st == DownloadManager.STATUS_SUCCESSFUL
                     val failed = st == DownloadManager.STATUS_FAILED
-                    val uriStr = if (urC >= 0) c.getString(urC).orEmpty() else ""
-                    val fileUri = if (uriStr.isNotBlank())
-                        (runCatching { Uri.parse(uriStr) }.getOrNull() ?: Uri.EMPTY) else Uri.EMPTY
+                    val uriStr = if (uriC >= 0) c.getString(uriC).orEmpty() else ""
+                    val fileUri = if (uriStr.isNotBlank()) runCatching { Uri.parse(uriStr) }.getOrNull() ?: Uri.EMPTY else Uri.EMPTY
                     items += DownloadItem(
-                        id = c.getLong(idC),
-                        title = if (tiC >= 0) c.getString(tiC).orEmpty().ifBlank { "Tệp" } else "Tệp",
-                        mime = if (miC >= 0) c.getString(miC).orEmpty() else "",
+                        id = if (idC >= 0) c.getLong(idC) else 0L,
+                        title = if (titleC >= 0) c.getString(titleC).orEmpty().ifBlank { "Tệp" } else "Tệp",
+                        mime = if (mimeC >= 0) c.getString(mimeC).orEmpty() else "",
                         uri = fileUri,
-                        size = if (szC >= 0) c.getLong(szC).coerceAtLeast(0L) else 0L,
+                        size = if (sizeC >= 0) c.getLong(sizeC).coerceAtLeast(0L) else 0L,
                         isPending = !done && !failed,
-                        modifiedAt = if (ltC >= 0) c.getLong(ltC) else 0L,
-                        read = if (dlC >= 0) c.getLong(dlC) else 0L,
-                        total = if (szC >= 0) c.getLong(szC) else -1L
+                        modifiedAt = if (timeC >= 0) c.getLong(timeC) else 0L,
+                        read = if (downC >= 0) c.getLong(downC) else 0L,
+                        total = if (sizeC >= 0) c.getLong(sizeC) else -1L
                     )
-                }
-            }
-        }.onFailure { onToast("Không đọc được danh sách tải xuống") }
-        return items
-    }
-
-    @Suppress("unused")
-    private fun queryDownloadsOld(): List<DownloadItem> {
-        val items = mutableListOf<DownloadItem>()
-        val active = activeDownloads()
-        val projection = arrayOf(MediaStore.Downloads._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.SIZE, MediaStore.Downloads.IS_PENDING, MediaStore.MediaColumns.DATE_ADDED)
-        val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
-        runCatching {
-            activity.contentResolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI, projection, selection, arrayOf("Download/Summit/"), "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
-                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-                val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
-                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
-                val pendingCol = cursor.getColumnIndexOrThrow(MediaStore.Downloads.IS_PENDING)
-                val dateCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idCol)
-                    val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
-                    val nm = cursor.getString(nameCol).orEmpty().ifBlank { "Tệp tải xuống" }
-                    val mt = active.firstOrNull { it.name == nm }
-                    items += DownloadItem(id, nm, cursor.getString(mimeCol).orEmpty(), uri,
-                        cursor.getLong(sizeCol), cursor.getInt(pendingCol) == 1,
-                        cursor.getLong(dateCol) * 1000L, mt?.read ?: 0L, mt?.total ?: -1L)
                 }
             }
         }.onFailure { onToast("Không đọc được danh sách tải xuống") }

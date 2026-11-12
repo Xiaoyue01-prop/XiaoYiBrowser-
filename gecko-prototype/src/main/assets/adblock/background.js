@@ -15,32 +15,52 @@ const BLOCKED = new Set([
 "mediaplex.com","yieldmanager.com","yieldmo.com","yengo.com",
 "ziffdavis.com","zergnet.com","zimbio.com","zooplankton.com"
 ]);
+let enabled = false;
 let blockedCount = 0;
 const hostSet = new Set();
+
+function postStats() {
+  try {
+    browser.runtime.sendMessage("summit_adblock", {
+      type: "adblock_stats",
+      blocked: blockedCount,
+      hosts: hostSet.size
+    }).catch(() => {});
+  } catch (e) {}
+}
+
+function pollSettings() {
+  try {
+    browser.runtime.sendMessage("summit_adblock", { type: "settingsQuery" })
+      .then((r) => { enabled = !!(r && r.enabled); })
+      .catch(() => {});
+  } catch (e) {}
+}
 
 function shouldBlock(url) {
   try {
     const h = new URL(url).hostname.toLowerCase();
-    for (const d of BLOCKED) { if (h === d || h.endsWith("." + d)) return d; }
+    for (const d of BLOCKED) {
+      if (h === d || h.endsWith("." + d)) return d;
+    }
   } catch (_) {}
   return null;
 }
 
+pollSettings();
+setInterval(pollSettings, 5000);
+
 browser.webRequest.onBeforeRequest.addListener(
   (details) => {
+    if (!enabled) return;
     const matched = shouldBlock(details.url);
     if (matched) {
       blockedCount++;
       hostSet.add(matched);
-      browser.runtime.sendMessage({ type: "adblock_stats", blocked: blockedCount, hosts: hostSet.size });
+      postStats();
       return { cancel: true };
     }
   },
   { urls: ["<all_urls>"] },
   ["blocking"]
 );
-
-browser.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "get_adblock_stats") return Promise.resolve({ blocked: blockedCount, hosts: hostSet.size });
-  if (msg.type === "reset_adblock_stats") { blockedCount = 0; hostSet.clear(); return Promise.resolve({ ok: true }); }
-});
