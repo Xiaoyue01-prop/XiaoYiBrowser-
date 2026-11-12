@@ -625,6 +625,8 @@ class GeckoPrototypeActivity : Activity() {
             activeDownloads = { downloadController.activeDownloads() },
             onCancelDownload = { name -> downloadController.cancelByName(name) },
             cancelDownload = { id -> downloadController.cancel(id) },
+            adStats = { adBlockedCount to adBlockedHosts },
+            onResetAdStats = { adBlockedCount = 0; adBlockedHosts = 0 },
             onToast = ::showToast, currentUrl = { currentUrl }
         )
         contextMenuController = GeckoContextMenuController(

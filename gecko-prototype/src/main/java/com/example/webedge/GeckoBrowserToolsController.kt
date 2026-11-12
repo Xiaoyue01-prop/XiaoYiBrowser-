@@ -39,18 +39,18 @@ internal class GeckoBrowserToolsController(
     private val accent: Int,
     private val adBlockEnabled: () -> Boolean,
     private val onToggleAdBlock: () -> Unit,
-    private val adStats: () -> Pair<Int, Int>,
-    private val onResetAdStats: () -> Unit,
     private val youtubeAdBlockEnabled: () -> Boolean,
     private val onToggleYoutubeAdBlock: () -> Unit,
     private val isPrivateMode: () -> Boolean,
+    private val onClearPermissions: () -> Unit,
     private val onClearCookies: () -> Unit,
     private val onClearCache: () -> Unit,
     private val onClearSiteData: () -> Unit,
     private val activeDownloads: () -> List<GeckoDownloadController.ActiveDownload>,
-    private val cancelDownload: (Long) -> Unit,
     private val onCancelDownload: (String) -> Unit,
-    private val onClearPermissions: () -> Unit,
+    private val cancelDownload: (Long) -> Unit,
+    private val adStats: () -> Pair<Int, Int>,
+    private val onResetAdStats: () -> Unit,
     private val onToast: (String) -> Unit,
     private val currentUrl: () -> String
 ) {
@@ -110,8 +110,8 @@ internal class GeckoBrowserToolsController(
         val dm = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val items = mutableListOf<DownloadItem>()
         runCatching {
-            dm.query(DownloadManager.Query()).use { c ->
-                if (c == null) return@use
+            val cursor = dm.query(DownloadManager.Query()) ?: return@runCatching
+            cursor.use { c ->
                 val idC = c.getColumnIndex(DownloadManager.COLUMN_ID)
                 val titleC = c.getColumnIndex(DownloadManager.COLUMN_TITLE)
                 val mimeC = c.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
@@ -234,15 +234,15 @@ internal class GeckoBrowserToolsController(
 
     private fun renderPrivacy(body: LinearLayout) {
         activeToneUpdates.clear(); body.removeAllViews()
-        val statsCard = card()
+                val statsCard = card()
         statsCard.addView(text("Bảo vệ theo dõi của Gecko", 14f, foreground(), true))
-        statsCard.addView(text("GeckoView sử dụng Enhanced Tracking Protection (ETP) + Summit AdBlock để chặn trình theo dõi, quảng cáo và mã độc.", 13f, muted).apply { setPadding(0, dp(5), 0, 0) })
+        statsCard.addView(text("GeckoView sử dụng Enhanced Tracking Protection (ETP) và Summit AdBlock để chặn trình theo dõi, quảng cáo và mã độc.", 13f, muted).apply { setPadding(0, dp(5), 0, 0) })
         val statRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, 0) }
-        val (blocked, hosts) = adStats()
-        statRow.addView(text("$blocked request bị chặn", 13f, foreground(), true), LinearLayout.LayoutParams(0, -2, 1f))
-        statRow.addView(text("$hosts host", 12f, muted), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(8) })
+        val stats = runCatching { adStats() }.getOrDefault(0 to 0)
+        statRow.addView(text("${stats.first} request bị chặn", 13f, foreground(), true), LinearLayout.LayoutParams(0, -2, 1f))
+        statRow.addView(text("${stats.second} host", 12f, muted), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(8) })
         statRow.addView(actionButton("Đặt lại", muted) { onResetAdStats(); renderPrivacy(body) }, LinearLayout.LayoutParams(-2, dp(32)))
-        statsCard.addView(statRow) (ETP) để chặn trình theo dõi và mã độc.", 13f, muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
+        statsCard.addView(statRow)
         body.addView(statsCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
 
         val filterCard = card()
