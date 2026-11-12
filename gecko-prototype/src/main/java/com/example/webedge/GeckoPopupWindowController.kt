@@ -1,5 +1,6 @@
 package com.example.webedge
 
+import org.mozilla.geckoview.AllowOrDeny
 import android.app.Activity
 import android.app.Dialog
 import android.graphics.Outline
@@ -163,10 +164,10 @@ class GeckoPopupWindowController(
             override fun onLoadRequest(
                 session: GeckoSession,
                 request: GeckoSession.NavigationDelegate.LoadRequest
-            ): GeckoResult<GeckoSession.NavigationDelegate.AllowOrDeny>? {
+            ): GeckoResult<AllowOrDeny>? {
                 if (request.isRedirect) return null
                 return if (openExternal(request.uri, session))
-                    GeckoResult.fromValue(GeckoSession.NavigationDelegate.AllowOrDeny.DENY) else null
+                    GeckoResult.fromValue(AllowOrDeny.DENY) else null
             }
 
             override fun onLocationChange(session: GeckoSession, url: String?, permissions: MutableList<GeckoSession.PermissionDelegate.ContentPermission>, hasUserGesture: Boolean) {

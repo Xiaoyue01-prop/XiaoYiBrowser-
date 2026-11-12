@@ -1,5 +1,6 @@
 package com.example.summitgecko
 
+import org.mozilla.geckoview.AllowOrDeny
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -1040,10 +1041,10 @@ class GeckoPrototypeActivity : Activity() {
             override fun onLoadRequest(
                 session: GeckoSession,
                 request: GeckoSession.NavigationDelegate.LoadRequest
-            ): GeckoResult<GeckoSession.NavigationDelegate.AllowOrDeny>? {
+            ): GeckoResult<AllowOrDeny>? {
                 if (request.isRedirect) return null
                 return if (openExternalUrl(request.uri))
-                    GeckoResult.fromValue(GeckoSession.NavigationDelegate.AllowOrDeny.DENY) else null
+                    GeckoResult.fromValue(AllowOrDeny.DENY) else null
             }
 
             override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {

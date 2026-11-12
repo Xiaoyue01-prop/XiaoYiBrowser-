@@ -132,7 +132,7 @@ internal class GeckoDownloadController(
                     Log.w(TAG, "Image download failed", e)
                     main.post { notify("Không thể tải hình ảnh này") }
                 }
-            }.apply { isDaemon = true; name = "SummitImageFetch" }.start()
+            }.apply { isDaemon = true; this.name = "SummitImageFetch" }.start()
         }
     }
 
@@ -191,7 +191,7 @@ internal class GeckoDownloadController(
             } finally {
                 active.remove(id)
             }
-        }.apply { isDaemon = true; name = "SummitDownload-$id" }.start()
+        }.apply { isDaemon = true; this.name = "SummitDownload-$id" }.start()
     }
 
     private fun formatBytes(bytes: Long): String {
