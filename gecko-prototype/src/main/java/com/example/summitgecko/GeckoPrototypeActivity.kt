@@ -791,7 +791,6 @@ class GeckoPrototypeActivity : Activity() {
     /** Same placement rules as Summit's MainActivity.applyInsets. */
     private fun applyInsets() {
         if (!::toolbar.isInitialized) return
-        }
         val bottom = maxOf(insetBottom, imeBottom) + dp(10)
 
         val barLp = toolbar.bar.layoutParams as FrameLayout.LayoutParams
