@@ -46,6 +46,8 @@ import com.example.webedge.GeckoPermissionController
 import com.example.webedge.GeckoPopupWindowController
 import com.example.webedge.GeckoPromptController
 import com.example.webedge.GeckoSuggestionController
+import com.example.webedge.GeckoTopFadeController
+import com.example.webedge.GeckoSessionLifecycleController
 import com.example.webedge.OrbMenuController
 import com.example.webedge.GlassDialogController
 import com.example.webedge.Store
@@ -874,6 +876,10 @@ class GeckoPrototypeActivity : Activity() {
         if (::menuController.isInitialized) menuController.relayout()
         updateLayout()
     }
+
+    /** Relative luminance approximation used to adapt the glass tint to page tone. */
+    private fun luminance(color: Int): Double =
+        0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)
 
     /** Adapt the glass tint and icon colours to the page behind it (dark / light). */
     private fun syncPageTone() {
