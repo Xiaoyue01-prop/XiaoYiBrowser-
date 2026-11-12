@@ -7,7 +7,11 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.content.pm.ActivityInfo
+import android.app.PictureInPictureParams
 import android.net.Uri
+import android.os.Build
+import android.util.Rational
 import android.util.Log
 import android.util.Rational
 import android.os.Build
@@ -69,6 +73,8 @@ import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.WebResponse
 import org.mozilla.geckoview.WebExtension
+import com.example.webedge.GeckoDialogProvider
+import com.example.webedge.GeckoCookieController
 import org.mozilla.geckoview.StorageController
 
 /**
@@ -87,7 +93,7 @@ import org.mozilla.geckoview.StorageController
  * pinned header, and a page-colour gradient otherwise. Normal-flow headers remain in the
  * document and scroll naturally; only their initial flow position is inset below the status bar.
  */
-class GeckoPrototypeActivity : Activity() {
+class GeckoPrototypeActivity : Activity(), GeckoDialogProvider {
 
     companion object {
         @Volatile
@@ -102,6 +108,10 @@ class GeckoPrototypeActivity : Activity() {
         private const val PROBE_URI = "resource://android/assets/summit_probe/"
         private const val PROBE_ID = "summit-probe@example.com"
         private const val PROBE_LOG_TAG = "SummitProbe"
+        private const val PIP_URI = "resource://android/assets/summit_pip/"
+        private const val PIP_ID = "summit-pip@example.com"
+        private const val ADBLOCK_URI = "resource://android/assets/adblock/"
+        private const val ADBLOCK_ID = "summit-adblock@example.com"
         private const val SAMPLE_INTERVAL_MS = 300L
     }
 
@@ -132,7 +142,7 @@ class GeckoPrototypeActivity : Activity() {
     private lateinit var session: GeckoSession
     private val tabManager = TabManager()
     private lateinit var tabSwitcher: TabSwitcherController
-    private lateinit var glassDialog: GlassDialogController
+    
     private lateinit var popupController: GeckoPopupWindowController
     private lateinit var permissionController: GeckoPermissionController
     private lateinit var promptController: GeckoPromptController
@@ -176,13 +186,40 @@ class GeckoPrototypeActivity : Activity() {
     private var probeColor: Int? = null
     private var probePageColor: Int? = null
     private var activityResumed = false
+    private var lastVideoW: Int = 0
+    private var lastVideoH: Int = 0
     private var lastTone: Int? = null
     private var popupPermission: GeckoPermissionController? = null
+    private var adBlockExtension: WebExtension? = null
+    private var pipExtension: WebExtension? = null
+    private var adBlockedCount: Int = 0
+    private var adBlockedHosts: Int = 0
     private var probeShifted = 0
     private var probeInset = 0.0
     // Message delivery is asynchronous: late startup handshakes must not overwrite scan results.
     private var probeScanStarted = false
 
+
+    private val adBlockDelegate = object : WebExtension.MessageDelegate {
+        override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
+            val m = message as? JSONObject ?: return null
+            if (m.optString("type") == "adblock_stats") {
+                runOnUiThread {
+                    adBlockedCount = m.optInt("blocked", 0)
+                    adBlockedHosts = m.optInt("hosts", 0)
+                }
+            }
+            return null
+        }
+    }
+
+    private val pipDelegate = object : WebExtension.MessageDelegate {
+        override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
+            val m = message as? JSONObject ?: return null
+            if (m.optString("type") == "pipRequest") runOnUiThread { enterPipFromWeb() }
+            return null
+        }
+    }
 
     private val probeDelegate = object : WebExtension.MessageDelegate {
         override fun onMessage(
@@ -548,8 +585,8 @@ class GeckoPrototypeActivity : Activity() {
         )
         downloadController = GeckoDownloadController(
             activity = this,
-            root = root,
-            dialog = { glassDialog },
+            runtime = { runtime(this,
+            getRuntime = { runtime(this) }) },
             isActiveSession = { it === session },
             notify = { showToast(it) },
             requestNotificationPermission = ::ensureNotificationPermission
@@ -558,7 +595,8 @@ class GeckoPrototypeActivity : Activity() {
         mediaController = GeckoMediaController(
             activity = this,
             requestNotificationPermission = ::ensureNotificationPermission,
-            onVideoInfo = { w, h, title, subtitle -> pip.setVideoInfo(w, h, title, subtitle) }
+            onVideoInfo = { w, h, title, subtitle -> lastVideoW = w; lastVideoH = h
+            pip.setVideoInfo(w, h, title, subtitle) }
         )
         sessionLifecycleController = GeckoSessionLifecycleController(
             tabs = tabManager,
@@ -585,6 +623,8 @@ class GeckoPrototypeActivity : Activity() {
             accent = accent,
             adBlockEnabled = { summitStore.adBlockEnabled },
             onToggleAdBlock = ::toggleAdBlock,
+            adStats = { adBlockedCount to adBlockedHosts },
+            onResetAdStats = { adBlockedCount = 0; adBlockedHosts = 0 },
             youtubeAdBlockEnabled = { summitStore.youtubeAdBlockEnabled },
             onToggleYoutubeAdBlock = ::toggleYoutubeAdBlock,
             isPrivateMode = { tabManager.isPrivateMode },
@@ -593,6 +633,7 @@ class GeckoPrototypeActivity : Activity() {
             onClearSiteData = { clearWebData(StorageController.ClearFlags.ALL) },
             activeDownloads = { downloadController.activeDownloads() },
             onCancelDownload = { name -> downloadController.cancelByName(name) },
+            cancelDownload = { id -> downloadController.cancel(id) },
             onClearPermissions = { if (::permissionController.isInitialized) permissionController.cancelAll() },
             onToast = ::showToast,
     currentUrl = { currentUrl }
@@ -786,6 +827,7 @@ class GeckoPrototypeActivity : Activity() {
         }
         surfaceView.attach(session)
         installProbe()
+        installPip()
         applyInsets()
     }
 
@@ -981,6 +1023,10 @@ class GeckoPrototypeActivity : Activity() {
             override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
                 runOnUiThread { downloadController.handle(session, response) }
             }
+
+            override fun onCrashed(session: GeckoSession) {
+                runOnUiThread { recoverCrashedSession(session) }
+            }
         })
         // Gecko reports page start/stop and percentage through the native ProgressDelegate.
         target.setProgressDelegate(object : GeckoSession.ProgressDelegate {
@@ -1129,6 +1175,7 @@ class GeckoPrototypeActivity : Activity() {
         ))
         s.setMediaSessionDelegate(mediaController.delegate)
         attachProbeToSession(s)
+        attachAdBlockToSession(s)
     }
 
     private fun clearWebData(flags: Long) {
@@ -1160,12 +1207,69 @@ class GeckoPrototypeActivity : Activity() {
     }
 
     /** Một số ROM hiện lại system bars sau khi xoay màn hình / resume. */
+    /** Khoa man hinh theo ti le khung hinh video khi vao fullscreen (giong Safari/Chrome).
+     *  Khong biet kich thuoc -> mac dinh ngang (haau het video web la ngang). */
+    private fun applyFullscreenOrientation(on: Boolean) {
+        runCatching {
+            requestedOrientation = if (on) {
+                when {
+                    lastVideoW > 0 && lastVideoH > 0 && lastVideoW < lastVideoH ->
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                    else -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                }
+            } else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
     private fun reapplyImmersiveIfShowing() {
         if (fullscreen && !isFinishing && !isDestroyed) {
             insetsController.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             insetsController.hide(WindowInsetsCompat.Type.systemBars())
         }
+    }
+
+    /** Content process crash: tao session moi cho tab va tai lai URL cu. */
+    private fun recoverCrashedSession(crashed: GeckoSession) {
+        val tab = tabManager.forSession(crashed) ?: return
+        val url = tab.url.ifBlank { summitStore.homeUrl.ifBlank { "https://www.google.com/" } }
+        Log.w("SummitGecko", "Content process crashed for tab ${tab.id}, recovering: $url")
+
+        runCatching { if (crashed.isOpen) crashed.close() }
+        mediaController.forget(crashed)
+        loadingBySession.remove(crashed)
+        progressBySession.remove(crashed)
+        canGoBackMap.remove(crashed)
+        canGoForwardMap.remove(crashed)
+        scrollYBySession.remove(crashed)
+
+        val fresh = newBrowserSession(tab.isPrivate)
+        configureSession(fresh)
+        runCatching { fresh.open(runtime(this)) }
+        attachProbeToSession(fresh)
+        runCatching { attachAdBlockToSession(fresh) }
+        runCatching { attachPipToSession(fresh) }
+
+        tab.session = fresh
+        loadingBySession[fresh] = false
+        progressBySession[fresh] = 0
+        if (tab.desktop) applyDesktopMode(fresh, true)
+
+        if (tab === tabManager.getActive()) {
+            session = fresh
+            surfaceView.attach(fresh)
+            fresh.setActive(true)
+            fresh.setFocused(true)
+            currentUrl = url
+            showAddress(url)
+            toolbar.setLoading(false, 0)
+            resetProbeState()
+            updateLayout()
+        }
+
+        fresh.loadUri(url)
+        showToast("Tab bi loi, dang tai lai…")
+        scheduleSaveTabs()
     }
 
     private fun pageSwipeAvailable(): Boolean =
@@ -1238,6 +1342,76 @@ class GeckoPrototypeActivity : Activity() {
 
     // ---- WebExtension probe ---------------------------------------------------------------
 
+    private fun installAdBlock() {
+        if (!summitStore.adBlockEnabled) return
+        runCatching {
+            runtime(this).webExtensionController.ensureBuiltIn(ADBLOCK_URI, ADBLOCK_ID)
+                .accept({ ext ->
+                    runOnUiThread {
+                        if (ext != null) {
+                            adBlockExtension = ext
+                            ext.setMessageDelegate(adBlockDelegate, "browser")
+                            tabManager.getAll().mapNotNull { it.session }.forEach { sess ->
+                                runCatching { sess.webExtensionController.registerWebExtension(ext, ADBLOCK_ID) }
+                            }
+                        }
+                    }
+                }, { err -> Log.w("SummitGecko", "AdBlock ext install failed", err) })
+        }.onFailure { Log.w("SummitGecko", "AdBlock install error", it) }
+    }
+
+    private fun uninstallAdBlock() {
+        adBlockExtension?.let { ext ->
+            tabManager.getAll().mapNotNull { it.session }.forEach { sess ->
+                runCatching { sess.webExtensionController.unregisterWebExtension(ADBLOCK_ID) }
+            }
+            runCatching { runtime(this).webExtensionController.unbootstrap(ext) }
+        }
+        adBlockExtension = null
+        adBlockedCount = 0; adBlockedHosts = 0
+    }
+
+    private fun attachAdBlockToSession(target: GeckoSession) {
+        val ext = adBlockExtension ?: return
+        runCatching { target.webExtensionController.registerWebExtension(ext, ADBLOCK_ID) }
+            .onFailure { Log.w("SummitGecko", "Could not attach AdBlock to session", it) }
+    }
+
+    private fun installPip() {
+        runCatching {
+            runtime(this).webExtensionController.ensureBuiltIn(PIP_URI, PIP_ID)
+                .accept({ ext ->
+                    runOnUiThread {
+                        if (ext != null) {
+                            pipExtension = ext
+                            ext.setMessageDelegate(pipDelegate, "browser")
+                            tabManager.getAll().mapNotNull { it.session }.forEach { sess ->
+                                runCatching { sess.webExtensionController.registerWebExtension(ext, PIP_ID) }
+                            }
+                        }
+                    }
+                }, { err -> Log.w("SummitGecko", "PiP bridge install failed", err) })
+        }.onFailure { Log.w("SummitGecko", "PiP bridge install error", it) }
+    }
+
+    private fun attachPipToSession(target: GeckoSession) {
+        val ext = pipExtension ?: return
+        runCatching { target.webExtensionController.registerWebExtension(ext, PIP_ID) }
+            .onFailure { Log.w("SummitGecko", "Could not attach PiP bridge", it) }
+    }
+
+    /** Nut PiP cua web -> vao PiP Android bang API chuan (khong phu thuoc ham cua PictureInPictureController). */
+    private fun enterPipFromWeb() {
+        if (isFinishing || isDestroyed || isInPictureInPictureMode) return
+        runCatching {
+            val b = PictureInPictureParams.Builder()
+            if (lastVideoW > 0 && lastVideoH > 0)
+                b.setAspectRatio(Rational(lastVideoW, lastVideoH))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) b.setAutoEnterEnabled(true)
+            enterPictureInPictureMode(b.build())
+        }.onFailure { Log.w("SummitGecko", "enterPipFromWeb failed", it) }
+    }
+
     private fun installProbe() {
         try {
             runtime(this).webExtensionController
@@ -1280,6 +1454,7 @@ class GeckoPrototypeActivity : Activity() {
         runCatching {
             target.webExtensionController.setMessageDelegate(extension, probeDelegate, "browser")
         }.onFailure { Log.w(PROBE_LOG_TAG, "Could not attach Probe to session", it) }
+        attachPipToSession(target)
     }
 
     private fun loadInitialTestPage() {
@@ -1446,6 +1621,7 @@ class GeckoPrototypeActivity : Activity() {
 
     private fun setFullscreen(on: Boolean) {
         fullscreen = on
+        applyFullscreenOrientation(on)
         if (::pip.isInitialized && ::surfaceView.isInitialized) pip.setVideoActive(on, surfaceView)
         if (on) {
             insetsController.hide(WindowInsetsCompat.Type.systemBars())
@@ -1712,6 +1888,7 @@ class GeckoPrototypeActivity : Activity() {
             configureSession(created)
             created.open(runtime(this))
             attachProbeToSession(created)
+            attachAdBlockToSession(created)
             tab.session = created
             loadingBySession[created] = false
             progressBySession[created] = 0
@@ -1794,7 +1971,7 @@ class GeckoPrototypeActivity : Activity() {
             configureSession(created)
             created.open(runtime(this))
             attachProbeToSession(created)
-
+            attachAdBlockToSession(created)
             previous.setFocused(false)
             previous.setActive(false)
             tabManager.add(created, targetUrl, isPrivate = privateMode)
@@ -1984,6 +2161,7 @@ class GeckoPrototypeActivity : Activity() {
     private fun toggleAdBlock() {
         summitStore.adBlockEnabled = !summitStore.adBlockEnabled
         applyAdBlock()
+        if (summitStore.adBlockEnabled) installAdBlock() else uninstallAdBlock()
         showToast(if (summitStore.adBlockEnabled) "Đã bật chặn quảng cáo" else "Đã tắt chặn quảng cáo")
         resetProbeState()
         session.reload(GeckoSession.LOAD_FLAGS_BYPASS_CACHE)
@@ -2106,6 +2284,7 @@ class GeckoPrototypeActivity : Activity() {
     override fun onResume() {
         super.onResume()
         activityResumed = true
+        if (::blurTarget.isInitialized) blurTarget.resume()
         requestHighRefreshRate()
         reapplyImmersiveIfShowing()
         if (::session.isInitialized) {
@@ -2119,6 +2298,7 @@ class GeckoPrototypeActivity : Activity() {
     override fun onPause() {
         activityResumed = false
         ui.removeCallbacks(tick)
+        if (::blurTarget.isInitialized) blurTarget.pause()
         if (::summitStore.isInitialized) summitStore.flush()
         saveTabsNow()
         // Keep Gecko's media pipeline alive while Android displays this Activity in PiP.
@@ -2126,6 +2306,8 @@ class GeckoPrototypeActivity : Activity() {
             session.setFocused(false)
             session.setActive(false)
         }
+        if (::sessionLifecycleController.isInitialized) sessionLifecycleController.trim(3)
+
         super.onPause()
     }
 

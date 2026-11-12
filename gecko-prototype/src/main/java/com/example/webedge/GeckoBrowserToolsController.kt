@@ -9,6 +9,8 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.app.DownloadManager
+import android.content.Context
 import android.provider.MediaStore
 import android.text.format.DateFormat
 import android.view.Gravity
@@ -37,6 +39,8 @@ internal class GeckoBrowserToolsController(
     private val accent: Int,
     private val adBlockEnabled: () -> Boolean,
     private val onToggleAdBlock: () -> Unit,
+    private val adStats: () -> Pair<Int, Int>,
+    private val onResetAdStats: () -> Unit,
     private val youtubeAdBlockEnabled: () -> Boolean,
     private val onToggleYoutubeAdBlock: () -> Unit,
     private val isPrivateMode: () -> Boolean,
@@ -44,6 +48,7 @@ internal class GeckoBrowserToolsController(
     private val onClearCache: () -> Unit,
     private val onClearSiteData: () -> Unit,
     private val activeDownloads: () -> List<GeckoDownloadController.ActiveDownload>,
+    private val cancelDownload: (Long) -> Unit,
     private val onCancelDownload: (String) -> Unit,
     private val onClearPermissions: () -> Unit,
     private val onToast: (String) -> Unit,
@@ -102,6 +107,46 @@ internal class GeckoBrowserToolsController(
     }
 
     private fun queryDownloads(): List<DownloadItem> {
+        val dm = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val items = mutableListOf<DownloadItem>()
+        runCatching {
+            dm.query(DownloadManager.Query()
+                .setSortOrder(DownloadManager.COLUMN_LAST_MODIFIED_TIMESTAMP + " DESC")).use { c ->
+                if (c == null) return@use
+                val idC = c.getColumnIndex(DownloadManager.COLUMN_ID)
+                val tiC = c.getColumnIndex(DownloadManager.COLUMN_TITLE)
+                val miC = c.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
+                val szC = c.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+                val dlC = c.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+                val stC = c.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                val urC = c.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+                val ltC = c.getColumnIndex(DownloadManager.COLUMN_LAST_MODIFIED_TIMESTAMP)
+                while (c.moveToNext()) {
+                    val st = c.getInt(stC)
+                    val done = st == DownloadManager.STATUS_SUCCESSFUL
+                    val failed = st == DownloadManager.STATUS_FAILED
+                    val uriStr = if (urC >= 0) c.getString(urC).orEmpty() else ""
+                    val fileUri = if (uriStr.isNotBlank())
+                        (runCatching { Uri.parse(uriStr) }.getOrNull() ?: Uri.EMPTY) else Uri.EMPTY
+                    items += DownloadItem(
+                        id = c.getLong(idC),
+                        title = if (tiC >= 0) c.getString(tiC).orEmpty().ifBlank { "Tệp" } else "Tệp",
+                        mime = if (miC >= 0) c.getString(miC).orEmpty() else "",
+                        uri = fileUri,
+                        size = if (szC >= 0) c.getLong(szC).coerceAtLeast(0L) else 0L,
+                        isPending = !done && !failed,
+                        modifiedAt = if (ltC >= 0) c.getLong(ltC) else 0L,
+                        read = if (dlC >= 0) c.getLong(dlC) else 0L,
+                        total = if (szC >= 0) c.getLong(szC) else -1L
+                    )
+                }
+            }
+        }.onFailure { onToast("Không đọc được danh sách tải xuống") }
+        return items
+    }
+
+    @Suppress("unused")
+    private fun queryDownloadsOld(): List<DownloadItem> {
         val items = mutableListOf<DownloadItem>()
         val active = activeDownloads()
         val projection = arrayOf(MediaStore.Downloads._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.SIZE, MediaStore.Downloads.IS_PENDING, MediaStore.MediaColumns.DATE_ADDED)
@@ -199,7 +244,7 @@ internal class GeckoBrowserToolsController(
     private fun confirmRemove(item: DownloadItem) {
         sheet.confirm(title = if (item.isPending) "Hủy tải xuống?" else "Xóa tệp tải xuống?", message = if (item.isPending) "Summit sẽ hủy tiến trình tải ${item.title}." else "Tệp ${item.title} sẽ bị xóa khỏi danh sách tải xuống và thiết bị.", positive = if (item.isPending) "Hủy tải" else "Xóa", negative = "Giữ lại") {
             if (item.isPending) {
-                onCancelDownload(item.title)
+                cancelDownload(item.id)
             } else {
                 val deleted = runCatching { activity.contentResolver.delete(item.uri, null, null) }.getOrDefault(0)
                 onToast(if (deleted > 0) "Đã xóa tệp tải xuống" else "Không xóa được tệp")
@@ -221,7 +266,13 @@ internal class GeckoBrowserToolsController(
         activeToneUpdates.clear(); body.removeAllViews()
         val statsCard = card()
         statsCard.addView(text("Bảo vệ theo dõi của Gecko", 14f, foreground(), true))
-        statsCard.addView(text("GeckoView sử dụng Enhanced Tracking Protection (ETP) để chặn trình theo dõi và mã độc.", 13f, muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
+        statsCard.addView(text("GeckoView sử dụng Enhanced Tracking Protection (ETP) + Summit AdBlock để chặn trình theo dõi, quảng cáo và mã độc.", 13f, muted).apply { setPadding(0, dp(5), 0, 0) })
+        val statRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, 0) }
+        val (blocked, hosts) = adStats()
+        statRow.addView(text("$blocked request bị chặn", 13f, foreground(), true), LinearLayout.LayoutParams(0, -2, 1f))
+        statRow.addView(text("$hosts host", 12f, muted), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(8) })
+        statRow.addView(actionButton("Đặt lại", muted) { onResetAdStats(); renderPrivacy(body) }, LinearLayout.LayoutParams(-2, dp(32)))
+        statsCard.addView(statRow) (ETP) để chặn trình theo dõi và mã độc.", 13f, muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
         body.addView(statsCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
 
         val filterCard = card()

@@ -1,0 +1,17 @@
+{
+  "manifest_version": 2,
+  "name": "Summit AdBlock",
+  "version": "1.0",
+  "permissions": ["webRequest", "webRequestBlocking", "<all_urls>"],
+  "background": { "scripts": ["background.js"] },
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["content.js"],
+    "css": ["cosmetic.css"],
+    "run_at": "document_start"
+  }, {
+    "matches": ["*://*.youtube.com/*", "*://m.youtube.com/*"],
+    "js": ["youtube.js"],
+    "run_at": "document_start"
+  }]
+}

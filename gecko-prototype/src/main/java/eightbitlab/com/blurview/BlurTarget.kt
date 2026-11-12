@@ -38,6 +38,7 @@ open class BlurTarget(context: Context) : FrameLayout(context) {
     private val glass = ArrayList<WeakReference<BlurView>>()
     private val ui = Handler(Looper.getMainLooper())
     private var running = false
+    private var paused = false
     private var captureInFlight = false
     private var lastSignature = 0L
     private var stillFrames = 0
@@ -73,13 +74,27 @@ open class BlurTarget(context: Context) : FrameLayout(context) {
     }
 
     private fun ensureRunning() {
-        if (running || !isAttachedToWindow) return
+        if (running || paused || !isAttachedToWindow) return
         running = true
         ui.post(tick)
     }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        ensureRunning()
+    }
+
+    /** Goi tu Activity.onPause: dung hoan toan viec capture de tiet kiem pin. */
+    fun pause() {
+        paused = true
+        ui.removeCallbacks(tick)
+        running = false
+    }
+
+    /** Goi tu Activity.onResume: bat lai chu ky capture. */
+    fun resume() {
+        if (!paused) return
+        paused = false
         ensureRunning()
     }
 

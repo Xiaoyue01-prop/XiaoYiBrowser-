@@ -1,0 +1,7 @@
+ins.adsbygoogle, div[class*="ad-slot"], div[class*="ad-container"],
+iframe[src*="doubleclick"], iframe[src*="googlesyndication"],
+div[class*="taboola-widget"], div[class*="outbrain"] {
+  display: none !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
