@@ -119,6 +119,7 @@ class Store(context: Context) {
     var autoHideBar: Boolean
     get() = sp.getBoolean("autohide", true)
     set(v) { sp.edit().putBoolean("autohide", v).apply() }
+    @Synchronized
     fun saveTabs(tabs: List<PersistedTab>) {
         val savedTabs = tabs.takeLast(100)
         val previousVersions = runCatching {

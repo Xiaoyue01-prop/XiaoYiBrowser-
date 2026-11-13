@@ -565,13 +565,13 @@ half4 main(float2 coord) {
     if (t < 0.01) return half4(base);
     float r = maxR * t;
     float4 sum = base;
-    for (int i = 1; i < 24; i++) {
+    for (int i = 1; i < 16; i++) {
         float fi = float(i);
         float a = fi * 2.39996323;
-        float rad = r * sqrt(fi / 24.0);
+        float rad = r * sqrt(fi / 16.0);
         sum += float4(content.eval(coord + float2(cos(a), sin(a)) * rad));
     }
-    float4 blurred = sum / 24.0;
+    float4 blurred = sum / 16.0;
     float v = veil * t;
     float4 outc = blurred * (1.0 - v) + float4(v, v, v, v);
     outc = outc * (1.0 - fade * t);

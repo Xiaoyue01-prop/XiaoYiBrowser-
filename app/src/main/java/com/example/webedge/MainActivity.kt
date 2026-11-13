@@ -1208,6 +1208,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         // Gỡ listener và giải phóng toàn bộ WebView sau khi các controller phụ thuộc đã dừng.
         tabWebViewLifecycle.detachCallbacks(web)
 
+        // Dừng nhận yêu cầu lưu tab mới; các tác vụ ghi đã xếp hàng vẫn được hoàn tất.
+        if (::tabPersistence.isInitialized) tabPersistence.close()
+
         // 3. Hủy tất cả Runnable đang chờ trong Handler
         handler.removeCallbacksAndMessages(null)
         if (::suggestionController.isInitialized) suggestionController.destroy()

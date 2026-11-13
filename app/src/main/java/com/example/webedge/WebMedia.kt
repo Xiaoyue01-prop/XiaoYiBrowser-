@@ -244,7 +244,7 @@ try {
     { get: function(){ return false; }, set: function(){}, configurable: true });
   HTMLVideoElement.prototype.requestPictureInPicture = function(){
     var v = this;
-    cur = v;
+    cur = v; watch();
     try { EdgeBridge.requestPip(); } catch (e) {}
     var p;
     try { p = v.requestFullscreen ? v.requestFullscreen() : (v.webkitRequestFullscreen && v.webkitRequestFullscreen()); } catch (e) {}
@@ -285,7 +285,7 @@ function send(force){
 function onEvent(e){
   var t = e.target;
   if (!(t instanceof HTMLMediaElement)) return;
-  if (e.type === 'play' || e.type === 'playing') cur = t;
+  if (e.type === 'play' || e.type === 'playing') { cur = t; watch(); }
   if (t !== cur) return;
   send(e.type !== 'timeupdate');
 }
@@ -294,7 +294,13 @@ function onEvent(e){
   .forEach(function(n){ document.addEventListener(n, onEvent, true); });
 document.addEventListener('timeupdate', function(e){ if (e.target === cur) send(false); }, true);
 window.addEventListener('pagehide', function(){ cur = null; send(true); });
-setInterval(function(){ if (cur && !cur.isConnected) { cur = null; send(true); } }, 3000);
+var watchTimer = 0;
+function watch(){
+  if (cur && !watchTimer) watchTimer = setInterval(function(){
+    if (cur && !cur.isConnected) { cur = null; send(true); }
+    if (!cur) { clearInterval(watchTimer); watchTimer = 0; }
+  }, 3000);
+}
 
 window.__summitMedia = {
   play: function(){ if (cur) { var p = cur.play(); if (p && p.catch) p.catch(function(){}); } },
@@ -305,6 +311,7 @@ window.__summitMedia = {
       var list = document.querySelectorAll('video,audio');
       for (var k = 0; k < list.length; k++) { if (!list[k].paused) { cur = list[k]; break; } }
     }
+    watch();
     send(true);
   }
 };
