@@ -26,6 +26,7 @@ class PictureInPictureController(
     private var videoActive = false
     private var videoView: View? = null
     private var aspect = DEFAULT_ASPECT
+    private var enterRequestedUptime = 0L
 
     fun setVideoActive(active: Boolean, view: View? = null) {
         videoActive = active
@@ -62,6 +63,7 @@ class PictureInPictureController(
      */
     fun enterNow() {
         if (!videoActive || activity.isInPictureInPictureMode) return
+        markEntering()
         try {
             val builder = PictureInPictureParams.Builder()
                 .setAspectRatio(Rational((aspect * RATIO_BASE).toInt(), RATIO_BASE))
@@ -74,6 +76,18 @@ class PictureInPictureController(
             report(e.message ?: e.javaClass.simpleName)
         }
     }
+
+    /** Ghi nhận app sắp vào PiP (nút PiP của trang, hoặc người dùng vuốt về home khi đang xem video). */
+    fun markEntering() {
+        enterRequestedUptime = android.os.SystemClock.uptimeMillis()
+    }
+
+    /**
+     * Trong lúc chuyển vào PiP, một số ROM gọi onStop trước khi isInPictureInPictureMode kịp thành true.
+     * Nếu coi đó là "app bị đóng" mà thoát toàn màn hình thì cửa sổ PiP chỉ còn giao diện trình duyệt thay vì video.
+     */
+    val isEntering: Boolean
+        get() = android.os.SystemClock.uptimeMillis() - enterRequestedUptime < ENTER_WINDOW_MS
 
     private fun report(reason: String) {
         Toast.makeText(activity, "Không vào được PiP: $reason", Toast.LENGTH_LONG).show()
@@ -106,6 +120,7 @@ class PictureInPictureController(
 
     private companion object {
         const val TAG = "SummitPiP"
+        const val ENTER_WINDOW_MS = 2_000L
         const val DEFAULT_ASPECT = 16f / 9f
         // Android chỉ nhận tỉ lệ trong khoảng 1:2.39 đến 2.39:1.
         const val MIN_ASPECT = 0.43f

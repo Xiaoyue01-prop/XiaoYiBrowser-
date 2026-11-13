@@ -1138,13 +1138,18 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     // onPictureInPictureModeChanged dễ chạy trước onStop và bỏ sót. Nếu app dừng khi video vẫn ở toàn màn hình
     // thì surface đã mất: thoát toàn màn hình (vừa đóng PiP thì dừng luôn video) để lần mở lại không bị đen.
     override fun onStop() {
-        if (isFullscreenVideoShowing() && !isInPictureInPictureMode && !isChangingConfigurations) {
+        if (isFullscreenVideoShowing() && !isInPictureInPictureMode && !isChangingConfigurations && !pipController.isEntering) {
             if (SystemClock.uptimeMillis() - lastPipExitUptime < PIP_CLOSE_WINDOW_MS) {
                 WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.pause()")
             }
             exitFullscreenView()
         }
         super.onStop()
+    }
+
+    override fun onUserLeaveHint() {
+        if (isFullscreenVideoShowing()) pipController.markEntering()
+        super.onUserLeaveHint()
     }
 
     override fun onPause() {

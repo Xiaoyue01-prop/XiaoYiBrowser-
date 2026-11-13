@@ -75,6 +75,12 @@ internal class BrowserFullscreenController(
 
     fun hide() {
         val view = customView ?: return
+        if ((activity.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            // Chỉ bản debug: cho biết ai làm video thoát toàn màn hình (chẩn đoán lỗi PiP hiện giao diện trình duyệt).
+            val trace = Throwable().stackTrace
+            val who = listOfNotNull(trace.getOrNull(1)?.methodName, trace.getOrNull(2)?.methodName).joinToString(" ← ")
+            android.widget.Toast.makeText(activity, "Thoát fullscreen: $who", android.widget.Toast.LENGTH_SHORT).show()
+        }
         pipController.setVideoActive(false)
         container.removeView(view)
         container.visibility = View.GONE
