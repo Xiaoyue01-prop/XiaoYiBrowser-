@@ -80,13 +80,13 @@ import org.mozilla.geckoview.StorageController
  *
  * Three rendering modes (menu cycles them):
  * GeckoView owns its rendering, system-window-inset, IME and accessibility integration.
- * The bundled WebExtension ("Summit Probe") offsets pinned headers and adds a reversible
- * normal-flow top margin when a scrolling header starts under the status bar. Summit additionally
+ * The bundled WebExtension ("Summit Probe") reserves the status-bar height as a reversible
+ * padding-top on <html> (like a content inset) and offsets pinned headers. Summit additionally
  * reports the bottom floating-toolbar reserve through GeckoView vertical clipping.
  *
  * In both Edge modes the strip above the page is the header colour when the extension reports a
- * pinned header, and a page-colour gradient otherwise. Normal-flow headers remain in the
- * document and scroll naturally; only their initial flow position is inset below the status bar.
+ * pinned header, and a page-colour gradient otherwise. Normal-flow content (headers included)
+ * starts below the status bar because of the html padding and scrolls up through it naturally.
  */
 class GeckoPrototypeActivity : Activity() {
 
@@ -1496,7 +1496,7 @@ class GeckoPrototypeActivity : Activity() {
         if (::topFadeController.isInitialized) {
             topFadeController.setColors(
                 page = probePageColor,
-                fixedHeader = if (probeHasFixed) probeColor else parseCssColor(m.optString("flowColor", ""))
+                fixedHeader = if (probeHasFixed) probeColor else null
             )
         }
         probeShifted = m.optInt("shifted", 0)
@@ -1517,8 +1517,8 @@ class GeckoPrototypeActivity : Activity() {
             "dy=${m.optInt("playerOverlayOffset", 0)}\n" +
             "hdr=$layerSummary player=${m.optString("playerOverlay", "none")} " +
             "excluded=${m.optInt("excluded", 0)}\n" +
-            "flow=${m.optString("flowSelector", "none")} +${m.optInt("flowOffset", 0)}px " +
-            "active=${m.optInt("flowShifted", 0)} fallback=${m.optBoolean("flowFallback", false)}"
+            "rootPad=${"%.1f".format(m.optDouble("rootPad", 0.0))}px " +
+            "cover=${m.optBoolean("cover", false)}"
         sampleTop()
         updateInfo()
     }

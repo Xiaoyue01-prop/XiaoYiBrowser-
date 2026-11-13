@@ -1,6 +1,11 @@
 // Summit Probe: content script.
-// Detects Flow/Fixed/Sticky page headers, reserves the initial Android top safe area
-// for normal-flow content, offsets pinned headers, restores stale changes, and reports diagnostics.
+// Safari-like top safe area for Gecko edge-to-edge:
+//  1. Reserve the status-bar height once, on <html> (like a scroll view's contentInset), as early
+//     as the native inset is known. All normal-flow content, flow headers included, starts below the
+//     status bar and scrolls up through it. No header guessing for flow content.
+//  2. Pinned (fixed/sticky) headers are not affected by html padding, so they are detected and
+//     offset below the status bar here.
+//  3. Reports header / page colours so native can paint the status-bar fade.
 (() => {
   'use strict';
   if (window.__summitProbe) return;
@@ -15,7 +20,6 @@
   const booting = () => Date.now() - bootAt < BOOT_MS;
   const MAX_NODES = 6000;
   const MAX_HEADER_TOP = 240;
-  const MAX_FLOW_HEADER_DOC_TOP = 260;
   const timerState = { id: null, due: 0, pending: false };
   let lastScan = 0;
   let lastKey = '';
@@ -29,10 +33,12 @@
   // moves the masthead below the status bar, the player's own top-row controls can end
   // up underneath it. Keep a separate, reversible offset for that player control row.
   const activePlayerOverlayShifts = new Map();
-  // Ordinary document-flow headers are not fixed/sticky. Reserve the top safe area
-  // on their top-level normal-flow root so the header remains tappable initially and
-  // then scrolls naturally through the status-bar region. Never change header margin.
-  const activeFlowOffsets = new Map();
+  // Reversible reservation of the top safe area on <html> (see applyRootInset).
+  const rootPad = {
+    active: false, applied: 0,
+    inlinePad: '', inlinePadPriority: '', inlineBox: '', inlineBoxPriority: ''
+  };
+  const IS_YOUTUBE = /(^|\.)youtube\.com$/i.test(location.hostname);
   let edgeModeEnabled = true;
   let headerScrollEnabled = false;
   // Android reports the real status-bar inset in CSS pixels. This is essential on
@@ -143,7 +149,11 @@
         edgeModeEnabled = nextEdge;
         headerScrollEnabled = nextHeader;
         nativeTopInsetCss = Math.max(0, nextNativeTop);
-        if (changed) schedule(100);
+        // Reserve the safe area right away; do not wait for the next scan.
+        if (changed) {
+          applyRootInset(edgeModeEnabled ? nativeTopInsetCss : 0);
+          schedule(100);
+        }
       }).catch(() => {});
     } catch (_) {}
   }
@@ -247,107 +257,68 @@
     return -1;
   }
 
-  function selfHeaderHint(el) {
-    const t = nodeTokens(el);
-    if (HEADER_TAGS.has(t.tag)) return t.tag;
-    if (t.role === 'banner' || t.role === 'navigation') return t.role;
-    const identity = `${t.tag} ${t.id} ${t.classes} ${t.aria}`;
-    const match = identity.match(HEADER_HINT_RE);
-    return match ? (match[2] || t.tag).toLowerCase() : '';
-  }
-
-  function topLevelBodyChild(el, body) {
-    let node = el;
-    while (node && node.parentElement && node.parentElement !== body) {
-      node = node.parentElement;
-    }
-    return node && node.parentElement === body ? node : null;
-  }
-
-  function restoreFlowOffset(el, state) {
+  // ---- Root safe-area reservation -------------------------------------------------
+  function isCoverPage() {
     try {
-      // Reserve the initial safe area on the normal-flow root, not on the header.
-      // Padding is reversible and participates in document scrolling, so the header
-      // naturally travels through the status-bar region as the user scrolls.
-      if (state.inlinePaddingTop) {
-        el.style.setProperty('padding-top', state.inlinePaddingTop, state.inlinePriority || '');
-      } else {
-        el.style.removeProperty('padding-top');
+      const m = document.querySelector('meta[name="viewport" i]');
+      return !!(m && /viewport-fit\s*=\s*cover/i.test(m.getAttribute('content') || ''));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function releaseRootInset() {
+    if (!rootPad.active) return;
+    const html = document.documentElement;
+    try {
+      if (html) {
+        if (rootPad.inlinePad) html.style.setProperty('padding-top', rootPad.inlinePad, rootPad.inlinePadPriority);
+        else html.style.removeProperty('padding-top');
+        if (rootPad.inlineBox) html.style.setProperty('box-sizing', rootPad.inlineBox, rootPad.inlineBoxPriority);
+        else html.style.removeProperty('box-sizing');
       }
     } catch (e) {
-      console.warn('[Summit Probe] could not restore flow safe-area padding:', e);
+      console.warn('[Summit Probe] could not release root inset:', e);
     }
-    activeFlowOffsets.delete(el);
+    rootPad.active = false;
+    rootPad.applied = 0;
   }
 
-  function findFallbackFlowRoot(body, vw, inset, scrollY) {
-    // If a page uses a generic app shell instead of a semantic <header>/<nav>,
-    // use only the first visible, full-width normal-flow body child. This is a
-    // conservative fallback, not a search through arbitrary content sections.
-    for (const el of Array.from(body.children || [])) {
-      const tag = (el.tagName || '').toLowerCase();
-      if (['script', 'style', 'link', 'meta', 'template', 'noscript'].includes(tag)) continue;
-      const cs = getComputedStyle(el);
-      if ((cs.position !== 'static' && cs.position !== 'relative') ||
-          cs.display === 'none' || cs.visibility === 'hidden') continue;
-      if (isExcludedContent(el) || containsExcludedContent(el)) continue;
-      const rect = el.getBoundingClientRect();
-      if (rect.width < vw * 0.72 || rect.height < 24) continue;
-      const state = activeFlowOffsets.get(el);
-      const baseDocTop = rect.top + scrollY - (state ? state.appliedInset : 0);
-      if (baseDocTop < -24 || baseDocTop > MAX_FLOW_HEADER_DOC_TOP ||
-          baseDocTop >= inset - 2) continue;
-      return {
-        root: el,
-        anchor: el,
-        selector: describeElement(el),
-        baseDocTop,
-        fallback: true
-      };
+  // Pad <html> by the status-bar height. Skipped for: edge mode off, pages that declare
+  // viewport-fit=cover (they own the safe area through env()), YouTube (own app shell; keeps the
+  // previous behaviour), and when the inset is 0 (fullscreen).
+  function applyRootInset(inset) {
+    const html = document.documentElement;
+    if (!html) return 0;
+    const want = (edgeModeEnabled && inset > 0 && !IS_YOUTUBE && !isCoverPage())
+      ? Math.round(inset * 10) / 10 : 0;
+    if (want <= 0) {
+      releaseRootInset();
+      return 0;
     }
-    return null;
-  }
-
-  function applyFlowOffset(target, inset, scrollY) {
-    const activeRoot = target ? target.root : null;
-    for (const [el, state] of Array.from(activeFlowOffsets.entries())) {
-      if (el !== activeRoot || inset <= 0) restoreFlowOffset(el, state);
+    try {
+      if (!rootPad.active) {
+        rootPad.inlinePad = html.style.getPropertyValue('padding-top');
+        rootPad.inlinePadPriority = html.style.getPropertyPriority('padding-top');
+        rootPad.inlineBox = html.style.getPropertyValue('box-sizing');
+        rootPad.inlineBoxPriority = html.style.getPropertyPriority('box-sizing');
+        rootPad.active = true;
+      } else if (Math.abs(rootPad.applied - want) < 0.05) {
+        return want;
+      } else {
+        // Re-measure the page's own padding without our value (no repaint: same task).
+        if (rootPad.inlinePad) html.style.setProperty('padding-top', rootPad.inlinePad, rootPad.inlinePadPriority);
+        else html.style.removeProperty('padding-top');
+      }
+      const base = parseFloat(getComputedStyle(html).paddingTop) || 0;
+      html.style.setProperty('box-sizing', 'border-box', 'important');
+      html.style.setProperty('padding-top', (base + want).toFixed(1) + 'px', 'important');
+      rootPad.applied = want;
+      return want;
+    } catch (e) {
+      console.warn('[Summit Probe] could not apply root inset:', e);
+      return 0;
     }
-    if (!target || inset <= 0) {
-      return { shifted: 0, selector: 'none', offset: 0, fallback: false };
-    }
-
-    const root = target.root;
-    let state = activeFlowOffsets.get(root);
-    const currentAnchorTop = target.anchor.getBoundingClientRect().top + scrollY;
-    const baseAnchorTop = currentAnchorTop - (state ? state.appliedInset : 0);
-    const needed = Math.max(0, inset - baseAnchorTop);
-    if (needed <= 1) {
-      if (state) restoreFlowOffset(root, state);
-      return { shifted: 0, selector: target.selector, offset: 0, fallback: target.fallback };
-    }
-
-    if (!state) {
-      const computedPadding = parseFloat(getComputedStyle(root).paddingTop);
-      state = {
-        inlinePaddingTop: root.style.getPropertyValue('padding-top'),
-        inlinePriority: root.style.getPropertyPriority('padding-top'),
-        basePaddingTop: Number.isFinite(computedPadding) ? computedPadding : 0,
-        appliedInset: 0
-      };
-      activeFlowOffsets.set(root, state);
-    }
-
-    // Browser-level safe-area reservation: pad the normal-flow page root, not the
-    // header itself. Unlike a fixed translation, this scrolls away naturally.
-    root.style.setProperty('padding-top', `${(state.basePaddingTop + needed).toFixed(1)}px`, 'important');
-    state.appliedInset = needed;
-    return {
-      shifted: 1,
-      selector: target.selector,
-      offset: Math.round(needed),
-      fallback: target.fallback
-    };
   }
 
   function describeElement(el) {
@@ -509,11 +480,10 @@
       const vh = window.innerHeight;
       const all = root.getElementsByTagName('*');
       const rawCandidates = [];
-      const flowCandidates = [];
       let nodes = 0;
       let excludedNodes = 0;
       const scrollY = window.scrollY || window.pageYOffset || 0;
-      const allowFlowOffset = pageKind() !== 'watch' && inset > 0;
+      const rootPadding = applyRootInset(inset);
 
       for (let i = 0; i < all.length && i < MAX_NODES; i++) {
         nodes++;
@@ -522,34 +492,7 @@
         const pos = cs.position;
         if (cs.display === 'none' || cs.visibility === 'hidden') continue;
 
-        if (pos !== 'fixed' && pos !== 'sticky') {
-          // Third header class: normal-flow header. Only inspect elements that carry
-          // their own semantic header/navigation hint; descendants inherit neither
-          // classification nor an offset from a distant ancestor.
-          if (allowFlowOffset && (pos === 'static' || pos === 'relative')) {
-            const hint = selfHeaderHint(el);
-            if (hint && !isExcludedContent(el) && !containsExcludedContent(el)) {
-              const rect = el.getBoundingClientRect();
-              if (rect.width >= vw * 0.6 && rect.height >= 24 && rect.height <= vh * 0.45) {
-                const bodyRoot = topLevelBodyChild(el, root);
-                const prior = bodyRoot ? activeFlowOffsets.get(bodyRoot) : null;
-                const docTop = rect.top + scrollY - (prior ? prior.appliedInset : 0);
-                if (bodyRoot && docTop >= -24 && docTop <= MAX_FLOW_HEADER_DOC_TOP &&
-                    docTop < inset - 2) {
-                  flowCandidates.push({
-                    root: bodyRoot,
-                    anchor: el,
-                    selector: describeElement(el),
-                    baseDocTop: docTop,
-                    hint,
-                    fallback: false
-                  });
-                }
-              }
-            }
-          }
-          continue;
-        }
+        if (pos !== 'fixed' && pos !== 'sticky') continue;
 
         if (isExcludedContent(el) || containsExcludedContent(el)) {
           excludedNodes++;
@@ -564,7 +507,10 @@
         const r = el.getBoundingClientRect();
         if (r.width < vw * 0.6 || r.height < 24 || r.height > vh * 0.4) continue;
         if (r.bottom <= 0 || r.top > MAX_HEADER_TOP + 8) continue;
-        if (Math.abs(r.top - expectedRectTop) > 7) continue;
+        // Sticky headers rest `rootPadding` lower than their pinned position until the page has
+        // scrolled that far, so accept both positions to avoid a late jump at the threshold.
+        const restDelta = pos === 'sticky' ? rootPadding : 0;
+        if (r.top < expectedRectTop - 7 || r.top > expectedRectTop + restDelta + 7) continue;
 
         const hint = findHeaderHint(el);
         const hintDepth = findHeaderHintDepth(el);
@@ -610,14 +556,6 @@
       for (const [el, state] of Array.from(activeShifts.entries())) {
         if (!selected.has(el) || inset <= 0) restoreElement(el, state);
       }
-
-      let flowTarget = null;
-      if (candidates.length === 0 && allowFlowOffset) {
-        flowCandidates.sort((a, b) => a.baseDocTop - b.baseDocTop ||
-          (a.fallback ? 1 : 0) - (b.fallback ? 1 : 0));
-        flowTarget = flowCandidates[0] || findFallbackFlowRoot(root, vw, inset, scrollY);
-      }
-      const flowResult = applyFlowOffset(flowTarget, inset, scrollY);
 
       let shifted = 0;
       const layers = [];
@@ -681,13 +619,10 @@
       const playerOverlay = alignWatchPlayerOverlay(candidates);
 
       const topLayer = candidates.length ? candidates[0].el : null;
-      const flowRect = flowTarget ? flowTarget.anchor.getBoundingClientRect() : null;
-      const flowVisibleAtTop = !!(flowRect && flowRect.bottom > 0 && flowRect.top < inset + 2);
       send({
         type: 'top',
         hasFixed: candidates.length > 0,
         color: topLayer ? solidBackground(topLayer) : '',
-        flowColor: !topLayer && flowVisibleAtTop ? solidBackground(flowTarget.anchor) : '',
         pageColor: pageBackgroundColor(),
         shifted,
         layers: candidates.length,
@@ -695,10 +630,8 @@
         overlayShifted: playerOverlay.shifted,
         playerOverlay: playerOverlay.selector,
         playerOverlayOffset: playerOverlay.offset,
-        flowShifted: flowResult.shifted,
-        flowSelector: flowResult.selector,
-        flowOffset: flowResult.offset,
-        flowFallback: flowResult.fallback,
+        rootPad: Math.round(rootPadding * 10) / 10,
+        cover: isCoverPage(),
         inset: Math.round(inset * 10) / 10,
         nodes,
         excluded: excludedNodes,
@@ -746,6 +679,19 @@
     timerState.due = due;
     timerState.id = setTimeout(() => { timerState.id = null; run(); }, wait);
   }
+
+  let lastSettingsAt = 0;
+  function refreshSettings() {
+    const now = Date.now();
+    if (now - lastSettingsAt < 400) return;
+    lastSettingsAt = now;
+    requestPageSettings();
+  }
+  window.addEventListener('resize', refreshSettings);
+  window.addEventListener('pageshow', refreshSettings);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshSettings();
+  });
 
   document.addEventListener('DOMContentLoaded', () => schedule(0));
   document.addEventListener('readystatechange', () => schedule(0));
