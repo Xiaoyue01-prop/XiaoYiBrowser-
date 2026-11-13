@@ -58,6 +58,7 @@ class PullToRefreshController(
     private var pulling = false
     private var refreshing = false
     private var reachedThreshold = false
+    private var pageHandlesTouch = false
     private var startX = 0f
     private var startY = 0f
     private var pullOrigin = 0f
@@ -69,6 +70,12 @@ class PullToRefreshController(
         host.addView(indicator, FrameLayout.LayoutParams(size, size, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
     }
 
+    /** JS của trang báo cử chỉ hiện tại thuộc về trang (khung cuộn trong, video...); mỗi lần chạm mới được đặt lại. */
+    fun setPageHandlesTouch(blocked: Boolean) {
+        pageHandlesTouch = blocked
+        if (blocked && pulling) release(cancelled = true) else if (blocked) tracking = false
+    }
+
     /** Gọi cho mọi MotionEvent của Activity; không bao giờ tiêu thụ sự kiện. */
     fun onTouch(ev: MotionEvent) {
         when (ev.actionMasked) {
@@ -77,6 +84,7 @@ class PullToRefreshController(
                 tracking = !refreshing && web != null && web.scrollY == 0 &&
                     ev.rawY < host.height * START_REGION && canStart()
                 pulling = false
+                pageHandlesTouch = false
                 startX = ev.rawX
                 startY = ev.rawY
             }
@@ -90,7 +98,7 @@ class PullToRefreshController(
     private fun move(ev: MotionEvent) {
         if (!tracking) return
         val web = webProvider()
-        if (web == null || web.scrollY != 0 || !canStart()) {
+        if (web == null || web.scrollY != 0 || !canStart() || pageHandlesTouch) {
             if (pulling) release(cancelled = true) else tracking = false
             return
         }
@@ -98,7 +106,7 @@ class PullToRefreshController(
         val dx = ev.rawX - startX
         if (!pulling) {
             when {
-                dy > slop && dy > abs(dx) * 1.5f -> beginPull(ev.rawY)
+                dy > slop * START_SLOP_FACTOR && dy > abs(dx) * START_ANGLE -> beginPull(ev.rawY)
                 abs(dx) > slop * 2 || dy < -slop -> tracking = false
             }
             return
@@ -205,6 +213,9 @@ class PullToRefreshController(
         const val DAMPING = 0.5f
         // Chỉ nhận cử chỉ bắt đầu ở phần trên của màn hình, tránh vuốt xuống từ thanh địa chỉ.
         const val START_REGION = 0.8f
+        // Siết điều kiện bắt đầu: phải kéo xa hơn một chút và gần như thẳng đứng.
+        const val START_SLOP_FACTOR = 1.5f
+        const val START_ANGLE = 2.5f
         const val MAX_REFRESH_MS = 10_000L
     }
 }

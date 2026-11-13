@@ -157,6 +157,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
     }
 
+    override fun onBridgePullGuard(owner: WebView, blocked: Boolean) {
+        if (owner === web && !isActivityDestroyed) pullRefresh?.setPageHandlesTouch(blocked)
+    }
+
     private fun isFullscreenVideoShowing(): Boolean = fullscreenVideoController?.isShowing == true
 
     // Báo trang gửi lại trạng thái media (sau khi đổi tab hoặc trang vừa nạp xong).

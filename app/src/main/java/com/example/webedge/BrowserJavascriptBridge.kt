@@ -12,6 +12,7 @@ internal interface BrowserJavascriptBridgeHost {
     fun onBridgeMediaState(owner: WebView, info: WebMediaInfo)
     fun onBridgePipRequest(owner: WebView)
     fun onBridgeLongPress(owner: WebView, linkUrl: String, imageUrl: String)
+    fun onBridgePullGuard(owner: WebView, blocked: Boolean)
 }
 
 /**
@@ -75,6 +76,12 @@ internal class BrowserJavascriptBridge(
         val safeLink = linkUrl.orEmpty()
         val safeImage = imageUrl.orEmpty()
         dispatch { host, owner -> host.onBridgeLongPress(owner, safeLink, safeImage) }
+    }
+
+    /** Trang tự xử lý cử chỉ chạm này (khung cuộn bên trong, trình phát video, preventDefault): không kéo-để-tải-lại. */
+    @JavascriptInterface
+    fun pullGuard(blocked: Int) {
+        dispatch { host, owner -> host.onBridgePullGuard(owner, blocked == 1) }
     }
 
     @JavascriptInterface

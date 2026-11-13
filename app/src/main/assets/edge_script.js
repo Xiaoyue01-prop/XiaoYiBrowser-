@@ -950,6 +950,47 @@ window.addEventListener('scroll', function(){
   sched();
   schedPageBackground();
 }, {passive: true});
+
+// Kéo-để-tải-lại của app chỉ nên chạy khi cử chỉ thuộc về trang cuộn gốc: báo về nếu chạm bắt đầu trong khung cuộn
+// đã cuộn xuống, trên trình phát video, hoặc nếu trang tự preventDefault khi kéo.
+(function(){
+  var guard = -1;
+  function report(b){
+    if (guard === b) return;
+    guard = b;
+    try { EdgeBridge.pullGuard(b); } catch (e) {}
+  }
+  function innerScrolled(el){
+    var n = 0;
+    while (el && el.nodeType === 1 && n++ < 40) {
+      if (el !== document.body && el !== document.documentElement && el.scrollTop > 0) {
+        var oy = '';
+        try { oy = getComputedStyle(el).overflowY; } catch (e) {}
+        if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') return true;
+      }
+      el = el.parentElement;
+    }
+    return false;
+  }
+  function onVideo(t){
+    try {
+      if (t.closest && t.closest('video, .html5-video-player, #player, ytm-player')) return true;
+      var st = document.elementsFromPoint ? document.elementsFromPoint(t.__x, t.__y) : [];
+      for (var i = 0; i < st.length; i++) { if (st[i].tagName === 'VIDEO') return true; }
+    } catch (e) {}
+    return false;
+  }
+  window.addEventListener('touchstart', function(e){
+    guard = -1;
+    var t = e.target, tc = e.touches && e.touches[0];
+    if (!t || !tc || e.touches.length > 1) { report(1); return; }
+    var probe = { closest: function(s){ return t.closest ? t.closest(s) : null; }, __x: tc.clientX, __y: tc.clientY };
+    report(innerScrolled(t) || onVideo(probe) ? 1 : 0);
+  }, {capture: true, passive: true});
+  window.addEventListener('touchmove', function(e){
+    if (e.defaultPrevented) report(1);
+  }, {passive: true});
+})();
 window.addEventListener('resize', schedAll);
 window.addEventListener('load', schedPageBackground, true);
 window.addEventListener('pageshow', schedPageBackground);
