@@ -13,6 +13,10 @@ Replaces the Experiment 01 "flow root" heuristic with a Safari-like content inse
 2. Removed: flow-header detection, fallback flow root, margin/padding on a body child, `flowColor`.
 3. Fixed/sticky headers: unchanged path (offset `top` by the inset). Sticky now also accepts its "at rest"
    position (`inset` lower than the pinned position) so it does not jump when it first pins.
+3b. Absolute top headers: `position:absolute; top:0` bars anchored to the initial containing block (no
+   positioned/transformed ancestor) are NOT moved by the html padding, so they are offset like pinned headers
+   (they still scroll away with the page). They do not set `hasFixed`/header colour for the status-bar strip.
+   Narrow/short absolute boxes and absolutes inside a positioned ancestor are left alone.
 4. Skipped on purpose: pages declaring `viewport-fit=cover` (page owns the safe area via env()),
    YouTube (own app shell, previous behaviour kept), edge mode off, inset 0 (fullscreen). Padding is released then.
 5. Native settings are re-queried on resize / pageshow / visibilitychange (rotation, fullscreen exit, tab restore).

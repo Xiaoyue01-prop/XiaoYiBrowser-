@@ -321,6 +321,21 @@
     }
   }
 
+  // An absolutely positioned element whose containing block is the initial containing block is
+  // NOT moved by the html padding (top:0 is the top of the page). If any ancestor is positioned or
+  // creates a containing block, it already travels with the padded content.
+  function anchoredToPageOrigin(el) {
+    const html = document.documentElement;
+    for (let p = el.parentElement; p && p !== html; p = p.parentElement) {
+      const c = getComputedStyle(p);
+      if (c.position !== 'static') return false;
+      if ((c.transform && c.transform !== 'none') || (c.perspective && c.perspective !== 'none') ||
+          (c.filter && c.filter !== 'none') || (c.contain && /layout|paint|strict|content/.test(c.contain)) ||
+          /transform|perspective|filter/.test(c.willChange || '')) return false;
+    }
+    return true;
+  }
+
   function describeElement(el) {
     const t = nodeTokens(el);
     const classNames = t.classes.trim().split(/\s+/).filter(Boolean).slice(0, 2);
@@ -492,7 +507,18 @@
         const pos = cs.position;
         if (cs.display === 'none' || cs.visibility === 'hidden') continue;
 
-        if (pos !== 'fixed' && pos !== 'sticky') continue;
+        if (pos !== 'fixed' && pos !== 'sticky' && pos !== 'absolute') continue;
+
+        // Absolute header pinned to the top of the page (top:0 against the initial containing
+        // block), e.g. Google's top bar: html padding does not move it, so offset it like a
+        // pinned header. Cheap rejections first: absolute elements are common.
+        if (pos === 'absolute') {
+          const aTop = parseFloat(cs.top);
+          if (!Number.isFinite(aTop) || aTop < 0 || aTop > MAX_HEADER_TOP) continue;
+          const ar = el.getBoundingClientRect();
+          if (ar.width < vw * 0.6 || ar.height < 24 || ar.height > vh * 0.4) continue;
+          if (!anchoredToPageOrigin(el)) continue;
+        }
 
         if (isExcludedContent(el) || containsExcludedContent(el)) {
           excludedNodes++;
@@ -506,11 +532,14 @@
         const expectedRectTop = state ? (state.baseTop + state.appliedInset) : top;
         const r = el.getBoundingClientRect();
         if (r.width < vw * 0.6 || r.height < 24 || r.height > vh * 0.4) continue;
-        if (r.bottom <= 0 || r.top > MAX_HEADER_TOP + 8) continue;
+        if (pos !== 'absolute' && (r.bottom <= 0 || r.top > MAX_HEADER_TOP + 8)) continue;
         // Sticky headers rest `rootPadding` lower than their pinned position until the page has
         // scrolled that far, so accept both positions to avoid a late jump at the threshold.
         const restDelta = pos === 'sticky' ? rootPadding : 0;
-        if (r.top < expectedRectTop - 7 || r.top > expectedRectTop + restDelta + 7) continue;
+        if (pos === 'absolute') {
+          // Document coordinates: an absolute header scrolls away with the page.
+          if (Math.abs(r.top + scrollY - expectedRectTop) > 7) continue;
+        } else if (r.top < expectedRectTop - 7 || r.top > expectedRectTop + restDelta + 7) continue;
 
         const hint = findHeaderHint(el);
         const hintDepth = findHeaderHintDepth(el);
@@ -527,6 +556,7 @@
           width: r.width,
           height: r.height,
           rectTop: r.top,
+          kind: pos,
           hint: hint || 'top-edge',
           hintDepth,
           selector: describeElement(el)
@@ -575,7 +605,7 @@
             };
             activeShifts.set(el, state);
           }
-          if (headerScrollEnabled) {
+          if (headerScrollEnabled && candidate.kind !== 'absolute') {
             const position = getComputedStyle(el).position;
             if (position === 'fixed') {
               const target = state.baseTop + inset;
@@ -618,10 +648,11 @@
       // translate the video surface, title/metadata, timeline or the whole player.
       const playerOverlay = alignWatchPlayerOverlay(candidates);
 
-      const topLayer = candidates.length ? candidates[0].el : null;
+      const pinnedCandidates = candidates.filter(c => c.kind !== 'absolute');
+      const topLayer = pinnedCandidates.length ? pinnedCandidates[0].el : null;
       send({
         type: 'top',
-        hasFixed: candidates.length > 0,
+        hasFixed: pinnedCandidates.length > 0,
         color: topLayer ? solidBackground(topLayer) : '',
         pageColor: pageBackgroundColor(),
         shifted,
