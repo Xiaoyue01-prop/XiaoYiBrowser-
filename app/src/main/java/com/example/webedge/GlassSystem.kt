@@ -700,12 +700,40 @@ half4 main(float2 coord) {
             }
         }
 
-        // Trang có video/media (kể cả đã dừng) giữ lớp video riêng, có thể kéo tần số quét của cả cửa sổ xuống ~60Hz
-        // khi chỉ có thẻ nhỏ xin tần số cao. Trong lúc blur được ép vẽ lại, xin tần số cao cho cả vùng blur và lớp kính.
+        // Trang có video/media (kể cả đã dừng) giữ một lớp video bỏ phiếu ~60Hz, thắng cả preferredRefreshRate lẫn
+        // phân loại HIGH của view (đo thực tế: trung vị 16.6ms khi bung bảng tab). Trong lúc blur được ép vẽ lại, ngoài việc
+        // xin HIGH còn đặt sàn tần số quét cho cả cửa sổ (preferredMinDisplayRefreshRate): sàn này giới hạn khoảng tần số
+        // mà hệ thống được chọn nên phiếu 60Hz của lớp video không kéo xuống được. Trả về 0 khi xong để không tốn pin.
+        // Dùng reflection để không vỡ biên dịch nếu SDK không công khai trường này; thiếu trường thì bỏ qua, không lỗi.
+        private val minRateField by lazy {
+            runCatching {
+                android.view.WindowManager.LayoutParams::class.java.getField("preferredMinDisplayRefreshRate")
+            }.getOrNull()
+        }
+
+        private fun hostWindow(): android.view.Window? {
+            var c: android.content.Context? = target.context
+            while (c is android.content.ContextWrapper) {
+                if (c is android.app.Activity) return c.window
+                c = c.baseContext
+            }
+            return null
+        }
+
         private fun boost(on: Boolean) {
             val category = if (on) View.REQUESTED_FRAME_RATE_CATEGORY_HIGH else View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT
             target.setRequestedFrameRate(category)
             also?.setRequestedFrameRate(category)
+            val field = minRateField ?: return
+            val window = hostWindow() ?: return
+            runCatching {
+                val rate = if (on) (target.display?.supportedModes?.maxOfOrNull { it.refreshRate } ?: 120f) else 0f
+                val lp = window.attributes
+                if (field.getFloat(lp) != rate) {
+                    field.setFloat(lp, rate)
+                    window.attributes = lp
+                }
+            }
         }
     }
 
