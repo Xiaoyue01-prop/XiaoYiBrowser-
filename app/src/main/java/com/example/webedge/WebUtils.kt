@@ -115,3 +115,24 @@ fun Activity.openExternalUrl(url: String, fallbackView: WebView, toast: (String)
         true
     }
 }
+
+/**
+ * WebView của tab: báo khi trang đang ở đỉnh mà cử chỉ kéo xuống không ai trong trang xử lý
+ * (khung cuộn con, preventDefault, touch-action, trình phát video...). Chromium chỉ phát overscroll sau khi cả chuỗi cuộn
+ * của trang đã từ chối cử chỉ, nên đây là tín hiệu đáng tin hơn việc đoán bằng JS để quyết định kéo-để-tải-lại.
+ */
+class SummitWebView(context: android.content.Context) : WebView(context) {
+    var onTopOverscroll: (() -> Unit)? = null
+
+    override fun overScrollBy(
+        deltaX: Int, deltaY: Int, scrollX: Int, scrollY: Int,
+        scrollRangeX: Int, scrollRangeY: Int, maxOverScrollX: Int, maxOverScrollY: Int,
+        isTouchEvent: Boolean
+    ): Boolean {
+        if (deltaY < 0 && scrollY <= 0) onTopOverscroll?.invoke()
+        return super.overScrollBy(
+            deltaX, deltaY, scrollX, scrollY, scrollRangeX, scrollRangeY,
+            maxOverScrollX, maxOverScrollY, isTouchEvent
+        )
+    }
+}

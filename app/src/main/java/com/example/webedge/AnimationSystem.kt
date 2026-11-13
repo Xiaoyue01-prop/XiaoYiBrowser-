@@ -72,6 +72,36 @@ object AnimationSystem {
         view.setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT)
     }
 
+    /**
+     * Chẩn đoán (chỉ gọi trên bản debug): đo nhịp frame trong [durationMs] rồi trả một dòng tóm tắt.
+     * Trung vị ~16.7ms nghĩa là màn bị kẹt 60Hz; trung vị ~8.3ms mà p95/tối đa lớn nghĩa là frame bị trễ do việc quá nặng.
+     */
+    fun probeFrames(label: String, durationMs: Long, onResult: (String) -> Unit) {
+        val deltas = ArrayList<Long>(256)
+        var last = 0L
+        val end = android.os.SystemClock.uptimeMillis() + durationMs
+        val callback = object : android.view.Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                if (last != 0L) deltas.add(frameTimeNanos - last)
+                last = frameTimeNanos
+                if (android.os.SystemClock.uptimeMillis() < end) {
+                    android.view.Choreographer.getInstance().postFrameCallback(this)
+                } else if (deltas.isNotEmpty()) {
+                    val sorted = deltas.sorted()
+                    fun ms(n: Long) = String.format(java.util.Locale.US, "%.1f", n / 1_000_000f)
+                    val median = sorted[sorted.size / 2]
+                    val p95 = sorted[(sorted.size * 95 / 100).coerceAtMost(sorted.size - 1)]
+                    val slow = deltas.count { it > 12_000_000L } * 100 / deltas.size
+                    onResult(
+                        "$label: ${deltas.size + 1} frame/${durationMs}ms, trung vị ${ms(median)}ms, " +
+                            "p95 ${ms(p95)}ms, tối đa ${ms(sorted.last())}ms, >12ms: $slow%"
+                    )
+                }
+            }
+        }
+        android.view.Choreographer.getInstance().postFrameCallback(callback)
+    }
+
     private val running =
         WeakHashMap<View, HashMap<DynamicAnimation.ViewProperty, SpringAnimation>>()
 

@@ -59,6 +59,7 @@ class PullToRefreshController(
     private var refreshing = false
     private var reachedThreshold = false
     private var pageHandlesTouch = false
+    private var topOverscrolled = false
     private var startX = 0f
     private var startY = 0f
     private var pullOrigin = 0f
@@ -68,6 +69,11 @@ class PullToRefreshController(
 
     init {
         host.addView(indicator, FrameLayout.LayoutParams(size, size, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+    }
+
+    /** WebView báo trang đã ở đỉnh và không ai trong trang nhận cử chỉ kéo xuống này. */
+    fun onWebTopOverscroll() {
+        if (tracking) topOverscrolled = true
     }
 
     /** JS của trang báo cử chỉ hiện tại thuộc về trang (khung cuộn trong, video...); mỗi lần chạm mới được đặt lại. */
@@ -85,6 +91,7 @@ class PullToRefreshController(
                     ev.rawY < host.height * START_REGION && canStart()
                 pulling = false
                 pageHandlesTouch = false
+                topOverscrolled = false
                 startX = ev.rawX
                 startY = ev.rawY
             }
@@ -106,7 +113,7 @@ class PullToRefreshController(
         val dx = ev.rawX - startX
         if (!pulling) {
             when {
-                dy > slop * START_SLOP_FACTOR && dy > abs(dx) * START_ANGLE -> beginPull(ev.rawY)
+                dy > slop * START_SLOP_FACTOR && dy > abs(dx) * START_ANGLE -> if (topOverscrolled) beginPull(ev.rawY)
                 abs(dx) > slop * 2 || dy < -slop -> tracking = false
             }
             return

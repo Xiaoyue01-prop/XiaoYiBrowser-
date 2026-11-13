@@ -443,7 +443,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         tabWebViewLifecycle = TabWebViewLifecycleController(
             createWebView = { tab ->
-                WebView(this).also { view ->
+                SummitWebView(this).also { view ->
+                    view.onTopOverscroll = {
+                        if (::web.isInitialized && view === web) pullRefresh?.onWebTopOverscroll()
+                    }
                     try {
                         privateProfileManager.applyProfile(view, tab)
                     } catch (error: Exception) {

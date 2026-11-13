@@ -174,7 +174,9 @@ class TabSwitcherController(
         }
 
         // Chụp lại tab hiện tại ngay lúc mở lưới, không để thumbnail của lần trước bị cũ.
+        val captureStart = android.os.SystemClock.uptimeMillis()
         captureActiveTab()
+        val captureMs = android.os.SystemClock.uptimeMillis() - captureStart
 
         val container = FrameLayout(activity).apply {
             clipChildren = false
@@ -677,6 +679,12 @@ class TabSwitcherController(
                 if (container.width <= 0 || container.height <= 0) return
                 morphStarted = true
                 blurSync.hold(900)
+                // Chỉ bản debug: đo nhịp frame lúc bung bảng tab (xem AnimationSystem.probeFrames).
+                if ((activity.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+                    AnimationSystem.probeFrames("Mở bảng tab (chụp ${captureMs}ms)", 900) {
+                        android.widget.Toast.makeText(activity, it, android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
                 // Nút Tab nảy lên trước rồi bảng mới nở ra, giống menu ba chấm. Thanh dưới thu gọn (nút ẩn) thì bỏ qua.
                 val canPop = origin != null && origin.isShown && origin.alpha > 0.9f
                 if (!OriginTransitionController.open(
