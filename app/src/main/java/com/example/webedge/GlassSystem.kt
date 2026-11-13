@@ -681,6 +681,7 @@ half4 main(float2 coord) {
             override fun doFrame(frameTimeNanos: Long) {
                 if (SystemClock.uptimeMillis() >= until) {
                     running = false
+                    boost(false)
                     return
                 }
                 target.invalidate()
@@ -694,8 +695,17 @@ half4 main(float2 coord) {
             until = maxOf(until, SystemClock.uptimeMillis() + durationMs)
             if (!running) {
                 running = true
+                boost(true)
                 Choreographer.getInstance().postFrameCallback(frame)
             }
+        }
+
+        // Trang có video/media (kể cả đã dừng) giữ lớp video riêng, có thể kéo tần số quét của cả cửa sổ xuống ~60Hz
+        // khi chỉ có thẻ nhỏ xin tần số cao. Trong lúc blur được ép vẽ lại, xin tần số cao cho cả vùng blur và lớp kính.
+        private fun boost(on: Boolean) {
+            val category = if (on) View.REQUESTED_FRAME_RATE_CATEGORY_HIGH else View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT
+            target.setRequestedFrameRate(category)
+            also?.setRequestedFrameRate(category)
         }
     }
 
