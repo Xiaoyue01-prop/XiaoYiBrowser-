@@ -1196,6 +1196,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (::tabSwipe.isInitialized) tabSwipe.cancelNow()
         pullRefresh?.destroy()
         pullRefresh = null
+        if (::pipController.isInitialized) pipController.close()
         downloadPromptController?.dismissAll()
         downloadPromptController = null
         // Trả lời mọi hộp thoại còn treo (JsResult, quyền) trước khi hủy WebView.

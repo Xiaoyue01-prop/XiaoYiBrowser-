@@ -45,6 +45,8 @@ kotlin {
 dependencies {
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.activity:activity-ktx:1.13.0")
+    // Jetpack PiP: tự lo sourceRectHint, đổi cỡ liền mạch cho video, tự vào PiP khi rời app (alpha03 ra 07/2026)
+    implementation("androidx.core:core-pip:1.0.0-alpha03")
     implementation("androidx.dynamicanimation:dynamicanimation:1.1.0")
     implementation("com.github.Dimezis:BlurView:version-3.2.0")
     // Coroutines: xử lý mạng không tạo Thread thô
