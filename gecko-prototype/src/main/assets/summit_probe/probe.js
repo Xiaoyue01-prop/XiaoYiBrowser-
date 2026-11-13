@@ -1,6 +1,6 @@
 // Summit Probe: content script.
-// Detects top navigation/header layers, offsets only those layers below the Android
-// status bar, restores stale offsets after SPA navigation, and reports diagnostics.
+// Detects Flow/Fixed/Sticky page headers, reserves the initial Android top safe area
+// for normal-flow content, offsets pinned headers, restores stale changes, and reports diagnostics.
 (() => {
   'use strict';
   if (window.__summitProbe) return;
@@ -29,12 +29,15 @@
   // moves the masthead below the status bar, the player's own top-row controls can end
   // up underneath it. Keep a separate, reversible offset for that player control row.
   const activePlayerOverlayShifts = new Map();
-  // Ordinary document-flow headers are not fixed/sticky. When one begins underneath
-  // the Android status bar, add a reversible margin to the page's top-level flow root.
-  // The header remains in normal flow and continues to scroll with the document.
+  // Ordinary document-flow headers are not fixed/sticky. Reserve the top safe area
+  // on their top-level normal-flow root so the header remains tappable initially and
+  // then scrolls naturally through the status-bar region. Never change header margin.
   const activeFlowOffsets = new Map();
   let edgeModeEnabled = true;
   let headerScrollEnabled = false;
+  // Android reports the real status-bar inset in CSS pixels. This is essential on
+  // pages without viewport-fit=cover, where CSS env(safe-area-inset-top) is often 0.
+  let nativeTopInsetCss = 0;
   let lastHeaderScrollMode = null;
   const PLAYER_TOP_OVERLAY_SELECTOR =
     '#movie_player .ytp-chrome-top, .html5-video-player .ytp-chrome-top, ' +
@@ -79,7 +82,8 @@
           'pointer-events:none;padding-top:env(safe-area-inset-top,0px)';
       }
       if (!insetEl.isConnected) (document.body || document.documentElement).appendChild(insetEl);
-      return parseFloat(getComputedStyle(insetEl).paddingTop) || 0;
+      const cssInset = parseFloat(getComputedStyle(insetEl).paddingTop) || 0;
+      return Math.max(cssInset, nativeTopInsetCss);
     } catch (e) {
       return 0;
     }
@@ -133,9 +137,12 @@
         if (!settings) return;
         const nextEdge = settings.edgeMode !== false;
         const nextHeader = settings.headerScroll === true;
-        const changed = nextEdge !== edgeModeEnabled || nextHeader !== headerScrollEnabled;
+        const nextNativeTop = Number(settings.topInsetCss) || 0;
+        const changed = nextEdge !== edgeModeEnabled || nextHeader !== headerScrollEnabled ||
+          Math.abs(nextNativeTop - nativeTopInsetCss) > 0.5;
         edgeModeEnabled = nextEdge;
         headerScrollEnabled = nextHeader;
+        nativeTopInsetCss = Math.max(0, nextNativeTop);
         if (changed) schedule(100);
       }).catch(() => {});
     } catch (_) {}
@@ -259,13 +266,16 @@
 
   function restoreFlowOffset(el, state) {
     try {
-      if (state.inlineMarginTop) {
-        el.style.setProperty('margin-top', state.inlineMarginTop, state.inlinePriority || '');
+      // Reserve the initial safe area on the normal-flow root, not on the header.
+      // Padding is reversible and participates in document scrolling, so the header
+      // naturally travels through the status-bar region as the user scrolls.
+      if (state.inlinePaddingTop) {
+        el.style.setProperty('padding-top', state.inlinePaddingTop, state.inlinePriority || '');
       } else {
-        el.style.removeProperty('margin-top');
+        el.style.removeProperty('padding-top');
       }
     } catch (e) {
-      console.warn('[Summit Probe] could not restore flow offset:', e);
+      console.warn('[Summit Probe] could not restore flow safe-area padding:', e);
     }
     activeFlowOffsets.delete(el);
   }
@@ -318,19 +328,19 @@
     }
 
     if (!state) {
-      const computedMargin = parseFloat(getComputedStyle(root).marginTop);
+      const computedPadding = parseFloat(getComputedStyle(root).paddingTop);
       state = {
-        inlineMarginTop: root.style.getPropertyValue('margin-top'),
-        inlinePriority: root.style.getPropertyPriority('margin-top'),
-        baseMarginTop: Number.isFinite(computedMargin) ? computedMargin : 0,
+        inlinePaddingTop: root.style.getPropertyValue('padding-top'),
+        inlinePriority: root.style.getPropertyPriority('padding-top'),
+        basePaddingTop: Number.isFinite(computedPadding) ? computedPadding : 0,
         appliedInset: 0
       };
       activeFlowOffsets.set(root, state);
     }
 
-    // Margin participates in normal document flow. Unlike transform/top, it reserves
-    // the space and lets the header naturally scroll underneath the translucent status bar.
-    root.style.setProperty('margin-top', `${(state.baseMarginTop + needed).toFixed(1)}px`, 'important');
+    // Browser-level safe-area reservation: pad the normal-flow page root, not the
+    // header itself. Unlike a fixed translation, this scrolls away naturally.
+    root.style.setProperty('padding-top', `${(state.basePaddingTop + needed).toFixed(1)}px`, 'important');
     state.appliedInset = needed;
     return {
       shifted: 1,
@@ -671,10 +681,13 @@
       const playerOverlay = alignWatchPlayerOverlay(candidates);
 
       const topLayer = candidates.length ? candidates[0].el : null;
+      const flowRect = flowTarget ? flowTarget.anchor.getBoundingClientRect() : null;
+      const flowVisibleAtTop = !!(flowRect && flowRect.bottom > 0 && flowRect.top < inset + 2);
       send({
         type: 'top',
         hasFixed: candidates.length > 0,
         color: topLayer ? solidBackground(topLayer) : '',
+        flowColor: !topLayer && flowVisibleAtTop ? solidBackground(flowTarget.anchor) : '',
         pageColor: pageBackgroundColor(),
         shifted,
         layers: candidates.length,

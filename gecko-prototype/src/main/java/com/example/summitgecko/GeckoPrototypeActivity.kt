@@ -238,6 +238,7 @@ class GeckoPrototypeActivity : Activity() {
                         .put("youtubeAdBlockEnabled", summitStore.adBlockEnabled && summitStore.youtubeAdBlockEnabled)
                         .put("edgeMode", summitStore.edgeMode)
                         .put("headerScroll", summitStore.headerScroll)
+                        .put("topInsetCss", if (fullscreen) 0.0 else statusTop.toDouble() / resources.displayMetrics.density)
                 )
             }
             // Bottom-lift poll của content script: trả lời ngay, không log để khỏi spam logcat.
@@ -1495,7 +1496,7 @@ class GeckoPrototypeActivity : Activity() {
         if (::topFadeController.isInitialized) {
             topFadeController.setColors(
                 page = probePageColor,
-                fixedHeader = if (probeHasFixed) probeColor else null
+                fixedHeader = if (probeHasFixed) probeColor else parseCssColor(m.optString("flowColor", ""))
             )
         }
         probeShifted = m.optInt("shifted", 0)
