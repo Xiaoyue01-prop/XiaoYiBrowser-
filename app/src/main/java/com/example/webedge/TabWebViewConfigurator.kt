@@ -75,6 +75,9 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
         host.privateProfileManager.configureCookies(view, tab.isPrivate)
         view.webViewClient = host.webViewClient
         view.webChromeClient = host.createChromeClient { tab.isPrivate }
+        // Cầu nối EdgeBridge phải gắn trước các script đầu tài liệu bên dưới (WebMessageListener + shim, thiếu hỗ trợ
+        // thì addJavascriptInterface như cũ).
+        installEdgeBridge(view, BrowserJavascriptBridge(view, host.bridgeHost))
         // Chạy script media ở mọi khung (kể cả iframe chứa trình phát) ngay từ đầu tài liệu.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(view, MEDIA_JS, setOf("*"))
@@ -86,7 +89,6 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
                 setOf("*")
             )
         }
-        view.addJavascriptInterface(BrowserJavascriptBridge(view, host.bridgeHost), "EdgeBridge")
         view.setFindListener { active, total, _ ->
             if (view === host.web) host.setFindCount(if (total == 0) "0" else "${active + 1}/$total")
         }
