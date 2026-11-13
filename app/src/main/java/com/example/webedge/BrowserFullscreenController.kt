@@ -49,8 +49,11 @@ internal class BrowserFullscreenController(
         customViewCallback = callback
         previousRequestedOrientation = activity.requestedOrientation
         // Giao diện app khoá dọc, nhưng video ngang thì xoay ngang trong lúc toàn màn hình (thoát thì hide() trả về như cũ)
-        val wanted = requestedOrientation?.takeIf { it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
-            ?: if (isLandscapeVideo()) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else null
+        // Đang xin vào PiP thì không xoay: xoay ngang cùng lúc với vào PiP làm cửa sổ PiP/surface video bị đen.
+        val wanted = if (pendingPip) null else {
+            requestedOrientation?.takeIf { it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+                ?: if (isLandscapeVideo()) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else null
+        }
         wanted?.let { activity.requestedOrientation = it }
 
         (view.parent as? ViewGroup)?.removeView(view)
