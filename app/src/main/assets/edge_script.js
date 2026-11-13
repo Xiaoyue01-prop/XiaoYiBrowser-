@@ -233,12 +233,16 @@ function runPageBackground(){
   reportPageBackground(pageCanvasColor());
 }
 
-function schedPageBackground(){
+var pageBgLastAt = 0;
+function schedPageBackground(slow){
   if (inFs() || pageBgTimer) return;
+  // Khi cuộn (slow): nền trang hiếm khi đổi, nên giãn tối thiểu 700ms giữa hai lần lấy mẫu thay vì 180ms.
+  var wait = slow === true ? Math.max(180, 700 - (Date.now() - pageBgLastAt)) : 180;
   pageBgTimer = setTimeout(function(){
     pageBgTimer = null;
+    pageBgLastAt = Date.now();
     runPageBackground();
-  }, 180);
+  }, wait);
 }
 
 function report(v){
@@ -313,8 +317,9 @@ function findHeader(I){
         var cs = getComputedStyle(el);
         if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none' && parseFloat(cs.opacity) >= 0.1) {
           var r = el.getBoundingClientRect();
-          var txt = (el.textContent || '').trim().length;
-          if (r.top <= I + 1 && r.width > w * 0.6 && r.height > 8 && r.height < h * 0.3 && txt > 0) {
+          // textContent của khối lớn rất nặng: chỉ lấy khi kích thước đã hợp lệ, và chỉ cần biết có chữ hay không.
+          if (r.top <= I + 1 && r.width > w * 0.6 && r.height > 8 && r.height < h * 0.3 &&
+              /\S/.test(el.textContent || '')) {
             if (!best || el.contains(best.el)) best = { el: el, cs: cs };
           }
         }
@@ -441,21 +446,39 @@ function shiftHeaderBackground(hd, I){
   } catch (e) {}
 }
 
+// Header đã tìm thấy được giữ lại tối đa 1.5s: các lần chạy khi cuộn chỉ kiểm tra lại đúng phần tử đó (rẻ),
+// còn việc dò từ đầu (nhiều elementsFromPoint) chỉ làm khi hết hạn, DOM đổi, đổi cỡ màn hình hoặc đổi tab.
+var hdCache = null;
+function cachedHeader(I){
+  var c = hdCache;
+  if (!c || !c.el.isConnected || Date.now() - c.at > 1500) return null;
+  try {
+    var cs = getComputedStyle(c.el);
+    if ((cs.position !== 'fixed' && cs.position !== 'sticky') || cs.display === 'none' || parseFloat(cs.opacity) < 0.1) return null;
+    var r = c.el.getBoundingClientRect(), w = window.innerWidth, h = window.innerHeight;
+    if (r.top <= I + 1 && r.width > w * 0.6 && r.height > 8 && r.height < h * 0.3) return { el: c.el, cs: cs };
+  } catch (e) {}
+  return null;
+}
+
 function runEdge(){
   var I = window.__edgeInset || 0;
   if (!I || !document.elementsFromPoint) return;
   try {
-    var hd = findHeader(I);
+    var hd = cachedHeader(I), fresh = false;
+    if (!hd) {
+      hd = findHeader(I);
+      if (hd) { fresh = true; hdCache = { el: hd.el, at: Date.now() }; }
+    }
     if (hd) {
       var topNow = parseFloat(hd.cs.top);
       if (isNaN(topNow) || topNow < I - 0.5) {
         hd.el.style.setProperty('top', I + 'px', 'important');
         hd.el.setAttribute('data-edge-hd', '1');
       }
-      if (hd.el.getAttribute('data-edge-hd')) shiftHeaderBackground(hd, I);
+      if (fresh && hd.el.getAttribute('data-edge-hd')) shiftHeaderBackground(hd, I);
       edgeReassert();
-      shiftCompanions(hd, I);
-      shiftVideoHost(hd, I);
+      if (fresh) { shiftCompanions(hd, I); shiftVideoHost(hd, I); }
       var hc = headerColor(hd.el, I);
       report(hc ? (hc[0] + ',' + hc[1] + ',' + hc[2]) : 'none');
       return;
@@ -531,6 +554,7 @@ function edgeResetAll(){
       el.removeAttribute('data-edge-pad');
     }
     edgeShiftList = [];
+    hdCache = null;
     window.__edgeHdBg = null;
     styleCache = new WeakMap();
     last = '';
@@ -630,12 +654,21 @@ function isBottomNav(el, H, W, offset, known){
 }
 
 // Tìm cả ancestor fixed rộng, phòng trường hợp từng nút con tự có position:fixed.
+// Nhớ kết quả từng phần tử: trong cùng một lượt dò, nhiều điểm lấy mẫu cùng đi qua một chuỗi phần tử cha
+// (body > #app > main...) nên không cần xét lại; phần tử vừa bị loại thì bỏ qua 700ms (không đếm lại nút bên trong).
+var navMemo = new WeakMap(), navRun = 0;
 function wideBottomNavOf(el, H, W){
+  var now = Date.now();
   for (; el && el !== document.documentElement && el !== document.body; el = el.parentElement) {
+    var m = navMemo.get(el);
+    if (m && m.run === navRun) { if (m.ok) return el; continue; }
+    if (m && !m.ok && now - m.t < 700) continue;
     var rec = compactBarRec(el);
     var liftedRec = findRec(el);
     var offset = liftedRec ? liftedRec.cur : 0;
-    if (isBottomNav(el, H, W, offset, !!rec)) return el;
+    var ok = isBottomNav(el, H, W, offset, !!rec);
+    navMemo.set(el, { t: now, run: navRun, ok: ok });
+    if (ok) return el;
   }
   return null;
 }
@@ -906,7 +939,8 @@ function runLift(){
   lifted = keep;
   syncCompactBars();
   if (R > 0 && document.elementsFromPoint) {
-    var ys = [H - 4, H - 40, H - 90, H - 160];
+    navRun++;
+    var ys = [H - 4, H - 60, H - 140];
     var xs = [0.1, 0.5, 0.9];
     for (var a = 0; a < ys.length; a++) {
       for (var b = 0; b < xs.length; b++) {
@@ -939,16 +973,16 @@ function schedLift(){
   liftTimer = setTimeout(function(){ liftTimer = null; liftLast = Date.now(); runLift(); }, wait);
 }
 
-function schedAll(){ sched(); schedLift(); schedPageBackground(); }
+function schedAll(){ hdCache = null; sched(); schedLift(); schedPageBackground(); }
 
-window.__edgeRun = function(){ run(); runLift(); schedPageBackground(); };
+window.__edgeRun = function(){ hdCache = null; run(); runLift(); schedPageBackground(); };
 window.__edgePageBgRun = function(){ runPageBackground(); };
 // Đổi tab: native đã bỏ qua báo cáo màu lúc trang này chạy nền, nên xoá bộ nhớ 'last' để báo lại.
-window.__edgeForceTop = function(){ last = ''; run(); };
+window.__edgeForceTop = function(){ last = ''; hdCache = null; run(); };
 window.__edgeLift = function(){ runLift(); };
 window.addEventListener('scroll', function(){
   sched();
-  schedPageBackground();
+  schedPageBackground(true);
 }, {passive: true});
 
 // Kéo-để-tải-lại của app chỉ nên chạy khi cử chỉ thuộc về trang cuộn gốc: báo về nếu chạm bắt đầu trong khung cuộn
@@ -1006,7 +1040,13 @@ try {
   observer = new MutationObserver(function(records){
     if (inFs()) return;
     for (var i = 0; i < records.length; i++) {
-      if (records[i].type === 'childList') { schedAll(); return; }   // thêm/bớt phần tử: làm đủ như cũ
+      if (records[i].type === 'childList') { hdCache = null; schedAll(); return; }   // thêm/bớt phần tử: làm đủ như cũ
+    }
+    // Đổi class/style ngay trên html/body (bật tắt chế độ tối...) mới làm nền trang đổi: báo lại màu ngay,
+    // vì lúc cuộn màu chỉ được lấy mẫu thưa.
+    for (var j = 0; j < records.length; j++) {
+      var tg = records[j].target;
+      if (tg === document.body || tg === document.documentElement) { schedPageBackground(); break; }
     }
     // Chỉ đổi class/style (hoạt ảnh, carousel...): nhẹ hơn và gộp tối đa một lần mỗi 150ms
     if (obsTimer) return;
