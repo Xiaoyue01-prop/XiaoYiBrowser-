@@ -1048,6 +1048,14 @@ try {
       var tg = records[j].target;
       if (tg === document.body || tg === document.documentElement) { schedPageBackground(); break; }
     }
+    // Bỏ qua các lần đổi style do chính script ghi lên thanh dưới (animation thu/bung ghi style mỗi khung hình):
+    // nếu không, animation tự kích hoạt dò lại cả trang. Chỉ khi còn thay đổi của trang thì mới xếp lịch.
+    var foreign = false;
+    for (var k = 0; k < records.length && !foreign; k++) {
+      var tt = records[k].target;
+      if (!compactBarRec(tt) && !findRec(tt)) foreign = true;
+    }
+    if (!foreign) return;
     // Chỉ đổi class/style (hoạt ảnh, carousel...): nhẹ hơn và gộp tối đa một lần mỗi 150ms
     if (obsTimer) return;
     var wait = Math.max(0, 150 - (Date.now() - obsLast));
@@ -1062,6 +1070,32 @@ try {
     styleCache = null;
   });
 } catch (e) {}
+
+// Đo thời gian chạy (tắt mặc định, gần như không tốn gì khi tắt). Bật bằng window.__edgePerf = true,
+// đọc bằng window.__edgePerfReport(): số lần chạy, tổng ms, ms lớn nhất của run / runLift / pageBg.
+var perf = {};
+function wrapPerf(name, fn){
+  return function(){
+    if (!window.__edgePerf) return fn.apply(this, arguments);
+    var t0 = performance.now();
+    try { return fn.apply(this, arguments); }
+    finally {
+      var d = performance.now() - t0, s = perf[name] || (perf[name] = { n: 0, total: 0, max: 0 });
+      s.n++; s.total += d; if (d > s.max) s.max = d;
+    }
+  };
+}
+run = wrapPerf('run', run);
+runLift = wrapPerf('runLift', runLift);
+runPageBackground = wrapPerf('pageBg', runPageBackground);
+window.__edgePerfReport = function(){
+  var out = {};
+  Object.keys(perf).forEach(function(k){
+    var s = perf[k];
+    out[k] = { n: s.n, avgMs: +(s.total / s.n).toFixed(2), maxMs: +s.max.toFixed(2), totalMs: +s.total.toFixed(1) };
+  });
+  return JSON.stringify(out);
+};
 
 setTimeout(window.__edgeRun, 100);
 setTimeout(window.__edgeRun, 800);
