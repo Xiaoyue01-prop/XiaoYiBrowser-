@@ -82,13 +82,25 @@ class PullToRefreshController(
         if (blocked && pulling) release(cancelled = true) else if (blocked) tracking = false
     }
 
+    /**
+     * Trang xem video của YouTube tự xử lý cử chỉ vuốt xuống (vào/thoát toàn màn hình, thu nhỏ trình phát) mà không chặn cuộn,
+     * nên Chromium vẫn phát overscroll và JS cũng khó đoán đúng. Ở đó tắt hẳn kéo-để-tải-lại; trang chủ YouTube vẫn dùng được.
+     */
+    private fun pageOwnsPullGesture(web: WebView): Boolean {
+        val uri = runCatching { android.net.Uri.parse(web.url) }.getOrNull() ?: return false
+        val hostName = uri.host?.lowercase() ?: return false
+        if (hostName != "youtube.com" && !hostName.endsWith(".youtube.com")) return false
+        val path = uri.path.orEmpty()
+        return path.startsWith("/watch") || path.startsWith("/shorts") || path.startsWith("/live")
+    }
+
     /** Gọi cho mọi MotionEvent của Activity; không bao giờ tiêu thụ sự kiện. */
     fun onTouch(ev: MotionEvent) {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 val web = webProvider()
                 tracking = !refreshing && web != null && web.scrollY == 0 &&
-                    ev.rawY < host.height * START_REGION && canStart()
+                    ev.rawY < host.height * START_REGION && canStart() && !pageOwnsPullGesture(web)
                 pulling = false
                 pageHandlesTouch = false
                 topOverscrolled = false
