@@ -120,7 +120,12 @@ internal class BrowserFullscreenController(
 
     fun hide() {
         val view = customView ?: return
-        pipController.trace("fullscreen hide")
+        run {
+            // Ghi vào log ai gọi hide (onHideCustomView = trang/WebView tự thoát; exitFullscreenView/onStop/... = app).
+            val st = Throwable().stackTrace
+            val who = st.drop(1).take(4).joinToString(" ← ") { "${it.className.substringAfterLast('.')}.${it.methodName}" }
+            pipController.trace("fullscreen hide by $who")
+        }
         if ((activity.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
             // Chỉ bản debug: cho biết ai làm video thoát toàn màn hình (chẩn đoán lỗi PiP hiện giao diện trình duyệt).
             val trace = Throwable().stackTrace

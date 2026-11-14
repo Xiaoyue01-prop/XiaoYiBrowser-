@@ -333,6 +333,9 @@ window.__summitMedia = {
     try {
       var v = on ? cur : pipEl;
       if (!v) return;
+      // Video đang toàn màn hình thì không báo "đã vào PiP" cho trang: nhiều trình phát coi đó là tín hiệu để tự thoát
+      // toàn màn hình (log: fullscreen hide ~250ms sau khi vào PiP), khiến cửa sổ PiP chỉ còn giao diện trình duyệt.
+      if (on && (document.fullscreenElement || document.webkitFullscreenElement)) return;
       pipEl = on ? v : null;
       var ev = new Event(on ? 'enterpictureinpicture' : 'leavepictureinpicture', { bubbles: true });
       ev.pictureInPictureWindow = { width: v.clientWidth, height: v.clientHeight,
