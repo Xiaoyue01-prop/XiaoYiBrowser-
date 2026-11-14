@@ -1128,13 +1128,18 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 }
             }
             // Bấm cửa sổ PiP để mở lại app: đợi cửa sổ ổn định kích thước rồi gắn lại view video cho khỏi đen.
-            handler.postDelayed({
-                if (isFullscreenVideoShowing() && !this@MainActivity.isInPictureInPictureMode &&
-                    lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
-                ) {
-                    fullscreenVideoController?.refreshSurface()
-                }
-            }, PIP_RETURN_REFRESH_DELAY_MS)
+            // Animation phóng từ PiP ra toàn màn hình mất ~300-500ms; làm một lượt quá sớm thì surface bị tạo lại giữa chừng
+            // và vẫn đen (chỉ hiện điều khiển của trang). Nên làm nhiều lượt, lượt sau cùng chạy khi cửa sổ đã ổn định.
+            for (delay in longArrayOf(PIP_RETURN_REFRESH_DELAY_MS, 600L, 1_200L)) {
+                handler.postDelayed({
+                    if (isFullscreenVideoShowing() && !this@MainActivity.isInPictureInPictureMode &&
+                        lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                    ) {
+                        fullscreenVideoController?.refreshSurface()
+                        WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.nudge()")
+                    }
+                }, delay)
+            }
         }
     }
 

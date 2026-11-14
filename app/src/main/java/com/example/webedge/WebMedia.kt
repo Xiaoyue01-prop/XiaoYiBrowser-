@@ -330,6 +330,17 @@ window.__summitMedia = {
       v.dispatchEvent(ev);
     } catch (e) {}
   },
+  // Buộc trình duyệt vẽ lại lớp video (sau khi thu từ PiP về toàn màn hình mà video đen): báo resize và ép tạo lại lớp.
+  nudge: function(){
+    try {
+      window.dispatchEvent(new Event('resize'));
+      var v = cur;
+      if (!v) return;
+      var old = v.style.transform;
+      v.style.transform = 'translateZ(0)';
+      requestAnimationFrame(function(){ requestAnimationFrame(function(){ v.style.transform = old; }); });
+    } catch (e) {}
+  },
   report: function(){
     if (!cur) {
       var list = document.querySelectorAll('video,audio');
