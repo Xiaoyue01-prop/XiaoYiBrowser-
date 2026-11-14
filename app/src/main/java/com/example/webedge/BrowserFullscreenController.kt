@@ -35,10 +35,18 @@ internal class BrowserFullscreenController(
     /** Người dùng rời app khi đang xem ngang: trả về dọc rồi vào PiP ngay, không dùng vùng video cũ. */
     fun leaveToPipFromLandscape() {
         if (customView == null) return
-        previousRequestedOrientation?.let { activity.requestedOrientation = it }
-        rotatedForVideo = false
+        // Đổi hướng ngay trước enterPictureInPictureMode làm hệ thống từ chối (trả false). Vào PiP trước ở hướng hiện tại
+        // (vùng video tính theo hướng ngang hiện tại nên đúng), rồi trả về dọc sau khi đã ở trong PiP.
         pipController.trace("leaveToPipFromLandscape")
-        pipController.enterNow(useSourceRect = false)
+        pipController.enterNow(useSourceRect = true)
+    }
+
+    /** Đã ở trong cửa sổ PiP: trả hướng về như trước khi xoay ngang vì video. */
+    fun restoreOrientationInPip() {
+        if (customView == null || !rotatedForVideo) return
+        rotatedForVideo = false
+        pipController.trace("restoreOrientationInPip")
+        previousRequestedOrientation?.let { activity.requestedOrientation = it }
     }
 
     /** Ép view toàn màn hình tạo lại lớp vẽ: ẩn rồi hiện lại sau một nhịp. */

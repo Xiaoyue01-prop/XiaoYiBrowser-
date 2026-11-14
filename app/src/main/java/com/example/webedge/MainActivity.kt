@@ -1127,6 +1127,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (::pipController.isInitialized) pipController.trace("modeChanged pip=$isInPictureInPictureMode state=${lifecycle.currentState}")
         if (!isInPictureInPictureMode && ::pipController.isInitialized) pipController.flushTrace()
         WebMediaHub.jsRunner?.invoke(mediaJs("pip($isInPictureInPictureMode)"))
+        if (isInPictureInPictureMode) {
+            // Vào PiP khi đang xoay ngang vì video: giờ mới trả về dọc, rồi làm tươi lớp video sau khi cửa sổ ổn định.
+            fullscreenVideoController?.restoreOrientationInPip()
+            handler.postDelayed({ if (this@MainActivity.isInPictureInPictureMode) fullscreenVideoController?.kickLayer() }, 600L)
+        }
         if (!isInPictureInPictureMode && isFullscreenVideoShowing()) lastPipExitUptime = SystemClock.uptimeMillis()
         if (!isInPictureInPictureMode && !isFullscreenVideoShowing()) {
             pipController.setVideoActive(false)
