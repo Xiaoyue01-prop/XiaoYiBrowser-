@@ -35,6 +35,8 @@ class FootballSheetController(
     private val toast: (String) -> Unit
 ) {
     private val sheet = BrowserBottomSheet(activity, density, isNight, foreground, accent)
+    // Không dùng tên "foreground" trong khối apply của View: nó trùng View.foreground (Drawable).
+    private val ink: Int = foreground
     private val muted: Int get() = if (isNight()) Color.rgb(190, 192, 200) else Color.rgb(105, 105, 112)
     private val cardColor: Int get() = if (isNight()) Color.rgb(43, 45, 52) else Color.rgb(247, 247, 249)
     private val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -84,7 +86,7 @@ class FootballSheetController(
             textSize = 13f
             setSingleLine()
             setText(query)
-            setTextColor(foreground)
+            setTextColor(ink)
             setHintTextColor(muted)
             setPadding(dp(14), 0, dp(14), 0)
             background = roundedDrawable(dp(12).toFloat(), cardColor)
@@ -110,7 +112,7 @@ class FootballSheetController(
         val card = card()
         val key = FootballPins.apiKey(activity)
         if (key.isNotBlank()) {
-            card.addView(text("API-Football key: ••••${key.takeLast(4)}", 13f, foreground, true))
+            card.addView(text("API-Football key: ••••${key.takeLast(4)}", 13f, ink, true))
             card.addView(
                 text(quotaText(), 12f, muted),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
@@ -123,7 +125,7 @@ class FootballSheetController(
                 LinearLayout.LayoutParams(-2, dp(34)).apply { topMargin = dp(10) }
             )
         } else {
-            card.addView(text("Nhập API key của API-Football", 13f, foreground, true))
+            card.addView(text("Nhập API key của API-Football", 13f, ink, true))
             card.addView(
                 text("Lấy key miễn phí ở dashboard.api-football.com (100 lượt/ngày).", 12f, muted),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
@@ -132,7 +134,7 @@ class FootballSheetController(
                 hint = "Dán key vào đây"
                 textSize = 13f
                 setSingleLine()
-                setTextColor(foreground)
+                setTextColor(ink)
                 setHintTextColor(muted)
                 setPadding(dp(12), 0, dp(12), 0)
                 background = roundedDrawable(dp(10).toFloat(), if (isNight()) Color.rgb(58, 58, 64) else Color.WHITE)
@@ -160,7 +162,7 @@ class FootballSheetController(
     private fun demoCard(page: LinearLayout): LinearLayout {
         val card = card()
         val on = FootballDemo.ID in FootballPins.pins(activity)
-        card.addView(text("Trận ảo để test", 13f, foreground, true))
+        card.addView(text("Trận ảo để test", 13f, ink, true))
         card.addView(
             text("Arsenal vs Chelsea, 1 phút trận = 2 giây, có 4 bàn thắng. Không tốn lượt API.", 12f, muted),
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
@@ -236,7 +238,7 @@ class FootballSheetController(
         val col = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         col.addView(text(subtitle(m), 11f, muted))
         col.addView(
-            text(scoreLine(m), 14f, foreground, true),
+            text(scoreLine(m), 14f, ink, true),
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) }
         )
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
@@ -304,7 +306,7 @@ class FootballSheetController(
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             gravity = Gravity.CENTER
             setPadding(dp(12), 0, dp(12), 0)
-            setTextColor(if (usesMuted) foreground else color)
+            setTextColor(if (usesMuted) ink else color)
             background = GradientDrawable().apply {
                 cornerRadius = dp(12).toFloat()
                 setColor(if (isNight()) Color.rgb(58, 58, 64) else Color.rgb(238, 238, 242))
