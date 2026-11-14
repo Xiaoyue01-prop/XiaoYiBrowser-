@@ -392,19 +392,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         fullscreenVideoController?.reapplyImmersiveIfShowing()
-        // Xoay máy khi đang ở cửa sổ PiP: cửa sổ đổi cỡ nên lớp video lại lệch lớp trang (đen, chỉ còn điều khiển). Làm tươi sau khi ổn định.
-        if (isInPictureInPictureMode && isFullscreenVideoShowing()) {
-            pipController.trace("config in pip orient=${newConfig.orientation}")
-            for (delay in longArrayOf(250L, 700L)) {
-                handler.postDelayed({
-                    if (isInPictureInPictureMode && isFullscreenVideoShowing()) {
-                        fullscreenVideoController?.kickLayer()
-                        WebMediaHub.jsRunner?.invoke(mediaJs("nudge(false)"))
-                    }
-                }, delay)
-            }
-            handler.postDelayed({ pipController.flushTrace() }, 1_000L)
-        }
     }
 
     /** Xin chế độ màn hình có tần số quét cao nhất (cùng độ phân giải) để animation chạy 120Hz thay vì 60Hz. */
@@ -1127,20 +1114,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (::pipController.isInitialized) pipController.trace("modeChanged pip=$isInPictureInPictureMode state=${lifecycle.currentState}")
         if (!isInPictureInPictureMode && ::pipController.isInitialized) pipController.flushTrace()
         WebMediaHub.jsRunner?.invoke(mediaJs("pip($isInPictureInPictureMode)"))
-        if (isInPictureInPictureMode) {
-            // Không trả hướng về dọc ở đây: nhiều trình phát tự thoát toàn màn hình khi máy chuyển ngang → dọc (log: fullscreen hide
-            // ngay sau restoreOrientationInPip). Hướng sẽ được trả khi video thoát toàn màn hình (hide()).
-            // Chỉ làm tươi lớp video sau khi cửa sổ PiP ổn định.
-            for (delay in longArrayOf(500L, 1_000L, 1_800L)) {
-                handler.postDelayed({
-                    if (this@MainActivity.isInPictureInPictureMode) {
-                        fullscreenVideoController?.kickLayer()
-                        WebMediaHub.jsRunner?.invoke(mediaJs("nudge(false)"))
-                    }
-                }, delay)
-            }
-            handler.postDelayed({ pipController.flushTrace() }, 2_200L)
-        }
+        // Không can thiệp gì lên view video khi đang ở PiP: ẩn/hiện view, trả hướng, gửi resize... đều làm player thoát toàn màn hình
+        // hoặc làm cửa sổ PiP hiện giao diện trình duyệt.
         if (!isInPictureInPictureMode && isFullscreenVideoShowing()) lastPipExitUptime = SystemClock.uptimeMillis()
         if (!isInPictureInPictureMode && !isFullscreenVideoShowing()) {
             pipController.setVideoActive(false)
