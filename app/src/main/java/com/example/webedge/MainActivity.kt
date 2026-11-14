@@ -29,7 +29,9 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 import java.util.Locale
@@ -66,6 +68,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private lateinit var bottomFade: View
     private lateinit var suggestBox: LinearLayout
     private lateinit var suggestBlurView: BlurView
+    private var readerModeController: ReaderModeController? = null
+    private var readerStatusWasVisible = true
+    private var readerBarWasHidden = false
+    private var readerPreviousBarsBehavior = 0
 
     private var d = 1f
     private var isNight = false
@@ -367,7 +373,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         accent = accent
     )
 
-    private fun setBarHidden(hide: Boolean) = toolbar.setBarHidden(hide)
+    private fun setBarHidden(hide: Boolean) {
+        // WebView gốc vẫn tồn tại bên dưới Reader; không để cuộn nền làm đổi trạng thái browser chrome.
+        if (readerModeController?.isActive == true) return
+        toolbar.setBarHidden(hide)
+    }
     private fun updateBarVisibility() = toolbar.updateBarVisibility()
     private fun updateNav() = toolbar.updateNav()
     private fun showDomain() = toolbar.showDomain()
@@ -381,17 +391,32 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         super.onResume()
         if (::pipController.isInitialized) pipController.trace("onResume")
         requestHighRefreshRate()
-        fullscreenVideoController?.reapplyImmersiveIfShowing()
+        if (readerModeController?.isActive == true) {
+            WindowCompat.getInsetsController(window, root).hide(WindowInsetsCompat.Type.statusBars())
+        } else {
+            fullscreenVideoController?.reapplyImmersiveIfShowing()
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) fullscreenVideoController?.reapplyImmersiveIfShowing()
+        if (hasFocus) {
+            if (readerModeController?.isActive == true) {
+                WindowCompat.getInsetsController(window, root).hide(WindowInsetsCompat.Type.statusBars())
+            } else {
+                fullscreenVideoController?.reapplyImmersiveIfShowing()
+            }
+        }
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
-        fullscreenVideoController?.reapplyImmersiveIfShowing()
+        if (readerModeController?.isActive == true) {
+            WindowCompat.getInsetsController(window, root).hide(WindowInsetsCompat.Type.statusBars())
+            readerModeController?.updateInsets()
+        } else {
+            fullscreenVideoController?.reapplyImmersiveIfShowing()
+        }
     }
 
     /** Xin chế độ màn hình có tần số quét cao nhất (cùng độ phân giải) để animation chạy 120Hz thay vì 60Hz. */
@@ -649,6 +674,15 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             accentColor = accent,
             topInset = { insetTop }
         )
+        readerModeController = ReaderModeController(
+            activity = this,
+            root = root,
+            density = d,
+            topInset = { insetTop },
+            bottomInset = { insetBottom },
+            entryPill = { urlPillFrame },
+            onVisibilityChanged = ::onReaderVisibilityChanged
+        )
         menu = MenuController(
             activity = this,
             root = root,
@@ -660,7 +694,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             isNight = { GlassSystem.isDarkPage() },
             fg = fg,
             accent = accent,
-            onVisibilityChanged = { syncOrbMenuVisibility() }
+            onVisibilityChanged = { syncOrbMenuVisibility() },
+            onOpenReader = ::requestReaderMode
         )
         val pageActions = PageActions(
             activity = this,
@@ -749,6 +784,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             }
 
             override fun handleOnBackPressed() {
+                if (readerModeController?.handleBack() == true) return
                 if (glassDialog.isShowing) glassDialog.cancelCurrent()
                 else if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
                 else if (isFullscreenVideoShowing()) exitFullscreenView()
@@ -774,7 +810,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         ::pageTransition.isInitialized && !pageTransition.isRunning && !barHidden && overlaysIdle()
 
     private fun overlaysIdle(): Boolean =
-        !isFullscreenVideoShowing() && !isInPictureInPictureMode &&
+        readerModeController?.isActive != true &&
+            !isFullscreenVideoShowing() && !isInPictureInPictureMode &&
             !(::glassDialog.isInitialized && glassDialog.isShowing) && !popup.isShowing &&
             !(::menu.isInitialized && menu.isOpen) && !findBarController.isShown && !urlBar.hasFocus() &&
             !(::tabSwitcherController.isInitialized && tabSwitcherController.isShowing)
@@ -850,6 +887,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         updateBarVisibility()
         if (::menu.isInitialized) menu.relayout()
         root.requestLayout()
+        readerModeController?.updateInsets()
         pageEdge.injectInsets()
     }
 
@@ -857,6 +895,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     // OrbMenu có trạng thái riêng, không suy diễn từ alpha của nút quay lại:
     // nút quay lại có thể mờ vì không còn lịch sử nhưng OrbMenu vẫn cần dùng được.
     private fun syncOrbMenuVisibility() {
+        if (readerModeController?.isActive == true) {
+            orbController?.setToolbarAvailable(false)
+            orbController?.setTemporarilyHidden(true)
+            return
+        }
         if (!findBarController.hasContainer || !toolbar.isCreated) return
         val findOn = findBarController.isShown
         val pageTyping = imeBottom > 0 && !urlBar.hasFocus() && !findOn
@@ -1215,6 +1258,80 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         super.onSaveInstanceState(outState)
     }
 
+    /** Mở Reader Module bằng nội dung trích xuất; WebView gốc và vị trí cuộn được giữ nguyên. */
+    private fun requestReaderMode() {
+        if (readerModeController?.isActive == true) return
+        if (!::web.isInitialized || web.url.isNullOrBlank()) {
+            toast("Chưa có trang để đọc")
+            return
+        }
+        if (findBarController.isShown) closeFind()
+        suggestionController.hide()
+        val sourceWeb = web
+        val sourceUrl = sourceWeb.url ?: currentUrl
+        sourceWeb.evaluateJavascript(ReaderModeController.EXTRACTION_SCRIPT) { raw ->
+            if (isActivityDestroyed || sourceWeb !== web) return@evaluateJavascript
+            val article = ReaderModeController.parseJavascriptResult(raw, sourceUrl)
+            if (article == null) {
+                toast("Trang này chưa có nội dung phù hợp với Reader Mode")
+            } else {
+                readerModeController?.show(article)
+            }
+        }
+    }
+
+    /** Browser chrome chỉ tạm ẩn; Reader không thay WebView, tab hay lịch sử điều hướng. */
+    private fun onReaderVisibilityChanged(active: Boolean) {
+        val controller = WindowCompat.getInsetsController(window, root)
+        if (active) {
+            readerBarWasHidden = barHidden
+            readerStatusWasVisible = ViewCompat.getRootWindowInsets(root)
+                ?.isVisible(WindowInsetsCompat.Type.statusBars()) ?: true
+            readerPreviousBarsBehavior = controller.systemBarsBehavior
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.statusBars())
+
+            suggestionController.hide()
+            suggestBox.visibility = View.GONE
+            suggestBlurView.visibility = View.GONE
+            bar.visibility = View.INVISIBLE
+            topFadeController.view.visibility = View.GONE
+            bottomFade.visibility = View.GONE
+            orbController?.setToolbarAvailable(false)
+            orbController?.setTemporarilyHidden(true)
+        } else {
+            controller.systemBarsBehavior = readerPreviousBarsBehavior
+            if (readerStatusWasVisible) controller.show(WindowInsetsCompat.Type.statusBars())
+            else controller.hide(WindowInsetsCompat.Type.statusBars())
+
+            suggestBlurView.visibility = View.GONE
+            suggestBox.visibility = View.GONE
+            topFadeController.view.visibility = View.VISIBLE
+            bottomFade.visibility = View.VISIBLE
+            setBarHidden(readerBarWasHidden)
+            bar.visibility = if (toolbar.barPresent && !readerBarWasHidden) View.VISIBLE else View.INVISIBLE
+            if (toolbar.barPresent) {
+                bar.alpha = 0f
+                bar.translationY = dp(12).toFloat()
+                AnimationSystem.spring(bar, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.fade(bar, 1f, AnimationSystem.QUICK)
+            }
+            updateBarVisibility()
+            syncOrbMenuVisibility()
+
+            // The browser address pill appears from the same small capsule that just returned from Reader.
+            if (toolbar.barPresent && !barHidden) {
+                urlPillFrame.alpha = 0f
+                urlPillFrame.scaleX = 0.72f
+                urlPillFrame.scaleY = 0.82f
+                AnimationSystem.spring(urlPillFrame, androidx.dynamicanimation.animation.DynamicAnimation.SCALE_X, 1f, AnimationSystem.MENU_POP_BACK)
+                AnimationSystem.spring(urlPillFrame, androidx.dynamicanimation.animation.DynamicAnimation.SCALE_Y, 1f, AnimationSystem.MENU_POP_BACK)
+                AnimationSystem.fade(urlPillFrame, 1f, AnimationSystem.QUICK)
+            }
+        }
+        readerModeController?.updateInsets()
+    }
+
     private fun setupOrbMenu() {
         orbController = OrbMenuController(
             blurTarget = blurTarget,
@@ -1246,6 +1363,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         pullRefresh?.destroy()
         pullRefresh = null
         if (::pipController.isInitialized) pipController.close()
+        readerModeController?.destroy()
+        readerModeController = null
         downloadPromptController?.dismissAll()
         downloadPromptController = null
         // Trả lời mọi hộp thoại còn treo (JsResult, quyền) trước khi hủy WebView.

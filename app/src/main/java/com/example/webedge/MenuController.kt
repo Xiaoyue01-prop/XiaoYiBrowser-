@@ -64,7 +64,8 @@ class MenuController(
     private val isNight: () -> Boolean,
     private val fg: Int,
     private val accent: Int,
-    private val onVisibilityChanged: () -> Unit = {}
+    private val onVisibilityChanged: () -> Unit = {},
+    private val onOpenReader: () -> Unit = {}
 ) {
     private class Panel(
         val page: LinearLayout,
@@ -624,6 +625,10 @@ class MenuController(
         box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)))
 
         gap()
+        item("Chế độ đọc", Icons.BOOK_OPEN, true) {
+            // Chờ thẻ menu thu về xong rồi mới đưa Reader Module lên trên Browser Module.
+            root.postDelayed({ onOpenReader() }, 360L)
+        }
         item("Dấu trang", Icons.BOOKMARK_OUTLINE, false) { showList("Dấu trang", "bookmarks") }
         item("Lịch sử", Icons.HISTORY, false) { showList("Lịch sử", "history") }
         item("Tải xuống", Icons.DOWNLOAD, true) { browserTools.showDownloads() }
