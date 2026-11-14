@@ -101,6 +101,17 @@ class MenuController(
         )
     }
 
+    private val footballSheet by lazy(LazyThreadSafetyMode.NONE) {
+        FootballSheetController(
+            activity = activity,
+            density = d,
+            isNight = isNight,
+            foreground = fg,
+            accent = accent,
+            toast = host::toast
+        )
+    }
+
     private data class CompactFallback(
         val translationX: Float,
         val translationY: Float,
@@ -633,6 +644,7 @@ class MenuController(
         item("Lịch sử", Icons.HISTORY, false) { showList("Lịch sử", "history") }
         item("Tải xuống", Icons.DOWNLOAD, true) { browserTools.showDownloads() }
         item("Privacy Dashboard", Icons.SHIELD, true) { browserTools.showPrivacy() }
+        item("Tỉ số bóng đá", Icons.FOOTBALL, true) { footballSheet.show() }
 
         gap()
         item("Tìm trong trang", Icons.SEARCH, true) { host.openFind() }
