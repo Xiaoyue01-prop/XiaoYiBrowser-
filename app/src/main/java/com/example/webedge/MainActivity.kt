@@ -1111,7 +1111,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         if (::pipController.isInitialized) pipController.trace("modeChanged pip=$isInPictureInPictureMode state=${lifecycle.currentState}")
         if (!isInPictureInPictureMode && ::pipController.isInitialized) pipController.flushTrace()
-        WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.pip($isInPictureInPictureMode)")
+        WebMediaHub.jsRunner?.invoke(mediaJs("pip($isInPictureInPictureMode)"))
         if (!isInPictureInPictureMode && isFullscreenVideoShowing()) lastPipExitUptime = SystemClock.uptimeMillis()
         if (!isInPictureInPictureMode && !isFullscreenVideoShowing()) {
             pipController.setVideoActive(false)
@@ -1123,7 +1123,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 if (!isInPictureInPictureMode && isFullscreenVideoShowing() &&
                     !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
                 ) {
-                    WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.pause()")
+                    WebMediaHub.jsRunner?.invoke(mediaJs("pause()"))
                     exitFullscreenView()
                 }
             }
@@ -1139,8 +1139,20 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                         lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
                     pipController.trace("pipReturn pass=$i ok=$ok state=${lifecycle.currentState}")
                     if (ok) {
-                        if (i == 0) fullscreenVideoController?.refreshSurface()
-                        WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.nudge(${i > 0})")
+                        when (i) {
+                            0 -> fullscreenVideoController?.refreshSurface()
+                            // Lớp trang và lớp video không còn khớp nhau sau khi đổi cỡ cửa sổ (chỉ thấy một trong hai).
+                            // Ẩn rồi hiện lại WebView buộc compositor dựng lại cả hai lớp, giống khi app quay lại từ nền.
+                            1 -> if (::web.isInitialized) {
+                                WebMediaHub.jsRunner?.invoke(mediaJs("holdPlaying()"))
+                                runCatching { web.onPause() }
+                                runCatching { web.onResume() }
+                                handler.postDelayed({
+                                    WebMediaHub.jsRunner?.invoke(mediaJs("restorePlaying()"))
+                                }, 150L)
+                            }
+                            else -> WebMediaHub.jsRunner?.invoke(mediaJs("nudge(false)"))
+                        }
                     }
                     if (i == delays.lastIndex) pipController.flushTrace()
                 }, delay)
@@ -1155,7 +1167,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (::pipController.isInitialized) pipController.trace("onStop inPip=$isInPictureInPictureMode entering=${pipController.isEntering}")
         if (isFullscreenVideoShowing() && !isInPictureInPictureMode && !isChangingConfigurations && !pipController.isEntering) {
             if (SystemClock.uptimeMillis() - lastPipExitUptime < PIP_CLOSE_WINDOW_MS) {
-                WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.pause()")
+                WebMediaHub.jsRunner?.invoke(mediaJs("pause()"))
             }
             exitFullscreenView()
         }

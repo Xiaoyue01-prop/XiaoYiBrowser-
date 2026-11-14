@@ -144,7 +144,7 @@ class WebMediaPlayer : SimpleBasePlayer(Looper.getMainLooper()) {
     }
 
     private fun run(call: String) {
-        WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.$call")
+        WebMediaHub.jsRunner?.invoke(mediaJs(call))
     }
 
     private companion object {
@@ -227,6 +227,16 @@ class WebMediaController(private val activity: ComponentActivity) {
         ) == PackageManager.PERMISSION_GRANTED
         if (!granted) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
+}
+
+/**
+ * Tạo mã JS gọi lệnh của __summitMedia ở MỌI khung. evaluateJavascript chỉ chạy ở khung chính, mà trình phát của nhiều web phim
+ * nằm trong iframe; broadcast chuyển lệnh xuống các khung con bằng postMessage. [call] dạng "pause()" hoặc "seek(12.5)".
+ */
+internal fun mediaJs(call: String): String {
+    val name = call.substringBefore('(')
+    val args = call.substringAfter('(', "").removeSuffix(")")
+    return "window.__summitMedia&&window.__summitMedia.broadcast('$name',[$args])"
 }
 
 // Script chạy trong trang: tìm thẻ video/audio đang phát, báo trạng thái về EdgeBridge.mediaState
@@ -336,12 +346,12 @@ window.__summitMedia = {
       window.dispatchEvent(new Event('resize'));
       var v = cur;
       if (!v) return;
-      // Tua tại chỗ: buộc giải mã và trình chiếu lại khung hình hiện tại (không đổi vị trí, không đổi trạng thái phát/dừng).
-      if (seek && v.readyState >= 2 && isFinite(v.currentTime) && !v.ended) { try { v.currentTime = v.currentTime; } catch (e) {} }
-      var old = v.style.transform;
-      v.style.transform = 'translateZ(0)';
-      requestAnimationFrame(function(){ requestAnimationFrame(function(){ v.style.transform = old; }); });
     } catch (e) {}
+  },
+  // Dùng quanh web.onPause()/onResume(): nhớ video đang phát để phát tiếp nếu WebView tạm dừng nó khi ẩn/hiện lại.
+  holdPlaying: function(){ try { window.__summitWasPlaying = !!(cur && !cur.paused && !cur.ended); } catch (e) {} },
+  restorePlaying: function(){
+    try { if (window.__summitWasPlaying && cur && cur.paused) { var p = cur.play(); if (p && p.catch) p.catch(function(){}); } } catch (e) {}
   },
   report: function(){
     if (!cur) {
@@ -352,6 +362,22 @@ window.__summitMedia = {
     send(true);
   }
 };
+// Chuyển lệnh từ app xuống mọi khung con (iframe chứa trình phát). Chỉ nhận tin từ khung cha, chỉ các lệnh trong danh sách.
+var ALLOWED = { play: 1, pause: 1, seek: 1, pip: 1, nudge: 1, holdPlaying: 1, restorePlaying: 1 };
+function relay(msg){
+  try { var fr = window.frames; for (var i = 0; i < fr.length; i++) { try { fr[i].postMessage(msg, '*'); } catch (e) {} } } catch (e) {}
+}
+window.__summitMedia.broadcast = function(name, args){
+  if (!ALLOWED[name]) return;
+  try { window.__summitMedia[name].apply(window.__summitMedia, args || []); } catch (e) {}
+  relay({ __summitCmd: name, args: args || [] });
+};
+window.addEventListener('message', function(e){
+  var d = e.data;
+  if (window === window.top || e.source !== window.parent) return;
+  if (!d || typeof d !== 'object' || typeof d.__summitCmd !== 'string') return;
+  window.__summitMedia.broadcast(d.__summitCmd, d.args);
+});
 window.__summitMedia.report();
 })();
 """
