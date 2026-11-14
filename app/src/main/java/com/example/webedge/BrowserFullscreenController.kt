@@ -103,8 +103,7 @@ internal class BrowserFullscreenController(
 
         onBottomReserveChanged()
         pipController.setVideoActive(true, view)
-        // Đang xoay ngang: tắt tự vào PiP của hệ thống, để onUserLeaveHint trả về dọc rồi mới vào PiP (vào PiP từ màn hình ngang bị đen).
-        if (rotatedForVideo) pipController.setAutoEnter(false)
+        // Giữ tự vào PiP của hệ thống cả khi xoay ngang: gọi enterPictureInPictureMode trong onUserLeaveHint lúc vuốt cử chỉ bị từ chối (trả false).
         pipController.trace("fullscreen show pending=$pendingPip orient=${activity.requestedOrientation} view=${view.javaClass.simpleName}")
         if (pendingPip) {
             pendingPip = false

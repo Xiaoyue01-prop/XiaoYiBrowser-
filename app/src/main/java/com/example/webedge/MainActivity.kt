@@ -1130,7 +1130,15 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (isInPictureInPictureMode) {
             // Vào PiP khi đang xoay ngang vì video: giờ mới trả về dọc, rồi làm tươi lớp video sau khi cửa sổ ổn định.
             fullscreenVideoController?.restoreOrientationInPip()
-            handler.postDelayed({ if (this@MainActivity.isInPictureInPictureMode) fullscreenVideoController?.kickLayer() }, 600L)
+            for (delay in longArrayOf(500L, 1_000L, 1_800L)) {
+                handler.postDelayed({
+                    if (this@MainActivity.isInPictureInPictureMode) {
+                        fullscreenVideoController?.kickLayer()
+                        WebMediaHub.jsRunner?.invoke(mediaJs("nudge(false)"))
+                    }
+                }, delay)
+            }
+            handler.postDelayed({ pipController.flushTrace() }, 2_200L)
         }
         if (!isInPictureInPictureMode && isFullscreenVideoShowing()) lastPipExitUptime = SystemClock.uptimeMillis()
         if (!isInPictureInPictureMode && !isFullscreenVideoShowing()) {
@@ -1213,7 +1221,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onUserLeaveHint() {
         if (isFullscreenVideoShowing()) {
             pipController.markEntering()
-            if (fullscreenVideoController?.isRotatedForVideo == true) fullscreenVideoController?.leaveToPipFromLandscape()
         }
         super.onUserLeaveHint()
     }
