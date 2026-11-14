@@ -35,8 +35,7 @@ internal class ReaderModeController(
     private val topInset: () -> Int,
     private val bottomInset: () -> Int,
     private val entryPill: () -> View?,
-    private val onVisibilityChanged: (Boolean) -> Unit,
-    private val onEdgeBackReveal: () -> Unit
+    private val onVisibilityChanged: (Boolean) -> Unit
 ) {
     private enum class ReaderTheme { LIGHT, SEPIA, DARK }
 
@@ -54,7 +53,6 @@ internal class ReaderModeController(
     private var settingsBlurView: BlurView? = null
     private var settingsBlurSync: GlassSystem.BlurSync? = null
     private var outsideDismiss: View? = null
-    private var edgeBackRevealPending = false
     private var toolbarButtons = emptyList<View>()
     private val settingsOptionRows = mutableListOf<Pair<LinearLayout, () -> Int>>()
     private var settingsOpen = false
@@ -71,7 +69,6 @@ internal class ReaderModeController(
         if (isActive) return
         settingsOpen = false
         settingsClosing = false
-        edgeBackRevealPending = false
         isSerif = false
         fontSizeSp = 18f
         widthMode = 1
@@ -83,9 +80,11 @@ internal class ReaderModeController(
             isFocusable = true
         }
         overlay = layer
+        // Attach the Reader layer first. BlurView must be configured against an attached
+        // BlurTarget; otherwise it can fall back to a merely translucent surface on some devices.
+        root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         buildArticleContent(layer, value)
         buildToolbar(layer)
-        root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         onVisibilityChanged(true)
 
         // Wait until the shared BlurView has produced real frosted pixels before revealing the pill.
@@ -94,25 +93,6 @@ internal class ReaderModeController(
             if (overlay !== layer) return@post
             animateToolbarIn()
         }
-    }
-
-    /**
-     * The first predictive edge-Back gesture reveals system bars but keeps Reader open.
-     * A second gesture inside the transient reveal window performs the normal Back action.
-     * Hardware Back and the Reader close button still exit immediately.
-     */
-    fun consumeEdgeBackGesture(): Boolean {
-        if (!isActive || settingsOpen || settingsClosing) return false
-        if (edgeBackRevealPending) {
-            edgeBackRevealPending = false
-            return false
-        }
-        edgeBackRevealPending = true
-        onEdgeBackReveal()
-        root.postDelayed({
-            if (overlay != null) edgeBackRevealPending = false
-        }, EDGE_REVEAL_WINDOW_MS)
-        return true
     }
 
     /** Back first collapses Aa; a second Back exits the Reader Module. */
@@ -132,13 +112,13 @@ internal class ReaderModeController(
         scroll.setPadding(0, topInset() + dp(22), 0, bottomInset() + dp(96))
         toolbar?.let { view ->
             (view.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-                lp.bottomMargin = bottomInset() + dp(12)
+                lp.bottomMargin = bottomInset() + dp(10)
                 view.layoutParams = lp
             }
         }
         settingsPanel?.let { view ->
             (view.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-                lp.bottomMargin = bottomInset() + dp(82)
+                lp.bottomMargin = bottomInset() + dp(44)
                 view.layoutParams = lp
             }
         }
@@ -210,7 +190,6 @@ internal class ReaderModeController(
         outsideDismiss = null
         toolbarBlurView = null
         toolbarBlurSync = null
-        edgeBackRevealPending = false
         toolbarButtons = emptyList()
         settingsOptionRows.clear()
         settingsOpen = false
@@ -302,8 +281,8 @@ internal class ReaderModeController(
             alpha = 0.01f
             scaleX = 0.64f
             scaleY = 0.78f
-            pivotX = dp(124).toFloat()
-            pivotY = dp(28).toFloat()
+            pivotX = dp(112).toFloat()
+            pivotY = dp(24).toFloat()
         }
         toolbar = capsule
         val blurTarget = readerBlurTarget ?: return
@@ -320,7 +299,7 @@ internal class ReaderModeController(
         val row = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(7), dp(5), dp(7), dp(5))
+            setPadding(dp(6), dp(2), dp(6), dp(2))
             clipChildren = false
             clipToPadding = false
         }
@@ -332,13 +311,13 @@ internal class ReaderModeController(
         )
         toolbarButtons = buttons
         buttons.forEachIndexed { index, button ->
-            val lp = LinearLayout.LayoutParams(0, dp(46), 1f)
+            val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
             if (index > 0) lp.leftMargin = dp(2)
             row.addView(button, lp)
         }
         capsule.addView(row, FrameLayout.LayoutParams(-1, -1))
-        val capsuleLp = FrameLayout.LayoutParams(dp(252), dp(58), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-        capsuleLp.bottomMargin = bottomInset() + dp(12)
+        val capsuleLp = FrameLayout.LayoutParams(dp(224), dp(48), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+        capsuleLp.bottomMargin = bottomInset() + dp(10)
         layer.addView(capsule, capsuleLp)
     }
 
@@ -347,8 +326,9 @@ internal class ReaderModeController(
             text = label
             contentDescription = description
             gravity = Gravity.CENTER
-            textSize = if (label == "Aa") 18f else 22f
+            textSize = if (label == "Aa") 20f else 27f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            includeFontPadding = false
             setTextColor(primaryColor())
             background = activity.roundedPressBackground(false, 18f, 1f, 1f)
             isClickable = true
@@ -408,7 +388,6 @@ internal class ReaderModeController(
         val layer = overlay ?: return
         if (settingsOpen || settingsClosing) return
         settingsOpen = true
-        edgeBackRevealPending = false
         settingsOptionRows.clear()
 
         val dismiss = View(activity).apply {
@@ -524,10 +503,9 @@ internal class ReaderModeController(
         widthLp.topMargin = dp(7)
         body.addView(widthRow, widthLp)
 
-        val panelLp = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-        panelLp.leftMargin = dp(18)
-        panelLp.rightMargin = dp(18)
-        panelLp.bottomMargin = bottomInset() + dp(82)
+        val panelWidth = minOf(dp(312), (root.width - dp(32)).coerceAtLeast(dp(248)))
+        val panelLp = FrameLayout.LayoutParams(panelWidth, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+        panelLp.bottomMargin = bottomInset() + dp(44)
         layer.addView(panel, panelLp)
         capsuleButtonsEnabled(false)
         panel.post {
@@ -543,6 +521,7 @@ internal class ReaderModeController(
                     view = panel,
                     origin = sourceAa,
                     endCornerRadiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * density,
+                    springSpec = AnimationSystem.MENU_MORPH,
                     fadeIn = false,
                     counterTransformView = panelGlass,
                     contentViews = { (0 until panel.childCount).map { panel.getChildAt(it) }.filter { it !== panelGlass } },
@@ -551,6 +530,7 @@ internal class ReaderModeController(
                     popScale = if (canPop) Constants.MENU_POP_SCALE else 1f,
                     popTowardTarget = if (canPop) Constants.MENU_POP_TOWARD else 0f,
                     popDelayMs = if (canPop) Constants.MENU_POP_DELAY_MS else 0L,
+                    popSpring = AnimationSystem.MENU_POP,
                     popMaxDistancePx = dp(Constants.TAB_POP_MAX_DP).toFloat()
                 )
                 if (!opened) AnimationSystem.enter(panel, spec = AnimationSystem.MENU_MORPH)
@@ -757,7 +737,6 @@ internal class ReaderModeController(
     private fun dp(value: Int): Int = (value * density).toInt()
 
     companion object {
-        const val EDGE_REVEAL_WINDOW_MS = 2200L
 
         /** Conservative in-page article extraction for the first UI prototype; source DOM is never modified. */
         val EXTRACTION_SCRIPT: String = """

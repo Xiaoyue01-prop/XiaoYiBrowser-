@@ -31,7 +31,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 import java.util.Locale
@@ -70,10 +69,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private lateinit var suggestBlurView: BlurView
     private var readerModeController: ReaderModeController? = null
     private var readerStatusWasVisible = true
-    private var readerNavigationWasVisible = true
     private var readerBarWasHidden = false
-    private var readerPreviousBarsBehavior = 0
-    private var readerPredictiveBackInProgress = false
 
     private var d = 1f
     private var isNight = false
@@ -683,8 +679,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             topInset = { insetTop },
             bottomInset = { insetBottom },
             entryPill = { urlPillFrame },
-            onVisibilityChanged = ::onReaderVisibilityChanged,
-            onEdgeBackReveal = ::showReaderTransientSystemBars
+            onVisibilityChanged = ::onReaderVisibilityChanged
         )
         menu = MenuController(
             activity = this,
@@ -772,10 +767,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             // Cử chỉ Back của hệ thống (vuốt từ cạnh trái/phải): trang trượt theo ngón tay như Safari.
             override fun handleOnBackStarted(backEvent: BackEventCompat) {
-                if (readerModeController?.isActive == true) {
-                    readerPredictiveBackInProgress = true
-                    return
-                }
+                if (readerModeController?.isActive == true) return
                 if (pageSwipeAvailable()) {
                     val sign = if (backEvent.swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
                     pageTransition.beginSwipe(web, sign)
@@ -783,24 +775,15 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             }
 
             override fun handleOnBackProgressed(backEvent: BackEventCompat) {
-                if (!readerPredictiveBackInProgress) pageTransition.updateSwipe(backEvent.progress)
+                if (readerModeController?.isActive != true) pageTransition.updateSwipe(backEvent.progress)
             }
 
             override fun handleOnBackCancelled() {
-                if (readerPredictiveBackInProgress) {
-                    readerPredictiveBackInProgress = false
-                    return
-                }
-                pageTransition.cancelSwipe()
+                if (readerModeController?.isActive != true) pageTransition.cancelSwipe()
             }
 
             override fun handleOnBackPressed() {
-                val fromReaderEdgeGesture = readerPredictiveBackInProgress
-                readerPredictiveBackInProgress = false
-                if (readerModeController?.isActive == true) {
-                    if (fromReaderEdgeGesture && readerModeController?.consumeEdgeBackGesture() == true) return
-                    if (readerModeController?.handleBack() == true) return
-                }
+                if (readerModeController?.handleBack() == true) return
                 if (glassDialog.isShowing) glassDialog.cancelCurrent()
                 else if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
                 else if (isFullscreenVideoShowing()) exitFullscreenView()
@@ -1296,17 +1279,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
     }
 
-    /** Lần vuốt Back cạnh đầu tiên trong Reader chỉ hé system bars; lần vuốt kế tiếp mới Back. */
-    private fun showReaderTransientSystemBars() {
-        val controller = WindowCompat.getInsetsController(window, root)
-        controller.show(WindowInsetsCompat.Type.systemBars())
-        root.postDelayed({
-            if (readerModeController?.isActive == true) {
-                controller.hide(WindowInsetsCompat.Type.systemBars())
-            }
-        }, ReaderModeController.EDGE_REVEAL_WINDOW_MS)
-    }
-
     /** Browser chrome chỉ tạm ẩn; Reader không thay WebView, tab hay lịch sử điều hướng. */
     private fun onReaderVisibilityChanged(active: Boolean) {
         val controller = WindowCompat.getInsetsController(window, root)
@@ -1314,10 +1286,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             readerBarWasHidden = barHidden
             val rootInsets = ViewCompat.getRootWindowInsets(root)
             readerStatusWasVisible = rootInsets?.isVisible(WindowInsetsCompat.Type.statusBars()) ?: true
-            readerNavigationWasVisible = rootInsets?.isVisible(WindowInsetsCompat.Type.navigationBars()) ?: true
-            readerPreviousBarsBehavior = controller.systemBarsBehavior
-            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            controller.hide(WindowInsetsCompat.Type.systemBars())
+            // Keep navigation gestures available. Reader hides only the status bar;
+            // a single Android edge-Back gesture must reach the normal Back dispatcher.
+            controller.hide(WindowInsetsCompat.Type.statusBars())
 
             suggestionController.hide()
             suggestBox.visibility = View.GONE
@@ -1328,11 +1299,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             orbController?.setToolbarAvailable(false)
             orbController?.setTemporarilyHidden(true)
         } else {
-            controller.systemBarsBehavior = readerPreviousBarsBehavior
             if (readerStatusWasVisible) controller.show(WindowInsetsCompat.Type.statusBars())
             else controller.hide(WindowInsetsCompat.Type.statusBars())
-            if (readerNavigationWasVisible) controller.show(WindowInsetsCompat.Type.navigationBars())
-            else controller.hide(WindowInsetsCompat.Type.navigationBars())
 
             suggestBlurView.visibility = View.GONE
             suggestBox.visibility = View.GONE

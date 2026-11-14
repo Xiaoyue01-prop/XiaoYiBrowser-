@@ -48,11 +48,11 @@ import eightbitlab.com.blurview.BlurView
  */
 object GlassSystem {
     // One adaptive material system: consistent frost, edge and corner language on light or dark pages.
-    private const val GLASS_BLUR_RADIUS_DP = 12f
-    // Tint is deliberately stronger than the old 6/255 wash: it stabilizes contrast while
-    // preserving the live background and the existing Frost Glass blur.
-    private const val LIGHT_GLASS_TINT_ALPHA = 38
-    private const val DARK_GLASS_TINT_ALPHA = 46
+    private const val GLASS_BLUR_RADIUS_DP = 16f
+    // Shared frost density: the blur is deliberately strong enough to soften text beneath
+    // floating glass surfaces, while the adaptive tint keeps labels readable on light/dark pages.
+    private const val LIGHT_GLASS_TINT_ALPHA = 68
+    private const val DARK_GLASS_TINT_ALPHA = 76
 
     // Adaptive material: only the surface tint changes; blur and Liquid Glass rims stay fixed.
     private val blurSurfaces = java.util.WeakHashMap<BlurView, Unit>()
