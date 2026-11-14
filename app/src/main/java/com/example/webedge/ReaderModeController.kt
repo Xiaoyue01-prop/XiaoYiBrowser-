@@ -238,14 +238,14 @@ internal class ReaderModeController(
             typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             includeFontPadding = false
             setLineSpacing(dp(6).toFloat(), 1.16f)
-            textIsSelectable = true
+            setTextIsSelectable(true)
         }
         articleBody = body
         val bodyLp = LinearLayout.LayoutParams(-1, -2)
         bodyLp.topMargin = dp(24)
         content.addView(body, bodyLp)
 
-        scroll.addView(content, ScrollView.LayoutParams(-1, -2))
+        scroll.addView(content, FrameLayout.LayoutParams(-1, -2))
         val target = BlurTarget(activity)
         readerBlurTarget = target
         target.addView(scroll, FrameLayout.LayoutParams(-1, -1))
@@ -310,7 +310,7 @@ internal class ReaderModeController(
             background = activity.roundedPressBackground(false, 18f, 1f, 1f)
             isClickable = true
             isFocusable = true
-            setOnClickListener(action)
+            setOnClickListener { _ -> action() }
             AnimationSystem.press(this, Constants.PRESS_SCALE_PILL)
         }
 
@@ -589,7 +589,7 @@ internal class ReaderModeController(
     private fun chip(label: String, onClick: () -> Unit): TextView = panelText(label, 16f, true).apply {
         gravity = Gravity.CENTER
         background = activity.roundedPressBackground(false, 12f, 1f, 1f)
-        setOnClickListener(onClick)
+        setOnClickListener { _ -> onClick() }
         AnimationSystem.press(this, Constants.PRESS_SCALE_ROW)
     }
 
