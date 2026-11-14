@@ -1103,6 +1103,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         const val PIP_RETURN_REFRESH_DELAY_MS = 180L
         /** true: giữ toàn màn hình khi thu từ PiP về (hiện còn lỗi lớp trang/lớp video); false: thoát về trang sạch sẽ. */
         const val PIP_RETURN_KEEP_FULLSCREEN = false
+        /** Quay về từ PiP vào toàn màn hình: có gỡ/gắn lại view video không (nháy một cái, nhưng từng cần để khỏi đen). */
+        const val PIP_RETURN_REATTACH_VIEW = false
         const val PIP_CLOSE_WINDOW_MS = 1_500L
     }
 
@@ -1163,7 +1165,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 val ok = isFullscreenVideoShowing() && !this@MainActivity.isInPictureInPictureMode &&
                     lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
                 pipController.trace("pipReturn keep fullscreen ok=$ok")
-                if (ok) fullscreenVideoController?.refreshSurface()
+                // Gỡ rồi gắn lại view làm khung hình nháy một cái; hiện tắt vì quay về đã không còn đen. Đen lại thì đặt true.
+                if (ok && PIP_RETURN_REATTACH_VIEW) fullscreenVideoController?.refreshSurface()
                 pipController.flushTrace()
             }, 400L)
         }

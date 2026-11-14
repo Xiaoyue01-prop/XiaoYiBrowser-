@@ -183,6 +183,8 @@ internal class BrowserFullscreenController(
     /** Ẩn cả status bar và navigation bar; vuốt cạnh chỉ hiện tạm thời rồi tự ẩn. */
     private fun applyImmersiveSystemBars() {
         if (customView == null || isHostDestroyed() || activity.isFinishing || activity.isDestroyed) return
+        // Cửa sổ PiP không có thanh hệ thống; ẩn/hiện chúng giữa lúc chuyển cảnh vào/ra PiP làm khung hình nháy.
+        if (activity.isInPictureInPictureMode) return
 
         val decorView = activity.window.decorView
         val controller = WindowCompat.getInsetsController(activity.window, decorView)
@@ -193,7 +195,9 @@ internal class BrowserFullscreenController(
         // Re-apply after the current layout/configuration pass. The guard prevents a queued
         // callback from hiding system bars after the user has already exited fullscreen.
         decorView.post {
-            if (customView != null && !isHostDestroyed() && !activity.isFinishing && !activity.isDestroyed) {
+            if (customView != null && !isHostDestroyed() && !activity.isFinishing && !activity.isDestroyed &&
+                !activity.isInPictureInPictureMode
+            ) {
                 val current = WindowCompat.getInsetsController(activity.window, decorView)
                 current.systemBarsBehavior =
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
