@@ -35,7 +35,9 @@ data class FbMatch(
     val penHome: Int?,
     val penAway: Int?,
     val goals: List<FbGoal>,
-    val cards: List<FbCard> = emptyList()
+    val cards: List<FbCard> = emptyList(),
+    val homeLogo: String = "",
+    val awayLogo: String = ""
 ) {
     val notStarted: Boolean get() = status == "NS" || status == "TBD"
     val inPlay: Boolean get() = status in IN_PLAY
@@ -182,7 +184,9 @@ object FootballApi {
             penHome = pen.intOrNull("home"),
             penAway = pen.intOrNull("away"),
             goals = scored,
-            cards = carded
+            cards = carded,
+            homeLogo = home.optString("logo"),
+            awayLogo = away.optString("logo")
         )
     }
 

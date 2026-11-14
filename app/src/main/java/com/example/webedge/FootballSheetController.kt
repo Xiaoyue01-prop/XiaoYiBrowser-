@@ -9,10 +9,12 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.Editable
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -46,6 +48,7 @@ class FootballSheetController(
     private var query = ""
     private var cache: List<FbMatch> = emptyList()
     private var errorText: String? = null
+    private val triedLogos = HashSet<String>()
 
     fun show() {
         val s = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -227,6 +230,16 @@ class FootballSheetController(
             cache.isEmpty() -> if (showLive) "Hiện không có trận nào đang đá." else "Hôm nay không có trận nào."
             else -> "${minOf(filtered.size, MAX_ROWS)}/${cache.size} trận · ${quotaText()}"
         }
+        // Tải logo còn thiếu một lần rồi vẽ lại; trong lúc chờ dùng chữ viết tắt.
+        val missing = filtered.take(MAX_ROWS).flatMap { listOf(it.homeLogo, it.awayLogo) }
+            .filter { it.isNotBlank() && FootballLogos.peek(it) == null && it !in triedLogos }
+        if (missing.isNotEmpty()) {
+            triedLogos += missing
+            scope?.launch {
+                FootballLogos.prefetch(missing)
+                renderList(page)
+            }
+        }
         filtered.take(MAX_ROWS).forEach { m ->
             list.addView(matchRow(m, m.id in pinned, page), LinearLayout.LayoutParams(-1, -2).apply {
                 bottomMargin = dp(8)
@@ -236,27 +249,80 @@ class FootballSheetController(
 
     private fun statusView(page: LinearLayout): TextView? = page.findViewWithTag(TAG_STATUS)
 
+    /**
+     * Dòng trận kiểu Apple Sports: bên trái hai hàng đội (logo tròn, tên, điểm; đội thua mờ đi),
+     * vạch chia mảnh, bên phải trạng thái (xanh khi đang đá) và nút ghim.
+     */
     private fun matchRow(m: FbMatch, pinned: Boolean, page: LinearLayout): View {
         val row = card().apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val col = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(text(subtitle(m), 11f, muted))
-        col.addView(
-            text(scoreLine(m), 14f, ink, true),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) }
-        )
-        row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
+        val started = !m.notStarted
+        val hg = m.homeGoals ?: 0
+        val ag = m.awayGoals ?: 0
 
+        fun teamLine(name: String, logoUrl: String, goals: Int, other: Int): View {
+            val line = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            val dim = started && goals < other
+            val color = if (dim) muted else ink
+            val size = dp(26)
+            val badge = ImageView(activity).apply {
+                setImageBitmap(FootballLogos.badgeBitmap(size * 2, name, FootballLogos.peek(logoUrl)))
+            }
+            line.addView(badge, LinearLayout.LayoutParams(size, size))
+            line.addView(
+                text(name, 15f, color, !dim).apply { setSingleLine(); ellipsize = TextUtils.TruncateAt.END },
+                LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(10); rightMargin = dp(8) }
+            )
+            line.addView(text(if (started) goals.toString() else "", 17f, color, !dim))
+            return line
+        }
+
+        val teams = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        teams.addView(teamLine(m.homeName, m.homeLogo, hg, ag), LinearLayout.LayoutParams(-1, -2))
+        teams.addView(
+            teamLine(m.awayName, m.awayLogo, ag, hg),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) }
+        )
+        row.addView(teams, LinearLayout.LayoutParams(0, -2, 1f))
+
+        row.addView(View(activity).apply {
+            setBackgroundColor(if (isNight()) Color.argb(40, 255, 255, 255) else Color.argb(28, 0, 0, 0))
+        }, LinearLayout.LayoutParams(dp(1), dp(46)).apply { leftMargin = dp(12); rightMargin = dp(12) })
+
+        val side = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        val live = m.inPlay
+        side.addView(
+            text(stateText(m), 13f, if (live) LIVE_GREEN else if (m.onBreak) BREAK_ORANGE else muted, true)
+                .apply { gravity = Gravity.CENTER }
+        )
+        if (m.league.isNotBlank()) {
+            side.addView(
+                text(m.league, 10f, muted).apply { setSingleLine(); ellipsize = TextUtils.TruncateAt.END; gravity = Gravity.CENTER },
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(1) }
+            )
+        }
         val canPin = !m.finished && !m.dead
         if (canPin || pinned) {
-            row.addView(
+            side.addView(
                 button(if (pinned) "Bỏ ghim" else "Ghim", if (pinned) muted else accent) {
                     if (pinned) FootballLiveService.unpin(activity, m.id) else pin(m.id)
                     renderList(page)
                 },
-                LinearLayout.LayoutParams(-2, dp(34)).apply { leftMargin = dp(10) }
+                LinearLayout.LayoutParams(-2, dp(28)).apply { topMargin = dp(6) }
             )
         }
+        row.addView(side, LinearLayout.LayoutParams(dp(84), -2))
         return row
+    }
+
+    /** Cột trạng thái: phút đang đá, giờ bóng lăn, HT, FT. */
+    private fun stateText(m: FbMatch): String = when {
+        m.notStarted -> hhmm.format(Date(m.kickoff * 1000))
+        m.inPlay -> if (m.status == "P") "Luân lưu" else "${m.elapsed ?: ""}'"
+        m.status == "HT" -> "HT"
+        m.onBreak -> "Tạm nghỉ"
+        m.finished -> "FT"
+        m.dead -> "Hoãn/hủy"
+        else -> m.status
     }
 
     private fun pin(id: Long) {
@@ -325,6 +391,8 @@ class FootballSheetController(
     }
 
     private companion object {
+        val LIVE_GREEN = Color.rgb(52, 199, 89)
+        val BREAK_ORANGE = Color.rgb(255, 159, 10)
         const val TAG_STATUS = "fb_status"
         const val TAG_LIST = "fb_list"
         const val MAX_ROWS = 60

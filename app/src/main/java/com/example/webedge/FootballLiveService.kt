@@ -74,8 +74,8 @@ class FootballLiveService : Service() {
         private const val PROBLEM_ID = 2_050_000_000
         private const val LIVE_BASE = 2_000_000_000   // tránh trùng id thông báo tải xuống
 
-        private val HOME_COLOR = Color.rgb(64, 170, 120)
-        private val AWAY_COLOR = Color.rgb(240, 140, 50)
+        private val LIVE_GREEN = Color.rgb(52, 199, 89)   // xanh "đang đá" của Apple Sports
+        private val BREAK_ORANGE = Color.rgb(255, 159, 10)
         private val YELLOW_CARD = Color.rgb(250, 204, 21)
         private val RED_CARD = Color.rgb(220, 53, 69)
 
@@ -163,6 +163,8 @@ class FootballLiveService : Service() {
                 val real = if (realPins.isEmpty()) emptyList() else FootballApi.byIds(key, realPins)
                 val demo = if (demoOn) listOf(FootballDemo.match()) else emptyList()
                 failures = 0
+                // Logo đội cho thẻ tỉ số; chỉ tải lần đầu (có cache), lỗi thì dùng chữ viết tắt.
+                FootballLogos.prefetch(real.flatMap { listOf(it.homeLogo, it.awayLogo) })
                 render(real + demo)
                 val realWait = if (real.isEmpty()) Long.MAX_VALUE else nextDelay(real)
                 val demoWait = if (demoOn) 2_000L else Long.MAX_VALUE
@@ -328,12 +330,22 @@ class FootballLiveService : Service() {
             else -> el
         }.coerceIn(0, max)
 
+        val accent = when {
+            m.inPlay -> LIVE_GREEN
+            m.onBreak -> BREAK_ORANGE
+            else -> Color.rgb(142, 142, 147)
+        }
+        val homeLogo = FootballLogos.peek(m.homeLogo)
+        val awayLogo = FootballLogos.peek(m.awayLogo)
+        val homeColor = FootballLogos.teamColor(m.homeName, homeLogo)
+        val awayColor = FootballLogos.teamColor(m.awayName, awayLogo)
+
         val segments = (if (extraTime) listOf(45, 45, 15, 15) else listOf(45, 45))
-            .map { Notification.ProgressStyle.Segment(it).setColor(HOME_COLOR) }
-        // Mỗi bàn thắng là một chấm trên dòng thời gian: xanh = chủ nhà, cam = khách.
+            .map { Notification.ProgressStyle.Segment(it).setColor(accent) }
+        // Mỗi bàn thắng là một chấm trên dòng thời gian, tô theo màu đội ghi bàn.
         val points = m.goals.map {
             Notification.ProgressStyle.Point(it.minute.coerceIn(1, max))
-                .setColor(if (it.home) HOME_COLOR else AWAY_COLOR)
+                .setColor(if (it.home) homeColor else awayColor)
         } + m.cards.map {
             Notification.ProgressStyle.Point(it.minute.coerceIn(1, max))
                 .setColor(if (it.red) RED_CARD else YELLOW_CARD)
@@ -350,7 +362,8 @@ class FootballLiveService : Service() {
         // alert = sự kiện mới: đăng qua kênh HIGH để Live Update bung ra; còn lại kênh LOW, nằm thu nhỏ.
         return Notification.Builder(this, if (alert) CH_ALERT else CH_LIVE)
             .setSmallIcon(R.drawable.ic_stat_football)
-            .setColor(HOME_COLOR)
+            .setLargeIcon(FootballLogos.scoreCard(m, homeLogo, awayLogo))
+            .setColor(accent)
             .setContentTitle(title)
             .setContentText(text)
             .setSubText(m.league.ifBlank { "Summit" })
@@ -381,7 +394,8 @@ class FootballLiveService : Service() {
         }
         return Notification.Builder(this, CH_LIVE)
             .setSmallIcon(R.drawable.ic_stat_football)
-            .setColor(HOME_COLOR)
+            .setLargeIcon(FootballLogos.scoreCard(m, FootballLogos.peek(m.homeLogo), FootballLogos.peek(m.awayLogo)))
+            .setColor(Color.rgb(142, 142, 147))
             .setContentTitle(if (m.dead) "${m.homeName} vs ${m.awayName}" else scoreLine(m))
             .setContentText("$label · ${m.league}")
             .setSubText("Summit")
@@ -392,8 +406,9 @@ class FootballLiveService : Service() {
 
     // ---------------------------------------------------------------- tiện ích
 
+    /** Tiêu đề gọn kiểu Apple Sports: "ARS 2 – 1 CHE". */
     private fun scoreLine(m: FbMatch) =
-        "${m.homeName} ${m.homeGoals ?: 0} – ${m.awayGoals ?: 0} ${m.awayName}"
+        "${FootballLogos.abbr(m.homeName)} ${m.homeGoals ?: 0} – ${m.awayGoals ?: 0} ${FootballLogos.abbr(m.awayName)}"
 
     /** Sự kiện gần nhất (bàn thắng / thẻ) để hiện ngay trên thông báo. */
     private fun lastEventLine(m: FbMatch): String? {
@@ -414,8 +429,10 @@ class FootballLiveService : Service() {
 
     private fun statusLabel(m: FbMatch): String = when (m.status) {
         "NS", "TBD" -> "Bắt đầu lúc ${hhmm.format(Date(m.kickoff * 1000))}"
-        "1H", "2H", "LIVE" -> minuteText(m)
-        "ET" -> "${minuteText(m)} · Hiệp phụ"
+        "1H" -> "● Hiệp 1 · ${minuteText(m)}"
+        "2H" -> "● Hiệp 2 · ${minuteText(m)}"
+        "LIVE" -> "● ${minuteText(m)}"
+        "ET" -> "● Hiệp phụ · ${minuteText(m)}"
         "HT" -> "Nghỉ giữa hiệp"
         "BT" -> "Nghỉ trước hiệp phụ"
         "P" -> "Đá luân lưu" + penText(m)
