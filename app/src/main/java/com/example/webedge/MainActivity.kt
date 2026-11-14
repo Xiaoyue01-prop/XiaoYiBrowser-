@@ -1138,7 +1138,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             // và vẫn đen (chỉ hiện điều khiển của trang). Nên làm nhiều lượt, lượt sau cùng chạy khi cửa sổ đã ổn định.
             // Lượt đầu gắn lại view; các lượt sau chỉ "đẩy" trang và tua tại chỗ để trình phát vẽ lại một khung hình mới
             // (giống double tap, vốn là thứ làm video hiện lại).
-            if (!PIP_RETURN_KEEP_FULLSCREEN) {
+            // Vào PiP bằng nút PiP của web: quay về thì thoát toàn màn hình (đường đã chạy ổn). Vào PiP bằng cách vuốt về home
+            // (đang xem ngang hoặc dọc): quay về giữ nguyên toàn màn hình và hướng hiện tại để xem tiếp.
+            val exitOnReturn = fullscreenVideoController?.enteredViaWebPipButton == true
+            if (exitOnReturn) {
                 // Thu từ PiP về: thoát toàn màn hình bằng đường thoát chuẩn của WebView (onCustomViewHidden) thay vì giữ view
                 // toàn màn hình đã hỏng (lớp trang và lớp video lệch nhau). Video vẫn phát tiếp trong trang, điều khiển hoạt động.
                 handler.postDelayed({
@@ -1154,31 +1157,15 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 }, 400L)
                 return
             }
-            val delays = longArrayOf(PIP_RETURN_REFRESH_DELAY_MS, 600L, 1_200L)
-            for ((i, delay) in delays.withIndex()) {
-                handler.postDelayed({
-                    val ok = isFullscreenVideoShowing() && !this@MainActivity.isInPictureInPictureMode &&
-                        lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
-                    pipController.trace("pipReturn pass=$i ok=$ok state=${lifecycle.currentState}")
-                    if (ok) {
-                        when (i) {
-                            0 -> fullscreenVideoController?.refreshSurface()
-                            // Lớp trang và lớp video không còn khớp nhau sau khi đổi cỡ cửa sổ (chỉ thấy một trong hai).
-                            // Ẩn rồi hiện lại WebView buộc compositor dựng lại cả hai lớp, giống khi app quay lại từ nền.
-                            1 -> if (::web.isInitialized) {
-                                WebMediaHub.jsRunner?.invoke(mediaJs("holdPlaying()"))
-                                runCatching { web.onPause() }
-                                runCatching { web.onResume() }
-                                handler.postDelayed({
-                                    WebMediaHub.jsRunner?.invoke(mediaJs("restorePlaying()"))
-                                }, 150L)
-                            }
-                            else -> WebMediaHub.jsRunner?.invoke(mediaJs("nudge(false)"))
-                        }
-                    }
-                    if (i == delays.lastIndex) pipController.flushTrace()
-                }, delay)
-            }
+            // Giữ toàn màn hình: chỉ gắn lại view một lần (như thiết kế gốc của app), không thêm thủ thuật làm tươi nào khác
+            // (ẩn/hiện view, onPause/onResume... đều từng làm trang thoát toàn màn hình).
+            handler.postDelayed({
+                val ok = isFullscreenVideoShowing() && !this@MainActivity.isInPictureInPictureMode &&
+                    lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                pipController.trace("pipReturn keep fullscreen ok=$ok")
+                if (ok) fullscreenVideoController?.refreshSurface()
+                pipController.flushTrace()
+            }, 400L)
         }
     }
 

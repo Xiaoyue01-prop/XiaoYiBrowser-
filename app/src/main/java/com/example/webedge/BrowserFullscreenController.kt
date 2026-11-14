@@ -27,6 +27,10 @@ internal class BrowserFullscreenController(
     private var pendingPip = false
     private var rotatedForVideo = false
 
+    /** PiP lần này được vào bằng nút PiP của player trên web (không phải vuốt về home): quay về thì thoát toàn màn hình. */
+    var enteredViaWebPipButton = false
+        private set
+
     val isShowing: Boolean get() = customView != null
 
     /** App đang xoay ngang vì video (không phải khoá dọc mặc định của app). */
@@ -65,6 +69,7 @@ internal class BrowserFullscreenController(
             // Đã ở toàn màn hình rồi (yêu cầu PiP tới trễ, hoặc người dùng bấm PiP khi đang xem toàn màn hình):
             // không có onShowCustomView nào nữa để kích hoạt, nên vào PiP ngay. Nếu app đã lỡ xoay ngang thì trả về dọc trước.
             previousRequestedOrientation?.let { activity.requestedOrientation = it }
+            enteredViaWebPipButton = true
             container.postDelayed({ if (customView === view) pipController.enterNow() }, PIP_SETTLE_MS)
             return
         }
@@ -85,6 +90,7 @@ internal class BrowserFullscreenController(
 
         customView = view
         customViewCallback = callback
+        enteredViaWebPipButton = pendingPip
         previousRequestedOrientation = activity.requestedOrientation
         // Giao diện app khoá dọc, nhưng video ngang thì xoay ngang trong lúc toàn màn hình (thoát thì hide() trả về như cũ)
         // Đang xin vào PiP thì không xoay: xoay ngang cùng lúc với vào PiP làm cửa sổ PiP/surface video bị đen.
@@ -137,6 +143,7 @@ internal class BrowserFullscreenController(
         container.visibility = View.GONE
         customView = null
         rotatedForVideo = false
+        enteredViaWebPipButton = false
         onBottomReserveChanged()
 
         val callback = customViewCallback
