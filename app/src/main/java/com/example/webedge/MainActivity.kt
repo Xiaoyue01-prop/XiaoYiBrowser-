@@ -1101,6 +1101,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     private companion object PipTiming {
         const val PIP_RETURN_REFRESH_DELAY_MS = 180L
+        /** true: giữ toàn màn hình khi thu từ PiP về (hiện còn lỗi lớp trang/lớp video); false: thoát về trang sạch sẽ. */
+        const val PIP_RETURN_KEEP_FULLSCREEN = false
         const val PIP_CLOSE_WINDOW_MS = 1_500L
     }
 
@@ -1132,6 +1134,22 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             // và vẫn đen (chỉ hiện điều khiển của trang). Nên làm nhiều lượt, lượt sau cùng chạy khi cửa sổ đã ổn định.
             // Lượt đầu gắn lại view; các lượt sau chỉ "đẩy" trang và tua tại chỗ để trình phát vẽ lại một khung hình mới
             // (giống double tap, vốn là thứ làm video hiện lại).
+            if (!PIP_RETURN_KEEP_FULLSCREEN) {
+                // Thu từ PiP về: thoát toàn màn hình bằng đường thoát chuẩn của WebView (onCustomViewHidden) thay vì giữ view
+                // toàn màn hình đã hỏng (lớp trang và lớp video lệch nhau). Video vẫn phát tiếp trong trang, điều khiển hoạt động.
+                handler.postDelayed({
+                    if (isFullscreenVideoShowing() && !this@MainActivity.isInPictureInPictureMode &&
+                        lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                    ) {
+                        pipController.trace("pipReturn exit fullscreen")
+                        WebMediaHub.jsRunner?.invoke(mediaJs("holdPlaying()"))
+                        exitFullscreenView()
+                        handler.postDelayed({ WebMediaHub.jsRunner?.invoke(mediaJs("restorePlaying()")) }, 300L)
+                    }
+                    pipController.flushTrace()
+                }, 400L)
+                return
+            }
             val delays = longArrayOf(PIP_RETURN_REFRESH_DELAY_MS, 600L, 1_200L)
             for ((i, delay) in delays.withIndex()) {
                 handler.postDelayed({
