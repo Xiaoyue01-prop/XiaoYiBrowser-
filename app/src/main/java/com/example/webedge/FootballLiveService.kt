@@ -146,14 +146,22 @@ class FootballLiveService : Service() {
             val pins = FootballPins.pins(this)
             if (pins.isEmpty()) { shutDown(); return }
 
+            // Trận ảo (test) tính tại chỗ, không gọi API; chỉ trận thật mới cần API key.
+            val realPins = pins.filterNot { FootballDemo.isDemo(it) }
+            val demoOn = pins.any { FootballDemo.isDemo(it) }
             val key = FootballPins.apiKey(this)
-            if (key.isBlank()) { problem("Chưa có API key để cập nhật tỉ số"); shutDown(); return }
+            if (realPins.isNotEmpty() && key.isBlank()) {
+                problem("Chưa có API key để cập nhật tỉ số"); shutDown(); return
+            }
 
             val wait: Long = try {
-                val matches = FootballApi.byIds(key, pins)
+                val real = if (realPins.isEmpty()) emptyList() else FootballApi.byIds(key, realPins)
+                val demo = if (demoOn) listOf(FootballDemo.match()) else emptyList()
                 failures = 0
-                render(matches)
-                nextDelay(matches)
+                render(real + demo)
+                val realWait = if (real.isEmpty()) Long.MAX_VALUE else nextDelay(real)
+                val demoWait = if (demoOn) 2_000L else Long.MAX_VALUE
+                minOf(realWait, demoWait).let { if (it == Long.MAX_VALUE) 120_000L else it }
             } catch (e: FootballApiException) {
                 when (e.kind) {
                     FootballApiException.Kind.AUTH -> {

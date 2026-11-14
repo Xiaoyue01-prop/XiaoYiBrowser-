@@ -67,6 +67,7 @@ class FootballSheetController(
     private fun buildPage(page: LinearLayout) {
         page.removeAllViews()
         page.addView(keyCard(page), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+        page.addView(demoCard(page), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         if (FootballPins.apiKey(activity).isBlank()) return
 
         val tabs = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
@@ -155,6 +156,30 @@ class FootballSheetController(
         return card
     }
 
+    /** Trận ảo Arsenal vs Chelsea chạy nhanh (~3 phút) để test Live Update, không cần API key. */
+    private fun demoCard(page: LinearLayout): LinearLayout {
+        val card = card()
+        val on = FootballDemo.ID in FootballPins.pins(activity)
+        card.addView(text("Trận ảo để test", 13f, foreground, true))
+        card.addView(
+            text("Arsenal vs Chelsea, 1 phút trận = 2 giây, có 4 bàn thắng. Không tốn lượt API.", 12f, muted),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
+        )
+        card.addView(
+            button(if (on) "Dừng trận ảo" else "Ghim trận ảo", if (on) muted else accent) {
+                if (on) {
+                    FootballLiveService.unpin(activity, FootballDemo.ID)
+                } else {
+                    FootballDemo.restart()
+                    pin(FootballDemo.ID)
+                }
+                buildPage(page)
+            },
+            LinearLayout.LayoutParams(-2, dp(34)).apply { topMargin = dp(10) }
+        )
+        return card
+    }
+
     private fun quotaText(): String {
         val limit = FootballApi.dailyLimit
         val rem = FootballApi.remaining
@@ -220,7 +245,7 @@ class FootballSheetController(
         if (canPin || pinned) {
             row.addView(
                 button(if (pinned) "Bỏ ghim" else "Ghim", if (pinned) muted else accent) {
-                    if (pinned) FootballLiveService.unpin(activity, m.id) else pin(m)
+                    if (pinned) FootballLiveService.unpin(activity, m.id) else pin(m.id)
                     renderList(page)
                 },
                 LinearLayout.LayoutParams(-2, dp(34)).apply { leftMargin = dp(10) }
@@ -229,13 +254,13 @@ class FootballSheetController(
         return row
     }
 
-    private fun pin(m: FbMatch) {
+    private fun pin(id: Long) {
         if (activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             activity.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFICATIONS)
             toast("Cấp quyền thông báo rồi bấm Ghim lại")
             return
         }
-        if (!FootballLiveService.pin(activity, m.id)) {
+        if (!FootballLiveService.pin(activity, id)) {
             toast("Chỉ ghim được tối đa ${FootballPins.MAX_PINS} trận")
         }
     }

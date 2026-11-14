@@ -176,3 +176,63 @@ object FootballApi {
     private fun JSONObject?.intOrNull(key: String): Int? =
         if (this == null || !has(key) || isNull(key)) null else optInt(key)
 }
+
+/**
+ * Trận ảo để test Live Update khi không có trận thật: chạy nhanh 1 phút trận = 2 giây (~3 phút cả trận),
+ * không tốn lượt API. Đi qua đúng đường hiển thị như trận thật (chip, thanh tiến độ, chấm bàn thắng, báo bàn thắng).
+ */
+object FootballDemo {
+    const val ID = 9_000_001L
+    private const val SEC_PER_MIN = 2
+    private const val KICKOFF_DELAY_S = 4
+    private const val HT_S = 10
+
+    // phút, chủ nhà ghi?, cầu thủ
+    private val script = listOf(
+        Triple(12, true, "Saka"),
+        Triple(31, false, "Palmer"),
+        Triple(58, true, "Odegaard"),
+        Triple(77, true, "Havertz")
+    )
+
+    @Volatile private var startedAt = 0L
+
+    fun isDemo(id: Long) = id == ID
+
+    fun restart() { startedAt = System.currentTimeMillis() }
+
+    fun match(): FbMatch {
+        if (startedAt == 0L) restart()
+        val s = (System.currentTimeMillis() - startedAt) / 1000.0
+        val firstHalfEnd = KICKOFF_DELAY_S + 45 * SEC_PER_MIN
+        val secondHalfStart = firstHalfEnd + HT_S
+        val end = secondHalfStart + 45 * SEC_PER_MIN
+
+        val status: String
+        val minute: Int?
+        when {
+            s < KICKOFF_DELAY_S -> { status = "NS"; minute = null }
+            s < firstHalfEnd -> { status = "1H"; minute = ((s - KICKOFF_DELAY_S) / SEC_PER_MIN).toInt() + 1 }
+            s < secondHalfStart -> { status = "HT"; minute = 45 }
+            s < end -> { status = "2H"; minute = 45 + ((s - secondHalfStart) / SEC_PER_MIN).toInt() + 1 }
+            else -> { status = "FT"; minute = 90 }
+        }
+        val goals = script.filter { minute != null && it.first <= minute }
+            .map { FbGoal(it.first, it.second, it.third) }
+        return FbMatch(
+            id = ID,
+            league = "Demo Cup",
+            kickoff = startedAt / 1000 + KICKOFF_DELAY_S,
+            status = status,
+            elapsed = minute,
+            extra = null,
+            homeName = "Arsenal",
+            awayName = "Chelsea",
+            homeGoals = goals.count { it.home },
+            awayGoals = goals.count { !it.home },
+            penHome = null,
+            penAway = null,
+            goals = goals
+        )
+    }
+}
