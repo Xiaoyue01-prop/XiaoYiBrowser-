@@ -244,7 +244,7 @@ internal fun mediaJs(call: String): String {
 internal const val MEDIA_JS = """
 (function(){
 if (window.__summitMedia) return;
-var cur = null, lastSent = 0, pipEl = null;
+var cur = null, lastSent = 0, pipEl = null, guardUntil = 0;
 
 // WebView không hỗ trợ Picture-in-Picture của web (nút PiP trong trình phát bấm không có tác dụng).
 // Giả lập: chuyển video sang toàn màn hình rồi nhờ app vào PiP của Android.
@@ -274,6 +274,16 @@ try {
   // Trang cần biết video đang ở PiP để đổi giao diện: pictureInPictureElement + sự kiện enter/leavepictureinpicture
   // (app gọi __summitMedia.pip(true/false) khi cửa sổ vào/ra PiP).
   Object.defineProperty(document, 'pictureInPictureElement', { get: function(){ return pipEl; }, configurable: true });
+  // Chặn trang tự thoát toàn màn hình trong lúc app chuyển sang PiP (vuốt về home): nhiều trình phát gọi exitFullscreen khi cửa sổ
+  // mất focus/đổi cỡ, làm cửa sổ PiP chỉ còn giao diện trình duyệt. App bật guard ở onUserLeaveHint và khi đã vào PiP, tắt khi thoát PiP.
+  ['exitFullscreen', 'webkitExitFullscreen', 'webkitCancelFullScreen'].forEach(function(n){
+    var orig = document[n];
+    if (typeof orig !== 'function') return;
+    document[n] = function(){
+      if (Date.now() < guardUntil) return Promise.resolve();
+      return orig.apply(this, arguments);
+    };
+  });
 } catch (e) {}
 
 function info(){
@@ -327,6 +337,8 @@ function watch(){
 
 window.__summitMedia = {
   play: function(){ if (cur) { var p = cur.play(); if (p && p.catch) p.catch(function(){}); } },
+  // guard(true, ms): chặn trang gọi exitFullscreen trong ms mili giây (ms <= 0: cho tới khi guard(false)).
+  guard: function(on, ms){ guardUntil = on ? (ms > 0 ? Date.now() + ms : Infinity) : 0; },
   pause: function(){ if (cur) cur.pause(); },
   seek: function(sec){ if (cur) cur.currentTime = sec; },
   pip: function(on){
@@ -366,7 +378,7 @@ window.__summitMedia = {
   }
 };
 // Chuyển lệnh từ app xuống mọi khung con (iframe chứa trình phát). Chỉ nhận tin từ khung cha, chỉ các lệnh trong danh sách.
-var ALLOWED = { play: 1, pause: 1, seek: 1, pip: 1, nudge: 1, holdPlaying: 1, restorePlaying: 1 };
+var ALLOWED = { play: 1, pause: 1, seek: 1, pip: 1, nudge: 1, holdPlaying: 1, restorePlaying: 1, guard: 1 };
 function relay(msg){
   try { var fr = window.frames; for (var i = 0; i < fr.length; i++) { try { fr[i].postMessage(msg, '*'); } catch (e) {} } } catch (e) {}
 }

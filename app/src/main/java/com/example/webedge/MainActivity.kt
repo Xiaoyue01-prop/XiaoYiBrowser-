@@ -1114,6 +1114,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (::pipController.isInitialized) pipController.trace("modeChanged pip=$isInPictureInPictureMode state=${lifecycle.currentState}")
         if (!isInPictureInPictureMode && ::pipController.isInitialized) pipController.flushTrace()
         WebMediaHub.jsRunner?.invoke(mediaJs("pip($isInPictureInPictureMode)"))
+        // Đang ở PiP: giữ guard cho tới khi thoát PiP.
+        WebMediaHub.jsRunner?.invoke(mediaJs(if (isInPictureInPictureMode) "guard(true, 0)" else "guard(false, 0)"))
         // Không can thiệp gì lên view video khi đang ở PiP: ẩn/hiện view, trả hướng, gửi resize... đều làm player thoát toàn màn hình
         // hoặc làm cửa sổ PiP hiện giao diện trình duyệt.
         if (!isInPictureInPictureMode && isFullscreenVideoShowing()) lastPipExitUptime = SystemClock.uptimeMillis()
@@ -1197,6 +1199,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onUserLeaveHint() {
         if (isFullscreenVideoShowing()) {
             pipController.markEntering()
+            // Sắp tự vào PiP: chặn trang tự thoát toàn màn hình trong lúc cửa sổ mất focus/đổi cỡ (tự hết hạn sau 4s nếu không vào PiP).
+            WebMediaHub.jsRunner?.invoke(mediaJs("guard(true, 4000)"))
         }
         super.onUserLeaveHint()
     }
