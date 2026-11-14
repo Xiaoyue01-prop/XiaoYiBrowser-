@@ -40,6 +40,7 @@ internal class ReaderModeController(
     private enum class ReaderTheme { LIGHT, SEPIA, DARK }
 
     private var overlay: FrameLayout? = null
+    private var readerBlurTarget: BlurTarget? = null
     private var scrollContent: LinearLayout? = null
     private var scrollView: ScrollView? = null
     private var articleTitle: TextView? = null
