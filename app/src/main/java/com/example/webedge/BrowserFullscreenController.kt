@@ -25,8 +25,29 @@ internal class BrowserFullscreenController(
     private var customViewCallback: android.webkit.WebChromeClient.CustomViewCallback? = null
     private var previousRequestedOrientation: Int? = null
     private var pendingPip = false
+    private var rotatedForVideo = false
 
     val isShowing: Boolean get() = customView != null
+
+    /** App đang xoay ngang vì video (không phải khoá dọc mặc định của app). */
+    val isRotatedForVideo: Boolean get() = customView != null && rotatedForVideo
+
+    /** Người dùng rời app khi đang xem ngang: trả về dọc rồi vào PiP ngay, không dùng vùng video cũ. */
+    fun leaveToPipFromLandscape() {
+        if (customView == null) return
+        previousRequestedOrientation?.let { activity.requestedOrientation = it }
+        rotatedForVideo = false
+        pipController.trace("leaveToPipFromLandscape")
+        pipController.enterNow(useSourceRect = false)
+    }
+
+    /** Ép view toàn màn hình tạo lại lớp vẽ: ẩn rồi hiện lại sau một nhịp. */
+    fun kickLayer() {
+        val view = customView ?: return
+        pipController.trace("kickLayer")
+        view.visibility = View.INVISIBLE
+        view.post { if (customView === view) { view.visibility = View.VISIBLE; view.requestLayout(); view.invalidate() } }
+    }
 
     private val clearPendingPip = Runnable { pendingPip = false }
 
@@ -64,6 +85,7 @@ internal class BrowserFullscreenController(
                 ?: if (isLandscapeVideo()) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else null
         }
         wanted?.let { activity.requestedOrientation = it }
+        rotatedForVideo = wanted != null
 
         (view.parent as? ViewGroup)?.removeView(view)
         container.removeAllViews()
@@ -73,6 +95,8 @@ internal class BrowserFullscreenController(
 
         onBottomReserveChanged()
         pipController.setVideoActive(true, view)
+        // Đang xoay ngang: tắt tự vào PiP của hệ thống, để onUserLeaveHint trả về dọc rồi mới vào PiP (vào PiP từ màn hình ngang bị đen).
+        if (rotatedForVideo) pipController.setAutoEnter(false)
         pipController.trace("fullscreen show pending=$pendingPip orient=${activity.requestedOrientation} view=${view.javaClass.simpleName}")
         if (pendingPip) {
             pendingPip = false
@@ -100,6 +124,7 @@ internal class BrowserFullscreenController(
         container.removeView(view)
         container.visibility = View.GONE
         customView = null
+        rotatedForVideo = false
         onBottomReserveChanged()
 
         val callback = customViewCallback

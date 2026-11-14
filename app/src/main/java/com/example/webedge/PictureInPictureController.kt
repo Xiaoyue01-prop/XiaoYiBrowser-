@@ -70,11 +70,22 @@ class PictureInPictureController(
      * Vào PiP ngay (nút PiP của trình phát trang web, sau khi video đã vào toàn màn hình). Truyền tham số tường minh
      * thay vì trông chờ vào tham số thư viện đã áp, và báo lỗi bằng toast vì không phải lúc nào cũng có logcat.
      */
-    fun enterNow() {
+    /** Bật/tắt tự vào PiP khi vuốt về home (tắt khi app đang xoay ngang để tự xử lý trong onUserLeaveHint). */
+    fun setAutoEnter(enabled: Boolean) {
+        try {
+            pip.setEnabled(videoActive && enabled)
+            pip.commit()
+        } catch (e: Exception) {
+            Log.w(TAG, "Đổi tự vào PiP thất bại", e)
+        }
+    }
+
+    /** [useSourceRect] = false khi hướng màn hình sắp đổi (vùng video tính theo hướng cũ sẽ sai). */
+    fun enterNow(useSourceRect: Boolean = true) {
         if (!videoActive || activity.isInPictureInPictureMode) return
         markEntering()
         try {
-            val rect = videoSourceRect()
+            val rect = if (useSourceRect) videoSourceRect() else null
             val builder = PictureInPictureParams.Builder()
                 .setAspectRatio(Rational((aspect * RATIO_BASE).toInt(), RATIO_BASE))
                 .setAutoEnterEnabled(true)

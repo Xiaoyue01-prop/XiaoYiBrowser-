@@ -392,6 +392,19 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         fullscreenVideoController?.reapplyImmersiveIfShowing()
+        // Xoay máy khi đang ở cửa sổ PiP: cửa sổ đổi cỡ nên lớp video lại lệch lớp trang (đen, chỉ còn điều khiển). Làm tươi sau khi ổn định.
+        if (isInPictureInPictureMode && isFullscreenVideoShowing()) {
+            pipController.trace("config in pip orient=${newConfig.orientation}")
+            for (delay in longArrayOf(250L, 700L)) {
+                handler.postDelayed({
+                    if (isInPictureInPictureMode && isFullscreenVideoShowing()) {
+                        fullscreenVideoController?.kickLayer()
+                        WebMediaHub.jsRunner?.invoke(mediaJs("nudge(false)"))
+                    }
+                }, delay)
+            }
+            handler.postDelayed({ pipController.flushTrace() }, 1_000L)
+        }
     }
 
     /** Xin chế độ màn hình có tần số quét cao nhất (cùng độ phân giải) để animation chạy 120Hz thay vì 60Hz. */
@@ -1193,7 +1206,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     override fun onUserLeaveHint() {
-        if (isFullscreenVideoShowing()) pipController.markEntering()
+        if (isFullscreenVideoShowing()) {
+            pipController.markEntering()
+            if (fullscreenVideoController?.isRotatedForVideo == true) fullscreenVideoController?.leaveToPipFromLandscape()
+        }
         super.onUserLeaveHint()
     }
 
