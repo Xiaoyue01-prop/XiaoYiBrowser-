@@ -65,6 +65,7 @@ internal class BrowserFullscreenController(
 
         onBottomReserveChanged()
         pipController.setVideoActive(true, view)
+        pipController.trace("fullscreen show pending=$pendingPip orient=${activity.requestedOrientation} view=${view.javaClass.simpleName}")
         if (pendingPip) {
             pendingPip = false
             container.removeCallbacks(clearPendingPip)
@@ -80,6 +81,7 @@ internal class BrowserFullscreenController(
 
     fun hide() {
         val view = customView ?: return
+        pipController.trace("fullscreen hide")
         if ((activity.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
             // Chỉ bản debug: cho biết ai làm video thoát toàn màn hình (chẩn đoán lỗi PiP hiện giao diện trình duyệt).
             val trace = Throwable().stackTrace

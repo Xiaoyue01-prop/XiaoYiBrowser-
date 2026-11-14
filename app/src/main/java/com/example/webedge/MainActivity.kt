@@ -379,6 +379,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onResume() {
         super.onResume()
+        if (::pipController.isInitialized) pipController.trace("onResume")
         requestHighRefreshRate()
         fullscreenVideoController?.reapplyImmersiveIfShowing()
     }
@@ -1108,6 +1109,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         newConfig: android.content.res.Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (::pipController.isInitialized) pipController.trace("modeChanged pip=$isInPictureInPictureMode state=${lifecycle.currentState}")
+        if (!isInPictureInPictureMode && ::pipController.isInitialized) pipController.flushTrace()
         WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.pip($isInPictureInPictureMode)")
         if (!isInPictureInPictureMode && isFullscreenVideoShowing()) lastPipExitUptime = SystemClock.uptimeMillis()
         if (!isInPictureInPictureMode && !isFullscreenVideoShowing()) {
@@ -1139,6 +1142,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     // onPictureInPictureModeChanged dễ chạy trước onStop và bỏ sót. Nếu app dừng khi video vẫn ở toàn màn hình
     // thì surface đã mất: thoát toàn màn hình (vừa đóng PiP thì dừng luôn video) để lần mở lại không bị đen.
     override fun onStop() {
+        if (::pipController.isInitialized) pipController.trace("onStop inPip=$isInPictureInPictureMode entering=${pipController.isEntering}")
         if (isFullscreenVideoShowing() && !isInPictureInPictureMode && !isChangingConfigurations && !pipController.isEntering) {
             if (SystemClock.uptimeMillis() - lastPipExitUptime < PIP_CLOSE_WINDOW_MS) {
                 WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.pause()")
@@ -1154,6 +1158,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     override fun onPause() {
+        if (::pipController.isInitialized) pipController.trace("onPause")
         downloadPromptController?.dismissAll()
         if (::store.isInitialized) store.flush()
         if (::web.isInitialized) {
