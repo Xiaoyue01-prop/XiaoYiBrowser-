@@ -40,18 +40,13 @@ internal class ReaderModeController(
     private enum class ReaderTheme { LIGHT, SEPIA, DARK }
 
     private var overlay: FrameLayout? = null
-    private var readerBlurTarget: BlurTarget? = null
     private var scrollContent: LinearLayout? = null
     private var scrollView: ScrollView? = null
     private var articleTitle: TextView? = null
     private var articleBody: TextView? = null
     private var articleMeta: TextView? = null
     private var toolbar: FrameLayout? = null
-    private var toolbarBlurView: BlurView? = null
-    private var toolbarBlurSync: GlassSystem.BlurSync? = null
     private var settingsPanel: FrameLayout? = null
-    private var settingsBlurView: BlurView? = null
-    private var settingsBlurSync: GlassSystem.BlurSync? = null
     private var outsideDismiss: View? = null
     private var toolbarButtons = emptyList<View>()
     private val settingsOptionRows = mutableListOf<Pair<LinearLayout, () -> Int>>()
@@ -80,15 +75,15 @@ internal class ReaderModeController(
             isFocusable = true
         }
         overlay = layer
-        // Attach the Reader layer first. BlurView must be configured against an attached
-        // BlurTarget; otherwise it can fall back to a merely translucent surface on some devices.
-        root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         buildArticleContent(layer, value)
+        // Attach the Reader BlurTarget to the window before creating any BlurView.
+        // BlurView needs an attached target to capture the live Reader text behind the glass.
+        root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         buildToolbar(layer)
         onVisibilityChanged(true)
 
-        // Wait until the shared BlurView has produced real frosted pixels before revealing the pill.
-        // This follows the same first-frame synchronization used by MenuTabs/MenuController.
+        // The reader toolbar grows out of the existing address pill, using the same spring language
+        // as MenuTabs/MenuController while keeping its own capsule surface unchanged.
         layer.post {
             if (overlay !== layer) return@post
             animateToolbarIn()
@@ -112,13 +107,13 @@ internal class ReaderModeController(
         scroll.setPadding(0, topInset() + dp(22), 0, bottomInset() + dp(96))
         toolbar?.let { view ->
             (view.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-                lp.bottomMargin = bottomInset() + dp(10)
+                lp.bottomMargin = bottomInset() + dp(12)
                 view.layoutParams = lp
             }
         }
         settingsPanel?.let { view ->
             (view.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-                lp.bottomMargin = bottomInset() + dp(44)
+                lp.bottomMargin = bottomInset() + dp(82)
                 view.layoutParams = lp
             }
         }
@@ -129,7 +124,6 @@ internal class ReaderModeController(
         val layer = overlay ?: return
         if (settingsOpen || settingsClosing) closeSettings(immediate = true)
         val source = toolbar
-        if (!immediate) toolbarBlurSync?.hold(700L)
         if (immediate || source == null || !source.isLaidOut) {
             finishExit(layer)
             return
@@ -158,10 +152,7 @@ internal class ReaderModeController(
         val layer = overlay ?: return
         AnimationSystem.cancel(layer)
         toolbar?.let(AnimationSystem::cancel)
-        settingsPanel?.let {
-            OriginTransitionController.cancel(it)
-            AnimationSystem.cancel(it)
-        }
+        settingsPanel?.let(AnimationSystem::cancel)
         root.removeView(layer)
         clearViews()
     }
@@ -185,11 +176,7 @@ internal class ReaderModeController(
         articleMeta = null
         toolbar = null
         settingsPanel = null
-        settingsBlurView = null
-        settingsBlurSync = null
         outsideDismiss = null
-        toolbarBlurView = null
-        toolbarBlurSync = null
         toolbarButtons = emptyList()
         settingsOptionRows.clear()
         settingsOpen = false
@@ -204,10 +191,6 @@ internal class ReaderModeController(
             setPadding(0, topInset() + dp(22), 0, bottomInset() + dp(96))
         }
         scrollView = scroll
-        scroll.setOnScrollChangeListener { _, _, _, _, _ ->
-            toolbarBlurSync?.hold(180L)
-            settingsBlurSync?.hold(180L)
-        }
         val content = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(horizontalPadding(), dp(14), horizontalPadding(), dp(24))
@@ -264,6 +247,8 @@ internal class ReaderModeController(
         content.addView(body, bodyLp)
 
         scroll.addView(content, FrameLayout.LayoutParams(-1, -2))
+        // Reader owns a target around its scrolling article so the toolbar blurs the text
+        // directly beneath it. The target is attached by show() before BlurViews are created.
         val target = BlurTarget(activity)
         readerBlurTarget = target
         target.addView(scroll, FrameLayout.LayoutParams(-1, -1))
@@ -274,32 +259,28 @@ internal class ReaderModeController(
     private fun buildToolbar(layer: FrameLayout) {
         val capsule = FrameLayout(activity).apply {
             background = GlassSystem.create(GlassSystem.Preset.ADDRESS_BAR, density, false)
-            foreground = GlassSystem.createBorder(GlassSystem.Preset.ADDRESS_BAR.radiusDp, density, false)
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
             elevation = dp(18).toFloat()
             alpha = 0.01f
             scaleX = 0.64f
             scaleY = 0.78f
-            pivotX = dp(112).toFloat()
-            pivotY = dp(24).toFloat()
+            pivotX = dp(124).toFloat()
+            pivotY = dp(28).toFloat()
         }
         toolbar = capsule
-        val blurTarget = readerBlurTarget ?: return
-        val glass = GlassSystem.createBlurView(
-            activity, blurTarget, GlassSystem.Preset.ADDRESS_BAR, density, false, rim = false
-        ).apply {
-            isClickable = false
-            isFocusable = false
-        }
-        toolbarBlurView = glass
-        toolbarBlurSync = GlassSystem.BlurSync(blurTarget, glass)
-        capsule.addView(glass, FrameLayout.LayoutParams(-1, -1))
+        capsule.addView(
+            GlassSystem.createBlurView(activity, readerBlurTarget ?: return, GlassSystem.Preset.ADDRESS_BAR, density, false).apply {
+                isClickable = false
+                isFocusable = false
+            },
+            FrameLayout.LayoutParams(-1, -1)
+        )
 
         val row = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(6), dp(2), dp(6), dp(2))
+            setPadding(dp(7), dp(5), dp(7), dp(5))
             clipChildren = false
             clipToPadding = false
         }
@@ -311,13 +292,13 @@ internal class ReaderModeController(
         )
         toolbarButtons = buttons
         buttons.forEachIndexed { index, button ->
-            val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
+            val lp = LinearLayout.LayoutParams(0, dp(46), 1f)
             if (index > 0) lp.leftMargin = dp(2)
             row.addView(button, lp)
         }
         capsule.addView(row, FrameLayout.LayoutParams(-1, -1))
-        val capsuleLp = FrameLayout.LayoutParams(dp(224), dp(48), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-        capsuleLp.bottomMargin = bottomInset() + dp(10)
+        val capsuleLp = FrameLayout.LayoutParams(dp(252), dp(58), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+        capsuleLp.bottomMargin = bottomInset() + dp(12)
         layer.addView(capsule, capsuleLp)
     }
 
@@ -326,9 +307,8 @@ internal class ReaderModeController(
             text = label
             contentDescription = description
             gravity = Gravity.CENTER
-            textSize = if (label == "Aa") 20f else 27f
+            textSize = if (label == "Aa") 18f else 22f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            includeFontPadding = false
             setTextColor(primaryColor())
             background = activity.roundedPressBackground(false, 18f, 1f, 1f)
             isClickable = true
@@ -339,45 +319,19 @@ internal class ReaderModeController(
 
     private fun animateToolbarIn() {
         val capsule = toolbar ?: return
-        val glass = toolbarBlurView ?: return
-        val sync = toolbarBlurSync
-        sync?.hold(1000L)
-        var started = false
-        fun startAfterBlurFrame() {
-            if (started || overlay == null || toolbar !== capsule) return
-            started = true
-            val anchor = entryPill()
-            if (anchor != null && anchor.width > 0 && capsule.width > 0) {
-                val capsuleLoc = IntArray(2)
-                val anchorLoc = IntArray(2)
-                capsule.getLocationOnScreen(capsuleLoc)
-                anchor.getLocationOnScreen(anchorLoc)
-                capsule.translationX = anchorLoc[0] + anchor.width / 2f - (capsuleLoc[0] + capsule.width / 2f)
-                capsule.translationY = anchorLoc[1] + anchor.height / 2f - (capsuleLoc[1] + capsule.height / 2f)
-            }
-            AnimationSystem.spring(capsule, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_POP_BACK)
-            AnimationSystem.spring(capsule, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_POP_BACK)
-            AnimationSystem.scaleTo(capsule, 1f, 1f, AnimationSystem.MENU_POP)
-            AnimationSystem.fade(capsule, 1f, AnimationSystem.QUICK)
+        val anchor = entryPill()
+        if (anchor != null && anchor.width > 0 && capsule.width > 0) {
+            val capsuleLoc = IntArray(2)
+            val anchorLoc = IntArray(2)
+            capsule.getLocationOnScreen(capsuleLoc)
+            anchor.getLocationOnScreen(anchorLoc)
+            capsule.translationX = anchorLoc[0] + anchor.width / 2f - (capsuleLoc[0] + capsule.width / 2f)
+            capsule.translationY = anchorLoc[1] + anchor.height / 2f - (capsuleLoc[1] + capsule.height / 2f)
         }
-
-        val observer = glass.viewTreeObserver
-        if (observer.isAlive) {
-            observer.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
-                override fun onPreDraw(): Boolean {
-                    if (glass.viewTreeObserver.isAlive) {
-                        glass.viewTreeObserver.removeOnPreDrawListener(this)
-                    }
-                    val choreographer = android.view.Choreographer.getInstance()
-                    choreographer.postFrameCallback {
-                        choreographer.postFrameCallback { startAfterBlurFrame() }
-                    }
-                    return true
-                }
-            })
-        }
-        // Safety fallback for devices that skip pre-draw callbacks.
-        glass.postDelayed({ startAfterBlurFrame() }, 260L)
+        AnimationSystem.spring(capsule, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_POP_BACK)
+        AnimationSystem.spring(capsule, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_POP_BACK)
+        AnimationSystem.scaleTo(capsule, 1f, 1f, AnimationSystem.MENU_POP)
+        AnimationSystem.fade(capsule, 1f, AnimationSystem.QUICK)
     }
 
     private fun toggleSettings() {
@@ -399,25 +353,26 @@ internal class ReaderModeController(
 
         val panel = FrameLayout(activity).apply {
             background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, density, false)
-            foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, density, false)
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
             elevation = dp(24).toFloat()
             alpha = 0.01f
+            scaleX = 0.82f
+            scaleY = 0.82f
+            translationY = dp(22).toFloat()
+            pivotX = root.width / 2f
+            pivotY = dp(230).toFloat()
             isClickable = true
             isFocusable = true
         }
         settingsPanel = panel
-        val blurTarget = readerBlurTarget ?: return
-        val panelGlass = GlassSystem.createBlurView(
-            activity, blurTarget, GlassSystem.Preset.MENU_CARD, density, false, rim = false
-        ).apply {
-            isClickable = false
-            isFocusable = false
-        }
-        settingsBlurView = panelGlass
-        settingsBlurSync = GlassSystem.BlurSync(blurTarget, panelGlass)
-        panel.addView(panelGlass, FrameLayout.LayoutParams(-1, -1))
+        panel.addView(
+            GlassSystem.createBlurView(activity, readerBlurTarget ?: return, GlassSystem.Preset.MENU_CARD, density, false).apply {
+                isClickable = false
+                isFocusable = false
+            },
+            FrameLayout.LayoutParams(-1, -1)
+        )
         val body = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(16), dp(18), dp(16))
@@ -503,57 +458,18 @@ internal class ReaderModeController(
         widthLp.topMargin = dp(7)
         body.addView(widthRow, widthLp)
 
-        val panelWidth = minOf(dp(312), (root.width - dp(32)).coerceAtLeast(dp(248)))
-        val panelLp = FrameLayout.LayoutParams(panelWidth, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-        panelLp.bottomMargin = bottomInset() + dp(44)
+        val panelLp = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+        panelLp.leftMargin = dp(18)
+        panelLp.rightMargin = dp(18)
+        panelLp.bottomMargin = bottomInset() + dp(82)
         layer.addView(panel, panelLp)
         capsuleButtonsEnabled(false)
         panel.post {
             if (settingsPanel !== panel) return@post
-            settingsBlurSync?.hold(1100L)
-            var morphStarted = false
-            fun startSettingsMorph() {
-                if (morphStarted || !settingsOpen || settingsPanel !== panel || !panel.isAttachedToWindow) return
-                morphStarted = true
-                val sourceAa = toolbarButtons.getOrNull(1)
-                val canPop = sourceAa?.isShown == true && sourceAa.alpha > 0.5f
-                val opened = OriginTransitionController.open(
-                    view = panel,
-                    origin = sourceAa,
-                    endCornerRadiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * density,
-                    springSpec = AnimationSystem.MENU_MORPH,
-                    fadeIn = false,
-                    counterTransformView = panelGlass,
-                    contentViews = { (0 until panel.childCount).map { panel.getChildAt(it) }.filter { it !== panelGlass } },
-                    contentStart = 0f,
-                    contentSpan = 0.25f,
-                    popScale = if (canPop) Constants.MENU_POP_SCALE else 1f,
-                    popTowardTarget = if (canPop) Constants.MENU_POP_TOWARD else 0f,
-                    popDelayMs = if (canPop) Constants.MENU_POP_DELAY_MS else 0L,
-                    popSpring = AnimationSystem.MENU_POP,
-                    popMaxDistancePx = dp(Constants.TAB_POP_MAX_DP).toFloat()
-                )
-                if (!opened) AnimationSystem.enter(panel, spec = AnimationSystem.MENU_MORPH)
-            }
-
-            // Match MenuController: keep the panel hidden until BlurView has drawn real pixels,
-            // then allow two display frames for the frosted layer to settle before morphing.
-            val observer = panelGlass.viewTreeObserver
-            if (observer.isAlive) {
-                observer.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
-                    override fun onPreDraw(): Boolean {
-                        if (panelGlass.viewTreeObserver.isAlive) {
-                            panelGlass.viewTreeObserver.removeOnPreDrawListener(this)
-                        }
-                        val choreographer = android.view.Choreographer.getInstance()
-                        choreographer.postFrameCallback {
-                            choreographer.postFrameCallback { startSettingsMorph() }
-                        }
-                        return true
-                    }
-                })
-            }
-            panelGlass.postDelayed({ startSettingsMorph() }, 300L)
+            panel.pivotY = panel.height.toFloat()
+            AnimationSystem.spring(panel, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+            AnimationSystem.scaleTo(panel, 1f, 1f, AnimationSystem.MENU_POP)
+            AnimationSystem.fade(panel, 1f, AnimationSystem.QUICK)
         }
     }
 
@@ -566,29 +482,21 @@ internal class ReaderModeController(
         val layer = overlay
         val panel = settingsPanel
         if (panel == null || immediate) {
-            panel?.let {
-                OriginTransitionController.cancel(it)
-                AnimationSystem.cancel(it)
-                layer?.removeView(it)
-            }
+            panel?.let { layer?.removeView(it) }
             settingsPanel = null
-            settingsBlurView = null
-            settingsBlurSync = null
             outsideDismiss?.let { layer?.removeView(it) }
             outsideDismiss = null
             settingsClosing = false
             capsuleButtonsEnabled(true)
             return
         }
-        // Morph ngược về đúng nút Aa bằng transition engine dùng chung của MenuTabs/MenuController.
-        // Lớp chắn chạm vẫn nằm trên toolbar cho đến khi quá trình thu hoàn tất.
-        settingsBlurSync?.hold(700L)
-        OriginTransitionController.close(panel, AnimationSystem.MENU_MORPH_CLOSE) {
+        // Giữ lớp chắn chạm và vô hiệu hóa pill cho đến khi spring đóng hoàn tất.
+        AnimationSystem.spring(panel, DynamicAnimation.TRANSLATION_Y, dp(18).toFloat(), AnimationSystem.MENU_MORPH_CLOSE)
+        AnimationSystem.scaleTo(panel, 0.84f, 0.84f, AnimationSystem.MENU_MORPH_CLOSE)
+        AnimationSystem.fade(panel, 0f, AnimationSystem.MENU_MORPH_CLOSE) {
             if (settingsPanel === panel) {
                 layer?.removeView(panel)
                 settingsPanel = null
-                settingsBlurView = null
-                settingsBlurSync = null
             }
             outsideDismiss?.let { layer?.removeView(it) }
             outsideDismiss = null
@@ -737,7 +645,6 @@ internal class ReaderModeController(
     private fun dp(value: Int): Int = (value * density).toInt()
 
     companion object {
-
         /** Conservative in-page article extraction for the first UI prototype; source DOM is never modified. */
         val EXTRACTION_SCRIPT: String = """
             (function() {
