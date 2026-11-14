@@ -50,17 +50,20 @@ class FootballSheetController(
     fun show() {
         val s = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         scope = s
-        val page = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(10), dp(16), dp(18))
-        }
+        val page = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val scroll = ScrollView(activity).apply {
             clipToPadding = false
             addView(page)
         }
+        // BrowserBottomSheet chỉ chừa chỗ dưới tiêu đề khi ScrollView là con ĐẦU của content (như trang Tải xuống).
+        val content = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(18))
+            addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
         cache = emptyList(); errorText = null; query = ""
         buildPage(page)
-        sheet.show("Tỉ số bóng đá", scroll, onDismiss = { s.cancel(); scope = null })
+        sheet.show("Tỉ số bóng đá", content, onDismiss = { s.cancel(); scope = null })
         if (FootballPins.apiKey(activity).isNotBlank()) load(page)
     }
 

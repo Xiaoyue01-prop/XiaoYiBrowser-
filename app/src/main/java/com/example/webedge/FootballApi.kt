@@ -17,6 +17,9 @@ import java.util.TimeZone
 /** Bàn thắng trong trận (lấy từ mảng events của /fixtures nếu API có trả về). */
 data class FbGoal(val minute: Int, val home: Boolean, val player: String)
 
+/** Thẻ phạt (vàng, hoặc đỏ / vàng thứ hai). */
+data class FbCard(val minute: Int, val red: Boolean, val home: Boolean, val player: String)
+
 /** Một trận bóng đá, đã rút gọn từ JSON của API-Football v3. */
 data class FbMatch(
     val id: Long,
@@ -31,7 +34,8 @@ data class FbMatch(
     val awayGoals: Int?,
     val penHome: Int?,
     val penAway: Int?,
-    val goals: List<FbGoal>
+    val goals: List<FbGoal>,
+    val cards: List<FbCard> = emptyList()
 ) {
     val notStarted: Boolean get() = status == "NS" || status == "TBD"
     val inPlay: Boolean get() = status in IN_PLAY
@@ -139,20 +143,28 @@ object FootballApi {
         val homeId = home.optLong("id")
 
         val scored = mutableListOf<FbGoal>()
+        val carded = mutableListOf<FbCard>()
         val events = o.optJSONArray("events")
         if (events != null) {
             for (i in 0 until events.length()) {
                 val e = events.optJSONObject(i) ?: continue
-                if (e.optString("type") != "Goal") continue
                 val detail = e.optString("detail")
-                if (detail.contains("Missed", ignoreCase = true)) continue
-                var isHome = e.optJSONObject("team")?.optLong("id") == homeId
-                if (detail.contains("Own", ignoreCase = true)) isHome = !isHome
-                scored += FbGoal(
-                    minute = e.optJSONObject("time")?.optInt("elapsed", 0) ?: 0,
-                    home = isHome,
-                    player = e.optJSONObject("player")?.optString("name").orEmpty()
-                )
+                val minute = e.optJSONObject("time")?.optInt("elapsed", 0) ?: 0
+                val teamIsHome = e.optJSONObject("team")?.optLong("id") == homeId
+                val player = e.optJSONObject("player")?.optString("name").orEmpty()
+                when (e.optString("type")) {
+                    "Goal" -> if (!detail.contains("Missed", ignoreCase = true)) {
+                        // Phản lưới: bàn thắng tính cho đội đối phương.
+                        val isHome = if (detail.contains("Own", ignoreCase = true)) !teamIsHome else teamIsHome
+                        scored += FbGoal(minute, isHome, player)
+                    }
+                    "Card" -> carded += FbCard(
+                        minute,
+                        detail.contains("Red", ignoreCase = true) || detail.contains("Second", ignoreCase = true),
+                        teamIsHome,
+                        player
+                    )
+                }
             }
         }
 
@@ -169,7 +181,8 @@ object FootballApi {
             awayGoals = goals.intOrNull("away"),
             penHome = pen.intOrNull("home"),
             penAway = pen.intOrNull("away"),
-            goals = scored
+            goals = scored,
+            cards = carded
         )
     }
 
@@ -193,6 +206,11 @@ object FootballDemo {
         Triple(31, false, "Palmer"),
         Triple(58, true, "Odegaard"),
         Triple(77, true, "Havertz")
+    )
+
+    private val cardScript = listOf(
+        FbCard(20, false, false, "Caicedo"),
+        FbCard(65, true, false, "Cucurella")
     )
 
     @Volatile private var startedAt = 0L
@@ -232,7 +250,8 @@ object FootballDemo {
             awayGoals = goals.count { !it.home },
             penHome = null,
             penAway = null,
-            goals = goals
+            goals = goals,
+            cards = cardScript.filter { minute != null && it.minute <= minute }
         )
     }
 }

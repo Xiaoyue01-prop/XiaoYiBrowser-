@@ -67,16 +67,17 @@ class FootballLiveService : Service() {
 
     companion object {
         private const val CH_LIVE = "summit_football_live"
-        private const val CH_GOAL = "summit_football_goal"
+        private const val CH_ALERT = "summit_football_alert"
         private const val ACTION_SYNC = "com.example.webedge.action.FOOTBALL_SYNC"
         private const val ACTION_UNPIN = "com.example.webedge.action.FOOTBALL_UNPIN"
         private const val EXTRA_ID = "com.example.webedge.extra.FIXTURE_ID"
         private const val PROBLEM_ID = 2_050_000_000
         private const val LIVE_BASE = 2_000_000_000   // tránh trùng id thông báo tải xuống
-        private const val GOAL_BASE = 2_100_000_000
 
         private val HOME_COLOR = Color.rgb(64, 170, 120)
         private val AWAY_COLOR = Color.rgb(240, 140, 50)
+        private val YELLOW_CARD = Color.rgb(250, 204, 21)
+        private val RED_CARD = Color.rgb(220, 53, 69)
 
         /** Ghim một trận; false nếu đã đủ [FootballPins.MAX_PINS]. Gọi khi app đang ở foreground. */
         fun pin(context: Context, fixtureId: Long): Boolean {
@@ -98,7 +99,11 @@ class FootballLiveService : Service() {
     private var loop: Job? = null
     private var anchorId = -1L
     private val lastNotif = HashMap<Long, Notification>()
-    private val lastScore = HashMap<Long, Pair<Int, Int>>()
+    // Trạng thái đã thấy ở lần cập nhật trước, để biết khi nào có SỰ KIỆN (bàn thắng, thẻ, đổi hiệp).
+    private val lastEvents = HashMap<Long, Int>()
+    private val lastStatus = HashMap<Long, String>()
+    private val lastSig = HashMap<Long, String>()
+    private val lastPostAt = HashMap<Long, Long>()
     private val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val manager by lazy { getSystemService(NotificationManager::class.java) }
 
@@ -217,18 +222,37 @@ class FootballLiveService : Service() {
 
     // ---------------------------------------------------------------- hiển thị
 
+    /**
+     * Cập nhật thường (đổi phút, thanh tiến độ) đi qua kênh LOW, không bật banner: thông báo nằm thu nhỏ
+     * trên chip. Chỉ khi có sự kiện (bàn thắng, thẻ, bắt đầu/nghỉ/hiệp 2) mới đăng lại qua kênh HIGH để
+     * chính Live Update bung ra, rồi tự thu về. Cập nhật thường cũng bị giãn tối thiểu 20 giây.
+     */
     private fun render(matches: List<FbMatch>) {
         val done = mutableListOf<FbMatch>()
+        val now = System.currentTimeMillis()
         for (m in matches) {
             if (m.finished || m.dead) { done += m; continue }
-            val n = buildLive(m)
-            lastNotif[m.id] = n
-            manager.notify(liveId(m.id), n)
 
-            val now = (m.homeGoals ?: 0) to (m.awayGoals ?: 0)
-            val prev = lastScore[m.id]
-            if (prev != null && now.first + now.second > prev.first + prev.second) goalAlert(m)
-            lastScore[m.id] = now
+            val key = m.goals.size + m.cards.size + (m.homeGoals ?: 0) + (m.awayGoals ?: 0)
+            val prevKey = lastEvents[m.id]
+            val prevStatus = lastStatus[m.id]
+            val phaseChanged = prevStatus != null && prevStatus != m.status &&
+                m.status in setOf("1H", "HT", "2H", "ET")
+            val alert = (prevKey != null && key > prevKey) || phaseChanged
+            lastEvents[m.id] = key
+            lastStatus[m.id] = m.status
+
+            val n = buildLive(m, alert)
+            lastNotif[m.id] = n
+
+            val sig = "${scoreLine(m)}|${statusLabel(m)}|${chip(m)}|${m.goals.size}|${m.cards.size}"
+            val firstPost = lastSig[m.id] == null
+            val throttled = now - (lastPostAt[m.id] ?: 0L) < 20_000L
+            if (alert || firstPost || (sig != lastSig[m.id] && !throttled)) {
+                manager.notify(liveId(m.id), n)
+                lastSig[m.id] = sig
+                lastPostAt[m.id] = now
+            }
         }
         done.forEach { finish(it) }
     }
@@ -241,7 +265,7 @@ class FootballLiveService : Service() {
             else stopForeground(STOP_FOREGROUND_DETACH)   // giữ thông báo, chỉ bỏ ràng buộc foreground
         }
         manager.notify(liveId(m.id), buildFinal(m))       // thay thông báo live bằng kết quả cuối
-        lastNotif.remove(m.id); lastScore.remove(m.id)
+        clearState(m.id)
         if (left.isEmpty()) stopSelf()
     }
 
@@ -253,13 +277,18 @@ class FootballLiveService : Service() {
 
     private fun forget(id: Long) {
         manager.cancel(liveId(id))
-        lastNotif.remove(id); lastScore.remove(id)
+        clearState(id)
+    }
+
+    private fun clearState(id: Long) {
+        lastNotif.remove(id); lastEvents.remove(id); lastStatus.remove(id)
+        lastSig.remove(id); lastPostAt.remove(id)
     }
 
     private fun shutDown() {
         loop?.cancel()
         lastNotif.keys.toList().forEach { manager.cancel(liveId(it)) }
-        lastNotif.clear(); lastScore.clear()
+        lastNotif.clear(); lastEvents.clear(); lastStatus.clear(); lastSig.clear(); lastPostAt.clear()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -276,21 +305,6 @@ class FootballLiveService : Service() {
         manager.notify(PROBLEM_ID, n)
     }
 
-    private fun goalAlert(m: FbMatch) {
-        val last = m.goals.lastOrNull()
-        val who = if (last != null && last.player.isNotBlank()) "${last.player} ${last.minute}'" else "${m.elapsed ?: ""}'"
-        val n = Notification.Builder(this, CH_GOAL)
-            .setSmallIcon(R.drawable.ic_stat_football)
-            .setContentTitle("⚽ Bàn thắng! ${scoreLine(m)}")
-            .setContentText(who)
-            .setSubText("Summit")
-            .setContentIntent(openApp(1))
-            .setTimeoutAfter(15_000L)
-            .setAutoCancel(true)
-            .build()
-        manager.notify(GOAL_BASE + m.id.toInt(), n)
-    }
-
     private fun placeholder(): Notification =
         Notification.Builder(this, CH_LIVE)
             .setSmallIcon(R.drawable.ic_stat_football)
@@ -300,7 +314,7 @@ class FootballLiveService : Service() {
             .setOngoing(true)
             .build()
 
-    private fun buildLive(m: FbMatch): Notification {
+    private fun buildLive(m: FbMatch, alert: Boolean): Notification {
         val el = m.elapsed ?: 0
         val extraTime = m.status == "ET" || m.status == "BT" || m.status == "P" || el > 90
         val max = if (extraTime) 120 else 90
@@ -320,6 +334,9 @@ class FootballLiveService : Service() {
         val points = m.goals.map {
             Notification.ProgressStyle.Point(it.minute.coerceIn(1, max))
                 .setColor(if (it.home) HOME_COLOR else AWAY_COLOR)
+        } + m.cards.map {
+            Notification.ProgressStyle.Point(it.minute.coerceIn(1, max))
+                .setColor(if (it.red) RED_CARD else YELLOW_CARD)
         }
         val style = Notification.ProgressStyle()
             .setStyledByProgress(true)
@@ -328,18 +345,19 @@ class FootballLiveService : Service() {
             .setProgressPoints(points)
 
         val title = if (m.notStarted) "${m.homeName} vs ${m.awayName}" else scoreLine(m)
-        val text = "${statusLabel(m)} · ${m.league}"
+        val text = "${statusLabel(m)} · ${lastEventLine(m) ?: m.league}"
 
-        return Notification.Builder(this, CH_LIVE)
+        // alert = sự kiện mới: đăng qua kênh HIGH để Live Update bung ra; còn lại kênh LOW, nằm thu nhỏ.
+        return Notification.Builder(this, if (alert) CH_ALERT else CH_LIVE)
             .setSmallIcon(R.drawable.ic_stat_football)
             .setColor(HOME_COLOR)
             .setContentTitle(title)
             .setContentText(text)
-            .setSubText("Summit")
+            .setSubText(m.league.ifBlank { "Summit" })
             .setShortCriticalText(chip(m))
             .setShowWhen(false)
             .setOngoing(true)
-            .setOnlyAlertOnce(true)
+            .setOnlyAlertOnce(!alert)
             .setContentIntent(openApp(2))
             .addAction(
                 Notification.Action.Builder(
@@ -375,7 +393,15 @@ class FootballLiveService : Service() {
     // ---------------------------------------------------------------- tiện ích
 
     private fun scoreLine(m: FbMatch) =
-        "${m.homeName} ${m.homeGoals ?: 0} - ${m.awayGoals ?: 0} ${m.awayName}"
+        "${m.homeName} ${m.homeGoals ?: 0} – ${m.awayGoals ?: 0} ${m.awayName}"
+
+    /** Sự kiện gần nhất (bàn thắng / thẻ) để hiện ngay trên thông báo. */
+    private fun lastEventLine(m: FbMatch): String? {
+        fun who(p: String) = if (p.isBlank()) "" else "$p "
+        val all = m.goals.map { it.minute to "⚽ ${who(it.player)}${it.minute}'" } +
+            m.cards.map { it.minute to "${if (it.red) "🟥" else "🟨"} ${who(it.player)}${it.minute}'" }
+        return all.maxByOrNull { it.first }?.second
+    }
 
     private fun penText(m: FbMatch) =
         if (m.penHome != null && m.penAway != null) " (${m.penHome}-${m.penAway})" else ""
@@ -435,10 +461,11 @@ class FootballLiveService : Service() {
             }
         )
         manager.createNotificationChannel(
-            NotificationChannel(CH_GOAL, "Bàn thắng", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "Báo ngắn khi trận đã ghim có bàn thắng"
+            NotificationChannel(CH_ALERT, "Sự kiện trận đấu", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Bàn thắng, thẻ phạt, bắt đầu/nghỉ giữa hiệp: Live Update bung ra rồi tự thu nhỏ"
                 setShowBadge(false)
             }
         )
+        manager.deleteNotificationChannel("summit_football_goal")
     }
 }
