@@ -29,7 +29,18 @@ window.EdgeBridge = {
   setPageBackground: function(r, g, b){ s('pb', [r, g, b]); },
   clearPageBackground: function(){ s('cpb', []); },
   pullGuard: function(b){ s('pg', [b]); },
-  requestPip: function(){ s('pip', []); },
+  // cb (tuỳ chọn) được gọi khi app đã ghi nhận yêu cầu PiP. Nếu không có tin trả lời (đường cũ / lỗi) thì vẫn gọi sau 400ms.
+  requestPip: function(cb){
+    var done = false;
+    function fin(){ if (done) return; done = true; try { cb && cb(); } catch (e) {} }
+    try {
+      var n = window.__summitNative;
+      if (!cb || !n) { s('pip', []); fin(); return; }
+      n.onmessage = function(ev){ if (ev && ev.data === 'pip-ok') fin(); };
+      s('pip', []);
+      setTimeout(fin, 400);
+    } catch (e) { fin(); }
+  },
   longPress: function(l, i){ s('lp', [l, i]); },
   mediaState: function(a, p, t, ar, art, pos, dur, rate, w, h){ s('ms', [a, p, t, ar, art, pos, dur, rate, w, h]); }
 };
@@ -65,7 +76,8 @@ internal class BrowserWebMessageBridge(
             "pb" -> if (isMainFrame) bridge.setPageBackground(a.optInt(1), a.optInt(2), a.optInt(3))
             "cpb" -> if (isMainFrame) bridge.clearPageBackground()
             "pg" -> if (isMainFrame) bridge.pullGuard(a.optInt(1))
-            "pip" -> bridge.requestPip()
+            // Trả lời "đã nhận" sau khi cờ PiP được đặt; trang đợi tin này rồi mới xin toàn màn hình (tránh chạy đua).
+            "pip" -> bridge.requestPip { runCatching { replyProxy.postMessage("pip-ok") } }
             "lp" -> bridge.longPress(a.text(1), a.text(2))
             "ms" -> bridge.mediaState(
                 a.optInt(1),

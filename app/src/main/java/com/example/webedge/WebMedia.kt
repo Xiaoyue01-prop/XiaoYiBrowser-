@@ -245,10 +245,20 @@ try {
   HTMLVideoElement.prototype.requestPictureInPicture = function(){
     var v = this;
     cur = v; watch();
-    try { EdgeBridge.requestPip(); } catch (e) {}
-    var p;
-    try { p = v.requestFullscreen ? v.requestFullscreen() : (v.webkitRequestFullscreen && v.webkitRequestFullscreen()); } catch (e) {}
-    return Promise.resolve(p).then(function(){ return { width: v.videoWidth, height: v.videoHeight }; });
+    // Đợi app xác nhận đã đặt cờ PiP rồi mới xin toàn màn hình: nếu không, app có thể xoay ngang trước khi biết là đang xin PiP.
+    // (Quyền kích hoạt do người dùng chạm kéo dài vài giây nên xin trễ một chút vẫn được.)
+    return new Promise(function(resolve, reject){
+      function goFs(){
+        var p;
+        try { p = v.requestFullscreen ? v.requestFullscreen() : (v.webkitRequestFullscreen && v.webkitRequestFullscreen()); } catch (e) {}
+        Promise.resolve(p).then(function(){ resolve({ width: v.videoWidth, height: v.videoHeight }); }, reject);
+      }
+      // Đường WebMessageListener nhận callback xác nhận; đường addJavascriptInterface cũ gọi đồng bộ nên không cần đợi.
+      try {
+        if (window.__summitNative) EdgeBridge.requestPip(goFs);
+        else { EdgeBridge.requestPip(); goFs(); }
+      } catch (e) { goFs(); }
+    });
   };
   document.exitPictureInPicture = function(){ return Promise.resolve(); };
   // Trang cần biết video đang ở PiP để đổi giao diện: pictureInPictureElement + sự kiện enter/leavepictureinpicture

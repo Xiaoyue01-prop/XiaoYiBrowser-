@@ -31,6 +31,14 @@ internal class BrowserFullscreenController(
     private val clearPendingPip = Runnable { pendingPip = false }
 
     fun armPendingPip() {
+        val view = customView
+        if (view != null) {
+            // Đã ở toàn màn hình rồi (yêu cầu PiP tới trễ, hoặc người dùng bấm PiP khi đang xem toàn màn hình):
+            // không có onShowCustomView nào nữa để kích hoạt, nên vào PiP ngay. Nếu app đã lỡ xoay ngang thì trả về dọc trước.
+            previousRequestedOrientation?.let { activity.requestedOrientation = it }
+            container.postDelayed({ if (customView === view) pipController.enterNow() }, PIP_SETTLE_MS)
+            return
+        }
         pendingPip = true
         container.removeCallbacks(clearPendingPip)
         container.postDelayed(clearPendingPip, PENDING_PIP_TIMEOUT_MS)

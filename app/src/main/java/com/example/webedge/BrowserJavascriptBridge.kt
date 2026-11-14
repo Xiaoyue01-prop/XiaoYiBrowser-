@@ -70,6 +70,17 @@ internal class BrowserJavascriptBridge(
         dispatch { host, owner -> host.onBridgePipRequest(owner) }
     }
 
+    /**
+     * Bản có xác nhận cho đường WebMessageListener (không gắn @JavascriptInterface nên không lộ ra trang):
+     * [onArmed] chạy trên UI thread SAU khi cờ PiP đã được đặt, để trang chỉ xin toàn màn hình khi app đã biết là đang xin PiP.
+     */
+    fun requestPip(onArmed: () -> Unit) {
+        dispatch { host, owner ->
+            host.onBridgePipRequest(owner)
+            onArmed()
+        }
+    }
+
     /** Long press lên liên kết/ảnh được phát hiện bởi LONG_PRESS_JS. */
     @JavascriptInterface
     fun longPress(linkUrl: String?, imageUrl: String?) {
