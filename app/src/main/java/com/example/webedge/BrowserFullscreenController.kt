@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.core.view.WindowCompat
+import androidx.core.view.doOnLayout
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.WindowInsetsCompat
 
@@ -67,7 +68,11 @@ internal class BrowserFullscreenController(
         if (pendingPip) {
             pendingPip = false
             container.removeCallbacks(clearPendingPip)
-            view.post { pipController.enterNow() }
+            // Vào PiP ngay khi view vừa gắn thì surface video chưa kịp vẽ khung đầu nên cửa sổ PiP đen (lúc được lúc không).
+            // Đợi view layout xong rồi thêm một khoảng cho video vẽ, và chỉ vào nếu vẫn đang toàn màn hình.
+            view.doOnLayout {
+                it.postDelayed({ if (customView === view) pipController.enterNow() }, PIP_SETTLE_MS)
+            }
         }
         onOrbTemporarilyHidden(true)
         applyImmersiveSystemBars()
@@ -159,5 +164,6 @@ internal class BrowserFullscreenController(
 
     private companion object {
         const val PENDING_PIP_TIMEOUT_MS = 2_000L
+        const val PIP_SETTLE_MS = 450L
     }
 }

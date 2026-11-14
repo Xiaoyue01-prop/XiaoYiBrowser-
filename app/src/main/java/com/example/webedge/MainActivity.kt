@@ -1108,6 +1108,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         newConfig: android.content.res.Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.pip($isInPictureInPictureMode)")
         if (!isInPictureInPictureMode && isFullscreenVideoShowing()) lastPipExitUptime = SystemClock.uptimeMillis()
         if (!isInPictureInPictureMode && !isFullscreenVideoShowing()) {
             pipController.setVideoActive(false)

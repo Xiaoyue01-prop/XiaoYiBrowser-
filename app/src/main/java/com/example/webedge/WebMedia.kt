@@ -234,7 +234,7 @@ class WebMediaController(private val activity: ComponentActivity) {
 internal const val MEDIA_JS = """
 (function(){
 if (window.__summitMedia) return;
-var cur = null, lastSent = 0;
+var cur = null, lastSent = 0, pipEl = null;
 
 // WebView không hỗ trợ Picture-in-Picture của web (nút PiP trong trình phát bấm không có tác dụng).
 // Giả lập: chuyển video sang toàn màn hình rồi nhờ app vào PiP của Android.
@@ -251,6 +251,9 @@ try {
     return Promise.resolve(p).then(function(){ return { width: v.videoWidth, height: v.videoHeight }; });
   };
   document.exitPictureInPicture = function(){ return Promise.resolve(); };
+  // Trang cần biết video đang ở PiP để đổi giao diện: pictureInPictureElement + sự kiện enter/leavepictureinpicture
+  // (app gọi __summitMedia.pip(true/false) khi cửa sổ vào/ra PiP).
+  Object.defineProperty(document, 'pictureInPictureElement', { get: function(){ return pipEl; }, configurable: true });
 } catch (e) {}
 
 function info(){
@@ -306,6 +309,17 @@ window.__summitMedia = {
   play: function(){ if (cur) { var p = cur.play(); if (p && p.catch) p.catch(function(){}); } },
   pause: function(){ if (cur) cur.pause(); },
   seek: function(sec){ if (cur) cur.currentTime = sec; },
+  pip: function(on){
+    try {
+      var v = on ? cur : pipEl;
+      if (!v) return;
+      pipEl = on ? v : null;
+      var ev = new Event(on ? 'enterpictureinpicture' : 'leavepictureinpicture', { bubbles: true });
+      ev.pictureInPictureWindow = { width: v.clientWidth, height: v.clientHeight,
+        addEventListener: function(){}, removeEventListener: function(){} };
+      v.dispatchEvent(ev);
+    } catch (e) {}
+  },
   report: function(){
     if (!cur) {
       var list = document.querySelectorAll('video,audio');
