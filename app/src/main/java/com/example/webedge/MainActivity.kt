@@ -1128,8 +1128,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (!isInPictureInPictureMode && ::pipController.isInitialized) pipController.flushTrace()
         WebMediaHub.jsRunner?.invoke(mediaJs("pip($isInPictureInPictureMode)"))
         if (isInPictureInPictureMode) {
-            // Vào PiP khi đang xoay ngang vì video: giờ mới trả về dọc, rồi làm tươi lớp video sau khi cửa sổ ổn định.
-            fullscreenVideoController?.restoreOrientationInPip()
+            // Không trả hướng về dọc ở đây: nhiều trình phát tự thoát toàn màn hình khi máy chuyển ngang → dọc (log: fullscreen hide
+            // ngay sau restoreOrientationInPip). Hướng sẽ được trả khi video thoát toàn màn hình (hide()).
+            // Chỉ làm tươi lớp video sau khi cửa sổ PiP ổn định.
             for (delay in longArrayOf(500L, 1_000L, 1_800L)) {
                 handler.postDelayed({
                     if (this@MainActivity.isInPictureInPictureMode) {
