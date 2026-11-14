@@ -1130,14 +1130,19 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             // Bấm cửa sổ PiP để mở lại app: đợi cửa sổ ổn định kích thước rồi gắn lại view video cho khỏi đen.
             // Animation phóng từ PiP ra toàn màn hình mất ~300-500ms; làm một lượt quá sớm thì surface bị tạo lại giữa chừng
             // và vẫn đen (chỉ hiện điều khiển của trang). Nên làm nhiều lượt, lượt sau cùng chạy khi cửa sổ đã ổn định.
-            for (delay in longArrayOf(PIP_RETURN_REFRESH_DELAY_MS, 600L, 1_200L)) {
+            // Lượt đầu gắn lại view; các lượt sau chỉ "đẩy" trang và tua tại chỗ để trình phát vẽ lại một khung hình mới
+            // (giống double tap, vốn là thứ làm video hiện lại).
+            val delays = longArrayOf(PIP_RETURN_REFRESH_DELAY_MS, 600L, 1_200L)
+            for ((i, delay) in delays.withIndex()) {
                 handler.postDelayed({
-                    if (isFullscreenVideoShowing() && !this@MainActivity.isInPictureInPictureMode &&
+                    val ok = isFullscreenVideoShowing() && !this@MainActivity.isInPictureInPictureMode &&
                         lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
-                    ) {
-                        fullscreenVideoController?.refreshSurface()
-                        WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.nudge()")
+                    pipController.trace("pipReturn pass=$i ok=$ok state=${lifecycle.currentState}")
+                    if (ok) {
+                        if (i == 0) fullscreenVideoController?.refreshSurface()
+                        WebMediaHub.jsRunner?.invoke("window.__summitMedia&&window.__summitMedia.nudge(${i > 0})")
                     }
+                    if (i == delays.lastIndex) pipController.flushTrace()
                 }, delay)
             }
         }

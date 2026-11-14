@@ -331,11 +331,13 @@ window.__summitMedia = {
     } catch (e) {}
   },
   // Buộc trình duyệt vẽ lại lớp video (sau khi thu từ PiP về toàn màn hình mà video đen): báo resize và ép tạo lại lớp.
-  nudge: function(){
+  nudge: function(seek){
     try {
       window.dispatchEvent(new Event('resize'));
       var v = cur;
       if (!v) return;
+      // Tua tại chỗ: buộc giải mã và trình chiếu lại khung hình hiện tại (không đổi vị trí, không đổi trạng thái phát/dừng).
+      if (seek && v.readyState >= 2 && isFinite(v.currentTime) && !v.ended) { try { v.currentTime = v.currentTime; } catch (e) {} }
       var old = v.style.transform;
       v.style.transform = 'translateZ(0)';
       requestAnimationFrame(function(){ requestAnimationFrame(function(){ v.style.transform = old; }); });
