@@ -48,7 +48,7 @@ import eightbitlab.com.blurview.BlurView
  */
 object GlassSystem {
     // One adaptive material system: consistent frost, edge and corner language on light or dark pages.
-    private const val GLASS_BLUR_RADIUS_DP = 6f
+    private const val GLASS_BLUR_RADIUS_DP = 12f
     // Tint is deliberately stronger than the old 6/255 wash: it stabilizes contrast while
     // preserving the live background and the existing Frost Glass blur.
     private const val LIGHT_GLASS_TINT_ALPHA = 38
