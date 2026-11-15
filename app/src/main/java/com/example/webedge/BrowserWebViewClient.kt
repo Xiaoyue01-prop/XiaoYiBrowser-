@@ -23,6 +23,8 @@ internal interface BrowserWebViewHost {
     val isUrlBarFocused: Boolean
     fun handleSpecialUrl(url: String, view: WebView): Boolean
     fun toast(msg: String)
+    /** Áp cỡ chữ đã lưu của website sắp tải cho [view] (cỡ chữ theo tên miền). */
+    fun applyTextZoom(view: WebView, url: String)
     fun forgetPageBackground(view: WebView)
     /** Bỏ nền trang đang áp lên cửa sổ (khi điều hướng hoặc renderer chết). */
     fun clearWindowPageBackground()
@@ -70,6 +72,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         YouTubeAdBlocker.onMainFrameNavigation(view, url)
         host.tabManager.updateForWebView(view, url, view.title ?: url)
+        host.applyTextZoom(view, url)
         // A navigation must not reuse the previous document's background tone.
         host.forgetPageBackground(view)
         if (view === host.web) host.clearWindowPageBackground()

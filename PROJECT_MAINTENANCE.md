@@ -102,3 +102,12 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - Còn lộ: `Sec-Ch-Ua` vẫn có brand "Android WebView" (chưa có cách đổi ở tầng app).
 - Chưa biên dịch tại môi trường chỉnh sửa; `setRequestedWithHeaderOriginAllowList` chưa kiểm tra với androidx.webkit 1.18 (CI là kiểm tra đầu tiên).
 - TẠM THỜI (2026-11-15): `RequestedWithDiagnostics` (WebUtils.kt) + toast trong `BrowserWebViewClient.onPageFinished` (không gọi lúc khởi động vì UI chưa sẵn sàng, gây crash) hiện kết quả cấu hình X-Requested-With khi mở tab đầu tiên. Gỡ cả hai sau khi xác định nguyên nhân.
+
+## Page menu (2026-11-15)
+
+- The reload button in the URL pill is now the page-menu button (`ToolbarController.pageMenuBtn`, `Icons.PAGE_MENU`). Reload lives in the page menu and pull-to-refresh. Like the other pill buttons it fades and stops being clickable while the bar is collapsed.
+- `MenuController` has two kinds (`MenuController.Kind.MAIN` / `PAGE`), one instance, one `menuLayer`. `toggle(kind)` picks `activeOrigin` (`originView` = three-dot button, `pageOriginView` = page-menu button); all morph code uses `activeOrigin`.
+- Page menu differences: the card is anchored to the page-menu button's right edge and the pill's bottom edge, so it sits on top of the pill; it does NOT absorb the pill or the orb (`startPillAbsorb` is MAIN only, `OrbMenuController.absorbTarget` is guarded by `menu.isPageMenu`). Other bottom-bar buttons are inert while it is open because the menu layer covers them and `menu.isOpen` is true (pull-to-refresh, tab swipe and auto-hide check it). Back closes it.
+- Page menu content: Share / Save page / Reload, text size row (A- / % / A+), Find in page, Desktop site. Main menu keeps: Reader, Bookmarks, History, Downloads, Privacy Dashboard, Football scores, Settings.
+- Text size: `TextZoomController` drives `WebSettings.textZoom` (steps 50-200%), stored per host in `Store` ("text_zoom" JSON, `www.` stripped, 100% not stored). Private tabs keep it in memory only. It is applied in `onPageStarted` and on tab activation. The Reader's own font size is separate.
+- Not compiled in the editing environment; verify on device: open/close morph from the small button (clipping inside the pill, spring feel), card position vs. the back button and three-dot button, A-/A+ with the menu staying open, per-site persistence, private tab, desktop mode, bar collapsed state.

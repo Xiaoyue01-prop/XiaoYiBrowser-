@@ -44,6 +44,13 @@ interface MenuHost {
     fun toggleDesktopMode()
     fun applyInsets()
     fun setBarHidden(hide: Boolean)
+
+    /** Cỡ chữ (%) của website đang xem. */
+    fun textZoomPercent(): Int
+    /** Tăng/giảm một bậc cỡ chữ của website đang xem; trả về phần trăm mới. */
+    fun stepTextZoom(delta: Int): Int
+    /** Đưa cỡ chữ của website đang xem về 100%; trả về phần trăm mới. */
+    fun resetTextZoom(): Int
     /** Dựng lại WebView theo [Store.webDarkMode] (WebView chỉ đọc theme lúc tạo). */
     fun setWebDarkMode(enabled: Boolean)
 }
@@ -124,6 +131,20 @@ class MenuController(
     /** Nút đã bấm để mở menu (nút ba chấm): menu bung ra từ đây và thu ngược về đây. */
     var originView: View? = null
 
+    /** Nút menu trang trong viên thuốc địa chỉ: menu trang bung ra từ đây và thu ngược về đây. */
+    var pageOriginView: View? = null
+
+    /** Menu ba chấm (MAIN) hoặc menu trang (PAGE); mỗi loại có nút gốc và nội dung riêng. */
+    enum class Kind { MAIN, PAGE }
+
+    private var kind = Kind.MAIN
+
+    /** Nút gốc của lần mở hiện tại ([originView] hoặc [pageOriginView]). */
+    private var activeOrigin: View? = null
+
+    /** Menu trang đang mở: không hút viên thuốc/orb vào thẻ, thẻ nằm đè lên viên thuốc. */
+    val isPageMenu: Boolean get() = menuLayer != null && kind == Kind.PAGE
+
     /** Viên thuốc địa chỉ: menu phải rộng đủ để phủ kín nó (không để lộ mép viên thuốc bên trái thẻ). */
     var coverView: View? = null
 
@@ -172,7 +193,7 @@ class MenuController(
             releasePillClip()
             return
         }
-        val btn = originView?.let { OriginTransitionController.boundsOnScreen(it) }
+        val btn = activeOrigin?.let { OriginTransitionController.boundsOnScreen(it) }
         val pillB = OriginTransitionController.boundsOnScreen(pill)
         AnimationSystem.cancel(pill)
         pill.translationX = b[0] + if (btn != null && pillB != null) btn.centerX() - pillB.centerX() else 0f
@@ -222,8 +243,8 @@ class MenuController(
     }
 
     private fun coverMinWidthPx(): Int {
-        if (toolbarCompact) return 0
-        val o = originView?.let { OriginTransitionController.boundsOnScreen(it) } ?: return 0
+        if (toolbarCompact || kind == Kind.PAGE) return 0
+        val o = activeOrigin?.let { OriginTransitionController.boundsOnScreen(it) } ?: return 0
         val c = coverView?.let { OriginTransitionController.boundsOnScreen(it) } ?: return 0
         return (o.right - c.left).toInt() + dp(6)
     }
@@ -252,11 +273,13 @@ class MenuController(
     private fun onOff(b: Boolean): String = if (b) "Bật" else "Tắt"
 
     /** Mở menu; nếu đang mở thì đóng. */
-    fun toggle() {
+    fun toggle(requested: Kind = Kind.MAIN) {
         if (menuLayer != null) {
             close()
             return
         }
+        kind = requested
+        activeOrigin = if (requested == Kind.PAGE) pageOriginView else originView
         val layer = FrameLayout(activity)
         layer.setOnClickListener { close() }
 
@@ -314,7 +337,7 @@ class MenuController(
             val radiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * d
             val morphing = OriginTransitionController.open(
                 card,
-                originView,
+                activeOrigin,
                 endCornerRadiusPx = radiusPx,
                 springSpec = AnimationSystem.MENU_MORPH,
                 // Vỏ kính mờ đặc ngay từ nút (không fade qua kính trong suốt); chỉ nội dung hiện muộn.
@@ -335,7 +358,8 @@ class MenuController(
                 popDelayMs = Constants.MENU_POP_DELAY_MS
             )
             // Đoạn 2: ngay sau đó viên thuốc bị hút vào khung nảy trên không.
-            if (morphing) startPillAbsorb(card)
+            // Menu trang nằm đè lên viên thuốc nên không hút nó (và orb) vào thẻ như menu ba chấm.
+            if (morphing && kind == Kind.MAIN) startPillAbsorb(card)
             if (!morphing) {
                 restorePillNow()
                 card.pivotX = card.width.toFloat()
@@ -388,7 +412,7 @@ class MenuController(
             if (retargeted) {
                 // retargetSource khôi phục nút menu gốc trước khi chuyển điểm neo; thẻ đang mở
                 // nên nút nguồn phải tiếp tục được giấu trong lúc thẻ thu vào Pill.
-                originView?.let { source ->
+                activeOrigin?.let { source ->
                     AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
                     AnimationSystem.scaleTo(source, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
                 }
@@ -400,7 +424,7 @@ class MenuController(
             }
             if (!morphed) {
                 OriginTransitionController.cancel(card)
-                originView?.let { source ->
+                activeOrigin?.let { source ->
                     AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
                     AnimationSystem.scaleTo(source, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
                 }
@@ -416,7 +440,7 @@ class MenuController(
                 card, AnimationSystem.MENU_MORPH
             ) {
                 if (menuLayer === layer && !toolbarCompact) {
-                    originView?.let { source ->
+                    activeOrigin?.let { source ->
                         // Nút nguồn có thể đã được scale nhỏ khi toolbar compact; chuẩn hoá hình học
                         // trong lúc còn alpha 0 để lần đóng menu sau này không trả về nút bị teo.
                         AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
@@ -477,7 +501,7 @@ class MenuController(
             restorePillNow()
             root.removeView(layer)
             onVisibilityChanged()
-            originView?.let { source ->
+            activeOrigin?.let { source ->
                 AnimationSystem.scaleTo(source, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
                 AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
             }
@@ -489,7 +513,7 @@ class MenuController(
             root.removeView(layer)
             // Thẻ đã về lại nút: viên thuốc nảy ra trước, orb nảy ra sau.
             returnAbsorbed()
-            originView?.let { source ->
+            activeOrigin?.let { source ->
                 if (toolbarCompact) {
                     AnimationSystem.scaleTo(source, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
                     AnimationSystem.fade(source, 0f, AnimationSystem.QUICK)
@@ -510,7 +534,7 @@ class MenuController(
         val card = menuCard ?: return
         layer.setPadding(0, host.insetTop + dp(12), 0, 0)
         val lp = card.layoutParams as FrameLayout.LayoutParams
-        val originBounds = originView?.takeIf { !toolbarCompact }?.let { OriginTransitionController.boundsOnScreen(it) }
+        val originBounds = activeOrigin?.takeIf { !toolbarCompact }?.let { OriginTransitionController.boundsOnScreen(it) }
         if (originBounds != null && root.width > 0 && root.height > 0) {
             // Neo góc dưới-phải của thẻ vào đúng góc dưới-phải của nút ba chấm: thẻ mọc lên trên và sang
             // trái, phủ luôn thanh dưới. Khung nút nằm gọn trong khung thẻ nên morph là nút lớn dần thành
@@ -518,7 +542,12 @@ class MenuController(
             val rootLoc = IntArray(2)
             root.getLocationOnScreen(rootLoc)
             val right = rootLoc[0] + root.width - originBounds.right
-            val bottom = rootLoc[1] + root.height - originBounds.bottom
+            // Menu trang: đáy thẻ ngang đáy viên thuốc (nút menu trang nhỏ hơn viên thuốc nên neo theo viên thuốc),
+            // nút vẫn nằm gọn trong thẻ nên morph là nút lớn dần thành menu.
+            val bottomRef = if (kind == Kind.PAGE) {
+                coverView?.let { OriginTransitionController.boundsOnScreen(it) } ?: originBounds
+            } else originBounds
+            val bottom = rootLoc[1] + root.height - bottomRef.bottom
             lp.rightMargin = maxOf(right.toInt(), host.insetRight + dp(8))
             lp.bottomMargin = maxOf(bottom.toInt() - dp(2), maxOf(host.insetBottom, host.imeBottom) + dp(4))
         } else {
@@ -623,42 +652,95 @@ class MenuController(
             box.addView(g, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)))
         }
 
-        val marked = store.isBookmarked(host.currentUrl)
+        if (kind == Kind.PAGE) {
+            // Menu trang: thao tác với chính trang đang xem.
+            val marked = store.isBookmarked(host.currentUrl)
+            val quick = LinearLayout(activity)
+            quick.orientation = LinearLayout.HORIZONTAL
+            quick.setPadding(dp(8), 0, dp(8), 0)
+            cell(quick, "Chia sẻ", Icons.SHARE) { shareUrl() }
+            cell(
+                quick,
+                if (marked) "Bỏ lưu" else "Lưu trang",
+                if (marked) Icons.BOOKMARK else Icons.BOOKMARK_OUTLINE
+            ) { toggleBookmark() }
+            cell(quick, "Tải lại", Icons.REFRESH) { host.web.reload() }
+            box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)))
 
-        val quick = LinearLayout(activity)
-        quick.orientation = LinearLayout.HORIZONTAL
-        quick.setPadding(dp(8), 0, dp(8), 0)
-        cell(quick, "Chia sẻ", Icons.SHARE) { shareUrl() }
-        cell(
-            quick,
-            if (marked) "Bỏ lưu" else "Lưu trang",
-            if (marked) Icons.BOOKMARK else Icons.BOOKMARK_OUTLINE
-        ) { toggleBookmark() }
-        cell(quick, "Tải lại", Icons.REFRESH) { host.web.reload() }
-        box.addView(quick, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)))
+            gap()
+            box.addView(buildTextSizeRow(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
 
-        gap()
-        item("Chế độ đọc", Icons.BOOK_OPEN, true) {
-            // Chờ thẻ menu thu về xong rồi mới đưa Reader Module lên trên Browser Module.
-            root.postDelayed({ onOpenReader() }, 360L)
+            gap()
+            item("Tìm trong trang", Icons.SEARCH, true) { host.openFind() }
+            item("Trang web máy tính", if (host.isDesktopMode()) Icons.CHECK else null, true) {
+                host.toggleDesktopMode()
+            }
+        } else {
+            item("Chế độ đọc", Icons.BOOK_OPEN, true) {
+                // Chờ thẻ menu thu về xong rồi mới đưa Reader Module lên trên Browser Module.
+                root.postDelayed({ onOpenReader() }, 360L)
+            }
+            item("Dấu trang", Icons.BOOKMARK_OUTLINE, false) { showList("Dấu trang", "bookmarks") }
+            item("Lịch sử", Icons.HISTORY, false) { showList("Lịch sử", "history") }
+            item("Tải xuống", Icons.DOWNLOAD, true) { browserTools.showDownloads() }
+            item("Privacy Dashboard", Icons.SHIELD, true) { browserTools.showPrivacy() }
+            item("Tỉ số bóng đá", Icons.FOOTBALL, true) { footballSheet.show() }
+
+            gap()
+            item("Cài đặt", Icons.TUNE, false) { showSettings() }
         }
-        item("Dấu trang", Icons.BOOKMARK_OUTLINE, false) { showList("Dấu trang", "bookmarks") }
-        item("Lịch sử", Icons.HISTORY, false) { showList("Lịch sử", "history") }
-        item("Tải xuống", Icons.DOWNLOAD, true) { browserTools.showDownloads() }
-        item("Privacy Dashboard", Icons.SHIELD, true) { browserTools.showPrivacy() }
-        item("Tỉ số bóng đá", Icons.FOOTBALL, true) { footballSheet.show() }
-
-        gap()
-        item("Tìm trong trang", Icons.SEARCH, true) { host.openFind() }
-        item("Trang web máy tính", if (host.isDesktopMode()) Icons.CHECK else null, true) {
-            host.toggleDesktopMode()
-        }
-
-        gap()
-        item("Cài đặt", Icons.TUNE, false) { showSettings() }
 
         menuBackAction = null
         setMenuPage(box, 280, animate)
+    }
+
+    /**
+     * Hàng chỉnh cỡ chữ của menu trang: [A nhỏ] [100%] [A lớn] trong một thanh viên thuốc.
+     * Bấm không đóng menu, chữ đổi ngay phía sau; bấm phần trăm để về 100%. Cỡ chữ lưu theo từng website.
+     */
+    private fun buildTextSizeRow(): View {
+        val steps = TextZoomController.STEPS
+        val row = LinearLayout(activity)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(dp(14), dp(6), dp(14), dp(6))
+
+        val track = LinearLayout(activity)
+        track.orientation = LinearLayout.HORIZONTAL
+        track.background = pillDrawable(Theme.gapColor(isNight()))
+
+        fun label(text: String, size: Float): TextView {
+            val t = TextView(activity)
+            t.text = text
+            t.textSize = size
+            stylePrimary(t)
+            t.gravity = Gravity.CENTER
+            t.background = ripple()
+            AnimationSystem.press(t, Constants.PRESS_SCALE_CELL)
+            return t
+        }
+        val smaller = label("A", 13f)
+        val value = label("100%", 14f)
+        val larger = label("A", 22f)
+        smaller.contentDescription = "Giảm cỡ chữ"
+        larger.contentDescription = "Tăng cỡ chữ"
+        value.contentDescription = "Đặt lại cỡ chữ"
+
+        fun refresh(percent: Int) {
+            value.text = "$percent%"
+            smaller.alpha = if (percent <= steps.first()) 0.35f else 1f
+            larger.alpha = if (percent >= steps.last()) 0.35f else 1f
+        }
+        refresh(host.textZoomPercent())
+        smaller.setOnClickListener { refresh(host.stepTextZoom(-1)) }
+        larger.setOnClickListener { refresh(host.stepTextZoom(1)) }
+        value.setOnClickListener { refresh(host.resetTextZoom()) }
+
+        track.addView(smaller, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        track.addView(value, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        track.addView(larger, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        row.addView(track, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        return row
     }
 
     private fun toggleBookmark() {
