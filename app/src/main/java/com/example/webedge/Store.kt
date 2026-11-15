@@ -122,6 +122,15 @@ class Store(context: Context) {
         get() = linkProtectionCache
         set(v) { linkProtectionCache = v; sp.edit().putBoolean("link_tracking_protection", v).apply() }
 
+    // Cỡ chữ theo từng website (xem TextZoomController): lưu theo tên miền, 100% là mặc định nên không ghi xuống máy.
+    fun textZoomFor(host: String): Int = sp.getInt("text_zoom_$host", TextZoomController.DEFAULT)
+
+    fun setTextZoom(host: String, percent: Int) {
+        sp.edit().apply {
+            if (percent == TextZoomController.DEFAULT) remove("text_zoom_$host") else putInt("text_zoom_$host", percent)
+        }.apply()
+    }
+
     /** Báo cho web biết app đang ở chế độ tối (prefers-color-scheme: dark). Web không hỗ trợ thì giữ nguyên. */
     var webDarkMode: Boolean
         get() = sp.getBoolean("web_dark_mode", false)
