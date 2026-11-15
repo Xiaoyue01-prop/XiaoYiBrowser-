@@ -541,12 +541,16 @@ class MenuController(
             // menu (như iOS 26), không còn cảnh thẻ bay từ nút lên một chỗ khác.
             val rootLoc = IntArray(2)
             root.getLocationOnScreen(rootLoc)
-            val right = rootLoc[0] + root.width - originBounds.right
-            // Menu trang: đáy thẻ ngang đáy viên thuốc (nút menu trang nhỏ hơn viên thuốc nên neo theo viên thuốc),
-            // nút vẫn nằm gọn trong thẻ nên morph là nút lớn dần thành menu.
+            // Menu trang: nút gốc nhỏ và nằm giữa thanh, nên mép phải thẻ canh theo nút ba chấm (thẻ phủ luôn
+            // nút này, không bị lệch trái) và đáy thẻ ngang đáy viên thuốc. Nút menu trang vẫn nằm gọn trong
+            // thẻ nên morph là nút lớn dần thành menu.
+            val rightRef = if (kind == Kind.PAGE) {
+                originView?.let { OriginTransitionController.boundsOnScreen(it) } ?: originBounds
+            } else originBounds
             val bottomRef = if (kind == Kind.PAGE) {
                 coverView?.let { OriginTransitionController.boundsOnScreen(it) } ?: originBounds
             } else originBounds
+            val right = rootLoc[0] + root.width - rightRef.right
             val bottom = rootLoc[1] + root.height - bottomRef.bottom
             lp.rightMargin = maxOf(right.toInt(), host.insetRight + dp(8))
             lp.bottomMargin = maxOf(bottom.toInt() - dp(2), maxOf(host.insetBottom, host.imeBottom) + dp(4))
