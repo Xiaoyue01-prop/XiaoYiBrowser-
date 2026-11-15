@@ -122,6 +122,18 @@ class Store(context: Context) {
         get() = linkProtectionCache
         set(v) { linkProtectionCache = v; sp.edit().putBoolean("link_tracking_protection", v).apply() }
 
+    // Site (tên miền đăng ký) đã tắt chặn quảng cáo/tracker. Đọc từ luồng nền (shouldInterceptRequest) nên giữ tập bất biến.
+    @Volatile private var adBlockOffCache: Set<String> =
+        sp.getStringSet("adblock_off_sites", emptySet())?.toSet() ?: emptySet()
+
+    fun isAdBlockDisabledFor(site: String): Boolean = site in adBlockOffCache
+
+    fun setAdBlockDisabledFor(site: String, disabled: Boolean) {
+        val next = if (disabled) adBlockOffCache + site else adBlockOffCache - site
+        adBlockOffCache = next
+        sp.edit().putStringSet("adblock_off_sites", next.toHashSet()).apply()
+    }
+
     /** Cỡ chữ (%) theo tên miền cho tab thường; mặc định 100 và không lưu mục mặc định. */
     fun textZoomFor(host: String): Int = readTextZoom().optInt(host, 100)
 

@@ -119,3 +119,13 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - Page menu content: Share / Save page / Reload, text size row (A- / % / A+), Find in page, Desktop site. Main menu keeps: Reader, Bookmarks, History, Downloads, Privacy Dashboard, Football scores, Settings.
 - Text size: `TextZoomController` drives `WebSettings.textZoom` (steps 50-200%), stored per host in `Store` ("text_zoom" JSON, `www.` stripped, 100% not stored). Private tabs keep it in memory only. It is applied in `onPageStarted` and on tab activation. The Reader's own font size is separate.
 - Not compiled in the editing environment; verify on device: open/close morph from the small button (clipping inside the pill, spring feel), card position vs. the back button and three-dot button, A-/A+ with the menu staying open, per-site persistence, private tab, desktop mode, bar collapsed state.
+
+## Danh sách chặn tracker (2026-11-15)
+
+- `AdBlocker.init` nạp nhiều file trong `assets/`: `adblock_domains.txt` (cũ), `tracker_domains.txt` (sinh từ EasyPrivacy bởi `tools/update_tracker_list.sh`, chạy trong Termux), `identity_resolution_domains.txt` (3 domain theo tin báo chí về Safari 27, chưa xác minh bằng WebKit). File thiếu thì bỏ qua.
+- `AdBlocker.shouldBlock(request, view, isSiteDisabled)`: (1) không chặn request CÙNG SITE với trang đang mở (so tên miền đăng ký xấp xỉ bằng `LinkTrackingProtection.registrableDomain`, không có Public Suffix List) nên giảm mạnh lỗi trang; (2) không chặn gì trên site người dùng đã tắt. Host trang đang mở lấy từ `AdBlocker.onMainFrameNavigation` (gọi cùng chỗ với `YouTubeAdBlocker.onMainFrameNavigation`), vì không đọc `WebView.url` được trên luồng nền.
+- Công tắc theo site: Privacy Dashboard, thẻ "Quyền của website hiện tại" ("Chặn quảng cáo và tracker trên trang này"), lưu `Store.adBlockOffCache` ("adblock_off_sites"). KHÔNG hiện trong phiên riêng tư để danh sách site đã tắt không bị ghi xuống máy. Tắt/bật sẽ tải lại trang.
+- Giấy phép: EasyPrivacy GPLv3 hoặc CC BY-SA 3.0 (tự kiểm tra lại trước khi phát hành). Header của `tracker_domains.txt` ghi nguồn. KHÔNG dùng DuckDuckGo Tracker Radar nếu phát hành thương mại (nhớ là CC BY-NC-SA, chưa kiểm tra lại).
+- Chưa làm: tự cập nhật danh sách trong app (hiện phải chạy script rồi build lại; rà 2 tuần/lần), chặn CNAME cloaking, luật cosmetic của EasyPrivacy.
+- Cách chạy script: `bash tools/update_tracker_list.sh` rồi commit `app/src/main/assets/tracker_domains.txt`. Domain nào gây lỗi trang thì thêm vào `tools/tracker_allowlist.txt` rồi chạy lại.
+- Test tay: một trang tin (nhiều tracker) với chặn bật và tắt; đăng nhập Google/Facebook (SSO); trang có video nhúng (YouTube); thanh toán; sau khi tắt công tắc theo site, kiểm tra trang tải lại và chặn quay lại khi bật.

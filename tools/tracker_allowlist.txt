@@ -1,0 +1,1 @@
+# Domain KHÔNG được chặn dù có trong EasyPrivacy (mỗi dòng một domain). Thêm vào đây khi một trang bị lỗi vì danh sách.

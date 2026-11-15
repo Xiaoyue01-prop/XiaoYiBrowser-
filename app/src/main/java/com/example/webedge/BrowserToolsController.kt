@@ -488,6 +488,29 @@ class BrowserToolsController(
                 text("Cài đặt bên dưới áp dụng cho origin hiện tại. Quyền hệ thống Android vẫn được kiểm tra riêng.", 11f, muted)
                     .apply { setPadding(0, dp(4), 0, dp(8)) }
             )
+            val adSite = if (privateSession) null else AdBlocker.siteKey(currentUrl())
+            if (adSite != null) {
+                val siteRow = LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(4), 0, dp(8))
+                }
+                val siteTexts = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+                siteTexts.addView(text("Chặn quảng cáo và tracker trên trang này", 13f, foreground, true))
+                siteTexts.addView(
+                    text("Tắt nếu trang bị lỗi. Áp dụng cho $adSite và các trang con; trang sẽ tải lại.", 11f, muted)
+                        .apply { setPadding(0, dp(2), 0, 0) }
+                )
+                siteRow.addView(siteTexts, LinearLayout.LayoutParams(0, -2, 1f))
+                val siteSwitch = GlassSystem.GlassSwitch(activity, density, isNight(), accent, !store.isAdBlockDisabledFor(adSite)) { checked ->
+                    store.setAdBlockDisabledFor(adSite, !checked)
+                    runCatching { webView().reload() }
+                    toast(if (checked) "Đã bật chặn trên $adSite" else "Đã tắt chặn trên $adSite")
+                }.apply { contentDescription = "Chặn quảng cáo và tracker trên trang này" }
+                activeToneUpdates += { dark -> siteSwitch.setTone(dark) }
+                siteRow.addView(siteSwitch, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+                currentCard.addView(siteRow)
+            }
             if (privateSession) {
                 currentCard.addView(
                     text("Trong phiên riêng tư, quyền camera, microphone và vị trí luôn được hỏi lại; lựa chọn không được lưu.", 12f, muted)

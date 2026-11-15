@@ -1,9 +1,13 @@
 package com.example.webedge
 
 import android.content.Context
+import android.net.Uri
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebView
 import java.io.ByteArrayInputStream
+import java.util.Collections
+import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -21,6 +25,13 @@ object AdBlocker {
     private val blockedRequestCount = AtomicLong(0L)
     private val blockedResourceHosts = ConcurrentHashMap.newKeySet<String>()
     private const val HOST_CACHE_MAX = 2000
+
+    // Các file danh sách trong assets/ (mỗi dòng một domain, # là chú thích). File thiếu thì bỏ qua.
+    // tracker_domains.txt do tools/update_tracker_list.sh sinh ra; identity_resolution_domains.txt xem ghi chú trong file.
+    private val LIST_FILES = listOf("adblock_domains.txt", "tracker_domains.txt", "identity_resolution_domains.txt")
+
+    // Host của trang đang mở theo từng WebView; ghi từ luồng UI, đọc ở luồng nền của shouldInterceptRequest.
+    private val topHosts = Collections.synchronizedMap(WeakHashMap<WebView, String>())
 
     data class Stats(val blockedRequests: Long, val uniqueHosts: Int)
 
@@ -56,23 +67,52 @@ object AdBlocker {
     fun init(context: Context) {
         if (initialized) return
         val loaded = HashSet<String>()
-        try {
-            context.assets.open("adblock_domains.txt").bufferedReader().use { reader ->
-                reader.forEachLine { line ->
-                    val domain = line.trim().lowercase()
-                    if (domain.isNotEmpty() && !domain.startsWith("#")) loaded.add(domain)
+        for (name in LIST_FILES) {
+            try {
+                context.assets.open(name).bufferedReader().use { reader ->
+                    reader.forEachLine { line ->
+                        val domain = line.trim().lowercase()
+                        if (domain.isNotEmpty() && !domain.startsWith("#")) loaded.add(domain)
+                    }
                 }
-            }
-        } catch (_: Exception) { }
+            } catch (_: Exception) { }
+        }
         blockedDomains = loaded
         hostCache.clear()
         initialized = true
     }
 
-    /** Không chặn khi người dùng chủ động mở trang (vd. vào thẳng sentry.io); chỉ chặn tài nguyên con. */
-    fun shouldBlock(request: WebResourceRequest): Boolean {
+    /** Ghi nhớ host của trang đang mở (gọi từ luồng UI khi điều hướng khung chính). */
+    fun onMainFrameNavigation(view: WebView, url: String?) {
+        val host = url?.let { runCatching { Uri.parse(it).host }.getOrNull() }
+        if (host.isNullOrBlank()) topHosts.remove(view) else topHosts[view] = host.lowercase().trimEnd('.')
+    }
+
+    fun forget(view: WebView) {
+        topHosts.remove(view)
+    }
+
+    /** Khoá "site" (tên miền đăng ký) của một URL, dùng cho công tắc tắt chặn theo site; null nếu không phải URL có host. */
+    fun siteKey(url: String?): String? {
+        val host = url?.let { runCatching { Uri.parse(it).host }.getOrNull() }
+        if (host.isNullOrBlank()) return null
+        return LinkTrackingProtection.registrableDomain(host)
+    }
+
+    /**
+     * Không chặn khi người dùng chủ động mở trang (vd. vào thẳng sentry.io); chỉ chặn tài nguyên con.
+     * Không chặn request cùng site với trang đang mở (không phải theo dõi bên thứ ba, tránh làm hỏng trang),
+     * và không chặn gì trên site mà người dùng đã tắt chặn ([isSiteDisabled]).
+     */
+    fun shouldBlock(request: WebResourceRequest, view: WebView, isSiteDisabled: (String) -> Boolean): Boolean {
         if (request.isForMainFrame) return false
         val host = request.url.host ?: return false
+        val top = topHosts[view]
+        if (top != null) {
+            val topSite = LinkTrackingProtection.registrableDomain(top)
+            if (isSiteDisabled(topSite)) return false
+            if (LinkTrackingProtection.registrableDomain(host) == topSite) return false
+        }
         if (!isAdHost(host)) return false
         blockedRequestCount.incrementAndGet()
         blockedResourceHosts.add(host.lowercase().trimEnd('.'))

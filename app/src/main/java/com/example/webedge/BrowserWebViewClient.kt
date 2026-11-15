@@ -39,6 +39,13 @@ internal interface BrowserWebViewHost {
 /** WebViewClient dùng chung cho mọi tab của trình duyệt. */
 internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebViewClient() {
 
+    /** Chặn quảng cáo bật toàn cục và chưa bị tắt cho site của [url]. */
+    private fun adBlockActiveFor(url: String?): Boolean {
+        if (!host.store.adBlockEnabled) return false
+        val site = AdBlocker.siteKey(url) ?: return true
+        return !host.store.isAdBlockDisabledFor(site)
+    }
+
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         if (!request.isForMainFrame) return false
         val target = request.url.toString()
@@ -71,6 +78,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         YouTubeAdBlocker.onMainFrameNavigation(view, url)
+        AdBlocker.onMainFrameNavigation(view, url)
         host.tabManager.updateForWebView(view, url, view.title ?: url)
         host.applyTextZoom(view, url)
         // A navigation must not reuse the previous document's background tone.
@@ -90,6 +98,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
 
     override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
         YouTubeAdBlocker.onMainFrameNavigation(view, url)
+        AdBlocker.onMainFrameNavigation(view, url)
         host.tabManager.updateForWebView(view, url, view.title ?: url)
         if (view !== host.web) return
         host.pageTransition.onHistoryChanged()
@@ -99,7 +108,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
     }
 
     override fun onPageCommitVisible(view: WebView, url: String) {
-        if (host.store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
+        if (adBlockActiveFor(url)) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
         YouTubeAdBlocker.sync(view, url, host.store.youtubeAdBlockEnabled)
         view.evaluateJavascript(MEDIA_JS, null)
         if (view !== host.web) return
@@ -113,7 +122,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         view: WebView,
         request: WebResourceRequest
     ): WebResourceResponse? {
-        if (host.store.adBlockEnabled && AdBlocker.shouldBlock(request)) {
+        if (host.store.adBlockEnabled && AdBlocker.shouldBlock(request, view, host.store::isAdBlockDisabledFor)) {
             YouTubeAdBlocker.recordGlobalBlockIfRelevant(request, view)
             return AdBlocker.createEmptyResponse()
         }
@@ -129,7 +138,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         if (host.tabManager.getForWebView(view)?.isPrivate != true) {
             host.store.addHistory(view.title ?: "", url)
         }
-        if (host.store.adBlockEnabled) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
+        if (adBlockActiveFor(url)) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
         YouTubeAdBlocker.sync(view, url, host.store.youtubeAdBlockEnabled)
         view.evaluateJavascript(MEDIA_JS, null)
         if (view !== host.web) return
@@ -144,6 +153,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
 
     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
         YouTubeAdBlocker.forget(view)
+        AdBlocker.forget(view)
         host.forgetPageBackground(view)
         if (view === host.web) host.clearWindowPageBackground()
         val tab = host.tabManager.getForWebView(view)

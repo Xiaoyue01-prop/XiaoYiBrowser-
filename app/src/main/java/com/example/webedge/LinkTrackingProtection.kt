@@ -51,7 +51,7 @@ object LinkTrackingProtection {
 
     private fun sameSite(a: String, b: String): Boolean = registrableDomain(a) == registrableDomain(b)
 
-    private fun registrableDomain(rawHost: String): String {
+    internal fun registrableDomain(rawHost: String): String {
         val host = rawHost.lowercase(Locale.ROOT).trimEnd('.')
         val labels = host.split('.')
         // IP (v4/v6) hoặc host tối đa hai nhãn (localhost, example.com): so nguyên host.
