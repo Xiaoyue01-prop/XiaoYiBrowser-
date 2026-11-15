@@ -250,68 +250,86 @@ class FootballSheetController(
     private fun statusView(page: LinearLayout): TextView? = page.findViewWithTag(TAG_STATUS)
 
     /**
-     * Dòng trận kiểu Apple Sports: bên trái hai hàng đội (logo tròn, tên, điểm; đội thua mờ đi),
-     * vạch chia mảnh, bên phải trạng thái (xanh khi đang đá) và nút ghim.
+     * Thẻ trận kiểu Apple Sports: đội nhà bên trái, đội khách bên phải (logo tròn + tên đầy đủ),
+     * ở giữa là tỉ số lớn, trạng thái/phút (xanh khi đang đá), tên giải; bên dưới là sự kiện gần nhất và nút ghim.
      */
     private fun matchRow(m: FbMatch, pinned: Boolean, page: LinearLayout): View {
-        val row = card().apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val card = card()
         val started = !m.notStarted
         val hg = m.homeGoals ?: 0
         val ag = m.awayGoals ?: 0
 
-        fun teamLine(name: String, logoUrl: String, goals: Int, other: Int): View {
-            val line = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-            val dim = started && goals < other
-            val color = if (dim) muted else ink
-            val size = dp(26)
-            val badge = ImageView(activity).apply {
-                setImageBitmap(FootballLogos.badgeBitmap(size * 2, name, FootballLogos.peek(logoUrl)))
-            }
-            line.addView(badge, LinearLayout.LayoutParams(size, size))
-            line.addView(
-                text(name, 15f, color, !dim).apply { setSingleLine(); ellipsize = TextUtils.TruncateAt.END },
-                LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(10); rightMargin = dp(8) }
+        fun teamCol(name: String, logoUrl: String): View {
+            val col = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+            val size = dp(44)
+            col.addView(
+                ImageView(activity).apply {
+                    setImageBitmap(FootballLogos.badgeBitmap(size * 2, name, FootballLogos.peek(logoUrl)))
+                },
+                LinearLayout.LayoutParams(size, size)
             )
-            line.addView(text(if (started) goals.toString() else "", 17f, color, !dim))
-            return line
+            col.addView(
+                text(name, 13f, ink, true).apply {
+                    gravity = Gravity.CENTER
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                },
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) }
+            )
+            return col
         }
 
-        val teams = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        teams.addView(teamLine(m.homeName, m.homeLogo, hg, ag), LinearLayout.LayoutParams(-1, -2))
-        teams.addView(
-            teamLine(m.awayName, m.awayLogo, ag, hg),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) }
-        )
-        row.addView(teams, LinearLayout.LayoutParams(0, -2, 1f))
-
-        row.addView(View(activity).apply {
-            setBackgroundColor(if (isNight()) Color.argb(40, 255, 255, 255) else Color.argb(28, 0, 0, 0))
-        }, LinearLayout.LayoutParams(dp(1), dp(46)).apply { leftMargin = dp(12); rightMargin = dp(12) })
-
-        val side = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
         val live = m.inPlay
-        side.addView(
-            text(stateText(m), 13f, if (live) LIVE_GREEN else if (m.onBreak) BREAK_ORANGE else muted, true)
-                .apply { gravity = Gravity.CENTER }
+        val stateColor = if (live) LIVE_GREEN else if (m.onBreak) BREAK_ORANGE else muted
+        val center = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        center.addView(
+            text(if (started) "$hg – $ag" else stateText(m), 28f, ink, true).apply { gravity = Gravity.CENTER; setSingleLine() }
         )
+        if (started) {
+            center.addView(
+                text(stateText(m), 13f, stateColor, true).apply { gravity = Gravity.CENTER },
+                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) }
+            )
+        }
         if (m.league.isNotBlank()) {
-            side.addView(
-                text(m.league, 10f, muted).apply { setSingleLine(); ellipsize = TextUtils.TruncateAt.END; gravity = Gravity.CENTER },
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(1) }
+            center.addView(
+                text(m.league, 10f, muted).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END },
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) }
+            )
+        }
+
+        val top = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        top.addView(teamCol(m.homeName, m.homeLogo), LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(center, LinearLayout.LayoutParams(0, -2, 1.1f))
+        top.addView(teamCol(m.awayName, m.awayLogo), LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(top, LinearLayout.LayoutParams(-1, -2))
+
+        val ev = lastEvent(m)
+        if (ev != null) {
+            card.addView(
+                text(ev, 11f, muted).apply { gravity = Gravity.CENTER },
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) }
             )
         }
         val canPin = !m.finished && !m.dead
         if (canPin || pinned) {
-            side.addView(
+            card.addView(
                 button(if (pinned) "Bỏ ghim" else "Ghim", if (pinned) muted else accent) {
                     if (pinned) FootballLiveService.unpin(activity, m.id) else pin(m.id)
                     renderList(page)
                 },
-                LinearLayout.LayoutParams(-2, dp(28)).apply { topMargin = dp(6) }
+                LinearLayout.LayoutParams(-1, dp(32)).apply { topMargin = dp(10) }
             )
         }
-        row.addView(side, LinearLayout.LayoutParams(dp(84), -2))
-        return row
+        return card
+    }
+
+    /** Sự kiện gần nhất (bàn thắng / thẻ) để hiện ở giữa thẻ. */
+    private fun lastEvent(m: FbMatch): String? {
+        fun who(p: String) = if (p.isBlank()) "" else "$p "
+        val all = m.goals.map { it.minute to "⚽ ${who(it.player)}${it.minute}'" } +
+            m.cards.map { it.minute to "${if (it.red) "🟥" else "🟨"} ${who(it.player)}${it.minute}'" }
+        return all.maxByOrNull { it.first }?.second
     }
 
     /** Cột trạng thái: phút đang đá, giờ bóng lăn, HT, FT. */

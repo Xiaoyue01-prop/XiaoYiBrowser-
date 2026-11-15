@@ -406,9 +406,9 @@ class FootballLiveService : Service() {
 
     // ---------------------------------------------------------------- tiện ích
 
-    /** Tiêu đề gọn kiểu Apple Sports: "ARS 2 – 1 CHE". */
+    /** Tiêu đề: tên đầy đủ hai bên, tỉ số ở giữa ("Arsenal 2 – 1 Chelsea"). */
     private fun scoreLine(m: FbMatch) =
-        "${FootballLogos.abbr(m.homeName)} ${m.homeGoals ?: 0} – ${m.awayGoals ?: 0} ${FootballLogos.abbr(m.awayName)}"
+        "${m.homeName}  ${m.homeGoals ?: 0} – ${m.awayGoals ?: 0}  ${m.awayName}"
 
     /** Sự kiện gần nhất (bàn thắng / thẻ) để hiện ngay trên thông báo. */
     private fun lastEventLine(m: FbMatch): String? {
