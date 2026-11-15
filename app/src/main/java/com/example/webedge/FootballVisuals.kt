@@ -183,32 +183,26 @@ object FootballLogos {
             Triple(m.homeName, homeLogo, hg),
             Triple(m.awayName, awayLogo, ag)
         )
-        val centers = floatArrayOf(86f, 170f)
+        val centers = floatArrayOf(72f, 184f)
 
-        val nameP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = 34f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-        }
         val scoreP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = 78f
+            textSize = 104f
             textAlign = Paint.Align.RIGHT
             typeface = Typeface.create("sans-serif", Typeface.BOLD)
         }
+        // Căn giữa theo chiều cao thật của chữ số (không phải ascent/descent) để điểm không bị lệch.
+        val digit = android.graphics.Rect().also { scoreP.getTextBounds("0", 0, 1, it) }
+        val digitMid = (digit.top + digit.bottom) / 2f
+
         for ((i, row) in rows.withIndex()) {
             val (name, logo, goals) = row
             val cy = centers[i]
-            drawBadge(c, 56f, cy, 34f, name, logo, teamColor(name, logo))
+            drawBadge(c, 76f, cy, 46f, name, logo, teamColor(name, logo))
 
             val other = if (i == 0) ag else hg
             val dim = started && goals < other
-            nameP.color = if (dim) Color.argb(140, 255, 255, 255) else Color.WHITE
-            c.drawText(abbr(name), 104f, cy - (nameP.ascent() + nameP.descent()) / 2, nameP)
-
             scoreP.color = if (dim) Color.argb(140, 255, 255, 255) else Color.WHITE
-            c.drawText(
-                if (started) goals.toString() else "–",
-                s - 26f, cy - (scoreP.ascent() + scoreP.descent()) / 2, scoreP
-            )
+            c.drawText(if (started) goals.toString() else "–", s - 30f, cy - digitMid, scoreP)
         }
 
         // Chấm trạng thái: xanh khi đang đá, cam khi nghỉ.
@@ -219,7 +213,7 @@ object FootballLogos {
         }
         if (dot != 0) {
             p.color = dot
-            val path = Path().apply { addCircle(s - 22f, 22f, 7f, Path.Direction.CW) }
+            val path = Path().apply { addCircle(s - 20f, 20f, 8f, Path.Direction.CW) }
             c.drawPath(path, p)
         }
         return bmp
