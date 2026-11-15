@@ -122,14 +122,22 @@ class Store(context: Context) {
         get() = linkProtectionCache
         set(v) { linkProtectionCache = v; sp.edit().putBoolean("link_tracking_protection", v).apply() }
 
-    // Cỡ chữ theo từng website (xem TextZoomController): lưu theo tên miền, 100% là mặc định nên không ghi xuống máy.
-    fun textZoomFor(host: String): Int = sp.getInt("text_zoom_$host", TextZoomController.DEFAULT)
+    /** Cỡ chữ (%) theo tên miền cho tab thường; mặc định 100 và không lưu mục mặc định. */
+    fun textZoomFor(host: String): Int = readTextZoom().optInt(host, 100)
 
     fun setTextZoom(host: String, percent: Int) {
-        sp.edit().apply {
-            if (percent == TextZoomController.DEFAULT) remove("text_zoom_$host") else putInt("text_zoom_$host", percent)
-        }.apply()
+        val map = readTextZoom()
+        if (percent == 100) map.remove(host) else map.put(host, percent)
+        // Giới hạn kích thước: quá nhiều website thì bỏ bớt mục cũ nhất.
+        while (map.length() > 500) {
+            val first = map.keys().next()
+            map.remove(first)
+        }
+        sp.edit().putString("text_zoom", map.toString()).apply()
     }
+
+    private fun readTextZoom(): JSONObject =
+        runCatching { JSONObject(sp.getString("text_zoom", "{}") ?: "{}") }.getOrDefault(JSONObject())
 
     /** Báo cho web biết app đang ở chế độ tối (prefers-color-scheme: dark). Web không hỗ trợ thì giữ nguyên. */
     var webDarkMode: Boolean
