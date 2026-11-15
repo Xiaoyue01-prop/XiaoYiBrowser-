@@ -185,6 +185,13 @@ object GlassSystem {
     private var toneOverride: Int? = null
 
     /**
+     * Màu đặc tương đương kính mờ: lớp tint chung của app đặt lên [base]. Dùng làm nền che cho thẻ kính
+     * trong lúc BlurView chưa vẽ khung đầu, để không lộ lớp kính trong chạy trước kính mờ.
+     */
+    fun frostedColor(base: Int): Int =
+        androidx.core.graphics.ColorUtils.compositeColors(currentOverlayColor, base)
+
+    /**
      * Ghi đè tạm tông kính/chữ của cả app bằng một màu nền (Reader dùng màu giấy đọc: sáng, sepia, tối).
      * Truyền null để trả về tông của trang web đang xem.
      */

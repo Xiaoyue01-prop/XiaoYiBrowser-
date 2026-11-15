@@ -692,6 +692,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             leftInset = { insetLeft },
             rightInset = { insetRight },
             toast = { msg -> toast(msg) },
+            autoHide = { store.autoHideBar },
             onVisibilityChanged = ::onReaderVisibilityChanged
         )
         menu = MenuController(

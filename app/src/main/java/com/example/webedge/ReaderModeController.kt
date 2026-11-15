@@ -6,7 +6,6 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
-import android.view.Choreographer
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -52,6 +51,7 @@ internal class ReaderModeController(
     private val bottomInset: () -> Int,
     private val leftInset: () -> Int,
     private val rightInset: () -> Int,
+    private val autoHide: () -> Boolean,
     private val toast: (String) -> Unit,
     private val onVisibilityChanged: (Boolean) -> Unit
 ) {
@@ -87,6 +87,10 @@ internal class ReaderModeController(
     private var aaButton: TextView? = null
     private var moreButton: View? = null
     private var pillHost: TextView? = null
+    private var pillFrame: FrameLayout? = null
+    private var backButton: View? = null
+    private var barCompact = false
+    private var scrollAccum = 0
 
     private var surface: Surface? = null
     private val surfaceDividers = mutableListOf<View>()
@@ -129,13 +133,37 @@ internal class ReaderModeController(
 
         // Thanh công cụ trượt/hiện nhẹ lên đúng chỗ thanh địa chỉ của trình duyệt vừa nhường lại.
         val bar = toolbar ?: return
-        bar.alpha = 0f
+        // Giữ thanh gần như vô hình cho tới khi BlurView vẽ xong khung hình mờ thật đầu tiên,
+        // để không có vài khung hình kính trong chạy trước kính mờ.
+        bar.alpha = 0.01f
         bar.translationY = dp(16).toFloat()
-        layer.post {
-            if (overlay !== layer) return@post
+        afterFirstGlassFrame(pillFrame ?: bar) {
+            if (overlay !== layer || exiting) return@afterFirstGlassFrame
             AnimationSystem.spring(bar, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
             AnimationSystem.fade(bar, 1f, AnimationSystem.QUICK)
         }
+    }
+
+    /** Chạy [action] một lần, sau khi [anchor] vẽ khung hình đầu và thêm 2 nhịp vsync (có hạn chót phòng hờ). */
+    private fun afterFirstGlassFrame(anchor: View, action: () -> Unit) {
+        var done = false
+        fun run() {
+            if (done) return
+            done = true
+            action()
+        }
+        val choreographer = Choreographer.getInstance()
+        val observer = anchor.viewTreeObserver
+        if (observer.isAlive) {
+            observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    if (anchor.viewTreeObserver.isAlive) anchor.viewTreeObserver.removeOnPreDrawListener(this)
+                    choreographer.postFrameCallback { choreographer.postFrameCallback { run() } }
+                    return true
+                }
+            })
+        }
+        anchor.postDelayed({ run() }, 160L)
     }
 
     /** Back first closes the open Aa/menu surface; a second Back exits the Reader Module. */
@@ -235,6 +263,10 @@ internal class ReaderModeController(
         aaButton = null
         moreButton = null
         pillHost = null
+        pillFrame = null
+        backButton = null
+        barCompact = false
+        scrollAccum = 0
         surface = null
         surfaceDividers.clear()
         settingsOptionRows.clear()
@@ -336,6 +368,7 @@ internal class ReaderModeController(
         val back = glassCircle(
             glassTarget, GlassSystem.Preset.TOOLBAR_BUTTON, Icons.ARROW_BACK, 11, "Thoát Reader"
         ) { exit() }
+        backButton = back
         val more = glassCircle(
             glassTarget, GlassSystem.Preset.ORB_BUTTON, Icons.MORE_HORIZ, 10, "Mở menu Reader"
         ) { openMenu() }
@@ -346,7 +379,10 @@ internal class ReaderModeController(
             background = roundedDrawable(GlassSystem.Preset.ADDRESS_BAR.radiusDp * density, Color.TRANSPARENT)
             clipToOutline = true
             clipChildren = true
+            // Viên thuốc đang thu nhỏ thì chạm vào để mở rộng lại, như thanh địa chỉ của trình duyệt.
+            setOnClickListener { _ -> setBarCompact(false) }
         }
+        pillFrame = pill
         pill.addView(
             GlassSystem.createBlurView(
                 activity, glassTarget, GlassSystem.Preset.ADDRESS_BAR, density, GlassSystem.isDarkPage()
@@ -407,6 +443,67 @@ internal class ReaderModeController(
         val barLp = FrameLayout.LayoutParams(-1, dp(barHeight), Gravity.BOTTOM)
         applyBarMargins(barLp)
         layer.addView(bar, barLp)
+
+        // Cuộn xuống thì thu nhỏ thanh công cụ như viên thuốc của trình duyệt; cuộn lên hoặc về đầu bài thì mở lại.
+        scrollView?.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
+            val dy = scrollY - oldScrollY
+            if (scrollY <= dp(24)) {
+                scrollAccum = 0
+                setBarCompact(false)
+            } else if (dy > 0) {
+                scrollAccum = maxOf(scrollAccum, 0) + dy
+                if (scrollAccum > dp(24)) setBarCompact(true)
+            } else if (dy < 0) {
+                scrollAccum = minOf(scrollAccum, 0) + dy
+                if (scrollAccum < -dp(24)) setBarCompact(false)
+            }
+        }
+    }
+
+    /** Thu nhỏ/mở rộng thanh công cụ đúng như viên thuốc: pill co lại, hai nút bên ẩn đi, ba chấm co vào tâm pill. */
+    private fun setBarCompact(compact: Boolean) {
+        if (compact == barCompact) return
+        if (compact && (surface != null || exiting || !autoHide())) return
+        val pill = pillFrame ?: return
+        val back = backButton ?: return
+        val more = moreButton ?: return
+        barCompact = compact
+        AnimationSystem.scaleTo(pill, if (compact) 0.58f else 1f, if (compact) 0.62f else 1f)
+        pillHost?.let { AnimationSystem.scaleTo(it, if (compact) 1.2f else 1f) }
+        back.isClickable = !compact
+        more.isClickable = !compact
+        aaButton?.isClickable = !compact
+        AnimationSystem.fade(back, if (compact) 0f else 1f, AnimationSystem.SETTLE)
+        AnimationSystem.scaleTo(back, if (compact) 0.5f else 1f)
+        aaButton?.let { AnimationSystem.fade(it, if (compact) 0f else 1f, AnimationSystem.SETTLE) }
+        compactMoreButton(more, pill, compact)
+    }
+
+    /** Co nút ba chấm vào tâm viên thuốc bằng đúng spring của morph menu (như ToolbarController). */
+    private fun compactMoreButton(more: View, pill: View, compact: Boolean) {
+        if (compact) {
+            val buttonLoc = IntArray(2)
+            val pillLoc = IntArray(2)
+            val b = floatArrayOf(more.translationX, more.translationY, more.scaleX, more.scaleY)
+            val p = floatArrayOf(pill.translationX, pill.translationY, pill.scaleX, pill.scaleY)
+            more.translationX = 0f; more.translationY = 0f; more.scaleX = 1f; more.scaleY = 1f
+            pill.translationX = 0f; pill.translationY = 0f; pill.scaleX = 1f; pill.scaleY = 1f
+            more.getLocationInWindow(buttonLoc)
+            pill.getLocationInWindow(pillLoc)
+            more.translationX = b[0]; more.translationY = b[1]; more.scaleX = b[2]; more.scaleY = b[3]
+            pill.translationX = p[0]; pill.translationY = p[1]; pill.scaleX = p[2]; pill.scaleY = p[3]
+            val targetX = pillLoc[0] + pill.width / 2f - buttonLoc[0] - more.width / 2f
+            val targetY = pillLoc[1] + pill.height / 2f - buttonLoc[1] - more.height / 2f
+            AnimationSystem.spring(more, DynamicAnimation.TRANSLATION_X, targetX, AnimationSystem.MENU_MORPH_CLOSE)
+            AnimationSystem.spring(more, DynamicAnimation.TRANSLATION_Y, targetY, AnimationSystem.MENU_MORPH_CLOSE)
+            AnimationSystem.scaleTo(more, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
+            AnimationSystem.fade(more, 0f, AnimationSystem.MENU_MORPH_CLOSE)
+        } else {
+            AnimationSystem.spring(more, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
+            AnimationSystem.spring(more, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+            AnimationSystem.scaleTo(more, 1f, 1f, AnimationSystem.MENU_MORPH)
+            AnimationSystem.fade(more, 1f, AnimationSystem.QUICK)
+        }
     }
 
     /** Nút tròn kính giống nút quay lại / nút ba chấm của thanh dưới trình duyệt. */
@@ -483,8 +580,9 @@ internal class ReaderModeController(
         layer.addView(scrim, FrameLayout.LayoutParams(-1, -1))
 
         val card = FrameLayout(activity).apply {
-            // Nền kính dự phòng + outline bo góc, viền kính vẽ đè: cùng kiểu thẻ menu của trình duyệt.
-            background = GlassSystem.create(preset, density, GlassSystem.isDarkPage())
+            // Nền ĐẶC cùng màu với kính mờ (tint chung đặt lên giấy đọc): khung hình nào BlurView chưa kịp vẽ
+            // thì thẻ vẫn trông như kính mờ, không lộ lớp kính trong và thanh công cụ phía dưới.
+            background = frostedBackground()
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
             clipChildren = true
@@ -523,19 +621,20 @@ internal class ReaderModeController(
         recolorSurface()
 
         val sync = GlassSystem.BlurSync(glassTarget, glass)
-        sync.hold(1000)
+        sync.hold(300)
 
         fun start() {
             if (surface !== state || state.started || state.closing) return
             if (card.width <= 0 || card.height <= 0) return
             state.started = true
-            sync.hold(900)
+            sync.hold(250)
             // Giống nút Tab: nút nảy lên trước rồi thẻ mới nở ra từ đó, cùng spring mặc định.
             val canPop = origin.isShown && origin.alpha > 0.9f
             val opened = OriginTransitionController.open(
                 card,
                 origin,
                 endCornerRadiusPx = preset.radiusDp * density,
+                springSpec = AnimationSystem.MENU_MORPH,
                 fadeIn = false,
                 // Ảnh blur được bù transform để luôn khớp toạ độ bài đọc phía sau, không bị phóng theo vỏ thẻ.
                 counterTransformView = glass,
@@ -550,19 +649,19 @@ internal class ReaderModeController(
             if (!opened) AnimationSystem.enter(card)
         }
 
-        // Chờ BlurView vẽ khung hình đầu rồi thêm 2 nhịp vsync, để khung đầu của morph không lộ lớp kính trong.
-        val choreographer = Choreographer.getInstance()
-        val observer = glass.viewTreeObserver
+        // Nền thẻ đã đặc nên không cần chờ BlurView: bung ngay khi có kích thước, như nút Tab.
+        card.post { start() }
+        val observer = card.viewTreeObserver
         if (observer.isAlive) {
             observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
                 override fun onPreDraw(): Boolean {
-                    if (glass.viewTreeObserver.isAlive) glass.viewTreeObserver.removeOnPreDrawListener(this)
-                    choreographer.postFrameCallback { choreographer.postFrameCallback { start() } }
+                    if (card.viewTreeObserver.isAlive) card.viewTreeObserver.removeOnPreDrawListener(this)
+                    card.post { start() }
                     return true
                 }
             })
         }
-        card.postDelayed({ start() }, 200L)
+        card.postDelayed({ start() }, 120L)
     }
 
     private fun closeSurface(immediate: Boolean = false) {
@@ -573,9 +672,9 @@ internal class ReaderModeController(
         }
         if (state.closing) return
         state.closing = true
-        GlassSystem.BlurSync(readerBlurTarget ?: state.card, state.glass).hold(700)
-        // Thu ngược về nút đã bấm bằng đúng animation đóng của nút Tab.
-        OriginTransitionController.close(state.card) { removeSurface(state) }
+        GlassSystem.BlurSync(readerBlurTarget ?: state.card, state.glass).hold(250)
+        // Thu ngược về nút đã bấm với spring đóng của menu ba chấm.
+        OriginTransitionController.close(state.card, AnimationSystem.MENU_MORPH_CLOSE) { removeSurface(state) }
     }
 
     private fun removeSurface(state: Surface) {
@@ -841,8 +940,14 @@ internal class ReaderModeController(
         recolorSurface()
     }
 
+    private fun frostedBackground() = roundedDrawable(
+        GlassSystem.Preset.MENU_CARD.radiusDp * density,
+        GlassSystem.frostedColor(backgroundColor())
+    )
+
     private fun recolorSurface() {
         val state = surface ?: return
+        state.card.background = frostedBackground()
         recolorTree(state.content)
         surfaceDividers.forEach { it.setBackgroundColor(GlassSystem.pageDividerColor()) }
         refreshSettingsSelections()
