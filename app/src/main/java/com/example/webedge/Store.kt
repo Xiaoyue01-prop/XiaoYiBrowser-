@@ -116,6 +116,12 @@ class Store(context: Context) {
         get() = youtubeAdBlockCache
         set(v) { youtubeAdBlockCache = v; sp.edit().putBoolean("youtube_adblock", v).apply() }
 
+    // Gỡ tham số theo dõi click (fbclid, gclid...) khi bấm link sang site khác. Mặc định bật.
+    @Volatile private var linkProtectionCache: Boolean = sp.getBoolean("link_tracking_protection", true)
+    var linkProtectionEnabled: Boolean
+        get() = linkProtectionCache
+        set(v) { linkProtectionCache = v; sp.edit().putBoolean("link_tracking_protection", v).apply() }
+
     /** Báo cho web biết app đang ở chế độ tối (prefers-color-scheme: dark). Web không hỗ trợ thì giữ nguyên. */
     var webDarkMode: Boolean
         get() = sp.getBoolean("web_dark_mode", false)

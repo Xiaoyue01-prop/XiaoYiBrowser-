@@ -39,7 +39,15 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         if (!request.isForMainFrame) return false
-        return host.handleSpecialUrl(request.url.toString(), view)
+        val target = request.url.toString()
+        // Chỉ GET: POST/form không được tải lại bằng loadUrl mà không mất dữ liệu.
+        if (host.store.linkProtectionEnabled && request.method.equals("GET", ignoreCase = true)) {
+            LinkTrackingProtection.strip(target, view.url)?.let { cleaned ->
+                view.loadUrl(cleaned)
+                return true
+            }
+        }
+        return host.handleSpecialUrl(target, view)
     }
 
     @Deprecated("Deprecated in Java")

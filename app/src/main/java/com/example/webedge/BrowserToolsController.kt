@@ -451,7 +451,28 @@ class BrowserToolsController(
         activeToneUpdates += { dark -> youtubeEnabled.setTone(dark) }
         youtubeRow.addView(youtubeEnabled, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
         youtubeCard.addView(youtubeRow)
-        body.addView(youtubeCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
+        body.addView(youtubeCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+
+        val linkCard = card()
+        val linkRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val linkTexts = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        linkTexts.addView(text("Bảo vệ theo dõi link", 14f, foreground, true))
+        linkTexts.addView(
+            text("Gỡ mã theo dõi click (fbclid, gclid...) khi bấm link sang trang khác. Giữ nguyên tham số UTM.", 11f, muted)
+                .apply { setPadding(0, dp(3), 0, 0) }
+        )
+        linkRow.addView(linkTexts, LinearLayout.LayoutParams(0, -2, 1f))
+        val linkEnabled = GlassSystem.GlassSwitch(activity, density, isNight(), accent, store.linkProtectionEnabled) { checked ->
+            store.linkProtectionEnabled = checked
+            toast(if (checked) "Đã bật bảo vệ theo dõi link" else "Đã tắt bảo vệ theo dõi link")
+        }.apply { contentDescription = "Bảo vệ theo dõi link" }
+        activeToneUpdates += { dark -> linkEnabled.setTone(dark) }
+        linkRow.addView(linkEnabled, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+        linkCard.addView(linkRow)
+        body.addView(linkCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
 
         addSectionTitle(body, "Quyền của website hiện tại")
         val privateSession = isPrivateMode()

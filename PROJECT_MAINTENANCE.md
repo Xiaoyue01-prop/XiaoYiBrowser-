@@ -86,3 +86,11 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - Toggling calls `MainActivity.rebuildWebViewsForDarkMode()`: background WebViews are destroyed (reopened from their last URL), the active tab is recreated and reloads its URL (scroll/form state is lost). Private tabs go through the same `createWebView` path, so they keep their profile.
 - Native overlays keep following the page tone (`GlassSystem.isDarkPage()`), not the switch.
 - Verify on device: a site with dark support (e.g. YouTube, GitHub), a site without (plain light page), a private tab, a login popup, toggling with several tabs open. Not compiled here; CI is the first compile check.
+
+## Link Tracking Protection (2026-11-15)
+
+- `LinkTrackingProtection.strip()` gỡ tham số click-tracking đã biết (fbclid, gclid, msclkid...) khỏi link GET sang SITE KHÁC; UTM và tham số lạ giữ nguyên. Gọi từ `BrowserWebViewClient.shouldOverrideUrlLoading` (main frame), rồi `loadUrl(cleaned)`.
+- Công tắc: `Store.linkProtectionEnabled` (mặc định bật), hiện trong Privacy Dashboard ("Bảo vệ theo dõi link").
+- Không áp dụng cho URL gõ/dán ở thanh địa chỉ, link mở từ app khác, POST. "Cùng site" so bằng xấp xỉ (không có Public Suffix List).
+- Cập nhật danh sách tham số mỗi lần rà soát 2 tuần. Chưa biên dịch tại môi trường chỉnh sửa; CI là kiểm tra đầu tiên.
+- Test tay: bấm link có `?fbclid=x&utm_source=y` từ trang khác site (kỳ vọng còn utm_source), link cùng site (giữ nguyên), form POST, private tab, popup đăng nhập.
