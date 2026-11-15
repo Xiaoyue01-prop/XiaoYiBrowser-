@@ -107,6 +107,18 @@ fun ovalDrawable(color: Int): GradientDrawable = GradientDrawable().apply {
     setColor(color)
 }
 
+/**
+ * Bán kính "bo tròn hết cỡ" (viên thuốc). GradientDrawable và Outline tự giới hạn bán kính về một nửa
+ * cạnh ngắn, nên cùng một giá trị cho ra nút tròn, viên thuốc hay thanh dài tuỳ kích thước nút.
+ */
+const val PILL_RADIUS_DP = 100
+
+/** [PILL_RADIUS_DP] đổi sang px. */
+fun pillRadiusPx(): Float = dp(PILL_RADIUS_DP).toFloat()
+
+/** Nền viên thuốc một màu. */
+fun pillDrawable(color: Int): GradientDrawable = roundedDrawable(pillRadiusPx(), color)
+
 /** Nền chữ nhật bo góc một màu (radiusPx tính bằng px). */
 fun roundedDrawable(radiusPx: Float, color: Int): GradientDrawable = GradientDrawable().apply {
     cornerRadius = radiusPx
@@ -114,13 +126,13 @@ fun roundedDrawable(radiusPx: Float, color: Int): GradientDrawable = GradientDra
 }
 
 /**
- * Nền hàng bấm kiểu iOS: khi nhấn hiện ô tô sáng bo góc (không ripple chữ nhật), nhả ra mờ dần.
- * Mỗi view cần một Drawable riêng nên gọi hàm này cho từng hàng.
+ * Nền hàng bấm kiểu iOS 26: khi nhấn hiện ô tô sáng hình viên thuốc (bo tròn hết cỡ, không ripple chữ nhật),
+ * nhả ra mờ dần. Mỗi view cần một Drawable riêng nên gọi hàm này cho từng hàng.
  */
 fun Context.roundedPressBackground(
     isNight: Boolean,
-    radiusDp: Float = 14f,
-    insetHDp: Float = 6f,
+    radiusDp: Float = PILL_RADIUS_DP.toFloat(),
+    insetHDp: Float = 8f,
     insetVDp: Float = 2f
 ): Drawable {
     val d = resources.displayMetrics.density

@@ -134,7 +134,7 @@ class DownloadPromptController(
                 gravity = Gravity.CENTER
                 setTextColor(if (primary) Color.WHITE else foregroundColor)
                 background = GradientDrawable().apply {
-                    cornerRadius = dp(14).toFloat()
+                    cornerRadius = pillRadiusPx()
                     setColor(
                         if (primary) accentColor
                         else if (night) Color.argb(42, 255, 255, 255)

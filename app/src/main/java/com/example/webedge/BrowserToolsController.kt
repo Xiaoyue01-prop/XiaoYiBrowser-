@@ -14,11 +14,9 @@ import android.text.format.DateFormat
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.CompoundButton
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import android.webkit.CookieManager
 import android.webkit.WebStorage
@@ -413,17 +411,16 @@ class BrowserToolsController(
         filterTexts.addView(text("Chỉ đếm các request bị bộ lọc Summit chặn thực tế.", 11f, muted)
             .apply { setPadding(0, dp(3), 0, 0) })
         filterRow.addView(filterTexts, LinearLayout.LayoutParams(0, -2, 1f))
-        val enabled = Switch(activity).apply {
-            isChecked = store.adBlockEnabled
-            setOnCheckedChangeListener { _: CompoundButton, checked: Boolean ->
-                store.adBlockEnabled = checked
-                val js = if (checked) AdBlocker.HIDE_CSS
-                    else "document.getElementById('__adblock_hide')?.remove();"
-                runCatching { webView().evaluateJavascript(js, null) }
-                toast(if (checked) "Đã bật chặn quảng cáo" else "Đã tắt chặn quảng cáo")
-            }
-        }
-        filterRow.addView(enabled)
+        // Công tắc kiểu iOS 26 (thon dài, viên gạt kính): xem GlassSystem.GlassSwitch.
+        val enabled = GlassSystem.GlassSwitch(activity, density, isNight(), accent, store.adBlockEnabled) { checked ->
+            store.adBlockEnabled = checked
+            val js = if (checked) AdBlocker.HIDE_CSS
+                else "document.getElementById('__adblock_hide')?.remove();"
+            runCatching { webView().evaluateJavascript(js, null) }
+            toast(if (checked) "Đã bật chặn quảng cáo" else "Đã tắt chặn quảng cáo")
+        }.apply { contentDescription = "Chặn quảng cáo theo danh sách" }
+        activeToneUpdates += { dark -> enabled.setTone(dark) }
+        filterRow.addView(enabled, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
         filterCard.addView(filterRow)
         body.addView(filterCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
 
@@ -444,17 +441,15 @@ class BrowserToolsController(
                 .also { youtubeBlockedSummary = it }
         )
         youtubeRow.addView(youtubeTexts, LinearLayout.LayoutParams(0, -2, 1f))
-        val youtubeEnabled = Switch(activity).apply {
-            isChecked = store.youtubeAdBlockEnabled
-            setOnCheckedChangeListener { _: CompoundButton, checked: Boolean ->
-                store.youtubeAdBlockEnabled = checked
-                allWebViews().forEach { page ->
-                    YouTubeAdBlocker.sync(page, page.url, checked)
-                }
-                toast(if (checked) "Đã bật YouTube AdBlock" else "Đã tắt YouTube AdBlock")
+        val youtubeEnabled = GlassSystem.GlassSwitch(activity, density, isNight(), accent, store.youtubeAdBlockEnabled) { checked ->
+            store.youtubeAdBlockEnabled = checked
+            allWebViews().forEach { page ->
+                YouTubeAdBlocker.sync(page, page.url, checked)
             }
-        }
-        youtubeRow.addView(youtubeEnabled)
+            toast(if (checked) "Đã bật YouTube AdBlock" else "Đã tắt YouTube AdBlock")
+        }.apply { contentDescription = "YouTube AdBlock" }
+        activeToneUpdates += { dark -> youtubeEnabled.setTone(dark) }
+        youtubeRow.addView(youtubeEnabled, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
         youtubeCard.addView(youtubeRow)
         body.addView(youtubeCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
 
@@ -622,7 +617,7 @@ class BrowserToolsController(
             initialIndex = choices.indexOfFirst { it.second == initialState },
             selectedColor = accent,
             normalColor = muted,
-            trackFill = GlassSystem.createSegmentedTrack(24, density, isNight())
+            trackFill = GlassSystem.createSegmentedTrack(PILL_RADIUS_DP, density, isNight())
         ) { index ->
             val state = choices[index].second
             onChange(state)
@@ -701,7 +696,7 @@ class BrowserToolsController(
         val usesMutedColor = color == muted
         button.setTextColor(if (usesMutedColor) foreground else color)
         val buttonSurface = GradientDrawable().apply {
-            cornerRadius = dp(12).toFloat()
+            cornerRadius = pillRadiusPx()
             setColor(if (isNight()) Color.rgb(58, 58, 64) else Color.rgb(238, 238, 242))
             setStroke(dp(1), if (usesMutedColor) {
                 if (isNight()) Color.rgb(82, 82, 88) else Color.rgb(218, 218, 224)

@@ -24,10 +24,13 @@ import android.view.Choreographer
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.ViewTreeObserver
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -369,17 +372,21 @@ object GlassSystem {
     private const val RIM_OUTER_DP = 1.25f
     private const val RIM_HIGHLIGHT_DP = 0.6f
 
+    /**
+     * Bán kính từng bề mặt kính. Nút và thanh (địa chỉ, tìm kiếm, nút tròn, nút chữ) dùng [PILL_RADIUS_DP]:
+     * bo tròn hết cỡ nên luôn là viên thuốc/tròn dù kích thước đổi. Thẻ (menu, toast, gợi ý) giữ góc bo vừa phải.
+     */
     enum class Preset(val radiusDp: Int) {
-        ADDRESS_BAR(28),
-        TOOLBAR_BUTTON(20),
+        ADDRESS_BAR(PILL_RADIUS_DP),
+        TOOLBAR_BUTTON(PILL_RADIUS_DP),
         TOAST(22),
         SUGGESTIONS(22),
-        FIND_BAR(28),
+        FIND_BAR(PILL_RADIUS_DP),
         MENU_CARD(26),
-        ORB_BUTTON(20),
-        ORB_SUB_BUTTON(16),
+        ORB_BUTTON(PILL_RADIUS_DP),
+        ORB_SUB_BUTTON(PILL_RADIUS_DP),
         TABS_DIALOG(0),
-        TABS_BUTTON(24)
+        TABS_BUTTON(PILL_RADIUS_DP)
     }
 
     /**
@@ -531,17 +538,22 @@ object GlassSystem {
             val dark = GlassSystem.isDarkPage()
             if (lastDarkTone != dark) updateShaders(b, dark)
             if (b.width() <= 0 || b.height() <= 0) return
+            val r = effectiveRadius()
             val o = outerW / 2f
             rect.set(b.left + o, b.top + o, b.right - o, b.bottom - o)
-            canvas.drawRoundRect(rect, (radiusPx - o).coerceAtLeast(0f), (radiusPx - o).coerceAtLeast(0f), outerPaint)
+            canvas.drawRoundRect(rect, (r - o).coerceAtLeast(0f), (r - o).coerceAtLeast(0f), outerPaint)
             val i = outerW + hiW / 2f
             rect.set(b.left + i, b.top + i, b.right - i, b.bottom - i)
-            val ri = (radiusPx - i).coerceAtLeast(0f)
+            val ri = (r - i).coerceAtLeast(0f)
             canvas.drawRoundRect(rect, ri, ri, hiPaint)
         }
 
+        /** Bán kính không vượt quá nửa cạnh ngắn: [PILL_RADIUS_DP] cho ra viên thuốc đúng hình. */
+        private fun effectiveRadius(): Float =
+            minOf(radiusPx, minOf(bounds.width(), bounds.height()) / 2f)
+
         override fun getOutline(outline: Outline) {
-            outline.setRoundRect(bounds, radiusPx)
+            outline.setRoundRect(bounds, effectiveRadius())
         }
 
         override fun setAlpha(alpha: Int) {
@@ -844,7 +856,7 @@ half4 main(float2 coord) {
         private var normalColor: Int,
         trackFill: Drawable,
         backdrop: View? = null,
-        radiusDp: Int = 24,
+        radiusDp: Int = PILL_RADIUS_DP,
         textSizeSp: Float = 12f,
         private val onSelect: (Int) -> Unit
     ) {
@@ -971,6 +983,260 @@ half4 main(float2 coord) {
     }
 
     /**
+     * Công tắc kiểu iOS 26: track thon dài 64x28dp, viên gạt hình viên thuốc 40x24dp (dài và mảnh hơn công tắc iOS cũ).
+     * Chạm giữ thì viên gạt phình ra và chuyển từ đặc sang kính trong; chạm hoặc kéo ngang để đổi trạng thái,
+     * thả tay nảy về đúng đầu. Màu track chạy liên tục theo vị trí viên gạt. Thay cho [android.widget.Switch].
+     *
+     * [onCheckedChange] chỉ gọi khi người dùng đổi trạng thái; [setCheckedSilently] đổi từ code thì không gọi.
+     */
+    class GlassSwitch(
+        context: Context,
+        private val density: Float,
+        private var isNight: Boolean,
+        private val onColor: Int,
+        checked: Boolean = false,
+        private val onCheckedChange: (Boolean) -> Unit
+    ) : FrameLayout(context) {
+        var isChecked: Boolean = checked
+            private set
+
+        private val trackFill = GradientDrawable()
+        private val thumb = FrameLayout(context)
+        private val solid = View(context)
+        private val glass = View(context)
+        private val travelPx = TRAVEL_DP * density
+        private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+
+        /** 0 = tắt (viên gạt bên trái), 1 = bật (bên phải); có thể vượt nhẹ khi spring nảy. */
+        private var progress = if (checked) 1f else 0f
+        private var progressAnim: AnimationSystem.FloatSpringHandle? = null
+        private var lifted = false
+        private var liftStart = 0L
+        private var pendingDrop: Runnable? = null
+        private var downX = 0f
+        private var startProgress = 0f
+        private var dragging = false
+
+        init {
+            // Cha mặc định cắt phần con tràn ra ngoài; viên gạt phình lên cần được vẽ tràn nhẹ khỏi track.
+            clipChildren = false
+            clipToPadding = false
+            isClickable = true
+            isFocusable = true
+
+            val radius = PILL_RADIUS_DP * density
+            trackFill.cornerRadius = radius
+            val track = View(context).apply { background = trackFill }
+            addView(
+                track,
+                FrameLayout.LayoutParams((TRACK_W_DP * density).toInt(), (TRACK_H_DP * density).toInt(), Gravity.CENTER)
+            )
+
+            solid.background = GradientDrawable().apply {
+                cornerRadius = radius
+                setColor(Color.WHITE)
+            }
+            glass.background = GradientDrawable().apply {
+                cornerRadius = radius
+                setColor(Color.argb(64, 255, 255, 255))
+            }
+            glass.foreground = registerRimSurface(GlassRimDrawable(radius, density))
+            glass.alpha = 0f
+            thumb.addView(solid, FrameLayout.LayoutParams(-1, -1))
+            thumb.addView(glass, FrameLayout.LayoutParams(-1, -1))
+            thumb.elevation = 2f * density
+            thumb.outlineAmbientShadowColor = Color.argb(48, 0, 0, 0)
+            thumb.outlineSpotShadowColor = Color.argb(64, 0, 0, 0)
+            thumb.outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, view.height / 2f)
+                }
+            }
+            thumb.clipToOutline = true
+            addView(
+                thumb,
+                FrameLayout.LayoutParams(
+                    (THUMB_W_DP * density).toInt(),
+                    (THUMB_H_DP * density).toInt(),
+                    Gravity.CENTER_VERTICAL or Gravity.START
+                ).apply { leftMargin = ((SIDE_DP + THUMB_INSET_DP) * density).toInt() }
+            )
+            render(progress)
+        }
+
+        /** Đổi màu track theo tông trang đang mở (trang tối cần track xám đậm hơn). */
+        fun setTone(dark: Boolean) {
+            if (isNight == dark) return
+            isNight = dark
+            render(progress)
+        }
+
+        /** Đặt trạng thái từ code (không gọi [onCheckedChange]). */
+        fun setCheckedSilently(value: Boolean, animate: Boolean = false) {
+            isChecked = value
+            progressAnim?.cancel()
+            if (animate) animateTo(if (value) 1f else 0f) else render(if (value) 1f else 0f)
+        }
+
+        private fun offColor(): Int =
+            if (isNight) Color.argb(120, 120, 120, 128) else Color.argb(82, 120, 120, 128)
+
+        private fun lerpColor(from: Int, to: Int, t: Float): Int = Color.argb(
+            (Color.alpha(from) + (Color.alpha(to) - Color.alpha(from)) * t).toInt(),
+            (Color.red(from) + (Color.red(to) - Color.red(from)) * t).toInt(),
+            (Color.green(from) + (Color.green(to) - Color.green(from)) * t).toInt(),
+            (Color.blue(from) + (Color.blue(to) - Color.blue(from)) * t).toInt()
+        )
+
+        private fun render(p: Float) {
+            progress = p
+            thumb.translationX = p * travelPx
+            trackFill.setColor(lerpColor(offColor(), onColor, p.coerceIn(0f, 1f)))
+        }
+
+        private fun animateTo(target: Float) {
+            progressAnim?.cancel()
+            progressAnim = AnimationSystem.springFloat(
+                from = progress,
+                to = target,
+                spec = AnimationSystem.SWITCH,
+                minimumVisibleChange = AnimationSystem.NORMALIZED_VALUE_MIN_CHANGE,
+                onUpdate = { render(it) }
+            )
+        }
+
+        private fun commit(value: Boolean) {
+            val changed = value != isChecked
+            isChecked = value
+            animateTo(if (value) 1f else 0f)
+            if (changed) {
+                performHapticFeedback(
+                    if (value) HapticFeedbackConstants.TOGGLE_ON else HapticFeedbackConstants.TOGGLE_OFF
+                )
+                onCheckedChange(value)
+            }
+        }
+
+        /** Chạm giữ: viên gạt phình ra, đặc nhạt đi và hiện lớp kính trong. Thả tay thì co lại, đặc trở lại. */
+        private fun lift(on: Boolean) {
+            if (lifted == on) return
+            lifted = on
+            if (on) {
+                liftStart = SystemClock.uptimeMillis()
+                AnimationSystem.fade(solid, 0.22f, AnimationSystem.QUICK)
+                AnimationSystem.fade(glass, 1f, AnimationSystem.QUICK)
+                AnimationSystem.scaleTo(thumb, LIFT_SCALE_X, LIFT_SCALE_Y, AnimationSystem.MENU_POP)
+            } else {
+                AnimationSystem.fade(glass, 0f, AnimationSystem.SETTLE)
+                AnimationSystem.fade(solid, 1f, AnimationSystem.SETTLE)
+                AnimationSystem.scaleTo(thumb, 1f, 1f, AnimationSystem.MENU_POP_BACK)
+            }
+        }
+
+        /** Giữ viên gạt phình ít nhất [MIN_LIFT_MS] để cú chạm nhanh vẫn thấy hiệu ứng kính. */
+        private fun dropLater() {
+            pendingDrop?.let { removeCallbacks(it) }
+            val wait = (MIN_LIFT_MS - (SystemClock.uptimeMillis() - liftStart)).coerceAtLeast(0L)
+            val r = Runnable { pendingDrop = null; lift(false) }
+            pendingDrop = r
+            postDelayed(r, wait)
+        }
+
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            // Vùng chạm 68x40dp: lớn hơn track để dễ bấm và chừa chỗ cho viên gạt phình ra.
+            super.onMeasure(
+                View.MeasureSpec.makeMeasureSpec((VIEW_W_DP * density).toInt(), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec((VIEW_H_DP * density).toInt(), View.MeasureSpec.EXACTLY)
+            )
+        }
+
+        @android.annotation.SuppressLint("ClickableViewAccessibility")
+        override fun onTouchEvent(e: MotionEvent): Boolean {
+            if (!isEnabled) return false
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    AnimationSystem.unclipParents(this)
+                    pendingDrop?.let { removeCallbacks(it) }
+                    pendingDrop = null
+                    downX = e.x
+                    startProgress = progress
+                    dragging = false
+                    lift(true)
+                    performHapticFeedback(HapticFeedbackConstants.GESTURE_START)
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = e.x - downX
+                    if (!dragging && Math.abs(dx) > touchSlop) {
+                        dragging = true
+                        progressAnim?.cancel()
+                    }
+                    if (dragging) render((startProgress + dx / travelPx).coerceIn(0f, 1f))
+                    return true
+                }
+                MotionEvent.ACTION_UP -> {
+                    dropLater()
+                    if (dragging) {
+                        dragging = false
+                        commit(progress > 0.5f)
+                    } else {
+                        performClick()
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    dropLater()
+                    dragging = false
+                    animateTo(if (isChecked) 1f else 0f)
+                    return true
+                }
+            }
+            return super.onTouchEvent(e)
+        }
+
+        /** Cũng là đường đi của TalkBack / bàn phím: chạm đơn đảo trạng thái. */
+        override fun performClick(): Boolean {
+            val handled = super.performClick()
+            commit(!isChecked)
+            return handled
+        }
+
+        override fun getAccessibilityClassName(): CharSequence = "android.widget.Switch"
+
+        override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+            super.onInitializeAccessibilityNodeInfo(info)
+            info.isCheckable = true
+            info.isChecked = isChecked
+        }
+
+        override fun onDetachedFromWindow() {
+            progressAnim?.cancel()
+            pendingDrop?.let { removeCallbacks(it) }
+            pendingDrop = null
+            super.onDetachedFromWindow()
+        }
+
+        private companion object {
+            // Track 64x28, viên gạt 40x24 cách mép 2dp: quãng chạy = 64 - 2*2 - 40 = 20dp.
+            const val TRACK_W_DP = 64f
+            const val TRACK_H_DP = 28f
+            const val THUMB_W_DP = 40f
+            const val THUMB_H_DP = 24f
+            const val THUMB_INSET_DP = 2f
+            const val TRAVEL_DP = TRACK_W_DP - 2f * THUMB_INSET_DP - THUMB_W_DP
+            // Chừa 2dp mỗi bên track để viên gạt phình ra không bị cắt; vùng chạm cao 40dp.
+            const val SIDE_DP = 2f
+            const val VIEW_W_DP = TRACK_W_DP + 2f * SIDE_DP
+            const val VIEW_H_DP = 40f
+            // Chạm giữ: viên gạt dài ra ~20% và cao gần bằng track.
+            const val LIFT_SCALE_X = 1.2f
+            const val LIFT_SCALE_Y = 1.18f
+            const val MIN_LIFT_MS = 200L
+        }
+    }
+
+    /**
      * Viên chọn của thanh chọn phân đoạn kiểu iOS 26 (tab bar trong video tham chiếu).
      * Lúc nghỉ là viên đặc nằm dưới nhãn; khi chạm giữ, viên đặc nhạt đi, hiện lớp kính trong,
      * phình to hơn thanh một chút và trượt theo ngón tay. Thả tay thì co lại và lăn về ô gần nhất.
@@ -985,7 +1251,7 @@ half4 main(float2 coord) {
         private var pendingDrop: Runnable? = null
 
         init {
-            val radius = 20f * density
+            val radius = PILL_RADIUS_DP * density
             solid.background = GradientDrawable().apply {
                 cornerRadius = radius
                 setColor(if (isNight) Color.rgb(76, 76, 81) else Color.WHITE)

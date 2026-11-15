@@ -44,6 +44,8 @@ object AnimationSystem {
     val MENU_POP_BACK = SpringSpec(0.24f, 0.70f)
     /** Nút gốc mờ đi/hiện lại khi bề mặt morph: chậm hơn QUICK để nút tan vào menu thay vì biến mất đột ngột. */
     val SOURCE_FADE = SpringSpec(0.32f, 1.0f)
+    /** Viên gạt của công tắc chạy về hai đầu: nảy nhẹ rồi đứng yên, giống công tắc iOS 26. */
+    val SWITCH = SpringSpec(0.32f, 0.70f)
     /** Đóng lại, thu về nút, trả về vị trí cũ (scale/alpha được chặn ở 0 nên không bị lật): gần như không nảy, không chạy lố qua nút. */
     val DISMISS = SpringSpec(0.40f, 0.90f)
 

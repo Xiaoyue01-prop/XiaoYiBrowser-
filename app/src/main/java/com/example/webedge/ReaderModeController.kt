@@ -368,7 +368,7 @@ internal class ReaderModeController(
             textSize = 15f
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             setTextColor(GlassSystem.pagePrimaryText())
-            background = activity.roundedPressBackground(GlassSystem.isDarkPage(), 18f, 2f, 3f)
+            background = activity.roundedPressBackground(GlassSystem.isDarkPage(), PILL_RADIUS_DP.toFloat(), 2f, 3f)
             isClickable = true
             isFocusable = true
             setOnClickListener { _ -> openOptions() }
@@ -713,7 +713,7 @@ internal class ReaderModeController(
             isClickable = true
             isFocusable = true
             contentDescription = label
-            background = activity.roundedPressBackground(GlassSystem.isDarkPage(), 14f, 3f, 2f)
+            background = activity.roundedPressBackground(GlassSystem.isDarkPage(), PILL_RADIUS_DP.toFloat(), 4f, 2f)
             addView(
                 ImageView(activity).apply {
                     setImageDrawable(PathIcon(iconPath, ICON_BASE))
@@ -738,7 +738,7 @@ internal class ReaderModeController(
             isClickable = true
             isFocusable = true
             setPadding(dp(12), 0, dp(12), 0)
-            background = activity.roundedPressBackground(GlassSystem.isDarkPage(), 14f, 3f, 1f)
+            background = activity.roundedPressBackground(GlassSystem.isDarkPage(), PILL_RADIUS_DP.toFloat(), 4f, 1f)
             addView(
                 ImageView(activity).apply {
                     setImageDrawable(PathIcon(iconPath, ICON_BASE))
@@ -885,7 +885,7 @@ internal class ReaderModeController(
 
     private fun chip(label: String, onClick: () -> Unit): TextView = panelText(label, 16f, true).apply {
         gravity = Gravity.CENTER
-        background = activity.roundedPressBackground(GlassSystem.isDarkPage(), 12f, 1f, 1f)
+        background = activity.roundedPressBackground(GlassSystem.isDarkPage(), PILL_RADIUS_DP.toFloat(), 1f, 1f)
         setOnClickListener { _ -> onClick() }
         AnimationSystem.press(this, Constants.PRESS_SCALE_ROW)
     }
@@ -900,7 +900,7 @@ internal class ReaderModeController(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             background = roundedDrawable(
-                dp(14).toFloat(),
+                pillRadiusPx(),
                 if (theme == ReaderTheme.DARK) Color.argb(55, 255, 255, 255) else Color.argb(24, 80, 80, 88)
             )
             setPadding(dp(3), dp(3), dp(3), dp(3))
@@ -927,7 +927,7 @@ internal class ReaderModeController(
 
     private fun optionBackground(selected: Boolean): android.graphics.drawable.Drawable =
         if (selected) roundedDrawable(
-            dp(11).toFloat(),
+            pillRadiusPx(),
             if (theme == ReaderTheme.DARK) Color.argb(70, 255, 255, 255) else Color.argb(220, 255, 255, 255)
         ) else ColorDrawableCompat.transparent()
 
@@ -936,7 +936,7 @@ internal class ReaderModeController(
             val selected = selectedProvider()
             // Nền của track phụ thuộc giấy đọc nên dựng lại khi đổi nền.
             row.background = roundedDrawable(
-                dp(14).toFloat(),
+                pillRadiusPx(),
                 if (theme == ReaderTheme.DARK) Color.argb(55, 255, 255, 255) else Color.argb(24, 80, 80, 88)
             )
             for (index in 0 until row.childCount) {

@@ -447,7 +447,7 @@ class FootballSheetController(
             setPadding(dp(12), 0, dp(12), 0)
             setTextColor(if (usesMuted) ink else color)
             background = GradientDrawable().apply {
-                cornerRadius = dp(12).toFloat()
+                cornerRadius = pillRadiusPx()
                 setColor(if (isNight()) Color.rgb(58, 58, 64) else Color.rgb(238, 238, 242))
                 setStroke(
                     dp(1),
