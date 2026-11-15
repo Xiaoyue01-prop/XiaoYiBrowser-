@@ -52,6 +52,13 @@ fun WebSettings.applyBrowserDefaults() {
     }
 }
 
+/**
+ * Context để dựng WebView. WebView lấy prefers-color-scheme từ isLightTheme của context lúc tạo, nên chế độ tối
+ * dùng theme tối chỉ cho WebView; darkening thuật toán vẫn tắt ở [applyBrowserDefaults].
+ */
+fun Activity.webViewContext(dark: Boolean): android.content.Context =
+    if (dark) android.view.ContextThemeWrapper(this, R.style.WebDarkTheme) else this
+
 private val WV_MARKER = Regex(""";\s*wv""", RegexOption.IGNORE_CASE)
 private val VERSION_4_0 = Regex("""\s*Version/4\.0""", RegexOption.IGNORE_CASE)
 

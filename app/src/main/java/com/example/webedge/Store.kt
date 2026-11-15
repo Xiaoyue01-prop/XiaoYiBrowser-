@@ -116,6 +116,11 @@ class Store(context: Context) {
         get() = youtubeAdBlockCache
         set(v) { youtubeAdBlockCache = v; sp.edit().putBoolean("youtube_adblock", v).apply() }
 
+    /** Báo cho web biết app đang ở chế độ tối (prefers-color-scheme: dark). Web không hỗ trợ thì giữ nguyên. */
+    var webDarkMode: Boolean
+        get() = sp.getBoolean("web_dark_mode", false)
+        set(v) { sp.edit().putBoolean("web_dark_mode", v).apply() }
+
     var autoHideBar: Boolean
     get() = sp.getBoolean("autohide", true)
     set(v) { sp.edit().putBoolean("autohide", v).apply() }

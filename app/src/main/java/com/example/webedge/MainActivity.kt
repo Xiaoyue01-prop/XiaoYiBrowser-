@@ -103,6 +103,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private val popup: PopupWindowController = PopupWindowController(
         activity = this,
         mainWebView = { web },
+        webViewContext = { webViewContext(store.webDarkMode) },
         chromeClient = { sourceWebView ->
             val sourceIsPrivate = privateProfileManager.isPrivateProfile(sourceWebView)
             createChromeClient { sourceIsPrivate }
@@ -284,6 +285,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun toggleDesktopMode() = this@MainActivity.toggleDesktopMode()
         override fun applyInsets() = this@MainActivity.applyInsets()
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
+        override fun setWebDarkMode(enabled: Boolean) = this@MainActivity.rebuildWebViewsForDarkMode()
     }
 
     private val toaster: ToastController = ToastController(
@@ -467,7 +469,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         tabWebViewLifecycle = TabWebViewLifecycleController(
             createWebView = { tab ->
-                SummitWebView(this).also { view ->
+                SummitWebView(webViewContext(store.webDarkMode)).also { view ->
                     view.onTopOverscroll = {
                         if (::web.isInitialized && view === web) pullRefresh?.onWebTopOverscroll()
                     }
@@ -1037,6 +1039,25 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         updateTabBadge()
         trimBackgroundTabs()
+    }
+
+    /**
+     * WebView chỉ đọc theme tối lúc được tạo, nên đổi chế độ tối phải dựng lại WebView: tab nền được giải phóng
+     * (mở lại sẽ tải từ URL cũ), tab đang xem được dựng lại ngay và tải lại trang hiện tại.
+     */
+    private fun rebuildWebViewsForDarkMode() {
+        if (!::web.isInitialized) return
+        val active = tabManager.getActive() ?: return
+        captureActiveTab()
+        val old = tabManager.getAll().mapNotNull { tab ->
+            val view = tab.webView ?: return@mapNotNull null
+            tab.url = view.url ?: tab.url
+            tab.title = view.title ?: tab.title
+            tab.webView = null
+            view
+        }.distinct()
+        activateTab(active)
+        old.forEach { tabWebViewLifecycle.destroy(it) }
     }
 
     private fun createBrowserTab() {

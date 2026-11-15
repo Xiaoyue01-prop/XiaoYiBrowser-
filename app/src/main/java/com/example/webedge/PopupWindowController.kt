@@ -44,6 +44,8 @@ class PopupWindowController(
     private val chromeClient: (source: WebView) -> WebChromeClient,
     private val openExternal: (String, WebView) -> Boolean,
     private val toast: (String) -> Unit,
+    /** Context dựng WebView popup; theo chế độ tối của web để popup đăng nhập cùng tông với tab. */
+    private val webViewContext: () -> android.content.Context = { activity },
     /** Theo giao diện của app; null thì theo chế độ tối của hệ thống. */
     private val isNight: (() -> Boolean)? = null,
     /** Applies the source tab's profile before the popup WebView is configured or navigated. */
@@ -68,7 +70,7 @@ class PopupWindowController(
         if (webView != null) return false
         val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
         val source = sourceView ?: mainWebView()
-        val popup = WebView(activity)
+        val popup = WebView(webViewContext())
         // Profile must be selected before reading settings, attaching clients or navigating.
         configureWebViewForSource(popup, source)
         val mainSettings = source.settings

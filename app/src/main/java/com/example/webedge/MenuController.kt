@@ -44,6 +44,8 @@ interface MenuHost {
     fun toggleDesktopMode()
     fun applyInsets()
     fun setBarHidden(hide: Boolean)
+    /** Dựng lại WebView theo [Store.webDarkMode] (WebView chỉ đọc theme lúc tạo). */
+    fun setWebDarkMode(enabled: Boolean)
 }
 
 /**
@@ -881,6 +883,26 @@ class MenuController(
             p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
         }
 
+        fun addSwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+            val r = LinearLayout(activity)
+            r.orientation = LinearLayout.HORIZONTAL
+            r.gravity = Gravity.CENTER_VERTICAL
+            r.setPadding(dp(22), 0, dp(14), 0)
+            r.background = ripple()
+            val l = TextView(activity)
+            l.text = label
+            l.textSize = 16f
+            stylePrimary(l, fg)
+            r.addView(l, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val sw = GlassSystem.GlassSwitch(activity, d, isNight(), accent, checked, onChange)
+                .apply { contentDescription = label }
+            r.addView(sw, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            // Chạm vào phần còn lại của hàng cũng đảo công tắc.
+            r.setOnClickListener { sw.performClick() }
+            AnimationSystem.press(r, Constants.PRESS_SCALE_ROW)
+            p.body.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
+        }
+
         addRow("Công cụ tìm kiếm", engines[store.searchEngine], fg) { chooseEngine() }
         addRow("Trang chủ", UrlUtils.shortUrl(store.homeUrl), fg) { editHome() }
         addRow("Tràn viền nội dung (thử nghiệm)", onOff(store.edgeMode), fg) {
@@ -899,6 +921,19 @@ class MenuController(
             if (!store.autoHideBar) host.setBarHidden(false)
             showSettings()
         }
+
+        addSwitchRow("Chế độ tối", store.webDarkMode) { enabled ->
+            store.webDarkMode = enabled
+            // Chờ công tắc nảy xong rồi mới dựng lại WebView (việc này nặng và tải lại trang).
+            root.postDelayed({ host.setWebDarkMode(enabled) }, 320L)
+            host.toast(if (enabled) "Đã bật chế độ tối, trang sẽ tải lại" else "Đã tắt chế độ tối, trang sẽ tải lại")
+        }
+        val darkHint = TextView(activity)
+        darkHint.text = "Chỉ những web có giao diện tối mới đổi màu; web khác giữ nguyên để không bị đen chữ trên nền đen."
+        darkHint.textSize = 12f
+        styleSecondary(darkHint)
+        darkHint.setPadding(dp(22), 0, dp(22), dp(6))
+        p.body.addView(darkHint)
 
         addButtons(p, panelButton("Xóa dữ liệu app", Theme.DANGER_RED) { confirmClear() }, panelButton("Xong", accent) { close() })
         showPanel(p)

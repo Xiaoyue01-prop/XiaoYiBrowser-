@@ -5,4 +5,10 @@
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
         <item name="android:colorAccent">#0A84FF</item>
     </style>
+
+    <!-- Chỉ dùng làm context cho WebView khi bật "Chế độ tối": WebView đọc isLightTheme=false để báo
+         prefers-color-scheme: dark cho trang. Giao diện app và việc darkening thuật toán không đổi. -->
+    <style name="WebDarkTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">#0A84FF</item>
+    </style>
 </resources>

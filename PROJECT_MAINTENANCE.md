@@ -78,3 +78,11 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - `roundedPressBackground()` (pressed highlight of menu rows, dialog buttons, suggestions, Reader rows) now defaults to the pill radius with an 8dp horizontal inset. Pass an explicit radius only for something that is not a row/button.
 - Toggles use `GlassSystem.GlassSwitch` instead of `android.widget.Switch`: 64x28dp track, 40x24dp pill thumb (slimmer and longer than the old iOS switch), thumb swells and turns into clear glass while pressed, tap or drag to change, spring settle (`AnimationSystem.SWITCH`). `onCheckedChange` fires only for user changes; use `setCheckedSilently()` from code and `setTone(dark)` from the page-tone observer (see Privacy Dashboard).
 - Not compiled in the editing environment (no Kotlin/Android SDK): the first CI run is the authoritative check. On device verify: Privacy Dashboard switches (tap, drag, quick tap, light and dark page), pressed highlight on menu rows / quick-action cells / Settings rows / dialog buttons, and that nothing is clipped when the glass buttons swell.
+
+## Web dark mode switch (2026-11-15)
+
+- Settings > "Chế độ tối" (`Store.webDarkMode`, default off). It does NOT darken pages: algorithmic darkening stays disabled in `applyBrowserDefaults()`. It only makes WebView report `prefers-color-scheme: dark`, so sites that ship a dark stylesheet switch to it and every other site stays light (no black-on-black).
+- WebView derives `prefers-color-scheme` from the `isLightTheme` attribute of the context it was created with, once, at construction. Dark mode therefore builds tab and popup WebViews with `webViewContext(dark)` (`ContextThemeWrapper` + `R.style.WebDarkTheme`, `WebUtils.kt`). The Activity theme stays light.
+- Toggling calls `MainActivity.rebuildWebViewsForDarkMode()`: background WebViews are destroyed (reopened from their last URL), the active tab is recreated and reloads its URL (scroll/form state is lost). Private tabs go through the same `createWebView` path, so they keep their profile.
+- Native overlays keep following the page tone (`GlassSystem.isDarkPage()`), not the switch.
+- Verify on device: a site with dark support (e.g. YouTube, GitHub), a site without (plain light page), a private tab, a login popup, toggling with several tabs open. Not compiled here; CI is the first compile check.
