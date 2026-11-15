@@ -8,7 +8,13 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.os.Bundle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +31,11 @@ import java.util.concurrent.ConcurrentHashMap
 object DownloadLiveUpdate {
     private const val CHANNEL_ID = "summit_download_live_updates"
     private const val CHANNEL_NAME = "Download progress"
+    // Kênh riêng, mức cao: tải xong/thất bại thì thông báo bung ra (kênh tiến độ ở mức thấp nên không bung).
+    private const val ALERT_CHANNEL_ID = "summit_download_done"
+    private const val ALERT_CHANNEL_NAME = "Download finished"
+
+    private enum class Kind { INFO, DONE, FAILED }
 
     const val ACTION_CANCEL_DOWNLOAD =
         "com.example.webedge.action.CANCEL_DOWNLOAD"
@@ -36,7 +47,9 @@ object DownloadLiveUpdate {
     private val activeJobs = ConcurrentHashMap<Long, Job>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val progressColor = Color.rgb(64, 170, 120)
+    private val progressColor = Color.rgb(10, 132, 255)   // xanh dương: đang tải
+    private val doneColor = Color.rgb(52, 199, 89)         // xanh lá: xong
+    private val failColor = Color.rgb(255, 69, 58)         // đỏ: lỗi
 
     fun ensureChannel(context: Context) {
         val manager =
@@ -51,6 +64,20 @@ object DownloadLiveUpdate {
             setShowBadge(false)
         }
         manager.createNotificationChannel(channel)
+        manager.createNotificationChannel(
+            NotificationChannel(ALERT_CHANNEL_ID, ALERT_CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Báo khi tải xong hoặc thất bại: thông báo bung ra rồi tự thu nhỏ"
+                setShowBadge(false)
+            }
+        )
+    }
+
+    /** Trang cài đặt kênh "Download finished" để bật Banner/Hiện nổi. */
+    fun doneSettingsIntent(context: Context): Intent {
+        ensureChannel(context)
+        return Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+            .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, ALERT_CHANNEL_ID)
     }
 
     fun track(context: Context, downloadId: Long, fileName: String) {
@@ -67,6 +94,9 @@ object DownloadLiveUpdate {
             var lastUpdateAt = 0L
             // Hỏi thưa hơn khi tiến độ đứng yên (ít đánh thức CPU và ít truy vấn hơn).
             var nextDelayMs = 750L
+            var speedBps = 0.0              // tốc độ làm mượt (EMA), byte/giây
+            var sampleBytes = 0L
+            var sampleAt = System.currentTimeMillis()
 
             try {
                 while (isActive) {
@@ -108,7 +138,8 @@ object DownloadLiveUpdate {
                         DownloadManager.STATUS_SUCCESSFUL -> {
                             postComplete(
                                 appContext, downloadId, fileName,
-                                "Tải xuống hoàn tất"
+                                "Tải xong" + if (total > 0L) " · ${formatBytes(total)}" else "",
+                                Kind.DONE
                             )
                             break
                         }
@@ -116,7 +147,8 @@ object DownloadLiveUpdate {
                         DownloadManager.STATUS_FAILED -> {
                             postComplete(
                                 appContext, downloadId, fileName,
-                                "Tải xuống thất bại ($reason)"
+                                "Tải xuống thất bại ($reason)",
+                                Kind.FAILED
                             )
                             break
                         }
@@ -124,7 +156,7 @@ object DownloadLiveUpdate {
                         DownloadManager.STATUS_PAUSED -> {
                             postProgress(
                                 appContext, downloadId, fileName,
-                                "Đang tạm dừng", downloaded, total, true
+                                "Đang tạm dừng", downloaded, total, true, 0L
                             )
                             nextDelayMs = 2000L
                         }
@@ -144,9 +176,16 @@ object DownloadLiveUpdate {
                             if (percent != lastPercent ||
                                 now - lastUpdateAt >= 2500L
                             ) {
+                                val dt = (now - sampleAt) / 1000.0
+                                if (dt >= 0.5 && downloaded >= sampleBytes) {
+                                    val inst = (downloaded - sampleBytes) / dt
+                                    speedBps = if (speedBps == 0.0) inst else speedBps * 0.6 + inst * 0.4
+                                    sampleBytes = downloaded
+                                    sampleAt = now
+                                }
                                 postProgress(
                                     appContext, downloadId, fileName,
-                                    "Đang tải xuống", downloaded, total, false
+                                    "Đang tải xuống", downloaded, total, false, speedBps.toLong()
                                 )
                                 lastPercent = percent
                                 lastUpdateAt = now
@@ -296,7 +335,8 @@ object DownloadLiveUpdate {
         state: String,
         downloaded: Long,
         total: Long,
-        paused: Boolean
+        paused: Boolean,
+        speedBps: Long
     ) {
         val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -308,23 +348,30 @@ object DownloadLiveUpdate {
                 0
             }
 
+        val accent = if (paused) Color.rgb(255, 159, 10) else progressColor
         val progressStyle = Notification.ProgressStyle()
             .setStyledByProgress(true)
             .setProgress(if (total > 0L) percent else 0)
             .setProgressSegments(
                 listOf(
                     Notification.ProgressStyle.Segment(100)
-                        .setColor(progressColor)
+                        .setColor(accent)
                 )
             )
             .setProgressIndeterminate(total <= 0L)
 
-        val details =
-            if (total > 0L) {
-                "$percent% · ${formatBytes(downloaded)} / ${formatBytes(total)}"
-            } else {
-                formatBytes(downloaded)
-            }
+        // Dòng chữ: "45% · 12.3 MB / 45.0 MB · còn 15 giây"; tốc độ nằm ở dòng phụ phía trên.
+        val eta = if (!paused && total > 0L && speedBps > 0L) etaText((total - downloaded) / speedBps) else null
+        val details = buildString {
+            if (total > 0L) append("$percent% · ${formatBytes(downloaded)} / ${formatBytes(total)}")
+            else append(formatBytes(downloaded))
+            if (eta != null) append(" · còn $eta")
+        }
+        val sub = when {
+            paused -> "Tạm dừng"
+            speedBps > 0L -> "Đang tải · ${formatBytes(speedBps)}/s"
+            else -> "Đang tải"
+        }
 
         val extras = Bundle().apply {
             putBoolean("android.requestPromotedOngoing", true)
@@ -337,14 +384,12 @@ object DownloadLiveUpdate {
         ).build()
 
         val notification = Notification.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setColor(progressColor)
+            .setSmallIcon(R.drawable.ic_stat_download)
+            .setLargeIcon(fileTile(name, null))
+            .setColor(accent)
             .setContentTitle(shortName(name).ifBlank { "Đang tải file" })
-            .setContentText(
-                if (paused) "Tạm dừng · $details"
-                else "$state · $details"
-            )
-            .setSubText("Summit")
+            .setContentText(details)
+            .setSubText(sub)
             // Chip trên đảo/thanh trạng thái: hiện % (hoặc dung lượng đã tải) thay vì bộ đếm giây mặc định.
             .setShortCriticalText(chipText(percent, total, downloaded))
             .setShowWhen(false)
@@ -360,29 +405,147 @@ object DownloadLiveUpdate {
         manager.notify(id.toInt(), notification)
     }
 
+    /**
+     * Kết thúc: DONE/FAILED đăng qua kênh mức cao để thông báo bung ra một lần (trước đây tải xong là ẩn luôn);
+     * INFO (đã hủy...) vẫn ở kênh thấp.
+     */
     private fun postComplete(
         context: Context,
         id: Long,
         name: String,
-        message: String
+        message: String,
+        kind: Kind = Kind.INFO
     ) {
         ensureChannel(context)
 
         val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        val notification = Notification.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setColor(progressColor)
+        val color = when (kind) {
+            Kind.DONE -> doneColor
+            Kind.FAILED -> failColor
+            Kind.INFO -> progressColor
+        }
+        val b = Notification.Builder(context, if (kind == Kind.INFO) CHANNEL_ID else ALERT_CHANNEL_ID)
+            .setSmallIcon(if (kind == Kind.DONE) R.drawable.ic_stat_download_done else R.drawable.ic_stat_download)
+            .setLargeIcon(fileTile(name, kind))
+            .setColor(color)
             .setContentTitle(shortName(name).ifBlank { "Tải file" })
             .setContentText(message)
-            .setSubText("Summit")
-            .setContentIntent(openAppPendingIntent(context, id))
+            .setSubText(if (kind == Kind.DONE) "Tải xong" else "Tải xuống")
+            .setShowWhen(true)
             .setAutoCancel(true)
             .setOngoing(false)
-            .build()
+            .setOnlyAlertOnce(false)
 
-        manager.notify(id.toInt(), notification)
+        // Tải xong: chạm vào để mở file, kèm nút "Mở" rõ ràng; nếu không lấy được file thì mở app.
+        val open = if (kind == Kind.DONE) openFileIntent(context, id) else null
+        if (open != null) {
+            b.setContentIntent(open)
+            b.addAction(Notification.Action.Builder(null, "Mở", open).build())
+            shareFileIntent(context, id)?.let {
+                b.addAction(Notification.Action.Builder(null, "Chia sẻ", it).build())
+            }
+        } else {
+            b.setContentIntent(openAppPendingIntent(context, id))
+        }
+        manager.notify(id.toInt(), b.build())
+    }
+
+    private fun openFileIntent(context: Context, id: Long): PendingIntent? = try {
+        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val uri = dm.getUriForDownloadedFile(id)
+        if (uri == null) null else {
+            val view = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, dm.getMimeTypeForDownloadedFile(id) ?: "*/*")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            PendingIntent.getActivity(
+                context, (id.toInt() xor 0x5f3a), view,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun shareFileIntent(context: Context, id: Long): PendingIntent? = try {
+        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val uri = dm.getUriForDownloadedFile(id)
+        if (uri == null) null else {
+            val send = Intent(Intent.ACTION_SEND)
+                .setType(dm.getMimeTypeForDownloadedFile(id) ?: "*/*")
+                .putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            send.clipData = android.content.ClipData.newRawUri("", uri)
+            val chooser = Intent.createChooser(send, null)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            PendingIntent.getActivity(
+                context, (id.toInt() xor 0x2b71), chooser,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun etaText(seconds: Long): String = when {
+        seconds < 60 -> "${seconds.coerceAtLeast(1)} giây"
+        seconds < 3600 -> "${seconds / 60} phút"
+        else -> "${seconds / 3600} giờ ${(seconds % 3600) / 60} phút"
+    }
+
+    // ------------------------------------------------------------ biểu tượng file
+
+    /** Ô vuông bo góc theo loại file (tên đuôi ở giữa); xong thì có dấu tích xanh, lỗi thì dấu ! đỏ ở góc. */
+    private fun fileTile(name: String, kind: Kind?): Bitmap {
+        val s = 256
+        val ext = name.substringAfterLast('.', "").lowercase(Locale.US).take(5)
+        val color = when (ext) {
+            "mp4", "mkv", "mov", "webm", "avi" -> Color.rgb(94, 92, 230)
+            "mp3", "m4a", "flac", "wav", "ogg", "aac" -> Color.rgb(255, 45, 85)
+            "jpg", "jpeg", "png", "gif", "webp", "heic", "svg" -> Color.rgb(255, 159, 10)
+            "zip", "rar", "7z", "tar", "gz" -> Color.rgb(162, 132, 94)
+            "pdf" -> Color.rgb(255, 69, 58)
+            "doc", "docx", "txt", "rtf" -> Color.rgb(10, 132, 255)
+            "xls", "xlsx", "csv" -> Color.rgb(48, 209, 88)
+            "apk" -> Color.rgb(50, 173, 80)
+            else -> Color.rgb(99, 99, 102)
+        }
+        val bmp = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.color = color
+        c.drawRoundRect(RectF(0f, 0f, s.toFloat(), s.toFloat()), 56f, 56f, p)
+
+        val label = ext.uppercase(Locale.US).ifBlank { "FILE" }
+        val t = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = Color.WHITE
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            textSize = if (label.length <= 3) 88f else 68f
+        }
+        c.drawText(label, s / 2f, s / 2f - (t.ascent() + t.descent()) / 2, t)
+
+        if (kind == Kind.DONE || kind == Kind.FAILED) {
+            val cx = s - 54f; val cy = s - 54f
+            p.color = Color.rgb(28, 28, 30)
+            c.drawCircle(cx, cy, 46f, p)
+            p.color = if (kind == Kind.DONE) doneColor else failColor
+            c.drawCircle(cx, cy, 36f, p)
+            val w = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                this.color = Color.WHITE; style = Paint.Style.STROKE
+                strokeWidth = 9f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+            }
+            val path = Path()
+            if (kind == Kind.DONE) {
+                path.moveTo(cx - 15f, cy + 1f); path.lineTo(cx - 4f, cy + 12f); path.lineTo(cx + 16f, cy - 11f)
+            } else {
+                path.moveTo(cx, cy - 16f); path.lineTo(cx, cy + 3f)
+                path.moveTo(cx, cy + 14f); path.lineTo(cx, cy + 14.5f)
+            }
+            c.drawPath(path, w)
+        }
+        return bmp
     }
 
     // Chip chỉ chứa được vài ký tự: biết tổng dung lượng thì hiện %, không thì hiện dung lượng đã tải.
