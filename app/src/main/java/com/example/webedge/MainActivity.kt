@@ -59,10 +59,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private val menuBtn: FrameLayout get() = toolbar.menuBtn
     private val tabBtn: ImageView get() = toolbar.tabBtn
     private lateinit var tabManager: TabManager
-    /** Cỡ chữ theo website; tab riêng tư chỉ giữ trong bộ nhớ. */
-    private val textZoom: TextZoomController by lazy {
-        TextZoomController(store) { view -> tabManager.getForWebView(view)?.isPrivate == true }
-    }
     private lateinit var privateProfileManager: PrivateProfileManager
     private lateinit var tabWebViewLifecycle: TabWebViewLifecycleController
     private lateinit var tabPersistence: TabPersistenceController
@@ -202,7 +198,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun handleSpecialUrl(url: String, view: WebView): Boolean =
             this@MainActivity.handleSpecialUrl(url, view)
         override fun toast(msg: String) = this@MainActivity.toast(msg)
-        override fun applyTextZoom(view: WebView, url: String) = textZoom.apply(view, url)
         override fun forgetPageBackground(view: WebView) { pageBackgrounds.remove(view) }
         override fun clearWindowPageBackground() { GlassSystem.setPageBackground(null, window.decorView) }
         override fun showDomain() = this@MainActivity.showDomain()
@@ -291,9 +286,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun applyInsets() = this@MainActivity.applyInsets()
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
         override fun setWebDarkMode(enabled: Boolean) = this@MainActivity.rebuildWebViewsForDarkMode()
-        override fun textZoomPercent(): Int = textZoom.percentFor(web, currentUrl.ifBlank { web.url })
-        override fun stepTextZoom(delta: Int): Int = textZoom.step(web, currentUrl.ifBlank { web.url }, delta)
-        override fun resetTextZoom(): Int = textZoom.reset(web, currentUrl.ifBlank { web.url })
     }
 
     private val toaster: ToastController = ToastController(
@@ -366,7 +358,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override val isFindBarShown: Boolean get() = findBarController.isShown
         override fun goBack() = goBackAnimated()
         override fun toggleMenu() = menu.toggle()
-        override fun togglePageMenu() = menu.toggle(MenuController.Kind.PAGE)
         override fun openTabSwitcher() = this@MainActivity.openTabSwitcher()
         override fun load(input: String) = this@MainActivity.load(input)
         override fun scheduleSuggest(query: String) = this@MainActivity.scheduleSuggest(query)
@@ -758,7 +749,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             onModeChange = ::switchTabMode
         )
         menu.originView = menuBtn
-        menu.pageOriginView = toolbar.pageMenuBtn
         menu.coverView = urlPillFrame
         setupOrbMenu()
     }
@@ -1036,7 +1026,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             if (web === target) target.evaluateJavascript("window.__edgeForceTop&&window.__edgeForceTop()", null)
         }
         currentUrl = target.url ?: tab.url
-        textZoom.apply(target, currentUrl)
         target.post { YouTubeAdBlocker.sync(target, target.url ?: tab.url, store.youtubeAdBlockEnabled) }
         target.alpha = 1f
         pillProgress.progress = 0f
@@ -1391,8 +1380,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         orbController?.alignWith(backBtn)
         // Menu ba chấm mở: orb thu vào viên thuốc trước, rồi viên thuốc mới bị menu hút vào.
         orbController?.absorbTarget = {
-            // Menu trang nằm đè lên viên thuốc nên orb không thu vào viên thuốc.
-            if (::menu.isInitialized && menu.isOpen && !menu.isPageMenu && toolbar.isCreated) {
+            if (::menu.isInitialized && menu.isOpen && toolbar.isCreated) {
                 OriginTransitionController.boundsOnScreen(urlPillFrame)?.let { android.graphics.PointF(it.centerX(), it.centerY()) }
             } else null
         }

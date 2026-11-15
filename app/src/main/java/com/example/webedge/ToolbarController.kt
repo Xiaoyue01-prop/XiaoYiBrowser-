@@ -41,8 +41,6 @@ internal interface ToolbarHost {
     fun goBack()
     fun toggleMenu()
     fun openTabSwitcher()
-    /** Mở menu trang (chia sẻ, lưu trang, tải lại, cỡ chữ...) từ nút trong viên thuốc địa chỉ. */
-    fun togglePageMenu()
     fun load(input: String)
     fun scheduleSuggest(query: String)
     fun hideSuggestions()
@@ -51,7 +49,7 @@ internal interface ToolbarHost {
 }
 
 /**
- * Thanh dưới nổi: nút quay lại, viên thuốc địa chỉ (tab, ô nhập, menu trang), nút ba chấm,
+ * Thanh dưới nổi: nút quay lại, viên thuốc địa chỉ (tab, ô nhập, tải lại), nút ba chấm,
  * cùng trạng thái thu gọn/ẩn. Sở hữu các view của thanh; Activity đọc lại qua các thuộc tính.
  */
 internal class ToolbarController(
@@ -72,7 +70,7 @@ internal class ToolbarController(
         private set
     lateinit var menuBtn: FrameLayout
         private set
-    lateinit var pageMenuBtn: ImageView
+    lateinit var reloadBtn: ImageView
         private set
     lateinit var tabBtn: ImageView
         private set
@@ -112,14 +110,12 @@ internal class ToolbarController(
         menuBtn.setOnClickListener { host.toggleMenu() }
         AnimationSystem.press(menuBtn, Constants.PRESS_SCALE_BTN)
 
-        // Nút menu trang thay chỗ nút tải lại; tải lại nằm trong menu trang và kéo-để-làm-mới.
-        pageMenuBtn = ImageView(activity)
-        pageMenuBtn.setImageDrawable(PathIcon(Icons.PAGE_MENU, host.foreground))
-        pageMenuBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
-        pageMenuBtn.contentDescription = "Menu trang"
-        pageMenuBtn.setOnClickListener { host.togglePageMenu() }
-        AnimationSystem.press(pageMenuBtn, Constants.PRESS_SCALE_SMALL)
-        // === Nút Multi-tab (đối xứng với pageMenuBtn) ===
+        reloadBtn = ImageView(activity)
+        reloadBtn.setImageDrawable(PathIcon(Icons.REFRESH, host.foreground))
+        reloadBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
+        reloadBtn.setOnClickListener { host.web.reload() }
+        AnimationSystem.press(reloadBtn, Constants.PRESS_SCALE_SMALL)
+        // === Nút Multi-tab (đối xứng với reloadBtn) ===
         tabBtn = ImageView(activity)
         tabBtn.setImageDrawable(PathIcon(Icons.TABS, host.foreground))
         tabBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
@@ -189,7 +185,7 @@ internal class ToolbarController(
         urlPill.setOnClickListener { setBarHidden(false) }
         urlPill.addView(tabBtn, LinearLayout.LayoutParams(dp(32), dp(32)))
         urlPill.addView(urlBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        urlPill.addView(pageMenuBtn, LinearLayout.LayoutParams(dp(32), dp(32)))
+        urlPill.addView(reloadBtn, LinearLayout.LayoutParams(dp(32), dp(32)))
 
         // Thanh dưới gồm 3 phần rời nhau: nút quay lại tròn, ô địa chỉ, nút ba chấm tròn
         bar = LinearLayout(activity)
@@ -252,14 +248,14 @@ internal class ToolbarController(
         AnimationSystem.scaleTo(urlBar, if (hide) 1.2f else 1f)
         backBtn.isClickable = !hide
         menuBtn.isClickable = !hide
-        pageMenuBtn.isClickable = !hide
+        reloadBtn.isClickable = !hide
         tabBtn.isClickable = !hide
         AnimationSystem.fade(backBtn, if (hide) 0f else backAlpha(), AnimationSystem.SETTLE)
         AnimationSystem.scaleTo(backBtn, if (hide) 0.5f else 1f)
         host.syncOrbMenuVisibility()
         // Menu trigger cũng co về Pill; nếu bảng menu đang mở thì chính MenuController morph cả thẻ.
         if (!host.isMenuOpen) animateMenuButtonCompact(hide)
-        AnimationSystem.fade(pageMenuBtn, if (hide) 0f else 1f, AnimationSystem.SETTLE)
+        AnimationSystem.fade(reloadBtn, if (hide) 0f else 1f, AnimationSystem.SETTLE)
         AnimationSystem.fade(tabBtn, if (hide) 0f else 1f, AnimationSystem.SETTLE)
         AnimationSystem.fade(host.bottomFade, if (hide) 0.35f else 1f, AnimationSystem.SETTLE)
         host.pushBottomReserve()

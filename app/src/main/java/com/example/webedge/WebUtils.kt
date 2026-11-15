@@ -12,12 +12,6 @@ import java.util.Locale
 
 // Tiện ích dùng chung cho WebView: cấu hình mặc định, user agent và mở link ngoài app.
 
-/** TẠM THỜI (chẩn đoán X-Requested-With): kết quả cấu hình gần nhất, hiện bằng toast một lần. Gỡ sau khi xác định xong. */
-object RequestedWithDiagnostics {
-    @Volatile var status: String? = null
-    @Volatile var shown = false
-}
-
 /** Cấu hình chung cho mọi WebView của app (tab chính và cửa sổ popup đăng nhập). */
 @SuppressLint("SetJavaScriptEnabled")
 fun WebSettings.applyBrowserDefaults() {
@@ -42,14 +36,9 @@ fun WebSettings.applyBrowserDefaults() {
 
     // WebView mặc định gửi header X-Requested-With: <tên gói app> tới mọi trang, làm lộ app đang dùng.
     // Danh sách origin rỗng = không gửi header này tới origin nào. Provider cũ không hỗ trợ thì giữ mặc định.
-    val requestedWithSupported = WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)
-    if (requestedWithSupported) {
-        val result = runCatching { WebSettingsCompat.setRequestedWithHeaderOriginAllowList(this, emptySet()) }
-        RequestedWithDiagnostics.status =
-            result.exceptionOrNull()?.let { "supported=true, call=LỖI ${it.javaClass.simpleName}: ${it.message}" }
-                ?: "supported=true, call=OK"
-    } else {
-        RequestedWithDiagnostics.status = "supported=false (WebView không hỗ trợ)"
+    // Đã đo (2026-11-15): với WebView 157 (mới nhất lúc đó, Android 17) isFeatureSupported trả về false và header vẫn được gửi.
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+        runCatching { WebSettingsCompat.setRequestedWithHeaderOriginAllowList(this, emptySet()) }
     }
 
     // Never algorithmically darken website content. Pages without their own dark stylesheet

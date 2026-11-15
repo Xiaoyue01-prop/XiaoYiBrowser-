@@ -1,6 +1,7 @@
 package com.example.webedge
 
 import android.net.Uri
+import android.util.Log
 import android.webkit.WebView
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
@@ -103,22 +104,25 @@ internal class BrowserWebMessageBridge(
 }
 
 /**
- * Gắn cầu nối vào WebView. Ưu tiên WebMessageListener + script shim; nếu WebView không hỗ trợ (hoặc gắn lỗi)
- * thì quay về addJavascriptInterface như cũ, nên các script không cần biết đang dùng đường nào.
+ * Gắn cầu nối vào WebView bằng WebMessageListener + script shim. KHÔNG còn đường dự phòng addJavascriptInterface:
+ * đường đó lộ đối tượng Java cho mọi khung (kể cả iframe quảng cáo) và không biết khung nào gọi. Nếu WebView không
+ * hỗ trợ (hoặc gắn lỗi) thì cầu nối tắt hẳn: các tính năng cần nó (màu thanh trên, media/PiP, menu nhấn giữ) ngừng
+ * hoạt động chứ không mở lỗ hổng.
  */
 internal fun installEdgeBridge(view: WebView, bridge: BrowserJavascriptBridge) {
     val modern = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) &&
         WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
-    if (modern) {
-        try {
-            WebViewCompat.addWebMessageListener(view, EDGE_BRIDGE_OBJECT, setOf("*"), BrowserWebMessageBridge(bridge))
-            WebViewCompat.addDocumentStartJavaScript(view, EDGE_BRIDGE_SHIM_JS, setOf("*"))
-            return
-        } catch (_: Exception) {
-            // rơi xuống đường cũ bên dưới
-        }
+    if (!modern) {
+        Log.w("EdgeBridge", "WebView không hỗ trợ WebMessageListener/DocumentStartScript: tắt cầu nối")
+        return
     }
-    view.addJavascriptInterface(bridge, "EdgeBridge")
+    try {
+        WebViewCompat.addWebMessageListener(view, EDGE_BRIDGE_OBJECT, setOf("*"), BrowserWebMessageBridge(bridge))
+        WebViewCompat.addDocumentStartJavaScript(view, EDGE_BRIDGE_SHIM_JS, setOf("*"))
+    } catch (e: Exception) {
+        Log.w("EdgeBridge", "Không gắn được cầu nối: tắt cầu nối", e)
+        runCatching { WebViewCompat.removeWebMessageListener(view, EDGE_BRIDGE_OBJECT) }
+    }
 }
 
 /** Gỡ cầu nối khỏi WebView (cả hai đường); gọi trước khi hủy WebView. */

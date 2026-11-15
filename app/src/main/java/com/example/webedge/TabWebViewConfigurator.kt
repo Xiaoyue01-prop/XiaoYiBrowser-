@@ -76,7 +76,7 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
         view.webViewClient = host.webViewClient
         view.webChromeClient = host.createChromeClient { tab.isPrivate }
         // Cầu nối EdgeBridge phải gắn trước các script đầu tài liệu bên dưới (WebMessageListener + shim, thiếu hỗ trợ
-        // thì addJavascriptInterface như cũ).
+        // thì cầu nối tắt hẳn, không còn đường dự phòng addJavascriptInterface).
         installEdgeBridge(view, BrowserJavascriptBridge(view, host.bridgeHost))
         // Chạy script media ở mọi khung (kể cả iframe chứa trình phát) ngay từ đầu tài liệu.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {

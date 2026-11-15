@@ -23,8 +23,6 @@ internal interface BrowserWebViewHost {
     val isUrlBarFocused: Boolean
     fun handleSpecialUrl(url: String, view: WebView): Boolean
     fun toast(msg: String)
-    /** Áp cỡ chữ đã lưu của website sắp tải cho [view] (cỡ chữ theo tên miền). */
-    fun applyTextZoom(view: WebView, url: String)
     fun forgetPageBackground(view: WebView)
     /** Bỏ nền trang đang áp lên cửa sổ (khi điều hướng hoặc renderer chết). */
     fun clearWindowPageBackground()
@@ -72,7 +70,6 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         YouTubeAdBlocker.onMainFrameNavigation(view, url)
         host.tabManager.updateForWebView(view, url, view.title ?: url)
-        host.applyTextZoom(view, url)
         // A navigation must not reuse the previous document's background tone.
         host.forgetPageBackground(view)
         if (view === host.web) host.clearWindowPageBackground()
@@ -124,11 +121,6 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
     }
 
     override fun onPageFinished(view: WebView, url: String) {
-        // TẠM THỜI: hiện kết quả cấu hình X-Requested-With một lần sau khi trang đầu tải xong (UI đã sẵn sàng).
-        if (!RequestedWithDiagnostics.shown && !host.isDestroyed) {
-            RequestedWithDiagnostics.shown = true
-            runCatching { host.toast("X-Requested-With: ${RequestedWithDiagnostics.status}") }
-        }
         host.tabManager.updateForWebView(view, url, view.title ?: url)
         // Private pages never enter the persisted browsing history.
         if (host.tabManager.getForWebView(view)?.isPrivate != true) {

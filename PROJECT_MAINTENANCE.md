@@ -97,17 +97,16 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 
 ## X-Requested-With (2026-11-15)
 
-- `applyBrowserDefaults()` gọi `WebSettingsCompat.setRequestedWithHeaderOriginAllowList(settings, emptySet())` (feature `REQUESTED_WITH_HEADER_ALLOW_LIST`) để WebView không gửi `X-Requested-With: com.example.webedge` tới trang web. Áp dụng cho tab và popup. Provider không hỗ trợ thì giữ hành vi mặc định.
-- Kiểm tra: mở `https://httpbin.org/anything` (mục `headers`), kỳ vọng không còn `X-Requested-With`.
-- Còn lộ: `Sec-Ch-Ua` vẫn có brand "Android WebView" (chưa có cách đổi ở tầng app).
-- Chưa biên dịch tại môi trường chỉnh sửa; `setRequestedWithHeaderOriginAllowList` chưa kiểm tra với androidx.webkit 1.18 (CI là kiểm tra đầu tiên).
-- TẠM THỜI (2026-11-15): `RequestedWithDiagnostics` (WebUtils.kt) + toast trong `BrowserWebViewClient.onPageFinished` (không gọi lúc khởi động vì UI chưa sẵn sàng, gây crash) hiện kết quả cấu hình X-Requested-With khi mở tab đầu tiên. Gỡ cả hai sau khi xác định nguyên nhân.
+- `applyBrowserDefaults()` gọi `WebSettingsCompat.setRequestedWithHeaderOriginAllowList(settings, emptySet())` khi `REQUESTED_WITH_HEADER_ALLOW_LIST` được hỗ trợ, để WebView không gửi `X-Requested-With: com.example.webedge`.
+- KẾT QUẢ ĐO: với WebView 157 (mới nhất tại 15/11/2026, Android 17) `isFeatureSupported` trả về false và header VẪN được gửi tới mọi trang. Không phải lỗi riêng của thiết bị; chưa rõ vì sao (Chromium đang chuyển sang bỏ header theo hướng opt-in nên API có thể đã đổi). Không có cách khác ở tầng app: header rỗng qua `loadUrl` chỉ áp dụng cho request đầu và có thể làm hỏng site. Lời gọi được giữ lại vì chỉ có tác dụng trên máy có WebView hỗ trợ.
+- Kiểm tra lại mỗi lần rà 2 tuần: mở `https://httpbin.org/anything` (mục `headers`).
+- Còn lộ: `Sec-Ch-Ua` có brand "Android WebView".
+- Bài học: không gọi toast lúc khởi động (trước khi UI dựng xong) vì sẽ crash; chỉ gọi sau `onPageFinished` trở đi.
 
-## Page menu (2026-11-15)
+## Cầu nối JS: siết quyền (2026-11-15)
 
-- The reload button in the URL pill is now the page-menu button (`ToolbarController.pageMenuBtn`, `Icons.PAGE_MENU`). Reload lives in the page menu and pull-to-refresh. Like the other pill buttons it fades and stops being clickable while the bar is collapsed.
-- `MenuController` has two kinds (`MenuController.Kind.MAIN` / `PAGE`), one instance, one `menuLayer`. `toggle(kind)` picks `activeOrigin` (`originView` = three-dot button, `pageOriginView` = page-menu button); all morph code uses `activeOrigin`.
-- Page menu differences: the card is anchored to the three-dot button's right edge (so it covers that button) and the pill's bottom edge, so it sits on top of the pill; it does NOT absorb the pill or the orb (`startPillAbsorb` is MAIN only, `OrbMenuController.absorbTarget` is guarded by `menu.isPageMenu`). Other bottom-bar buttons are inert while it is open because the menu layer covers them and `menu.isOpen` is true (pull-to-refresh, tab swipe and auto-hide check it). Back closes it.
-- Page menu content: Share / Save page / Reload, text size row (A- / % / A+), Find in page, Desktop site. Main menu keeps: Reader, Bookmarks, History, Downloads, Privacy Dashboard, Football scores, Settings.
-- Text size: `TextZoomController` drives `WebSettings.textZoom` (steps 50-200%), stored per host in `Store` ("text_zoom" JSON, `www.` stripped, 100% not stored). Private tabs keep it in memory only. It is applied in `onPageStarted` and on tab activation. The Reader's own font size is separate.
-- Not compiled in the editing environment; verify on device: open/close morph from the small button (clipping inside the pill, spring feel), card position vs. the back button and three-dot button, A-/A+ with the menu staying open, per-site persistence, private tab, desktop mode, bar collapsed state.
+- Bỏ đường dự phòng `addJavascriptInterface("EdgeBridge")` trong `installEdgeBridge`: đường đó lộ đối tượng Java cho mọi khung (kể cả iframe quảng cáo) và không biết khung nào gọi. Nếu WebView không hỗ trợ `WEB_MESSAGE_LISTENER` + `DOCUMENT_START_SCRIPT` hoặc gắn lỗi, cầu nối tắt hẳn (log tag `EdgeBridge`). Hệ quả: màu thanh trên, media/PiP, menu nhấn giữ ngừng chạy; `edge_script.js` gọi `EdgeBridge.*` không bọc try/catch ở vài chỗ (setPageBackground, setTopColor) nên có thể báo ReferenceError trong console. `minSdk = 36` nên khả năng này rất thấp.
+- `WebMediaPlayer` chỉ nhận ảnh bìa qua `isSafeArtworkUrl()`: https, host công khai (loại localhost, host một nhãn, .local/.internal/.lan, IPv6 literal, IPv4 riêng/loopback/link-local/CGNAT). Lý do: Media3 tự tải URL do trang chọn, bỏ qua chặn quảng cáo và profile private. Chưa chống DNS rebinding. Chưa xác minh Media3 tải ảnh đúng theo cách này; nếu ảnh bìa không hiện ở site chỉ có http thì đó là hành vi mới có chủ đích.
+- Không đổi PiP: `onBridgePipRequest` chỉ nhận từ tab đang xem, cờ PiP có hạn chờ (`PENDING_PIP_TIMEOUT_MS`), vào toàn màn hình thật vẫn cần tương tác người dùng. Chặn theo "vừa có trạng thái media" bị loại vì `requestPictureInPicture` đặt `cur` mà chưa gửi trạng thái (video đang tạm dừng sẽ mất PiP).
+- Vẫn còn: quy tắc origin `"*"` (trình duyệt đa dụng không có danh sách origin tin cậy); media/PiP/long-press vẫn nhận từ mọi khung vì MEDIA_JS/LONG_PRESS_JS chạy trong iframe.
+- Test tay: màu thanh trạng thái, PiP (YouTube, iframe nhúng, đang pause), nhấn giữ link/ảnh, ảnh bìa trên thông báo media (site https), và một trang http-only để thấy ảnh bìa bị bỏ.

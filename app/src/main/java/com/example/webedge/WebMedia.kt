@@ -46,6 +46,31 @@ data class WebMediaInfo(
     val aspect: Float get() = if (videoWidth > 0 && videoHeight > 0) videoWidth.toFloat() / videoHeight else 0f
 }
 
+private val IPV4_LITERAL = Regex("""^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$""")
+
+/**
+ * Ảnh bìa do trang chọn rồi Media3 (app, không phải WebView) tự tải, nên không qua chặn quảng cáo hay profile private.
+ * Chỉ nhận https tới host công khai: loại localhost, host một nhãn, đuôi nội bộ, IPv6 literal và IPv4 riêng/loopback/link-local.
+ * Giới hạn: không chống được DNS rebinding (host công khai trỏ về IP nội bộ).
+ */
+internal fun isSafeArtworkUrl(raw: String): Boolean {
+    val uri = runCatching { Uri.parse(raw) }.getOrNull() ?: return false
+    if (!"https".equals(uri.scheme, ignoreCase = true)) return false
+    val host = uri.host?.lowercase(java.util.Locale.ROOT)?.trimEnd('.') ?: return false
+    if (!host.contains('.') || host.contains(':')) return false
+    if (host == "localhost" || host.endsWith(".localhost") || host.endsWith(".local") ||
+        host.endsWith(".internal") || host.endsWith(".lan") || host.endsWith(".home.arpa")
+    ) return false
+    val m = IPV4_LITERAL.matchEntire(host) ?: return true
+    val o = m.groupValues.drop(1).map { it.toInt() }
+    if (o.any { it > 255 }) return false
+    return !(o[0] == 0 || o[0] == 10 || o[0] == 127 ||
+        (o[0] == 169 && o[1] == 254) ||
+        (o[0] == 172 && o[1] in 16..31) ||
+        (o[0] == 192 && o[1] == 168) ||
+        (o[0] == 100 && o[1] in 64..127))
+}
+
 /** Cầu nối dùng chung giữa Activity và Service (cùng một process). */
 object WebMediaHub {
     /** Chạy một đoạn JS trong tab đang xem; Activity gán khi đang chạy. */
@@ -77,7 +102,7 @@ class WebMediaPlayer : SimpleBasePlayer(Looper.getMainLooper()) {
             .setTitle(info.title)
             .setArtist(info.artist)
             .apply {
-                info.artworkUrl.takeIf { it.startsWith("http") }?.let { setArtworkUri(Uri.parse(it)) }
+                info.artworkUrl.takeIf { isSafeArtworkUrl(it) }?.let { setArtworkUri(Uri.parse(it)) }
             }
             .build()
         val mediaItem = MediaItem.Builder().setMediaId(MEDIA_ID).setMediaMetadata(metadata).build()
