@@ -110,6 +110,22 @@ class FootballLiveService : Service() {
                 (m.getNotificationChannel(CH_ALERT)?.importance ?: 0) >= NotificationManager.IMPORTANCE_HIGH
         }
 
+        /** Trang cài đặt của kênh "Tỉ số trực tiếp" (cập nhật thường): bật thông báo và Banner/Hiện nổi cho kênh này. */
+        fun liveSettingsIntent(context: Context): Intent {
+            createChannels(context.getSystemService(NotificationManager::class.java))
+            return Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, CH_LIVE)
+        }
+
+        /** Kênh tỉ số trực tiếp đang bật (không bị tắt hẳn) và đang ở mức hiện banner (HIGH) không. */
+        fun liveImportance(context: Context): Int {
+            val m = context.getSystemService(NotificationManager::class.java)
+            createChannels(m)
+            if (!m.areNotificationsEnabled()) return NotificationManager.IMPORTANCE_NONE
+            return m.getNotificationChannel(CH_LIVE)?.importance ?: NotificationManager.IMPORTANCE_NONE
+        }
+
         private fun createChannels(manager: NotificationManager) {
             manager.createNotificationChannel(
                 NotificationChannel(CH_LIVE, "Tỉ số trực tiếp", NotificationManager.IMPORTANCE_LOW).apply {

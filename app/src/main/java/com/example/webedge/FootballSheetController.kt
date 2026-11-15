@@ -196,7 +196,7 @@ class FootballSheetController(
     private fun bannerCard(): LinearLayout {
         val card = card()
         val ok = FootballLiveService.alertCanPopup(activity)
-        card.addView(text("Chip tự bung khi có bàn thắng", 13f, ink, true))
+        card.addView(text("Banner khi có sự kiện (bàn thắng, thẻ phạt)", 13f, ink, true))
         card.addView(
             text(
                 if (ok) "Cần bật thêm \"Banner\"/\"Hiện nổi\" cho kênh Sự kiện trận đấu nếu chip chưa bung ra."
@@ -208,6 +208,31 @@ class FootballSheetController(
         card.addView(
             button("Mở cài đặt kênh", accent) {
                 try { activity.startActivity(FootballLiveService.alertSettingsIntent(activity)) }
+                catch (e: Exception) { toast("Không mở được cài đặt thông báo") }
+            },
+            LinearLayout.LayoutParams(-2, dp(34)).apply { topMargin = dp(10) }
+        )
+
+        // Kênh "Tỉ số trực tiếp": cập nhật thường (đổi phút, thanh tiến độ). Mặc định ở mức nhẹ nhàng.
+        val liveLevel = FootballLiveService.liveImportance(activity)
+        val liveText = when {
+            liveLevel == android.app.NotificationManager.IMPORTANCE_NONE ->
+                "Đang tắt: Live Update sẽ không hiện. Hãy bật thông báo cho kênh này."
+            liveLevel >= android.app.NotificationManager.IMPORTANCE_HIGH ->
+                "Đã bật banner: chip sẽ bung ra ở mỗi lần cập nhật."
+            else -> "Đang ở mức nhẹ nhàng. Bật Banner/Hiện nổi nếu muốn chip bung ra ở mọi lần cập nhật."
+        }
+        card.addView(
+            text("Thông báo tỉ số trực tiếp", 13f, ink, true),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) }
+        )
+        card.addView(
+            text(liveText, 12f, if (liveLevel == android.app.NotificationManager.IMPORTANCE_NONE) BREAK_ORANGE else muted),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
+        )
+        card.addView(
+            button("Mở cài đặt kênh", accent) {
+                try { activity.startActivity(FootballLiveService.liveSettingsIntent(activity)) }
                 catch (e: Exception) { toast("Không mở được cài đặt thông báo") }
             },
             LinearLayout.LayoutParams(-2, dp(34)).apply { topMargin = dp(10) }
