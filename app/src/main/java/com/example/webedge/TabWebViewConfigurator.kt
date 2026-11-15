@@ -70,11 +70,6 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
         view.setBackgroundColor(Color.WHITE)
         val settings = view.settings
         settings.applyBrowserDefaults()
-        // TẠM THỜI: hiện kết quả cấu hình X-Requested-With một lần mỗi lần mở app (gỡ sau khi chẩn đoán xong).
-        if (!RequestedWithDiagnostics.shown) {
-            RequestedWithDiagnostics.shown = true
-            host.toast("X-Requested-With: ${RequestedWithDiagnostics.status}")
-        }
         if (mobileUa.isBlank()) mobileUa = cleanMobileUserAgent(settings.userAgentString)
         applyDesktopMode(view, tab.desktop)
         host.privateProfileManager.configureCookies(view, tab.isPrivate)

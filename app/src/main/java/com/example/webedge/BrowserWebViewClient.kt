@@ -121,6 +121,11 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
     }
 
     override fun onPageFinished(view: WebView, url: String) {
+        // TẠM THỜI: hiện kết quả cấu hình X-Requested-With một lần sau khi trang đầu tải xong (UI đã sẵn sàng).
+        if (!RequestedWithDiagnostics.shown && !host.isDestroyed) {
+            RequestedWithDiagnostics.shown = true
+            runCatching { host.toast("X-Requested-With: ${RequestedWithDiagnostics.status}") }
+        }
         host.tabManager.updateForWebView(view, url, view.title ?: url)
         // Private pages never enter the persisted browsing history.
         if (host.tabManager.getForWebView(view)?.isPrivate != true) {
