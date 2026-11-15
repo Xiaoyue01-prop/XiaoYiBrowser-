@@ -101,3 +101,4 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - Kiểm tra: mở `https://httpbin.org/anything` (mục `headers`), kỳ vọng không còn `X-Requested-With`.
 - Còn lộ: `Sec-Ch-Ua` vẫn có brand "Android WebView" (chưa có cách đổi ở tầng app).
 - Chưa biên dịch tại môi trường chỉnh sửa; `setRequestedWithHeaderOriginAllowList` chưa kiểm tra với androidx.webkit 1.18 (CI là kiểm tra đầu tiên).
+- TẠM THỜI (2026-11-15): `RequestedWithDiagnostics` (WebUtils.kt) + toast trong `TabWebViewConfigurator.configure` hiện kết quả cấu hình X-Requested-With khi mở tab đầu tiên. Gỡ cả hai sau khi xác định nguyên nhân.
