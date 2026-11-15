@@ -678,7 +678,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             density = d,
             topInset = { insetTop },
             bottomInset = { insetBottom },
-            entryPill = { urlPillFrame },
+            leftInset = { insetLeft },
+            rightInset = { insetRight },
+            toast = { msg -> toast(msg) },
             onVisibilityChanged = ::onReaderVisibilityChanged
         )
         menu = MenuController(
@@ -1217,8 +1219,20 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     // Đóng PiP bằng nút X: Android gọi onPictureInPictureModeChanged(false) rồi mới onStop, nên kiểm tra ở
     // onPictureInPictureModeChanged dễ chạy trước onStop và bỏ sót. Nếu app dừng khi video vẫn ở toàn màn hình
     // thì surface đã mất: thoát toàn màn hình (vừa đóng PiP thì dừng luôn video) để lần mở lại không bị đen.
+    override fun onStart() {
+        super.onStart()
+        // Quay lại app thì Live Update tiến độ đọc không còn cần nữa.
+        ReaderLiveUpdate.cancel(this)
+    }
+
     override fun onStop() {
         if (::pipController.isInitialized) pipController.trace("onStop inPip=$isInPictureInPictureMode entering=${pipController.isEntering}")
+        // Đang ở Reader mà vuốt ra màn hình chính: hiện % đã đọc dưới dạng Live Update (chỉ hiển thị, không có nút).
+        if (!isChangingConfigurations) {
+            readerModeController?.readingSnapshot()?.let { snapshot ->
+                ReaderLiveUpdate.post(this, snapshot.title, snapshot.host, snapshot.percent)
+            }
+        }
         if (isFullscreenVideoShowing() && !isInPictureInPictureMode && !isChangingConfigurations && !pipController.isEntering) {
             if (SystemClock.uptimeMillis() - lastPipExitUptime < PIP_CLOSE_WINDOW_MS) {
                 WebMediaHub.jsRunner?.invoke(mediaJs("pause()"))
@@ -1299,6 +1313,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             orbController?.setToolbarAvailable(false)
             orbController?.setTemporarilyHidden(true)
         } else {
+            ReaderLiveUpdate.cancel(this)
             if (readerStatusWasVisible) controller.show(WindowInsetsCompat.Type.statusBars())
             else controller.hide(WindowInsetsCompat.Type.statusBars())
 
@@ -1363,6 +1378,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (::pipController.isInitialized) pipController.close()
         readerModeController?.destroy()
         readerModeController = null
+        ReaderLiveUpdate.cancel(this)
         downloadPromptController?.dismissAll()
         downloadPromptController = null
         // Trả lời mọi hộp thoại còn treo (JsResult, quyền) trước khi hủy WebView.

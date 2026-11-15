@@ -142,13 +142,16 @@ object GlassSystem {
      * A null color restores the original light-page material and app colors.
      */
     fun setPageBackground(color: Int?, foregroundRoot: View? = null) {
-        val overlay = overlayForPage(color)
-        val pageToneChanged = pageBackgroundColor != color
-        pageBackgroundColor = color
+        requestedPageBackground = color
+        // Khi Reader đang mở, tông kính theo màu giấy đọc thay vì nền trang web bên dưới.
+        val tone = toneOverride ?: color
+        val overlay = overlayForPage(tone)
+        val pageToneChanged = pageBackgroundColor != tone
+        pageBackgroundColor = tone
 
         if (pageToneChanged) {
             pageToneObservers.values.toList().forEach { observer ->
-                runCatching { observer(color) }
+                runCatching { observer(tone) }
             }
         }
 
@@ -171,7 +174,21 @@ object GlassSystem {
             observeForegroundChanges(foregroundRoot)
         }
         // Keep every active native layer in sync, including sheets that live in their own Dialog window.
-        foregroundRoots.keys.toList().forEach { root -> applyForegroundContrast(root, color) }
+        foregroundRoots.keys.toList().forEach { root -> applyForegroundContrast(root, tone) }
+    }
+
+    // Màu nền trang web mới nhất mà trang báo lên, giữ lại để khôi phục khi hết ghi đè tông.
+    private var requestedPageBackground: Int? = null
+    private var toneOverride: Int? = null
+
+    /**
+     * Ghi đè tạm tông kính/chữ của cả app bằng một màu nền (Reader dùng màu giấy đọc: sáng, sepia, tối).
+     * Truyền null để trả về tông của trang web đang xem.
+     */
+    fun overrideTone(color: Int?) {
+        if (toneOverride == color) return
+        toneOverride = color
+        setPageBackground(requestedPageBackground)
     }
 
     /** Register another native window/root (for example a bottom sheet Dialog) with the same page tone. */
