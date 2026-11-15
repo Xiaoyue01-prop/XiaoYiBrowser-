@@ -73,6 +73,7 @@ class FootballLiveService : Service() {
         private const val EXTRA_ID = "com.example.webedge.extra.FIXTURE_ID"
         private const val PROBLEM_ID = 2_050_000_000
         private const val LIVE_BASE = 2_000_000_000   // tránh trùng id thông báo tải xuống
+        private const val FINAL_BASE = 2_100_000_000  // kết quả cuối trận: id riêng, không gắn với foreground service
 
         private val LIVE_GREEN = Color.rgb(52, 199, 89)   // xanh "đang đá" của Apple Sports
         private val BREAK_ORANGE = Color.rgb(255, 159, 10)
@@ -82,6 +83,8 @@ class FootballLiveService : Service() {
         /** Ghim một trận; false nếu đã đủ [FootballPins.MAX_PINS]. Gọi khi app đang ở foreground. */
         fun pin(context: Context, fixtureId: Long): Boolean {
             if (!FootballPins.add(context, fixtureId)) return false
+            // Ghim lại trận đã kết thúc thì bỏ thẻ kết quả cũ.
+            context.getSystemService(NotificationManager::class.java).cancel(FINAL_BASE + fixtureId.toInt())
             context.startForegroundService(syncIntent(context))
             return true
         }
@@ -89,6 +92,38 @@ class FootballLiveService : Service() {
         fun unpin(context: Context, fixtureId: Long) {
             FootballPins.remove(context, fixtureId)
             context.startService(syncIntent(context))
+        }
+
+        /** Trang cài đặt của kênh "Sự kiện trận đấu": nơi bật Banner/Hiện nổi để chip bung ra khi có bàn thắng. */
+        fun alertSettingsIntent(context: Context): Intent {
+            createChannels(context.getSystemService(NotificationManager::class.java))
+            return Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, CH_ALERT)
+        }
+
+        /** Kênh sự kiện có đang ở mức bật banner (HIGH) không. Một số hãng còn công tắc Banner riêng, app không đọc được. */
+        fun alertCanPopup(context: Context): Boolean {
+            val m = context.getSystemService(NotificationManager::class.java)
+            createChannels(m)
+            return m.areNotificationsEnabled() &&
+                (m.getNotificationChannel(CH_ALERT)?.importance ?: 0) >= NotificationManager.IMPORTANCE_HIGH
+        }
+
+        private fun createChannels(manager: NotificationManager) {
+            manager.createNotificationChannel(
+                NotificationChannel(CH_LIVE, "Tỉ số trực tiếp", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Tỉ số các trận bóng đá đã ghim"
+                    setShowBadge(false)
+                }
+            )
+            manager.createNotificationChannel(
+                NotificationChannel(CH_ALERT, "Sự kiện trận đấu", NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "Bàn thắng, thẻ phạt, bắt đầu/nghỉ giữa hiệp: Live Update bung ra rồi tự thu nhỏ"
+                    setShowBadge(false)
+                }
+            )
+            manager.deleteNotificationChannel("summit_football_goal")
         }
 
         private fun syncIntent(context: Context) =
@@ -259,14 +294,19 @@ class FootballLiveService : Service() {
         done.forEach { finish(it) }
     }
 
+    /**
+     * Hết trận: gỡ thông báo live (và foreground nếu là neo) rồi đăng thẻ kết quả bằng id RIÊNG.
+     * Trước đây kết quả dùng chung id với thông báo foreground nên bị gỡ theo khi service dừng.
+     */
     private fun finish(m: FbMatch) {
         FootballPins.remove(this, m.id)
         val left = FootballPins.pins(this)
         if (m.id == anchorId) {
             if (left.isNotEmpty()) setAnchor(left.first())
-            else stopForeground(STOP_FOREGROUND_DETACH)   // giữ thông báo, chỉ bỏ ràng buộc foreground
+            else { stopForeground(STOP_FOREGROUND_REMOVE); anchorId = -1L }
         }
-        manager.notify(liveId(m.id), buildFinal(m))       // thay thông báo live bằng kết quả cuối
+        manager.cancel(liveId(m.id))
+        manager.notify(finalId(m.id), buildFinal(m))
         clearState(m.id)
         if (left.isEmpty()) stopSelf()
     }
@@ -392,16 +432,34 @@ class FootballLiveService : Service() {
             "ABD" -> "Trận bị bỏ dở"
             else -> "Kết thúc"
         }
-        return Notification.Builder(this, CH_LIVE)
+        val summary = matchSummary(m)
+        val b = Notification.Builder(this, CH_LIVE)
             .setSmallIcon(R.drawable.ic_stat_football)
             .setLargeIcon(FootballLogos.scoreCard(m, FootballLogos.peek(m.homeLogo), FootballLogos.peek(m.awayLogo)))
             .setColor(Color.rgb(142, 142, 147))
             .setContentTitle(if (m.dead) "${m.homeName} vs ${m.awayName}" else scoreLine(m))
             .setContentText("$label · ${m.league}")
-            .setSubText("Summit")
+            .setSubText("Kết quả cuối trận")
+            .setShowWhen(true)
             .setContentIntent(openApp(3))
             .setAutoCancel(true)
-            .build()
+        if (summary.isNotBlank()) {
+            b.setStyle(Notification.BigTextStyle().bigText("$label · ${m.league}\n$summary"))
+        }
+        return b.build()
+    }
+
+    /** Tổng kết: cầu thủ ghi bàn của từng đội và thẻ đỏ, mỗi đội một dòng. */
+    private fun matchSummary(m: FbMatch): String {
+        fun line(team: String, home: Boolean): String? {
+            val g = m.goals.filter { it.home == home }.sortedBy { it.minute }
+                .joinToString(", ") { "⚽ ${it.player.ifBlank { "?" }} ${it.minute}'" }
+            val r = m.cards.filter { it.home == home && it.red }.sortedBy { it.minute }
+                .joinToString(", ") { "🟥 ${it.player.ifBlank { "?" }} ${it.minute}'" }
+            val all = listOf(g, r).filter { it.isNotBlank() }.joinToString(", ")
+            return if (all.isBlank()) null else "$team: $all"
+        }
+        return listOfNotNull(line(m.homeName, true), line(m.awayName, false)).joinToString("\n")
     }
 
     // ---------------------------------------------------------------- tiện ích
@@ -454,6 +512,7 @@ class FootballLiveService : Service() {
     }
 
     private fun liveId(fixtureId: Long) = LIVE_BASE + fixtureId.toInt()
+    private fun finalId(fixtureId: Long) = FINAL_BASE + fixtureId.toInt()
 
     private fun openApp(code: Int): PendingIntent = PendingIntent.getActivity(
         this, 7000 + code,
@@ -470,19 +529,5 @@ class FootballLiveService : Service() {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
-    private fun ensureChannels() {
-        manager.createNotificationChannel(
-            NotificationChannel(CH_LIVE, "Tỉ số trực tiếp", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Tỉ số các trận bóng đá đã ghim"
-                setShowBadge(false)
-            }
-        )
-        manager.createNotificationChannel(
-            NotificationChannel(CH_ALERT, "Sự kiện trận đấu", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Bàn thắng, thẻ phạt, bắt đầu/nghỉ giữa hiệp: Live Update bung ra rồi tự thu nhỏ"
-                setShowBadge(false)
-            }
-        )
-        manager.deleteNotificationChannel("summit_football_goal")
-    }
+    private fun ensureChannels() = createChannels(manager)
 }

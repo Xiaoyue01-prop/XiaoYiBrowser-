@@ -76,6 +76,7 @@ class FootballSheetController(
         page.removeAllViews()
         page.addView(keyCard(page), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         page.addView(demoCard(page), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+        page.addView(bannerCard(), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         if (FootballPins.apiKey(activity).isBlank()) return
 
         val tabs = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
@@ -182,6 +183,32 @@ class FootballSheetController(
                     pin(FootballDemo.ID)
                 }
                 buildPage(page)
+            },
+            LinearLayout.LayoutParams(-2, dp(34)).apply { topMargin = dp(10) }
+        )
+        return card
+    }
+
+    /**
+     * Chip chỉ tự bung ra khi kênh "Sự kiện trận đấu" được phép hiện banner. App không bật được công tắc này
+     * (nhiều hãng máy còn có công tắc Banner riêng, mặc định tắt), nên đưa người dùng tới đúng trang cài đặt.
+     */
+    private fun bannerCard(): LinearLayout {
+        val card = card()
+        val ok = FootballLiveService.alertCanPopup(activity)
+        card.addView(text("Chip tự bung khi có bàn thắng", 13f, ink, true))
+        card.addView(
+            text(
+                if (ok) "Cần bật thêm \"Banner\"/\"Hiện nổi\" cho kênh Sự kiện trận đấu nếu chip chưa bung ra."
+                else "Kênh Sự kiện trận đấu đang bị tắt hoặc hạ mức nên chip sẽ không bung ra. Hãy bật Banner/Hiện nổi.",
+                12f, if (ok) muted else BREAK_ORANGE
+            ),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
+        )
+        card.addView(
+            button("Mở cài đặt kênh", accent) {
+                try { activity.startActivity(FootballLiveService.alertSettingsIntent(activity)) }
+                catch (e: Exception) { toast("Không mở được cài đặt thông báo") }
             },
             LinearLayout.LayoutParams(-2, dp(34)).apply { topMargin = dp(10) }
         )
