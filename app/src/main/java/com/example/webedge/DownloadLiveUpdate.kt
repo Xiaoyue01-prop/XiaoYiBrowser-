@@ -36,6 +36,7 @@ object DownloadLiveUpdate {
     private const val ALERT_CHANNEL_NAME = "Download finished"
 
     private enum class Kind { INFO, DONE, FAILED }
+    private const val SETTLE_MS = 8_000L   // thời gian giữ dạng Live Update sau khi tải xong
 
     const val ACTION_CANCEL_DOWNLOAD =
         "com.example.webedge.action.CANCEL_DOWNLOAD"
@@ -406,27 +407,33 @@ object DownloadLiveUpdate {
     }
 
     /**
-     * Kết thúc: DONE/FAILED đăng qua kênh mức cao để thông báo bung ra một lần (trước đây tải xong là ẩn luôn);
-     * INFO (đã hủy...) vẫn ở kênh thấp.
+     * Kết thúc: DONE/FAILED đăng qua kênh mức cao ở dạng Live Update (ongoing + promoted, chip "Xong"/"Lỗi",
+     * thanh đầy) nên bung ra như một Live Update; sau [SETTLE_MS] chuyển thành thông báo thường, im lặng,
+     * giữ nút Mở/Chia sẻ. Android chỉ promote thông báo ongoing nên không thể giữ Live Update vĩnh viễn.
+     * INFO (đã hủy...) vẫn là thông báo thường ở kênh thấp.
      */
     private fun postComplete(
         context: Context,
         id: Long,
         name: String,
         message: String,
-        kind: Kind = Kind.INFO
+        kind: Kind = Kind.INFO,
+        settled: Boolean = false
     ) {
         ensureChannel(context)
 
         val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
+        val live = kind != Kind.INFO && !settled
         val color = when (kind) {
             Kind.DONE -> doneColor
             Kind.FAILED -> failColor
             Kind.INFO -> progressColor
         }
-        val b = Notification.Builder(context, if (kind == Kind.INFO) CHANNEL_ID else ALERT_CHANNEL_ID)
+        val b = Notification.Builder(
+            context, if (live) ALERT_CHANNEL_ID else CHANNEL_ID
+        )
             .setSmallIcon(if (kind == Kind.DONE) R.drawable.ic_stat_download_done else R.drawable.ic_stat_download)
             .setLargeIcon(fileTile(name, kind))
             .setColor(color)
@@ -434,11 +441,25 @@ object DownloadLiveUpdate {
             .setContentText(message)
             .setSubText(if (kind == Kind.DONE) "Tải xong" else "Tải xuống")
             .setShowWhen(true)
-            .setAutoCancel(true)
-            .setOngoing(false)
-            .setOnlyAlertOnce(false)
+            .setAutoCancel(!live)
+            .setOngoing(live)
+            .setOnlyAlertOnce(settled)
 
-        // Tải xong: chạm vào để mở file, kèm nút "Mở" rõ ràng; nếu không lấy được file thì mở app.
+        if (live) {
+            b.setShortCriticalText(if (kind == Kind.DONE) "Xong" else "Lỗi")
+            b.setShowWhen(false)
+            b.setExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
+            b.setStyle(
+                Notification.ProgressStyle()
+                    .setStyledByProgress(true)
+                    .setProgress(if (kind == Kind.DONE) 100 else 0)
+                    .setProgressSegments(
+                        listOf(Notification.ProgressStyle.Segment(100).setColor(color))
+                    )
+            )
+        }
+
+        // Tải xong: chạm vào để mở file, kèm nút "Mở" và "Chia sẻ"; nếu không lấy được file thì mở app.
         val open = if (kind == Kind.DONE) openFileIntent(context, id) else null
         if (open != null) {
             b.setContentIntent(open)
@@ -450,6 +471,19 @@ object DownloadLiveUpdate {
             b.setContentIntent(openAppPendingIntent(context, id))
         }
         manager.notify(id.toInt(), b.build())
+
+        if (live) {
+            scope.launch {
+                delay(SETTLE_MS)
+                try {
+                    // Người dùng đã vuốt bỏ trong lúc chờ thì không đăng lại.
+                    if (manager.activeNotifications.any { it.id == id.toInt() }) {
+                        postComplete(context, id, name, message, kind, settled = true)
+                    }
+                } catch (_: SecurityException) {
+                }
+            }
+        }
     }
 
     private fun openFileIntent(context: Context, id: Long): PendingIntent? = try {
