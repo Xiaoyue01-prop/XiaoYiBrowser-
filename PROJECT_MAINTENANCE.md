@@ -94,3 +94,10 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - Không áp dụng cho URL gõ/dán ở thanh địa chỉ, link mở từ app khác, POST. "Cùng site" so bằng xấp xỉ (không có Public Suffix List).
 - Cập nhật danh sách tham số mỗi lần rà soát 2 tuần. Chưa biên dịch tại môi trường chỉnh sửa; CI là kiểm tra đầu tiên.
 - Test tay: bấm link có `?fbclid=x&utm_source=y` từ trang khác site (kỳ vọng còn utm_source), link cùng site (giữ nguyên), form POST, private tab, popup đăng nhập.
+
+## X-Requested-With (2026-11-15)
+
+- `applyBrowserDefaults()` gọi `WebSettingsCompat.setRequestedWithHeaderOriginAllowList(settings, emptySet())` (feature `REQUESTED_WITH_HEADER_ALLOW_LIST`) để WebView không gửi `X-Requested-With: com.example.webedge` tới trang web. Áp dụng cho tab và popup. Provider không hỗ trợ thì giữ hành vi mặc định.
+- Kiểm tra: mở `https://httpbin.org/anything` (mục `headers`), kỳ vọng không còn `X-Requested-With`.
+- Còn lộ: `Sec-Ch-Ua` vẫn có brand "Android WebView" (chưa có cách đổi ở tầng app).
+- Chưa biên dịch tại môi trường chỉnh sửa; `setRequestedWithHeaderOriginAllowList` chưa kiểm tra với androidx.webkit 1.18 (CI là kiểm tra đầu tiên).

@@ -34,6 +34,12 @@ fun WebSettings.applyBrowserDefaults() {
     safeBrowsingEnabled = true
     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 
+    // WebView mặc định gửi header X-Requested-With: <tên gói app> tới mọi trang, làm lộ app đang dùng.
+    // Danh sách origin rỗng = không gửi header này tới origin nào. Provider cũ không hỗ trợ thì giữ mặc định.
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+        runCatching { WebSettingsCompat.setRequestedWithHeaderOriginAllowList(this, emptySet()) }
+    }
+
     // Never algorithmically darken website content. Pages without their own dark stylesheet
     // keep the author's default canvas (normally white); Summit adapts native overlays separately.
     if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
