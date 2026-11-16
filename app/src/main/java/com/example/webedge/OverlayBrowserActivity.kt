@@ -5,9 +5,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.text.TextUtils
@@ -87,13 +89,14 @@ class OverlayBrowserActivity : ComponentActivity() {
 
     @SuppressLint("ClickableViewAccessibility", "SetJavaScriptEnabled")
     private fun buildUi(startUrl: String) {
-        // Palette theo tông trang gần nhất mà Summit ghi nhận (mặc định: sáng). Sheet là bề mặt đặc như popup website.
-        val night = GlassSystem.isDarkPage()
-        val sheetColor = GlassSystem.pageSurfaceColor()
-        val textColor = GlassSystem.pagePrimaryText()
-        val subTextColor = GlassSystem.pageSecondaryText()
-        val grabberColor = GlassSystem.pageSheetGrabberColor()
-        val buttonColor = GlassSystem.pageSheetButtonColor()
+        // Bắt đầu bằng palette sáng trung tính; tông thật lấy từ màu nền của CHÍNH trang trong sheet (probeTone),
+        // không lấy tông của tab thường (trang ở sheet có thể sáng trong khi tab thường đang tối, và ngược lại).
+        var night = false
+        val sheetColor = GlassSystem.pageSurfaceColor(null)
+        val textColor = GlassSystem.pagePrimaryText(null)
+        val subTextColor = GlassSystem.pageSecondaryText(null)
+        val grabberColor = GlassSystem.pageSheetGrabberColor(null)
+        val buttonColor = GlassSystem.pageSheetButtonColor(null)
 
         val root = FrameLayout(this)
         val scrimView = View(this).apply {
@@ -237,6 +240,34 @@ class OverlayBrowserActivity : ComponentActivity() {
             )
         }
 
+        // Đổi palette của sheet theo màu nền trang (sáng/tối). Chỉ làm khi sáng/tối thật sự đổi.
+        fun applyTone(color: Int?) {
+            val dark = GlassSystem.isDarkPage(color)
+            if (dark == night) return
+            night = dark
+            val fg = GlassSystem.pagePrimaryText(color)
+            val btn = GlassSystem.pageSheetButtonColor(color)
+            sheetView.background = ColorDrawable(GlassSystem.pageSurfaceColor(color))
+            title.setTextColor(fg)
+            host.setTextColor(GlassSystem.pageSecondaryText(color))
+            closeBtn.setImageDrawable(PathIcon(Icons.CLOSE, fg))
+            closeBtn.background = ovalDrawable(btn)
+            moreBtn.setImageDrawable(PathIcon(Icons.MORE_HORIZ, fg))
+            moreBtn.background = ovalDrawable(btn)
+            (grabber.background as? GradientDrawable)?.setColor(GlassSystem.pageSheetGrabberColor(color))
+            BrowserSheetMotion.configureWindow(window, root, dark)
+            // Lớp phủ trắng nhẹ ở mép chỉ hợp với trang sáng.
+            GlassSystem.applyEdgeBlur(view, headerPx + dp(24), 0, dp(14).toFloat(), if (dark) 0f else 0.30f, 0f)
+        }
+        fun probeTone(target: WebView) {
+            target.evaluateJavascript(TONE_PROBE_JS) { raw ->
+                val parts = raw?.trim('"')?.split(',')?.mapNotNull { it.trim().toFloatOrNull() }
+                if (parts != null && parts.size >= 3) {
+                    applyTone(Color.rgb(parts[0].toInt(), parts[1].toInt(), parts[2].toInt()))
+                }
+            }
+        }
+
         view.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(v: WebView, newProgress: Int) {
                 val bar = progressBar ?: return
@@ -258,12 +289,18 @@ class OverlayBrowserActivity : ComponentActivity() {
                 injectHeaderSpace(v)
             }
 
-            override fun onPageCommitVisible(v: WebView, url: String) = injectHeaderSpace(v)
+            override fun onPageCommitVisible(v: WebView, url: String) {
+                injectHeaderSpace(v)
+                probeTone(v)
+            }
 
             override fun onPageFinished(v: WebView, url: String) {
                 currentUrl = url
                 updateTitle(v, url)
                 injectHeaderSpace(v)
+                probeTone(v)
+                // Nhiều trang đổi nền sau khi tải xong (dark mode theo script): đo lại một lần nữa.
+                v.postDelayed({ if (!isDestroyed) probeTone(v) }, 700)
                 if (store.adBlockEnabled && AdBlocker.siteKey(url)?.let(store::isAdBlockDisabledFor) != true) {
                     v.evaluateJavascript(AdBlocker.HIDE_CSS, null)
                 }
@@ -411,6 +448,12 @@ class OverlayBrowserActivity : ComponentActivity() {
     }
 
     private companion object {
+        /** Trả "r,g,b" của nền trang (body, rồi html; nền trong suốt thì coi là trắng). */
+        const val TONE_PROBE_JS =
+            "(function(){function c(e){if(!e)return null;var b=getComputedStyle(e).backgroundColor||'';" +
+                "var m=b.match(/rgba?\\(([^)]+)\\)/);if(!m)return null;var p=m[1].split(',').map(parseFloat);" +
+                "if(p.length>3&&p[3]<0.5)return null;return p[0]+','+p[1]+','+p[2];}" +
+                "return c(document.body)||c(document.documentElement)||'255,255,255';})()"
         const val MENU_OPEN_SUMMIT = 1
         const val MENU_COPY = 2
         const val MENU_SHARE = 3
