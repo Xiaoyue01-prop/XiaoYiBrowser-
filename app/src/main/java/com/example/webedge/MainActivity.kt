@@ -40,6 +40,7 @@ import androidx.lifecycle.lifecycleScope
 class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     private lateinit var store: Store
+    private lateinit var firstRunPermissions: FirstRunPermissions
     private lateinit var pipController: PictureInPictureController
     private val webMedia = WebMediaController(this)
     private var pullRefresh: PullToRefreshController? = null
@@ -458,6 +459,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         WebMediaHub.jsRunner = { js -> runOnUiThread { if (::web.isInitialized) web.evaluateJavascript(js, null) } }
 
         store = Store(this)
+        firstRunPermissions = FirstRunPermissions(this, store)
         privateProfileManager = PrivateProfileManager()
         // Dọn các profile riêng tư bị bỏ lại nếu Android kill process trước khi onDestroy chạy.
         privateProfileManager.purgeOrphanedSessions()
@@ -645,6 +647,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
         )
         setContentView(root)
+        // Xin gộp quyền ở lần mở đầu tiên, đợi UI vẽ xong rồi mới hiện hộp thoại hệ thống.
+        root.post { firstRunPermissions.requestIfFirstRun() }
     }
 
     /** Các controller dùng chung BlurTarget (tải xuống, menu, hộp thoại, tab, Orb). */

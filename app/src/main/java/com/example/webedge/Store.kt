@@ -156,6 +156,11 @@ class Store(context: Context) {
         get() = sp.getBoolean("web_dark_mode", false)
         set(v) { sp.edit().putBoolean("web_dark_mode", v).apply() }
 
+    /** Đã hỏi gộp các quyền runtime ở lần mở app đầu tiên chưa (xem FirstRunPermissions). */
+    var firstRunPermissionsAsked: Boolean
+        get() = sp.getBoolean("first_run_permissions_asked", false)
+        set(v) { sp.edit().putBoolean("first_run_permissions_asked", v).apply() }
+
     var autoHideBar: Boolean
     get() = sp.getBoolean("autohide", true)
     set(v) { sp.edit().putBoolean("autohide", v).apply() }
