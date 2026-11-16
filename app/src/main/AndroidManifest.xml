@@ -33,18 +33,32 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Để máy nhận Summit là trình duyệt: mở được mọi link http/https. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.APP_BROWSER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            Link từ app khác (Facebook, Telegram...): hiện thành sheet ngay trên app đó, kiểu Chrome Custom Tabs.
+            Đây cũng là nơi khai báo http/https để máy nhận Summit là trình duyệt. Không đặt launchMode:
+            mặc định "standard" nên activity nằm chung task với app gọi; taskAffinity riêng để khi app gọi dùng
+            NEW_TASK thì sheet cũng không chui vào task của MainActivity.
+        -->
+        <activity
+            android:name=".OverlayBrowserActivity"
+            android:exported="true"
+            android:theme="@style/OverlayTheme"
+            android:taskAffinity="com.example.webedge.overlay"
+            android:excludeFromRecents="true"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="http" />
                 <data android:scheme="https" />
-            </intent-filter>
-
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.APP_BROWSER" />
             </intent-filter>
         </activity>
 

@@ -1,0 +1,421 @@
+package com.example.webedge
+
+import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Outline
+import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
+import android.net.Uri
+import android.os.Bundle
+import android.text.TextUtils
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.ViewOutlineProvider
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.PopupMenu
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.dynamicanimation.animation.DynamicAnimation
+import java.util.Locale
+
+/**
+ * Xem nhanh một link do app khác gửi tới (Facebook, Telegram, Gmail...) kiểu Chrome Custom Tabs / SFSafariViewController:
+ * sheet bo góc trượt lên NGAY TRÊN app đó (cùng task, nền trong suốt), có ✕ để đóng, tiêu đề + tên miền, menu ba chấm.
+ * Bấm ✕, kéo tay nắm/thanh tiêu đề xuống, chạm vùng tối hoặc nút Back (khi hết lịch sử) thì quay về đúng app cũ.
+ * "Mở trong Summit" chuyển trang sang một tab thật trong [MainActivity].
+ *
+ * Dùng chung process với Summit nên cookie/đăng nhập của tab thường dùng được luôn (CookieManager mặc định).
+ * Không dùng profile riêng tư. Bộ chặn quảng cáo chung ([AdBlocker]) vẫn áp dụng.
+ *
+ * Bản v1 chưa có: xin quyền camera/mic/vị trí của trang, toàn màn hình video, tải xuống ngay trong sheet (tải xuống
+ * và popup mới sẽ chuyển sang Summit / mở cùng cửa sổ).
+ */
+class OverlayBrowserActivity : ComponentActivity() {
+
+    private lateinit var store: Store
+    private var web: WebView? = null
+    private var sheet: View? = null
+    private var scrim: View? = null
+    private var progressBar: View? = null
+    private var titleView: TextView? = null
+    private var hostView: TextView? = null
+    private var closing = false
+    private var currentUrl: String = ""
+
+    @SuppressLint("ClickableViewAccessibility", "SetJavaScriptEnabled")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val startUrl = incomingUrl(intent)
+        if (startUrl == null) {
+            finish()
+            return
+        }
+        currentUrl = startUrl
+        enableEdgeToEdge()
+        // Không dùng animation cửa sổ của hệ thống: sheet tự trượt bằng spring như popup website.
+        overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
+        overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
+
+        store = Store(this)
+        AdBlocker.init(this)
+        buildUi(startUrl)
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val view = web
+                if (view != null && view.canGoBack()) view.goBack() else animateClose()
+            }
+        })
+    }
+
+    @SuppressLint("ClickableViewAccessibility", "SetJavaScriptEnabled")
+    private fun buildUi(startUrl: String) {
+        // Palette theo tông trang gần nhất mà Summit ghi nhận (mặc định: sáng). Sheet là bề mặt đặc như popup website.
+        val night = GlassSystem.isDarkPage()
+        val sheetColor = GlassSystem.pageSurfaceColor()
+        val textColor = GlassSystem.pagePrimaryText()
+        val subTextColor = GlassSystem.pageSecondaryText()
+        val grabberColor = GlassSystem.pageSheetGrabberColor()
+        val buttonColor = GlassSystem.pageSheetButtonColor()
+
+        val root = FrameLayout(this)
+        val scrimView = View(this).apply {
+            setBackgroundColor(GlassSystem.pageScrimColor())
+            alpha = 0f
+            setOnClickListener { animateClose() }
+        }
+        root.addView(scrimView, FrameLayout.LayoutParams(-1, -1))
+
+        val corner = dp(36)
+        val sheetView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = ColorDrawable(sheetColor)
+            // Chỉ bo hai góc trên: đáy kéo dài ra ngoài khung nên góc dưới không bị bo.
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height + corner, corner.toFloat())
+                }
+            }
+            clipToOutline = true
+            isClickable = true
+            translationY = resources.displayMetrics.heightPixels.toFloat()
+        }
+        val sheetLp = FrameLayout.LayoutParams(-1, -1)
+        root.addView(sheetView, sheetLp)
+
+        // --- WebView ---
+        val view = WebView(webViewContext(store.webDarkMode))
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+            setAcceptThirdPartyCookies(view, true)
+        }
+        view.settings.applyBrowserDefaults()
+        view.settings.apply {
+            // window.open / target=_blank: tải ngay trong sheet (không có cửa sổ phụ chồng lên).
+            setSupportMultipleWindows(false)
+            userAgentString = cleanMobileUserAgent(userAgentString)
+        }
+
+        // --- Tay nắm + thanh tiêu đề (vùng kéo để đóng) ---
+        val dragZone = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val grabber = View(this).apply { background = roundedDrawable(dp(3).toFloat(), grabberColor) }
+        dragZone.addView(
+            grabber,
+            LinearLayout.LayoutParams(dp(36), dp(5)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(8)
+            }
+        )
+        val header = FrameLayout(this)
+        val closeBtn = ImageView(this).apply {
+            setImageDrawable(PathIcon(Icons.CLOSE, textColor))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = ovalDrawable(buttonColor)
+            contentDescription = "Đóng"
+            setOnClickListener { animateClose() }
+        }
+        AnimationSystem.press(closeBtn, Constants.PRESS_SCALE_BTN)
+        header.addView(
+            closeBtn,
+            FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER_VERTICAL or Gravity.START).apply {
+                marginStart = dp(16)
+            }
+        )
+        val moreBtn = ImageView(this).apply {
+            setImageDrawable(PathIcon(Icons.MORE_HORIZ, textColor))
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            background = ovalDrawable(buttonColor)
+            contentDescription = "Thêm"
+        }
+        AnimationSystem.press(moreBtn, Constants.PRESS_SCALE_BTN)
+        moreBtn.setOnClickListener { showMenu(moreBtn) }
+        header.addView(
+            moreBtn,
+            FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER_VERTICAL or Gravity.END).apply {
+                marginEnd = dp(16)
+            }
+        )
+        // Giữa: tiêu đề trang (đậm) + tên miền (nhỏ, mờ) như Custom Tabs.
+        val titleBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+        }
+        val title = TextView(this).apply {
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(textColor)
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        val host = TextView(this).apply {
+            textSize = 12f
+            setTextColor(subTextColor)
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        titleBox.addView(title, LinearLayout.LayoutParams(-1, -2))
+        titleBox.addView(host, LinearLayout.LayoutParams(-1, -2))
+        header.addView(
+            titleBox,
+            FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply {
+                marginStart = dp(72)
+                marginEnd = dp(72)
+            }
+        )
+        // Thanh tiến trình mảnh sát đáy tiêu đề.
+        val progress = View(this).apply {
+            setBackgroundColor(0xFF0A84FF.toInt())
+            pivotX = 0f
+            scaleX = 0f
+            alpha = 0f
+        }
+        header.addView(progress, FrameLayout.LayoutParams(-1, dp(2), Gravity.BOTTOM))
+        dragZone.addView(header, LinearLayout.LayoutParams(-1, dp(56)))
+
+        titleView = title
+        hostView = host
+        progressBar = progress
+        updateTitle(view, startUrl)
+
+        // Trang phủ kín sheet, tiêu đề trong suốt nằm trên và mờ dần phần trang sát mép (giống popup website).
+        val headerPx = dp(BrowserSheetMotion.HEADER_HEIGHT_DP)
+        val pageHost = FrameLayout(this)
+        pageHost.addView(view, FrameLayout.LayoutParams(-1, -1))
+        pageHost.addView(dragZone, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        sheetView.addView(pageHost, LinearLayout.LayoutParams(-1, -1))
+        GlassSystem.installEdgeBlur(view, headerPx + dp(24), 0, dp(14).toFloat(), if (night) 0f else 0.30f, 0f)
+
+        // Đẩy nội dung trang xuống dưới tiêu đề lúc nghỉ: padding-top cho <html>, quy dp -> px CSS theo viewport.
+        val widthDp = (resources.displayMetrics.widthPixels / resources.displayMetrics.density).toInt()
+        val headerDp = BrowserSheetMotion.HEADER_HEIGHT_DP
+        fun injectHeaderSpace(target: WebView) {
+            target.evaluateJavascript(
+                "(function(){var p=Math.round($headerDp*window.innerWidth/$widthDp);" +
+                    "var s=document.getElementById('summit-hdr');" +
+                    "if(!s){s=document.createElement('style');s.id='summit-hdr';(document.head||document.documentElement).appendChild(s);}" +
+                    "s.textContent='html{padding-top:'+p+'px !important;box-sizing:border-box !important;}';})();",
+                null
+            )
+        }
+
+        view.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(v: WebView, newProgress: Int) {
+                val bar = progressBar ?: return
+                if (newProgress >= 100) {
+                    AnimationSystem.fade(bar, 0f)
+                } else {
+                    bar.alpha = 1f
+                    AnimationSystem.spring(bar, DynamicAnimation.SCALE_X, newProgress / 100f, AnimationSystem.SETTLE)
+                }
+            }
+
+            override fun onReceivedTitle(v: WebView, receivedTitle: String?) = updateTitle(v, v.url)
+        }
+        view.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(v: WebView, url: String, favicon: Bitmap?) {
+                currentUrl = url
+                AdBlocker.onMainFrameNavigation(v, url)
+                updateTitle(v, url)
+                injectHeaderSpace(v)
+            }
+
+            override fun onPageCommitVisible(v: WebView, url: String) = injectHeaderSpace(v)
+
+            override fun onPageFinished(v: WebView, url: String) {
+                currentUrl = url
+                updateTitle(v, url)
+                injectHeaderSpace(v)
+                if (store.adBlockEnabled && AdBlocker.siteKey(url)?.let(store::isAdBlockDisabledFor) != true) {
+                    v.evaluateJavascript(AdBlocker.HIDE_CSS, null)
+                }
+            }
+
+            override fun shouldInterceptRequest(v: WebView, request: WebResourceRequest): WebResourceResponse? {
+                if (store.adBlockEnabled && AdBlocker.shouldBlock(request, v, store::isAdBlockDisabledFor)) {
+                    return AdBlocker.createEmptyResponse()
+                }
+                return super.shouldInterceptRequest(v, request)
+            }
+
+            override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
+                if (!request.isForMainFrame) return false
+                return this@OverlayBrowserActivity.openExternalUrl(request.url.toString(), v) { msg ->
+                    Toast.makeText(this@OverlayBrowserActivity, msg, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        // Tải xuống do MainActivity lo (có hộp xác nhận, DownloadManager, Live Update): chuyển link sang Summit.
+        view.setDownloadListener { url, _, _, _, _ -> openInSummit(url) }
+
+        // --- Kéo xuống để đóng ---
+        BrowserSheetMotion.bindDragZone(dragZone, sheetView, scrimView, ::dp, ::animateClose)
+
+        // --- Cửa sổ trong suốt, tự lo vùng thanh hệ thống và bàn phím ---
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            sheetLp.topMargin = bars.top + dp(BrowserSheetMotion.TOP_MARGIN_DP)
+            sheetView.layoutParams = sheetLp
+            sheetView.setPadding(0, 0, 0, ime.bottom)
+            insets
+        }
+        setContentView(root)
+        BrowserSheetMotion.configureWindow(window, root, night)
+
+        web = view
+        sheet = sheetView
+        scrim = scrimView
+        ViewCompat.requestApplyInsets(root)
+        root.post {
+            if (closing) return@post
+            ViewCompat.requestApplyInsets(root)
+            BrowserSheetMotion.show(sheetView, scrimView)
+        }
+        view.loadUrl(startUrl)
+    }
+
+    // ---------------- Menu ba chấm ----------------
+
+    private fun showMenu(anchor: View) {
+        val menu = PopupMenu(this, anchor, Gravity.END)
+        menu.menu.add(0, MENU_OPEN_SUMMIT, 0, "Mở trong Summit")
+        menu.menu.add(0, MENU_COPY, 1, "Sao chép liên kết")
+        menu.menu.add(0, MENU_SHARE, 2, "Chia sẻ")
+        menu.menu.add(0, MENU_REFRESH, 3, "Tải lại")
+        menu.setOnMenuItemClickListener { item ->
+            val url = web?.url ?: currentUrl
+            when (item.itemId) {
+                MENU_OPEN_SUMMIT -> openInSummit(url)
+                MENU_COPY -> {
+                    val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("url", url))
+                    Toast.makeText(this, "Đã sao chép liên kết", Toast.LENGTH_SHORT).show()
+                }
+                MENU_SHARE -> {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, url)
+                    }
+                    startActivity(Intent.createChooser(send, null))
+                }
+                MENU_REFRESH -> web?.reload()
+            }
+            true
+        }
+        menu.show()
+    }
+
+    /** Chuyển trang sang tab mới trong Summit (MainActivity singleTask sẽ lên trước) rồi đóng sheet ngay. */
+    private fun openInSummit(url: String) {
+        val open = Intent(this, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse(url)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(open)
+        finish()
+    }
+
+    private fun updateTitle(view: WebView, url: String?) {
+        val pageHost = runCatching { Uri.parse(url).host }.getOrNull()?.removePrefix("www.")?.takeIf { it.isNotBlank() }
+        val pageTitle = view.title?.takeIf { it.isNotBlank() && it != url }
+        titleView?.text = pageTitle ?: pageHost ?: "Summit"
+        hostView?.text = pageHost.orEmpty()
+        hostView?.visibility = if (pageHost == null || pageTitle == pageHost) View.GONE else View.VISIBLE
+    }
+
+    // ---------------- Đóng ----------------
+
+    /** Sheet trượt xuống, lớp tối mờ đi rồi mới finish() về app cũ. [velocity]: vận tốc kéo (px/giây) để nối mạch với tay. */
+    private fun animateClose(velocity: Float = 0f) {
+        if (closing) return
+        val sheetView = sheet
+        val scrimView = scrim
+        if (sheetView == null || scrimView == null || sheetView.height <= 0) {
+            finish()
+            return
+        }
+        closing = true
+        AnimationSystem.fade(scrimView, 0f, AnimationSystem.DISMISS)
+        AnimationSystem.spring(
+            sheetView,
+            DynamicAnimation.TRANSLATION_Y,
+            sheetView.height.toFloat() + dp(EXIT_OFFSET_DP),
+            AnimationSystem.DISMISS,
+            velocity
+        ) { if (!isFinishing) finish() }
+        // Dự phòng nếu spring bị huỷ giữa chừng.
+        scrimView.postDelayed({ if (!isFinishing) finish() }, CLOSE_FALLBACK_MS)
+    }
+
+    override fun onDestroy() {
+        web?.let { view ->
+            AdBlocker.forget(view)
+            view.stopLoading()
+            (view.parent as? ViewGroup)?.removeView(view)
+            view.webChromeClient = WebChromeClient()
+            view.webViewClient = WebViewClient()
+            view.destroy()
+        }
+        web = null
+        super.onDestroy()
+    }
+
+    // ---------------- Link tới ----------------
+
+    /** Link http/https do app khác gửi tới; null nếu intent không phải link web. */
+    private fun incomingUrl(source: Intent?): String? {
+        val received = source ?: return null
+        if (received.action != Intent.ACTION_VIEW) return null
+        val scheme = received.data?.scheme?.lowercase(Locale.ROOT)
+        return if (scheme == "http" || scheme == "https") received.dataString else null
+    }
+
+    private companion object {
+        const val MENU_OPEN_SUMMIT = 1
+        const val MENU_COPY = 2
+        const val MENU_SHARE = 3
+        const val MENU_REFRESH = 4
+        const val EXIT_OFFSET_DP = 40
+        const val CLOSE_FALLBACK_MS = 900L
+    }
+}
