@@ -20,6 +20,11 @@ import android.widget.TextView
 import androidx.dynamicanimation.animation.DynamicAnimation
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.json.JSONTokener
 import kotlin.math.roundToInt
@@ -54,6 +59,8 @@ internal class ReaderModeController(
     private val rightInset: () -> Int,
     private val autoHide: () -> Boolean,
     private val toast: (String) -> Unit,
+    /** Hộp thoại nhập chữ (dùng để xin API key dịch). onResult nhận null khi người dùng hủy. */
+    private val askText: (title: String, message: String, current: String, onResult: (String?) -> Unit) -> Unit,
     private val onVisibilityChanged: (Boolean) -> Unit
 ) {
     private enum class ReaderTheme(val label: String) { LIGHT("Sáng"), SEPIA("Sepia"), DARK("Tối") }
@@ -98,6 +105,12 @@ internal class ReaderModeController(
     private val settingsOptionRows = mutableListOf<Pair<LinearLayout, () -> Int>>()
     private var menuThemeValue: TextView? = null
     private var menuWidthValue: TextView? = null
+
+    // Dịch bài sang tiếng Việt. translated[0] = tiêu đề, translated[i + 1] = đoạn i; null = chưa dịch xong.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var translateJob: Job? = null
+    private var translated: Array<String?>? = null
+    private var showTranslated = false
 
     private var exiting = false
     private var isSerif = false
@@ -248,6 +261,10 @@ internal class ReaderModeController(
     }
 
     private fun clearViews() {
+        translateJob?.cancel()
+        translateJob = null
+        translated = null
+        showTranslated = false
         // Trả tông kính về nền của trang web đang xem.
         GlassSystem.overrideTone(null)
         overlay = null
@@ -787,6 +804,10 @@ internal class ReaderModeController(
             body.addView(quick, LinearLayout.LayoutParams(-1, -2))
 
             addDivider(body)
+            body.addView(menuRow(TRANSLATE_ICON, translateLabel(), null) {
+                closeSurface()
+                onTranslateClicked()
+            }, LinearLayout.LayoutParams(-1, dp(48)))
             val themeValue = panelText(theme.label, 13f, false, secondary = true)
             menuThemeValue = themeValue
             body.addView(menuRow(Icons.TUNE, "Đổi nền đọc", themeValue) {
@@ -862,6 +883,107 @@ internal class ReaderModeController(
         val lp = LinearLayout.LayoutParams(-1, maxOf(1, (density * 0.75f).toInt()))
         lp.setMargins(dp(10), dp(6), dp(10), dp(6))
         parent.addView(line, lp)
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Dịch sang tiếng Việt (Gemini)
+    // ---------------------------------------------------------------------------------------------
+
+    private val isTranslating: Boolean get() = translateJob?.isActive == true
+
+    private fun translateLabel(): String = when {
+        isTranslating -> "Dừng dịch"
+        translated == null -> "Dịch sang tiếng Việt"
+        showTranslated -> "Xem bản gốc"
+        else -> "Xem bản dịch"
+    }
+
+    private fun onTranslateClicked() {
+        if (article == null) return
+        when {
+            isTranslating -> {
+                translateJob?.cancel()
+                toast("Đã dừng dịch")
+            }
+            translated == null -> beginTranslation()
+            else -> {
+                showTranslated = !showTranslated
+                renderArticleText()
+            }
+        }
+    }
+
+    private fun beginTranslation() {
+        val current = article ?: return
+        if (TranslateApi.looksVietnamese(current.paragraphs.take(6).joinToString(" "))) {
+            toast("Bài này đã là tiếng Việt")
+            return
+        }
+        val key = TranslateSettings.apiKey(activity)
+        if (key.isBlank()) {
+            askText(
+                "Dịch bằng Gemini",
+                "Dán API key lấy ở aistudio.google.com/apikey. Key chỉ lưu trên máy này.",
+                ""
+            ) { value ->
+                val clean = value?.trim().orEmpty()
+                if (clean.isNotBlank()) {
+                    TranslateSettings.setApiKey(activity, clean)
+                    if (article === current) beginTranslation()
+                }
+            }
+            return
+        }
+
+        val texts = listOf(current.title) + current.paragraphs
+        val out = arrayOfNulls<String>(texts.size)
+        translated = out
+        showTranslated = true
+        toast("Đang dịch…")
+        val model = TranslateSettings.model(activity)
+        translateJob = scope.launch {
+            try {
+                TranslateApi.translateAll(key, model, texts) { indices, results ->
+                    if (article !== current) return@translateAll
+                    indices.forEachIndexed { n, idx -> if (idx < out.size) out[idx] = results.getOrNull(n) }
+                    renderArticleText()
+                }
+                if (article === current) toast("Đã dịch xong")
+            } catch (e: TranslateApiException) {
+                if (article !== current) return@launch
+                // Chưa có đoạn nào dịch được thì quay về bản gốc để lần sau thử lại từ đầu.
+                if (out.all { it == null }) {
+                    translated = null
+                    showTranslated = false
+                }
+                toast(
+                    when (e.kind) {
+                        TranslateApiException.Kind.AUTH -> {
+                            TranslateSettings.setApiKey(activity, "")
+                            "API key không hợp lệ, hãy nhập lại"
+                        }
+                        TranslateApiException.Kind.QUOTA -> "Hết hạn mức dịch hôm nay"
+                        TranslateApiException.Kind.RATE -> "Gemini đang giới hạn tốc độ, thử lại sau ít phút"
+                        TranslateApiException.Kind.NETWORK -> "Không kết nối được tới Gemini"
+                        TranslateApiException.Kind.BLOCKED -> "Google từ chối dịch một phần nội dung"
+                        TranslateApiException.Kind.OTHER -> "Dịch lỗi: ${e.message}"
+                    }
+                )
+            }
+        }
+    }
+
+    /** Vẽ lại tiêu đề và thân bài: bản dịch nếu đang bật (đoạn nào chưa dịch thì giữ bản gốc), không thì bản gốc. */
+    private fun renderArticleText() {
+        val current = article ?: return
+        val t = translated
+        if (!showTranslated || t == null) {
+            articleTitle?.text = current.title
+            articleBody?.text = current.paragraphs.joinToString("\n\n")
+            return
+        }
+        articleTitle?.text = t[0] ?: current.title
+        articleBody?.text = current.paragraphs.indices.joinToString("\n\n") { t[it + 1] ?: current.paragraphs[it] }
     }
 
     private fun shareArticle() {
@@ -1059,6 +1181,9 @@ internal class ReaderModeController(
 
     companion object {
         private const val TAG_SECONDARY = "reader_secondary"
+        // Biểu tượng "translate" của Material (24x24), giống các icon còn lại trong Icons.
+        private const val TRANSLATE_ICON =
+            "M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"
         // Màu gốc của icon kính: tối trung tính, hệ kính tự đổi sang trắng khi tông là tối.
         private val ICON_BASE = Color.rgb(18, 18, 20)
 

@@ -692,6 +692,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             leftInset = { insetLeft },
             rightInset = { insetRight },
             toast = { msg -> toast(msg) },
+            askText = { title, message, current, onResult ->
+                // glassDialog được tạo sau Reader, chỉ dùng khi người dùng bấm nên đã sẵn sàng.
+                glassDialog.show(title, message, "Lưu", "Hủy", current) { ok, input ->
+                    onResult(if (ok) input else null)
+                }
+            },
             autoHide = { store.autoHideBar },
             onVisibilityChanged = ::onReaderVisibilityChanged
         )
