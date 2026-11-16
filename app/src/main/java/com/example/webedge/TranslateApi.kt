@@ -28,7 +28,7 @@ object TranslateSettings {
      * Đổi model ở đây khi Google ra bản mới hoặc ngừng bản cũ (xem tên model trong Google AI Studio).
      * Flash-Lite rẻ và nhanh nhất; nếu bản dịch chưa ưng thì thử bản Flash thường.
      */
-    const val DEFAULT_MODEL = "gemini-2.5-flash-lite"
+    const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
     private fun sp(c: Context) = c.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
