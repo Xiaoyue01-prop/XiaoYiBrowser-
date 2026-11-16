@@ -206,6 +206,20 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun applyTextZoom(view: WebView, url: String) = textZoom.apply(view, url)
         override fun forgetPageBackground(view: WebView) { pageBackgrounds.remove(view) }
         override fun clearWindowPageBackground() { GlassSystem.setPageBackground(null, window.decorView) }
+        override fun confirmHttpFallback(view: WebView, httpUrl: String) {
+            val hostName = runCatching { Uri.parse(httpUrl).host }.getOrNull() ?: httpUrl
+            this@MainActivity.glassDialog.show(
+                title = "Trang không hỗ trợ HTTPS",
+                message = "$hostName không mở được bằng kết nối bảo mật. Nếu mở bằng HTTP, nội dung không được mã hóa: người khác trên cùng mạng có thể xem hoặc sửa trang này.",
+                positive = "Mở bằng HTTP",
+                negative = "Hủy"
+            ) { ok, _ ->
+                if (ok && !isActivityDestroyed) {
+                    HttpsFirst.allowHttp(httpUrl)
+                    runCatching { view.loadUrl(httpUrl) }
+                }
+            }
+        }
         override fun showDomain() = this@MainActivity.showDomain()
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
         override fun updateNav() = this@MainActivity.updateNav()
@@ -996,7 +1010,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     private fun load(input: String) {
         if (input.isBlank()) return
-        web.loadUrl(toUrl(input))
+        val url = toUrl(input)
+        web.loadUrl(HttpsFirst.upgrade(web, url) ?: url)
     }
 
     private val tabConfigHost: TabWebViewConfigHost = object : TabWebViewConfigHost {

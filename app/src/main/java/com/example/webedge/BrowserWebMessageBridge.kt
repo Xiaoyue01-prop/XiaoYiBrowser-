@@ -1,6 +1,7 @@
 package com.example.webedge
 
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import android.webkit.WebView
 import androidx.webkit.JavaScriptReplyProxy
@@ -78,8 +79,13 @@ internal class BrowserWebMessageBridge(
             "cpb" -> if (isMainFrame) bridge.clearPageBackground()
             "pg" -> if (isMainFrame) bridge.pullGuard(a.optInt(1))
             // Trả lời "đã nhận" sau khi cờ PiP được đặt; trang đợi tin này rồi mới xin toàn màn hình (tránh chạy đua).
-            "pip" -> bridge.requestPip { runCatching { replyProxy.postMessage("pip-ok") } }
-            "lp" -> bridge.longPress(a.text(1), a.text(2))
+            // Bị spam thì vẫn trả lời để trang không phải đợi, nhưng không chuyển tiếp cho app.
+            "pip" -> if (allow(Op.PIP)) {
+                bridge.requestPip { runCatching { replyProxy.postMessage("pip-ok") } }
+            } else {
+                runCatching { replyProxy.postMessage("pip-ok") }
+            }
+            "lp" -> if (allow(Op.LONG_PRESS)) bridge.longPress(a.text(1), a.text(2))
             "ms" -> bridge.mediaState(
                 a.optInt(1),
                 a.optBoolean(2, false),
@@ -93,6 +99,23 @@ internal class BrowserWebMessageBridge(
                 a.optInt(10)
             )
         }
+    }
+
+    /**
+     * Chỉ giới hạn hai thao tác một cú chạm của người dùng mới tạo ra (xin PiP, nhấn giữ): một trang/iframe độc hại
+     * không thể bắn chúng hàng chục lần mỗi giây. Cố ý KHÔNG giới hạn tc/pb/pg/ms vì edge_script.js và MEDIA_JS
+     * bắn dồn khi cuộn, chuyển trang hoặc đang phát media. Bộ nhớ này theo từng WebView (mỗi tab một listener).
+     */
+    private enum class Op(val minGapMs: Long) { PIP(250L), LONG_PRESS(250L) }
+
+    private val lastAcceptedAt = LongArray(Op.values().size)
+
+    private fun allow(op: Op): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        val last = lastAcceptedAt[op.ordinal]
+        if (last != 0L && now - last < op.minGapMs) return false
+        lastAcceptedAt[op.ordinal] = now
+        return true
     }
 
     // JSON null/thiếu -> null (optString trả về chữ "null" cho JSON null nên không dùng trực tiếp).

@@ -19,6 +19,7 @@ import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -294,6 +295,7 @@ class OverlayBrowserActivity : ComponentActivity() {
             override fun onPageCommitVisible(v: WebView, url: String) = probeTone(v)
 
             override fun onPageFinished(v: WebView, url: String) {
+                HttpsFirst.onLoaded(v, url)
                 currentUrl = url
                 updateTitle(v, url)
                 probeTone(v)
@@ -311,8 +313,23 @@ class OverlayBrowserActivity : ComponentActivity() {
                 return super.shouldInterceptRequest(v, request)
             }
 
+            override fun onReceivedError(v: WebView, request: WebResourceRequest, error: WebResourceError) {
+                if (!request.isForMainFrame || error.errorCode == ERROR_HOST_LOOKUP) return
+                // Bản https không mở được: chuyển sang Summit, nơi có hộp xác nhận trước khi dùng http.
+                HttpsFirst.fallbackFor(v, request.url.toString())?.let { httpUrl ->
+                    Toast.makeText(this@OverlayBrowserActivity, "Trang không hỗ trợ HTTPS", Toast.LENGTH_SHORT).show()
+                    openInSummit(httpUrl)
+                }
+            }
+
             override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
                 if (!request.isForMainFrame) return false
+                if (request.method.equals("GET", ignoreCase = true)) {
+                    HttpsFirst.upgrade(v, request.url.toString())?.let { secure ->
+                        v.loadUrl(secure)
+                        return true
+                    }
+                }
                 return this@OverlayBrowserActivity.openExternalUrl(request.url.toString(), v) { msg ->
                     Toast.makeText(this@OverlayBrowserActivity, msg, Toast.LENGTH_SHORT).show()
                 }
@@ -346,7 +363,7 @@ class OverlayBrowserActivity : ComponentActivity() {
             ViewCompat.requestApplyInsets(root)
             BrowserSheetMotion.show(sheetView, scrimView)
         }
-        view.loadUrl(startUrl)
+        view.loadUrl(HttpsFirst.upgrade(view, startUrl) ?: startUrl)
     }
 
     // ---------------- Menu ba chấm: cùng animation + kính mờ với menu trang của Summit ----------------

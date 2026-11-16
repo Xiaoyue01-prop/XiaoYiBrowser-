@@ -26,6 +26,8 @@ internal interface BrowserWebViewHost {
     /** Áp cỡ chữ đã lưu của website sắp tải cho [view] (cỡ chữ theo tên miền). */
     fun applyTextZoom(view: WebView, url: String)
     fun forgetPageBackground(view: WebView)
+    /** Bản https của một trang http không mở được: hỏi người dùng có muốn mở bằng http không. */
+    fun confirmHttpFallback(view: WebView, httpUrl: String)
     /** Bỏ nền trang đang áp lên cửa sổ (khi điều hướng hoặc renderer chết). */
     fun clearWindowPageBackground()
     fun showDomain()
@@ -52,13 +54,24 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         if (!request.isForMainFrame) return false
-        val target = request.url.toString()
+        var target = request.url.toString()
+        var rewritten = false
         // Chỉ GET: POST/form không được tải lại bằng loadUrl mà không mất dữ liệu.
-        if (host.store.linkProtectionEnabled && request.method.equals("GET", ignoreCase = true)) {
-            LinkTrackingProtection.strip(target, view.url)?.let { cleaned ->
-                view.loadUrl(cleaned)
-                return true
+        if (request.method.equals("GET", ignoreCase = true)) {
+            if (host.store.linkProtectionEnabled) {
+                LinkTrackingProtection.strip(target, view.url)?.let { cleaned ->
+                    target = cleaned
+                    rewritten = true
+                }
             }
+            HttpsFirst.upgrade(view, target)?.let { secure ->
+                target = secure
+                rewritten = true
+            }
+        }
+        if (rewritten) {
+            view.loadUrl(target)
+            return true
         }
         return host.handleSpecialUrl(target, view)
     }
@@ -69,6 +82,12 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
 
     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
         if (request.isForMainFrame && !host.isDestroyed && view === host.web) {
+            if (error.errorCode != ERROR_HOST_LOOKUP) {
+                HttpsFirst.fallbackFor(view, request.url.toString())?.let { httpUrl ->
+                    host.confirmHttpFallback(view, httpUrl)
+                    return
+                }
+            }
             host.toast("Không tải được trang (${error.errorCode})")
             AnimationSystem.fade(view, 1f, AnimationSystem.SETTLE)
         }
@@ -138,6 +157,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
     }
 
     override fun onPageFinished(view: WebView, url: String) {
+        HttpsFirst.onLoaded(view, url)
         host.tabManager.updateForWebView(view, url, view.title ?: url)
         // Private pages never enter the persisted browsing history.
         if (host.tabManager.getForWebView(view)?.isPrivate != true) {

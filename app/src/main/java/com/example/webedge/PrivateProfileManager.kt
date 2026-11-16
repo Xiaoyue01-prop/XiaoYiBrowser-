@@ -87,7 +87,8 @@ class PrivateProfileManager {
         }
         sourceProfile.cookieManager.apply {
             setAcceptCookie(true)
-            setAcceptThirdPartyCookies(target, true)
+            // Phiên riêng tư: popup cũng không nhận cookie bên thứ ba (cookie của chính popup vẫn là first-party).
+            setAcceptThirdPartyCookies(target, !isPrivateProfile)
         }
     }
 
@@ -122,7 +123,8 @@ class PrivateProfileManager {
     fun configureCookies(view: WebView, isPrivate: Boolean) {
         cookieManagerFor(view, isPrivate).apply {
             setAcceptCookie(true)
-            setAcceptThirdPartyCookies(view, true)
+            // Tab riêng tư chặn cookie bên thứ ba để tracker xuyên site không bám theo; tab thường giữ nguyên.
+            setAcceptThirdPartyCookies(view, !isPrivate)
         }
     }
 
