@@ -399,12 +399,15 @@ function shiftVideoHost(hd, I){
       if (vr.width * vr.height > bestArea) { bestArea = vr.width * vr.height; best = vids[i]; }
     }
     if (!best || bestArea < 20000) return;
+    // Khối fixed/sticky ngoài cùng chứa video mà KHÔNG chứa header: khi đã đăng nhập, YouTube có thể bọc cả header
+    // lẫn player trong cùng một khối sticky; bản cũ gặp khối đó là bỏ cuộc nên player không được hạ xuống.
     var host = null;
     for (var el = best.parentElement; el && el !== document.documentElement && el !== document.body; el = el.parentElement) {
+      if (el === hd.el || el.contains(hd.el)) continue;
       var cs = getComputedStyle(el);
       if (cs.position === 'fixed' || cs.position === 'sticky') host = el;
     }
-    if (!host || host === hd.el || hd.el.contains(host) || host.contains(hd.el)) return;
+    if (!host || host === hd.el || hd.el.contains(host)) return;
     if (host.hasAttribute('data-edge-shift')) return;
     var hs = getComputedStyle(host);
     var top = parseFloat(hs.top);
@@ -413,6 +416,26 @@ function shiftVideoHost(hd, I){
     var delta = hb - rt;
     if (isNaN(top) || delta < 4 || rt < I - 4) return;
     edgeShiftTop(host, top, delta);
+  } catch (e) {}
+}
+
+// Player có thể xuất hiện/được dựng lại SAU lúc header được dò (trang xem video tải khi đã đăng nhập, chuyển video
+// kiểu SPA, YouTube thay khối player). Khi đó lần dò header "mới" đã qua rồi nên player không bao giờ được hạ xuống
+// và header đè lên nó. Kiểm tra lại định kỳ (tối đa 4 lần/giây): chỉ làm việc khi có video lớn đang bị header đè.
+var lateAt = 0;
+function lateVideoHost(hd, I){
+  var now = Date.now();
+  if (now - lateAt < 250) return;
+  lateAt = now;
+  try {
+    var vids = document.getElementsByTagName('video');
+    if (!vids.length) return;
+    var hb = hd.el.getBoundingClientRect().bottom;
+    for (var i = 0; i < vids.length; i++) {
+      var vr = vids[i].getBoundingClientRect();
+      if (vr.width * vr.height < 20000) continue;
+      if (vr.top < hb - 4 && vr.top >= I - 4 && vr.bottom > hb) { shiftVideoHost(hd, I); return; }
+    }
   } catch (e) {}
 }
 
@@ -479,6 +502,7 @@ function runEdge(){
       if (fresh && hd.el.getAttribute('data-edge-hd')) shiftHeaderBackground(hd, I);
       edgeReassert();
       if (fresh) { shiftCompanions(hd, I); shiftVideoHost(hd, I); }
+      else if (hd.el.getAttribute('data-edge-hd')) lateVideoHost(hd, I);
       var hc = headerColor(hd.el, I);
       report(hc ? (hc[0] + ',' + hc[1] + ',' + hc[2]) : 'none');
       return;
