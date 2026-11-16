@@ -438,15 +438,16 @@ class OverlayBrowserActivity : ComponentActivity() {
         }
         card.addView(list, FrameLayout.LayoutParams(-2, -2))
 
-        // Đặt bằng margin (không dùng x/y: spring translation của morph sẽ ghi đè): ngay dưới nút, mép phải thẳng hàng với nút.
+        // Giống menu của Summit: thẻ mọc ĐÚNG tại chỗ nút (góc trên-phải của thẻ trùng góc trên-phải của nút, che luôn nút)
+        // rồi bung xuống/sang trái. Đặt bằng margin (không dùng x/y: spring translation của morph sẽ ghi đè).
         val rootLoc = IntArray(2).also { root.getLocationOnScreen(it) }
         val anchorLoc = IntArray(2).also { anchor.getLocationOnScreen(it) }
         val anchorRight = anchorLoc[0] + anchor.width - rootLoc[0]
         layer.addView(
             card,
             FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
-                topMargin = anchorLoc[1] + anchor.height - rootLoc[1] + dp(8)
-                marginEnd = (root.width - anchorRight).coerceAtLeast(dp(12))
+                topMargin = anchorLoc[1] - rootLoc[1]
+                marginEnd = (root.width - anchorRight).coerceAtLeast(0)
             }
         )
         // Giữ thẻ gần như vô hình trong lúc BlurView vẽ khung thật đầu tiên, để lớp kính dự phòng không nháy.
