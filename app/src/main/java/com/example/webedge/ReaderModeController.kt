@@ -1205,7 +1205,26 @@ internal class ReaderModeController(
               };
               candidates.sort((a, b) => score(b) - score(a));
               const root = candidates[0] || document.body;
-              let paragraphs = Array.from(root.querySelectorAll ? root.querySelectorAll('p') : [])
+              // Loại các đoạn không thuộc thân bài: khối bài liên quan/đề xuất/chia sẻ/bình luận nằm TRONG vùng chính,
+              // đoạn nằm trong thẻ <a>, và đoạn gần như toàn là link (dòng giới thiệu bài khác).
+              const junkSel = 'aside, nav, footer, form, [class*="related"], [id*="related"], [class*="recommend"], [class*="trending"], [class*="most-read"], [class*="newsletter"], [class*="share"], [class*="comment"]';
+              const isJunk = node => {
+                try {
+                  if (node.closest('a')) return true;
+                  const box = node.closest(junkSel);
+                  if (box && box !== root && root.contains(box)) return true;
+                } catch (_) {}
+                const total = clean(node.innerText).length;
+                if (!total) return true;
+                let linked = 0;
+                node.querySelectorAll('a').forEach(a => { linked += clean(a.innerText).length; });
+                return linked / total > 0.6;
+              };
+              const allParagraphs = Array.from(root.querySelectorAll ? root.querySelectorAll('p') : []);
+              const keptNodes = allParagraphs.filter(node => !isJunk(node));
+              // Nếu lọc quá tay (trang đặt tên class lạ) thì quay về danh sách đầy đủ.
+              const useNodes = keptNodes.length >= 2 ? keptNodes : allParagraphs;
+              let paragraphs = useNodes
                 .map(node => clean(node.innerText))
                 .filter(text => text.length >= 35);
               if (paragraphs.length < 2) {
