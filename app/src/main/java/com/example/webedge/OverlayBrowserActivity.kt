@@ -32,9 +32,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
-import androidx.core.view.doOnLayout
 import androidx.core.view.WindowInsetsCompat
 import androidx.dynamicanimation.animation.DynamicAnimation
+import eightbitlab.com.blurview.BlurTarget
 import java.util.Locale
 
 /**
@@ -61,6 +61,9 @@ class OverlayBrowserActivity : ComponentActivity() {
     private var closing = false
     private var currentUrl: String = ""
     private var contentRoot: FrameLayout? = null
+    private var blurTarget: BlurTarget? = null
+    private var blurSync: GlassSystem.BlurSync? = null
+    private var menuAnchor: View? = null
     private var menuLayer: View? = null
     private var menuPanel: View? = null
     /** Sheet đang ở tông tối (theo nền của chính trang trong sheet). */
@@ -108,12 +111,19 @@ class OverlayBrowserActivity : ComponentActivity() {
         val buttonColor = GlassSystem.pageSheetButtonColor(null)
 
         val root = FrameLayout(this)
+        // Giống MainActivity: BlurTarget bọc nội dung (scrim + sheet), thẻ kính của menu nằm cạnh nó trên root.
+        val target = BlurTarget(this)
+        root.addView(target, FrameLayout.LayoutParams(-1, -1))
+        blurTarget = target
+        blurSync = GlassSystem.BlurSync(target)
+        // Kính/chữ của cả app theo nền trang trong sheet trong lúc sheet mở (trả lại ở onDestroy).
+        GlassSystem.overrideTone(Color.WHITE)
         val scrimView = View(this).apply {
             setBackgroundColor(GlassSystem.pageScrimColor())
             alpha = 0f
             setOnClickListener { animateClose() }
         }
-        root.addView(scrimView, FrameLayout.LayoutParams(-1, -1))
+        target.addView(scrimView, FrameLayout.LayoutParams(-1, -1))
 
         val corner = dp(36)
         val sheetView = LinearLayout(this).apply {
@@ -130,7 +140,7 @@ class OverlayBrowserActivity : ComponentActivity() {
             translationY = resources.displayMetrics.heightPixels.toFloat()
         }
         val sheetLp = FrameLayout.LayoutParams(-1, -1)
-        root.addView(sheetView, sheetLp)
+        target.addView(sheetView, sheetLp)
 
         // --- WebView ---
         val view = WebView(webViewContext(store.webDarkMode))
@@ -239,6 +249,7 @@ class OverlayBrowserActivity : ComponentActivity() {
             if (dark == night) return
             night = dark
             darkTone = dark
+            GlassSystem.overrideTone(color)
             val fg = GlassSystem.pagePrimaryText(color)
             val btn = GlassSystem.pageSheetButtonColor(color)
             sheetView.background = ColorDrawable(GlassSystem.pageSurfaceColor(color))
@@ -338,7 +349,7 @@ class OverlayBrowserActivity : ComponentActivity() {
         view.loadUrl(startUrl)
     }
 
-    // ---------------- Menu ba chấm (bung từ chính nút, đóng thu về nút) ----------------
+    // ---------------- Menu ba chấm: cùng animation + kính mờ với menu trang của Summit ----------------
 
     private class MenuItem(val icon: String, val label: String, val run: () -> Unit)
 
@@ -348,6 +359,9 @@ class OverlayBrowserActivity : ComponentActivity() {
             return
         }
         val root = contentRoot ?: return
+        val target = blurTarget ?: return
+        val sync = blurSync ?: return
+        val d = resources.displayMetrics.density
         val url = { web?.url ?: currentUrl }
         val items = listOf(
             MenuItem(Icons.OPEN_IN_NEW, "Mở trong Summit") { openInSummit(url()) },
@@ -366,35 +380,40 @@ class OverlayBrowserActivity : ComponentActivity() {
             MenuItem(Icons.REFRESH, "Tải lại") { web?.reload() }
         )
 
-        val dark = darkTone
-        val tone = if (dark) Color.BLACK else Color.WHITE // màu mẫu để lấy palette đúng tông
-        val fg = GlassSystem.pagePrimaryText(tone)
-        val radius = dp(24).toFloat()
+        val night = GlassSystem.isDarkPage()
+        val fg = GlassSystem.pagePrimaryText()
+        val radiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * d
 
-        val layer = FrameLayout(this).apply {
-            setBackgroundColor(Color.TRANSPARENT)
-            setOnClickListener { dismissMenu() }
-        }
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            background = roundedDrawable(radius, if (dark) Color.rgb(44, 45, 52) else Color.WHITE).apply {
-                setStroke(dp(1), GlassSystem.pageDividerColor(tone))
-            }
-            elevation = dp(18).toFloat()
+        val layer = FrameLayout(this).apply { setOnClickListener { dismissMenu() } }
+        val card = MenuCardLayout(this).apply {
+            maxHeightPx = (resources.displayMetrics.heightPixels * Constants.MENU_MAX_HEIGHT_FRACTION).toInt()
+            // Nền kính dự phòng + outline bo góc để thẻ không trong suốt nếu BlurView chưa render kịp.
+            background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, night)
             clipToOutline = true
+            clipChildren = true
+            clipToPadding = true
             isClickable = true
-            alpha = 0f // hiện sau khi đã đặt đúng chỗ, tránh nháy ở góc trên trái
+            foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, d, night)
         }
-        val rows = ArrayList<View>()
+        val glass = GlassSystem.createBlurView(this, target, GlassSystem.Preset.MENU_CARD, d, false, rim = false).apply {
+            isClickable = false
+            isFocusable = false
+        }
+        card.addView(glass, FrameLayout.LayoutParams(-1, -1))
+
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(8))
+            minimumWidth = dp(240)
+        }
         items.forEach { item ->
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(14), 0, dp(14), 0)
+                setPadding(dp(22), 0, dp(22), 0)
                 minimumHeight = dp(48)
                 isClickable = true
-                background = roundedPressBackground(dark, insetHDp = 0f, insetVDp = 0f)
+                background = roundedPressBackground(night)
                 setOnClickListener {
                     dismissMenu()
                     root.post { runCatching(item.run) }
@@ -408,60 +427,116 @@ class OverlayBrowserActivity : ComponentActivity() {
                 TextView(this).apply {
                     text = item.label
                     textSize = 15f
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                     setTextColor(fg)
                     setPadding(dp(14), dp(6), 0, dp(6))
                 },
                 LinearLayout.LayoutParams(0, -2, 1f)
             )
             AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
-            panel.addView(row, LinearLayout.LayoutParams(-1, -2))
-            rows.add(row)
+            list.addView(row, LinearLayout.LayoutParams(-1, -2))
         }
+        card.addView(list, FrameLayout.LayoutParams(-2, -2))
 
-        // Đặt bằng margin (layout), không dùng x/y: spring translation của morph sẽ ghi đè x/y.
-        val width = minOf(dp(250), resources.displayMetrics.widthPixels - dp(24))
+        // Đặt bằng margin (không dùng x/y: spring translation của morph sẽ ghi đè): ngay dưới nút, mép phải thẳng hàng với nút.
         val rootLoc = IntArray(2).also { root.getLocationOnScreen(it) }
         val anchorLoc = IntArray(2).also { anchor.getLocationOnScreen(it) }
         val anchorRight = anchorLoc[0] + anchor.width - rootLoc[0]
-        val top = anchorLoc[1] + anchor.height - rootLoc[1] + dp(8)
-        val lp = FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            gravity = Gravity.TOP or Gravity.START
-            leftMargin = (anchorRight - width).coerceAtLeast(dp(12))
-            topMargin = top
-        }
-        layer.addView(panel, lp)
+        layer.addView(
+            card,
+            FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
+                topMargin = anchorLoc[1] + anchor.height - rootLoc[1] + dp(8)
+                marginEnd = (root.width - anchorRight).coerceAtLeast(dp(12))
+            }
+        )
+        // Giữ thẻ gần như vô hình trong lúc BlurView vẽ khung thật đầu tiên, để lớp kính dự phòng không nháy.
+        card.alpha = 0.01f
+        card.scaleX = 0.8f
+        card.scaleY = 0.8f
         root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         menuLayer = layer
-        menuPanel = panel
-        panel.doOnLayout {
-            if (menuPanel !== panel) return@doOnLayout
-            val opened = OriginTransitionController.open(
-                panel,
-                origin = anchor,
-                endCornerRadiusPx = radius,
+        menuPanel = card
+        menuAnchor = anchor
+
+        var started = false
+        fun startAnimation() {
+            if (menuPanel !== card || started) return
+            started = true
+            val morphing = OriginTransitionController.open(
+                card,
+                anchor,
+                endCornerRadiusPx = radiusPx,
                 springSpec = AnimationSystem.MENU_MORPH,
+                // Vỏ kính mờ đặc ngay từ nút; chỉ nội dung hiện muộn.
                 fadeIn = false,
-                // Vỏ hiện đặc ngay từ nút, chữ/icon hiện dần khi vỏ đã bung (như menu ba chấm của Summit).
-                contentViews = { rows },
+                // BlurView nằm trong thẻ nên bù ngược transform để vùng blur đứng yên theo toạ độ cửa sổ.
+                counterTransformView = glass,
+                contentViews = { listOf<View>(list) },
                 contentStart = 0f,
-                contentSpan = 0.25f
+                contentSpan = 0.25f,
+                // Nút nảy lên rồi menu mới nở ra từ đó (như menu trang).
+                popScale = Constants.MENU_POP_SCALE,
+                popTowardTarget = Constants.MENU_POP_TOWARD,
+                popDelayMs = Constants.MENU_POP_DELAY_MS
             )
-            if (!opened) panel.alpha = 1f
+            if (!morphing) {
+                card.pivotX = card.width.toFloat()
+                card.pivotY = 0f
+                AnimationSystem.enter(card, spec = AnimationSystem.MENU_MORPH)
+            }
+            sync.hold(850)
         }
+        sync.hold(1000)
+        val observer = glass.viewTreeObserver
+        if (observer.isAlive) {
+            observer.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    if (glass.viewTreeObserver.isAlive) glass.viewTreeObserver.removeOnPreDrawListener(this)
+                    // Chờ thêm 2 nhịp vsync (thẻ vẫn ẩn) để frame đầu của animation không lộ lớp kính trong.
+                    val choreographer = android.view.Choreographer.getInstance()
+                    choreographer.postFrameCallback { choreographer.postFrameCallback { startAnimation() } }
+                    return true
+                }
+            })
+        }
+        card.postDelayed({ startAnimation() }, 200L)
     }
 
     private fun dismissMenu(animate: Boolean = true) {
-        val panel = menuPanel ?: return
+        val card = menuPanel ?: return
         val layer = menuLayer
+        val anchor = menuAnchor
         menuPanel = null
         menuLayer = null
-        val remove = { layer?.let { contentRoot?.removeView(it) }; Unit }
+        menuAnchor = null
+        val restoreAnchor = {
+            anchor?.let { source ->
+                AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.spring(source, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.scaleTo(source, 1f, 1f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.fade(source, 1f, AnimationSystem.QUICK)
+            }
+            Unit
+        }
         if (animate) {
-            OriginTransitionController.close(panel, AnimationSystem.MENU_MORPH_CLOSE) { remove() }
+            blurSync?.hold(600)
+            // Thu hồi: co ngược về nút ba chấm đã bung ra.
+            OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
+                layer?.let { contentRoot?.removeView(it) }
+                restoreAnchor()
+            }
         } else {
-            OriginTransitionController.cancel(panel)
-            AnimationSystem.cancel(panel)
-            remove()
+            OriginTransitionController.cancel(card)
+            AnimationSystem.cancel(card)
+            layer?.let { contentRoot?.removeView(it) }
+            anchor?.let { source ->
+                AnimationSystem.cancel(source)
+                source.translationX = 0f
+                source.translationY = 0f
+                source.scaleX = 1f
+                source.scaleY = 1f
+                source.alpha = 1f
+            }
         }
     }
 
@@ -511,6 +586,7 @@ class OverlayBrowserActivity : ComponentActivity() {
 
     override fun onDestroy() {
         dismissMenu(false)
+        GlassSystem.overrideTone(null)
         web?.let { view ->
             AdBlocker.forget(view)
             view.stopLoading()
