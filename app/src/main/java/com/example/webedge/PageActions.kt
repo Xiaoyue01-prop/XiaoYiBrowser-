@@ -37,7 +37,8 @@ internal class PageActions(
             val request = downloads.buildRequest(
                 imageUrl, view.settings.userAgentString, "image", "image/*",
                 privateProfileManager().cookieHeader(view, currentTab?.isPrivate == true, imageUrl),
-                useCookieHeader = true
+                useCookieHeader = true,
+                pageUrl = view.url
             )
             downloads.enqueue(request)
             toast("Đang tải hình ảnh")

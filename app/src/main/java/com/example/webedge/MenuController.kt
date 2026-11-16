@@ -1008,6 +1008,10 @@ class MenuController(
             showSettings()
         }
 
+        addSwitchRow("Gợi ý chế độ đọc cho bài báo", store.readerHintEnabled) { enabled ->
+            store.readerHintEnabled = enabled
+        }
+
         addSwitchRow("Chế độ tối", store.webDarkMode) { enabled ->
             store.webDarkMode = enabled
             // Chờ công tắc nảy xong rồi mới dựng lại WebView (việc này nặng và tải lại trang).

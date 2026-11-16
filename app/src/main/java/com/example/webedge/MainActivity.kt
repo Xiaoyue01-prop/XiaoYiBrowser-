@@ -212,6 +212,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun injectInsets() = pageEdge.injectInsets()
         override fun updateTabBadge() = this@MainActivity.updateTabBadge()
         override fun activateTab(tab: TabManager.Tab) = this@MainActivity.activateTab(tab)
+        override fun checkReaderHint(view: WebView, url: String) {
+            if (!store.readerHintEnabled || readerModeController?.isActive == true || urlBar.hasFocus()) return
+            val isPrivate = tabManager.getForWebView(view)?.isPrivate == true
+            readerSuggestion.check(view, url, isPrivate) { view === web && !isActivityDestroyed }
+        }
+        override fun dismissReaderHint() = readerSuggestion.onNavigation()
     }
 
     private val chromeHost: BrowserChromeHost = object : BrowserChromeHost {
@@ -309,6 +315,23 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     )
 
     private fun toast(msg: String) = toaster.show(msg)
+
+    // lazy vì Store chỉ có sau onCreate.
+    private val readerSuggestion: ReaderSuggestionController by lazy {
+        ReaderSuggestionController(
+            context = this,
+            store = store,
+            root = { root },
+            blurTarget = { blurTarget },
+            foreground = { fg },
+            accent = accent,
+            density = { d },
+            isNight = { isNight },
+            bottomInset = { maxOf(insetBottom, imeBottom) },
+            bottomBarHeightDp = BOTTOM_BAR_HEIGHT_DP,
+            onOpen = { origin -> openReader(origin) }
+        )
+    }
 
     private val findBarController: FindBarController = FindBarController(
         activity = this,
@@ -1315,10 +1338,14 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     /** Mở Reader Module bằng nội dung trích xuất; WebView gốc và vị trí cuộn được giữ nguyên. */
-    private fun requestReaderMode() {
+    private fun requestReaderMode() = openReader(null)
+
+    /** [origin] khác null (banner gợi ý) thì Reader bung ra từ chính view đó và thu ngược về đó khi thoát. */
+    private fun openReader(origin: View?) {
         if (readerModeController?.isActive == true) return
         if (!::web.isInitialized || web.url.isNullOrBlank()) {
             toast("Chưa có trang để đọc")
+            readerSuggestion.cancelOpening()
             return
         }
         if (findBarController.isShown) closeFind()
@@ -1326,18 +1353,23 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         val sourceWeb = web
         val sourceUrl = sourceWeb.url ?: currentUrl
         sourceWeb.evaluateJavascript(ReaderModeController.EXTRACTION_SCRIPT) { raw ->
-            if (isActivityDestroyed || sourceWeb !== web) return@evaluateJavascript
+            if (isActivityDestroyed || sourceWeb !== web) {
+                readerSuggestion.cancelOpening()
+                return@evaluateJavascript
+            }
             val article = ReaderModeController.parseJavascriptResult(raw, sourceUrl)
             if (article == null) {
                 toast("Trang này chưa có nội dung phù hợp với Reader Mode")
+                readerSuggestion.cancelOpening()
             } else {
-                readerModeController?.show(article)
+                readerModeController?.show(article, origin)
             }
         }
     }
 
     /** Browser chrome chỉ tạm ẩn; Reader không thay WebView, tab hay lịch sử điều hướng. */
     private fun onReaderVisibilityChanged(active: Boolean) {
+        if (active) readerSuggestion.onReaderOpened() else readerSuggestion.onReaderClosed()
         val controller = WindowCompat.getInsetsController(window, root)
         if (active) {
             readerBarWasHidden = barHidden

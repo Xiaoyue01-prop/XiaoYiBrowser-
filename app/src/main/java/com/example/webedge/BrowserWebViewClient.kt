@@ -34,6 +34,10 @@ internal interface BrowserWebViewHost {
     fun injectInsets()
     fun updateTabBadge()
     fun activateTab(tab: TabManager.Tab)
+    /** Trang chính vừa tải xong: xem có nên gợi ý Chế độ đọc không. */
+    fun checkReaderHint(view: WebView, url: String)
+    /** Bắt đầu điều hướng trang chính: gỡ banner gợi ý Chế độ đọc của trang cũ. */
+    fun dismissReaderHint()
 }
 
 /** WebViewClient dùng chung cho mọi tab của trình duyệt. */
@@ -85,6 +89,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         host.forgetPageBackground(view)
         if (view === host.web) host.clearWindowPageBackground()
         if (view !== host.web) return
+        host.dismissReaderHint()
         // Chụp trang cũ trước khi mờ đi và trước khi nội dung đổi, để lần sau vuốt quay lại có ảnh xem trước.
         if (view.url != url) host.pageTransition.remember(view)
         host.webMedia.reset()
@@ -149,6 +154,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         host.tabSwipe.onPageReady()
         host.currentUrl = url
         host.updateTabBadge()
+        host.checkReaderHint(view, url)
     }
 
     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {

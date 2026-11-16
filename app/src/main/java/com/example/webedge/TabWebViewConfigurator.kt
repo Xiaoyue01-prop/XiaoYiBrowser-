@@ -97,7 +97,8 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
                 val request = host.downloads.buildRequest(
                     dlUrl, userAgent, contentDisposition, mimetype,
                     host.privateProfileManager.cookieHeader(view, tab.isPrivate, dlUrl),
-                    useCookieHeader = true
+                    useCookieHeader = true,
+                    pageUrl = view.url
                 )
                 host.downloadPrompt?.show(request.fileName) {
                     host.downloads.enqueue(request)

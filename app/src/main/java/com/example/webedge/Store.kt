@@ -30,6 +30,8 @@ class Store(context: Context) {
         // Tab preview chỉ cần đủ nét để hiển thị trong lưới, không cần giữ ảnh gần full-resolution.
         private const val MAX_PREVIEW_WIDTH_PX = 420
         private const val MAX_PREVIEW_HEIGHT_PX = 900
+        // Bấm × trên banner gợi ý Chế độ đọc đủ số lần này ở cùng một tên miền thì thôi gợi ý cho tên miền đó.
+        private const val READER_HINT_MUTE_AFTER = 3
     }
     private val sp = context.getSharedPreferences("edge", Context.MODE_PRIVATE)
     private val thumbnailDir = File(context.filesDir, "tab_thumbnails").apply { mkdirs() }
@@ -155,6 +157,18 @@ class Store(context: Context) {
     var webDarkMode: Boolean
         get() = sp.getBoolean("web_dark_mode", false)
         set(v) { sp.edit().putBoolean("web_dark_mode", v).apply() }
+
+    /** Gợi ý mở Chế độ đọc bằng banner khi vào trang có vẻ là bài báo. */
+    var readerHintEnabled: Boolean
+        get() = sp.getBoolean("reader_hint", true)
+        set(v) { sp.edit().putBoolean("reader_hint", v).apply() }
+
+    fun isReaderHintMuted(host: String): Boolean = sp.getInt("reader_hint_x_$host", 0) >= READER_HINT_MUTE_AFTER
+
+    fun noteReaderHintDismissed(host: String) {
+        val key = "reader_hint_x_$host"
+        sp.edit().putInt(key, sp.getInt(key, 0) + 1).apply()
+    }
 
     /** Đã hỏi gộp các quyền runtime ở lần mở app đầu tiên chưa (xem FirstRunPermissions). */
     var firstRunPermissionsAsked: Boolean

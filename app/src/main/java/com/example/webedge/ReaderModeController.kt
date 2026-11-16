@@ -17,6 +17,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.view.doOnLayout
 import androidx.dynamicanimation.animation.DynamicAnimation
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
@@ -27,6 +28,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.lang.ref.WeakReference
 import kotlin.math.roundToInt
 
 internal data class ReaderArticle(
@@ -113,6 +115,8 @@ internal class ReaderModeController(
     private var showTranslated = false
 
     private var exiting = false
+    // View (banner gợi ý) mà Reader đã bung ra từ đó; thoát thì thu ngược về đúng chỗ này nếu nó còn trên màn hình.
+    private var openedFrom: WeakReference<View>? = null
     private var isSerif = false
     private var fontSizeSp = 18f
     private var widthMode = 1
@@ -121,7 +125,8 @@ internal class ReaderModeController(
     val isActive: Boolean get() = overlay != null
     val isSurfaceOpen: Boolean get() = surface != null
 
-    fun show(value: ReaderArticle) {
+    /** [origin] khác null: Reader bung ra từ view đó ([OriginTransitionController]) thay vì thanh công cụ trượt lên. */
+    fun show(value: ReaderArticle, origin: View? = null) {
         if (isActive) return
         surface = null
         exiting = false
@@ -144,6 +149,27 @@ internal class ReaderModeController(
         buildToolbar(layer, value)
         applyPalette()
         onVisibilityChanged(true)
+
+        val morphOrigin = origin?.takeIf { it.isAttachedToWindow }
+        if (morphOrigin != null) {
+            openedFrom = WeakReference(morphOrigin)
+            // Chờ layout xong (có khung thật) rồi mới morph; layout chạy trước khi vẽ nên không lộ khung hình toàn màn hình.
+            layer.doOnLayout {
+                if (overlay !== layer || exiting) return@doOnLayout
+                OriginTransitionController.open(
+                    layer,
+                    origin = morphOrigin,
+                    endCornerRadiusPx = 0f,
+                    springSpec = AnimationSystem.MENU_MORPH,
+                    // Vỏ giấy đặc ngay từ banner; chữ và thanh công cụ hiện muộn hơn để không bị bóp méo khi vỏ còn nhỏ.
+                    fadeIn = false,
+                    contentViews = { listOfNotNull(scrollView, toolbar) },
+                    contentStart = 0.15f,
+                    contentSpan = 0.4f
+                )
+            }
+            return
+        }
 
         // Thanh công cụ trượt/hiện nhẹ lên đúng chỗ thanh địa chỉ của trình duyệt vừa nhường lại.
         val bar = toolbar ?: return
@@ -235,6 +261,14 @@ internal class ReaderModeController(
             return
         }
         exiting = true
+        val from = openedFrom?.get()
+        if (from != null && from.isAttachedToWindow) {
+            // Thu ngược về đúng banner đã bung ra.
+            OriginTransitionController.close(layer, AnimationSystem.MENU_MORPH_CLOSE) {
+                if (overlay === layer) finishExit(layer)
+            }
+            return
+        }
         // Thanh công cụ hạ xuống và cả lớp đọc mờ đi, để lộ lại thanh địa chỉ của trình duyệt ở đúng chỗ cũ.
         AnimationSystem.spring(bar, DynamicAnimation.TRANSLATION_Y, dp(12).toFloat(), AnimationSystem.MENU_MORPH_CLOSE)
         AnimationSystem.fade(layer, 0f, AnimationSystem.QUICK) {
@@ -245,6 +279,7 @@ internal class ReaderModeController(
     fun destroy() {
         val layer = overlay ?: return
         surface?.let { OriginTransitionController.cancel(it.card) }
+        OriginTransitionController.cancel(layer)
         AnimationSystem.cancel(layer)
         toolbar?.let(AnimationSystem::cancel)
         root.removeView(layer)
@@ -253,6 +288,7 @@ internal class ReaderModeController(
 
     private fun finishExit(layer: FrameLayout) {
         if (overlay !== layer) return
+        OriginTransitionController.cancel(layer)
         AnimationSystem.cancel(layer)
         toolbar?.let(AnimationSystem::cancel)
         root.removeView(layer)
@@ -268,6 +304,7 @@ internal class ReaderModeController(
         // Trả tông kính về nền của trang web đang xem.
         GlassSystem.overrideTone(null)
         overlay = null
+        openedFrom = null
         readerBlurTarget = null
         paperView = null
         scrollContent = null

@@ -27,7 +27,8 @@ class DownloadController(
         val userAgent: String,
         val cookie: String,
         val mimeType: String,
-        val fileName: String
+        val fileName: String,
+        val referer: String = ""
     )
 
     private val pendingLiveUpdates = linkedMapOf<Long, String>()
@@ -52,14 +53,34 @@ class DownloadController(
         contentDisposition: String?,
         mimeType: String?,
         cookieHeader: String? = null,
-        useCookieHeader: Boolean = false
+        useCookieHeader: Boolean = false,
+        pageUrl: String? = null
     ) = Request(
         url = url,
         userAgent = userAgent.orEmpty(),
         cookie = if (useCookieHeader) cookieHeader.orEmpty() else CookieManager.getInstance().getCookie(url).orEmpty(),
         mimeType = mimeType.orEmpty(),
-        fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+        fileName = URLUtil.guessFileName(url, contentDisposition, mimeType),
+        referer = referrerFor(pageUrl, url)
     )
+
+    /**
+     * Referer theo chính sách mặc định của Chrome (strict-origin-when-cross-origin): cùng origin gửi cả URL trang,
+     * khác origin chỉ gửi origin, và không gửi khi hạ cấp từ https xuống http. Nhiều CDN chặn hotlink nếu thiếu Referer,
+     * khiến DownloadManager đứng ở 0 B trong khi Chrome tải bình thường.
+     */
+    private fun referrerFor(pageUrl: String?, targetUrl: String): String {
+        if (pageUrl.isNullOrBlank()) return ""
+        val page = runCatching { Uri.parse(pageUrl) }.getOrNull() ?: return ""
+        val target = runCatching { Uri.parse(targetUrl) }.getOrNull() ?: return ""
+        val scheme = page.scheme ?: return ""
+        val host = page.host ?: return ""
+        if (scheme != "http" && scheme != "https") return ""
+        if (scheme == "https" && target.scheme == "http") return ""
+        val port = if (page.port != -1) ":${page.port}" else ""
+        val sameOrigin = target.scheme == scheme && target.host == host && target.port == page.port
+        return if (sameOrigin) pageUrl.substringBefore('#') else "$scheme://$host$port/"
+    }
 
     fun enqueue(request: Request) {
         try {
@@ -71,6 +92,7 @@ class DownloadController(
             if (request.mimeType.isNotBlank()) download.setMimeType(request.mimeType)
             if (request.cookie.isNotBlank()) download.addRequestHeader("Cookie", request.cookie)
             if (request.userAgent.isNotBlank()) download.addRequestHeader("User-Agent", request.userAgent)
+            if (request.referer.isNotBlank()) download.addRequestHeader("Referer", request.referer)
             download.setNotificationVisibility(
                 DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
             )
