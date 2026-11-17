@@ -293,6 +293,8 @@ class GlassDialogController(
 
         val width = minOf(dp(300), activity.resources.displayMetrics.widthPixels - dp(48))
         holder.addView(card, FrameLayout.LayoutParams(width, -2, Gravity.CENTER))
+        // Nổi trên mọi lớp phủ có elevation (vd. bảng tab) để hộp thoại không bị che.
+        layer.elevation = dp(32).toFloat()
         root.addView(layer, FrameLayout.LayoutParams(-1, -1))
         activeLayer = layer
         GlassSystem.observePageTone(layer) { color ->

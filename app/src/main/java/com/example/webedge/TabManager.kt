@@ -12,7 +12,13 @@ class TabManager {
     companion object {
         private const val TAG = "TabManager"
         fun newId(): Long = UUID.randomUUID().mostSignificantBits and Long.MAX_VALUE
+        /** Nhóm mặc định: luôn tồn tại, đổi tên được nhưng không xóa được. */
+        const val MAIN_GROUP_ID = 1L
+        const val MAIN_GROUP_NAME = "Chính"
     }
+
+    /** Nhóm tab chỉ để sắp xếp: cookie, lịch sử, dấu trang vẫn dùng chung giữa các nhóm. */
+    data class Group(val id: Long, var name: String)
 
     data class Tab(
         val id: Long = newId(),
@@ -28,13 +34,20 @@ class TabManager {
         /** Lần cuối người dùng rời/dùng tab (nanoTime), để biết tab nền nào lâu không dùng nhất. */
         var lastActiveAt: Long = 0L,
         /** Trang web máy tính theo từng tab (không dùng cờ toàn cục): tab bị thu hồi rồi tạo lại vẫn giữ đúng UA. */
-        var desktop: Boolean = false
+        var desktop: Boolean = false,
+        /** Nhóm của tab thường. Tab riêng tư không thuộc nhóm nào (luôn là nhóm mặc định, không dùng tới). */
+        var groupId: Long = MAIN_GROUP_ID
     )
 
     private val normalTabs = mutableListOf<Tab>()
     private val privateTabs = mutableListOf<Tab>()
     private var privateMode = false
     private var listener: (() -> Unit)? = null
+    private val groups = mutableListOf(Group(MAIN_GROUP_ID, MAIN_GROUP_NAME))
+
+    /** Nhóm đang xem: lưới tab, vuốt giữa các tab, số tab và tab mới đều theo nhóm này (chế độ thường). */
+    var currentGroupId: Long = MAIN_GROUP_ID
+        private set
 
     init {
         normalTabs.add(Tab(isActive = true))
@@ -51,11 +64,12 @@ class TabManager {
     fun getAll(): List<Tab> = normalTabs.toList() + privateTabs.toList()
 
     /** Danh sách tab mà MenuTabs và thao tác vuốt được phép hiển thị ở chế độ hiện tại. */
-    fun getCurrentTabs(): List<Tab> = currentList().toList()
+    fun getCurrentTabs(): List<Tab> =
+        if (privateMode) privateTabs.toList() else normalTabs.filter { it.groupId == currentGroupId }
 
     fun getActive(): Tab? = currentList().find { it.isActive }
     fun getForWebView(view: WebView): Tab? = getAll().find { it.webView === view }
-    fun count(): Int = currentList().size
+    fun count(): Int = getCurrentTabs().size
     fun privateCount(): Int = privateTabs.size
 
     /** Chuyển danh sách đang xem; nếu vùng riêng tư chưa có tab thì mở một tab trống đầu tiên. */
@@ -74,9 +88,79 @@ class TabManager {
             }
         }
         target?.lastActiveAt = System.nanoTime()
+        if (!usePrivate) target?.let { currentGroupId = it.groupId }
         listener?.invoke()
         return target
     }
+
+    // ---------------- Nhóm tab ----------------
+
+    fun getGroups(): List<Group> = groups.toList()
+    fun currentGroup(): Group = groups.firstOrNull { it.id == currentGroupId } ?: groups.first()
+    fun tabCountOf(groupId: Long): Int = normalTabs.count { it.groupId == groupId }
+
+    private fun cleanGroupName(name: String): String = name.trim().replace(Regex("\\s+"), " ").take(24)
+
+    /** Tên rỗng hoặc trùng nhóm khác (không phân biệt hoa thường) thì không tạo; trả null. */
+    fun addGroup(name: String): Group? {
+        val clean = cleanGroupName(name)
+        if (clean.isEmpty() || groups.any { it.name.equals(clean, ignoreCase = true) }) return null
+        val group = Group(newId(), clean)
+        groups.add(group)
+        listener?.invoke()
+        return group
+    }
+
+    fun renameGroup(id: Long, name: String): Boolean {
+        val clean = cleanGroupName(name)
+        val group = groups.firstOrNull { it.id == id } ?: return false
+        if (clean.isEmpty() || groups.any { it.id != id && it.name.equals(clean, ignoreCase = true) }) return false
+        group.name = clean
+        listener?.invoke()
+        return true
+    }
+
+    /** Xóa nhóm (trừ nhóm mặc định); tab của nó chuyển về nhóm mặc định, không bị đóng. */
+    fun deleteGroup(id: Long): Boolean {
+        if (id == MAIN_GROUP_ID) return false
+        if (!groups.removeAll { it.id == id }) return false
+        normalTabs.forEach { if (it.groupId == id) it.groupId = MAIN_GROUP_ID }
+        if (currentGroupId == id) currentGroupId = MAIN_GROUP_ID
+        listener?.invoke()
+        return true
+    }
+
+    /** Chỉ đổi nhóm đang XEM (bộ lọc của bảng tab); tab đang hiển thị trên màn hình không đổi. */
+    fun setCurrentGroup(id: Long) {
+        if (privateMode || groups.none { it.id == id } || currentGroupId == id) return
+        currentGroupId = id
+        listener?.invoke()
+    }
+
+    /** Đưa nhóm đang xem về nhóm của tab đang hiển thị (đóng bảng tab mà không chọn thẻ nào). */
+    fun syncGroupToActive() {
+        if (privateMode) return
+        val active = normalTabs.firstOrNull { it.isActive } ?: return
+        if (currentGroupId != active.groupId) {
+            currentGroupId = active.groupId
+            listener?.invoke()
+        }
+    }
+
+    fun moveTabsToGroup(ids: Set<Long>, groupId: Long) {
+        if (groups.none { it.id == groupId }) return
+        var changed = false
+        normalTabs.forEach {
+            if (it.id in ids && it.groupId != groupId) {
+                it.groupId = groupId
+                changed = true
+            }
+        }
+        if (changed) listener?.invoke()
+    }
+
+    /** Bản sao nhóm để ghi xuống đĩa (gọi trên luồng chính cùng lúc với [exportTabs]). */
+    fun exportGroups(): List<Group> = groups.map { it.copy() }
 
     /** Tab nền còn WebView sống nhưng lâu không dùng nhất. Chỉ tab đang thực sự hiển thị được giữ. */
     fun staleLiveTabs(max: Int): List<Tab> {
@@ -96,14 +180,20 @@ class TabManager {
             thumbnail = it.thumbnail?.takeUnless { bitmap -> bitmap.isRecycled },
             thumbnailUrl = it.thumbnailUrl.orEmpty(),
             thumbnailVersion = it.thumbnailVersion,
-            desktop = it.desktop
+            desktop = it.desktop,
+            groupId = it.groupId
         )
     }
 
     /** Khôi phục duy nhất vùng tab thường; phiên riêng tư luôn bắt đầu rỗng sau khi Activity khởi động lại. */
-    fun restoreTabs(saved: List<PersistedTab>) {
+    fun restoreTabs(saved: List<PersistedTab>, savedGroups: List<Group> = emptyList()) {
         normalTabs.clear()
         privateTabs.clear()
+        // Nhóm mặc định luôn có (giữ tên người dùng đã đổi); nhóm trùng id bị bỏ.
+        groups.clear()
+        groups.add(Group(MAIN_GROUP_ID, savedGroups.firstOrNull { it.id == MAIN_GROUP_ID }?.name?.ifBlank { null } ?: MAIN_GROUP_NAME))
+        savedGroups.forEach { g -> if (g.id != MAIN_GROUP_ID && g.name.isNotBlank() && groups.none { it.id == g.id }) groups.add(g.copy()) }
+        currentGroupId = MAIN_GROUP_ID
         if (saved.isEmpty()) {
             normalTabs.add(Tab(isActive = true))
             listener?.invoke()
@@ -127,7 +217,9 @@ class TabManager {
                     thumbnail = item.thumbnail,
                     thumbnailUrl = item.thumbnailUrl.takeIf { it.isNotBlank() },
                     thumbnailVersion = item.thumbnailVersion,
-                    desktop = item.desktop
+                    desktop = item.desktop,
+                    // Tab cũ chưa có nhóm, hoặc nhóm đã mất, rơi về nhóm mặc định.
+                    groupId = item.groupId.takeIf { gid -> groups.any { it.id == gid } } ?: MAIN_GROUP_ID
                 )
             )
         }
@@ -141,6 +233,7 @@ class TabManager {
             }
         }
         privateMode = false
+        normalTabs.firstOrNull { it.isActive }?.let { currentGroupId = it.groupId }
         listener?.invoke()
     }
 
@@ -151,7 +244,10 @@ class TabManager {
             if (it.isActive) it.lastActiveAt = now
             it.isActive = false
         }
-        val tab = Tab(url = url, title = title, isActive = true, isPrivate = privateMode, lastActiveAt = now)
+        val tab = Tab(
+            url = url, title = title, isActive = true, isPrivate = privateMode, lastActiveAt = now,
+            groupId = if (privateMode) MAIN_GROUP_ID else currentGroupId
+        )
         tabs.add(tab)
         listener?.invoke()
         return tab
@@ -165,6 +261,7 @@ class TabManager {
         tabs.forEach { if (it.isActive) it.lastActiveAt = now }
         tabs.forEach { it.isActive = (it.id == id) }
         target.lastActiveAt = now
+        if (!target.isPrivate) currentGroupId = target.groupId
         listener?.invoke()
         return target
     }
@@ -179,8 +276,16 @@ class TabManager {
         val removed = tabs.removeAt(idx)
 
         if (removed.isActive && tabs.isNotEmpty()) {
-            val next = if (idx < tabs.size) tabs[idx] else tabs.last()
+            // Ưu tiên tab liền kề CÙNG NHÓM (sau, rồi trước); hết thì lấy tab bất kỳ gần nhất.
+            val next = if (removed.isPrivate) {
+                if (idx < tabs.size) tabs[idx] else tabs.last()
+            } else {
+                tabs.drop(idx).firstOrNull { it.groupId == removed.groupId }
+                    ?: tabs.take(idx).lastOrNull { it.groupId == removed.groupId }
+                    ?: (if (idx < tabs.size) tabs[idx] else tabs.last())
+            }
             tabs.forEach { it.isActive = (it === next) }
+            if (!next.isPrivate) currentGroupId = next.groupId
         }
 
         // Đóng private tab cuối cùng kết thúc phiên và tự quay về vùng tab thường.

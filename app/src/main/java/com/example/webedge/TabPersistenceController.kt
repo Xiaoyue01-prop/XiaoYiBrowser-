@@ -22,7 +22,7 @@ class TabPersistenceController(
 
     /** Restores tab metadata before the initial WebView is created. */
     fun restore() {
-        tabManager.restoreTabs(store.loadTabs())
+        tabManager.restoreTabs(store.loadTabs(), store.loadTabGroups())
     }
 
     /** Coalesces rapid URL/title/thumbnail updates into one disk write. */
@@ -36,7 +36,7 @@ class TabPersistenceController(
     fun saveNow() {
         if (closed) return
         handler.removeCallbacks(saveRunnable)
-        write(nextSeq(), createOwnedSnapshot())
+        write(nextSeq(), createOwnedSnapshot(), tabManager.exportGroups())
     }
 
     /** Captures URL/title and, when requested, the current tab thumbnail without forcing a disk write. */
@@ -79,18 +79,20 @@ class TabPersistenceController(
         if (closed) return
         val seq = nextSeq()
         val snapshot = createOwnedSnapshot()
+        val groups = tabManager.exportGroups()
         try {
-            io.execute { write(seq, snapshot) }
+            io.execute { write(seq, snapshot, groups) }
         } catch (_: java.util.concurrent.RejectedExecutionException) {
             recycleSnapshot(snapshot)
         }
     }
 
     /** Bỏ qua bản chụp cũ nếu một bản mới hơn đã được ghi; luôn giải phóng Bitmap snapshot. */
-    private fun write(seq: Long, snapshot: List<PersistedTab>) {
+    private fun write(seq: Long, snapshot: List<PersistedTab>, groups: List<TabManager.Group>) {
         try {
             synchronized(lock) {
                 if (seq < lastWrittenSeq) return
+                store.saveTabGroups(groups)
                 store.saveTabs(snapshot)
                 lastWrittenSeq = seq
             }

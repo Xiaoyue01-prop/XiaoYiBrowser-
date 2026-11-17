@@ -834,7 +834,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             onOverlayOpened = { orbController?.setTemporarilyHidden(true) },
             onOverlayClosed = { syncOrbMenuVisibility() },
             onModeChange = ::switchTabMode,
-            onReopenClosedTab = ::reopenClosedTab
+            onReopenClosedTab = ::reopenClosedTab,
+            dialogs = glassDialog,
+            toast = { message -> toast(message) }
         )
         menu.originView = menuBtn
         menu.pageOriginView = toolbar.pageMenuBtn

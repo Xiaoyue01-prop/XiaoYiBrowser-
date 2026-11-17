@@ -22,7 +22,8 @@ data class PersistedTab(
     val thumbnail: Bitmap? = null,
     val thumbnailUrl: String = "",
     val thumbnailVersion: Long = 0L,
-    val desktop: Boolean = false
+    val desktop: Boolean = false,
+    val groupId: Long = TabManager.MAIN_GROUP_ID
 )
 class Store(context: Context) {
     companion object {
@@ -218,6 +219,7 @@ class Store(context: Context) {
                     .put("thumbnailUrl", tab.thumbnailUrl)
                     .put("thumbnailVersion", savedVersions[tab.id] ?: 0L)
                     .put("desktop", tab.desktop)
+                    .put("group", tab.groupId)
             )
         }
         sp.edit().putString("saved_tabs", arr.toString()).apply()
@@ -247,11 +249,36 @@ class Store(context: Context) {
                     thumbnail = obj.optLong("id", 0L).takeIf { it > 0L }?.let(::loadThumbnail),
                     thumbnailUrl = obj.optString("thumbnailUrl", ""),
                     thumbnailVersion = obj.optLong("thumbnailVersion", 0L),
-                    desktop = obj.optBoolean("desktop", false)
+                    desktop = obj.optBoolean("desktop", false),
+                    groupId = obj.optLong("group", TabManager.MAIN_GROUP_ID)
                 )
             )
         }
         return result
+    }
+
+    /** Danh sách nhóm tab (gồm cả nhóm mặc định để giữ tên người dùng đặt). */
+    @Synchronized
+    fun saveTabGroups(groups: List<TabManager.Group>) {
+        val arr = JSONArray()
+        for (g in groups) arr.put(JSONObject().put("id", g.id).put("name", g.name))
+        sp.edit().putString("tab_groups", arr.toString()).apply()
+    }
+
+    fun loadTabGroups(): List<TabManager.Group> {
+        val arr = try {
+            JSONArray(sp.getString("tab_groups", "[]") ?: "[]")
+        } catch (_: Exception) {
+            JSONArray()
+        }
+        val out = mutableListOf<TabManager.Group>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val id = o.optLong("id", 0L)
+            val name = o.optString("name", "")
+            if (id != 0L && name.isNotBlank()) out.add(TabManager.Group(id, name))
+        }
+        return out
     }
     fun list(key: String): MutableList<Entry> {
         // ✅ Có trong cache thì lấy luôn, khỏi đọc lại từ ổ cứng

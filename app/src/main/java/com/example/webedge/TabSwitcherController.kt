@@ -21,6 +21,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.core.view.WindowCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -51,7 +52,10 @@ class TabSwitcherController(
     private val onOverlayOpened: () -> Unit = {},
     private val onOverlayClosed: () -> Unit = {},
     private val onModeChange: (Boolean) -> Boolean = { false },
-    private val onReopenClosedTab: (Entry) -> Unit = {}
+    private val onReopenClosedTab: (Entry) -> Unit = {},
+    /** Hộp thoại kính dùng chung (đặt tên / xóa nhóm thẻ) và toast của Activity. */
+    private val dialogs: GlassDialogController? = null,
+    private val toast: (String) -> Unit = {}
 ) {
     // TextView hiển thị "N tab"; cập nhật khi đóng tab mà không dựng lại bảng.
     private var countLabel: TextView? = null
@@ -375,21 +379,37 @@ class TabSwitcherController(
             setPadding(dp(6), dp(4), dp(6), dp(6))
         }
         // Thay chữ "Tab đang mở" bằng viên kính tìm kiếm (kính lúp → kéo dài thành thanh nhập từ khóa).
-        // Khung chồng để viên kính bung đè lên nhãn bên phải; nhãn "Riêng tư" tạm thời giữ dấu hiệu chế độ
-        // riêng tư, sau này nhường chỗ cho viên kính "Nhóm thẻ".
+        // Khung chồng để viên kính tìm kiếm bung đè lên viên "Nhóm thẻ" bên phải (viên này mờ dần khi bung).
         var tabQuery = ""
         var onQueryChanged: () -> Unit = {}
         val headWrap = FrameLayout(activity).apply {
             clipChildren = false
             clipToPadding = false
         }
-        val privateLabel = TextView(activity).apply {
-            text = "Riêng tư"
+        // Viên "Nhóm thẻ" ở góc phải: hiện tên nhóm đang xem (chạm để mở menu nhóm); tab riêng tư thì hiện "Riêng tư"
+        // và không bấm được (tab riêng tư không chia nhóm).
+        val groupText = TextView(activity).apply {
             textSize = 15f
-            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
             setTextColor(GlassSystem.pagePrimaryText())
-            visibility = if (tabManager.isPrivateMode) View.VISIBLE else View.GONE
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER
+            maxWidth = dp(150)
+            setPadding(dp(16), 0, dp(16), 0)
         }
+        val groupPill = GlassSystem.createGlassPill(
+            activity, blurTarget, activity.resources.displayMetrics.density, isNight()
+        )
+        groupPill.addView(groupText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40), Gravity.CENTER))
+        fun updateGroupPill() {
+            val priv = tabManager.isPrivateMode
+            val name = tabManager.currentGroup().name
+            groupText.text = if (priv) "Riêng tư" else "$name ▾"
+            groupPill.isClickable = !priv
+            groupPill.contentDescription = if (priv) "Riêng tư" else "Nhóm thẻ: $name"
+        }
+        updateGroupPill()
         val searchPill = GlassSearchPill(
             activity = activity,
             blurTarget = blurTarget,
@@ -400,15 +420,15 @@ class TabSwitcherController(
                 tabQuery = q
                 onQueryChanged()
             },
-            onSearchProgress = { p -> privateLabel.alpha = 1f - (p * 3f).coerceIn(0f, 1f) },
+            onSearchProgress = { p -> groupPill.alpha = 1f - (p * 3f).coerceIn(0f, 1f) },
             syncBlur = { ms -> blurSync.hold(ms) }
         )
         headWrap.addView(
-            privateLabel,
+            groupPill,
             FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40),
                 Gravity.END or Gravity.CENTER_VERTICAL
-            ).apply { marginEnd = dp(8) }
+            )
         )
         headWrap.addView(
             searchPill.view,
@@ -521,9 +541,9 @@ class TabSwitcherController(
             val visibleTabs = if (q.isEmpty()) allTabs else allTabs.filter {
                 it.title.contains(q, ignoreCase = true) || it.url.contains(q, ignoreCase = true)
             }
-            if (visibleTabs.isEmpty() && q.isNotEmpty()) {
+            if (visibleTabs.isEmpty()) {
                 leftColumn.addView(TextView(activity).apply {
-                    text = "Không tìm thấy tab nào"
+                    text = if (q.isNotEmpty()) "Không tìm thấy tab nào" else "Nhóm này chưa có tab nào.\nBấm + để tạo tab mới."
                     textSize = 15f
                     setTextColor(GlassSystem.pageSecondaryText())
                     setPadding(dp(8), dp(24), dp(8), dp(8))
@@ -653,6 +673,292 @@ class TabSwitcherController(
             }
         }
         onQueryChanged = { renderCards() }
+
+        // ---------------- Menu "Nhóm thẻ" ----------------
+        // Thẻ kính mọc đúng tại viên "Nhóm thẻ" rồi bung xuống/sang trái, cùng OriginTransitionController
+        // và hằng số nảy với menu trang. Dựng ngay trong container (bảng tab nổi trên menuLayer của MenuController).
+        var groupLayer: FrameLayout? = null
+        var groupCard: MenuCardLayout? = null
+
+        fun afterGroupChanged() {
+            updateGroupPill()
+            countLabel?.text = "${tabManager.count()} tab"
+            renderCards()
+        }
+
+        fun dismissGroupMenu(animate: Boolean = true) {
+            val card = groupCard ?: return
+            val layer = groupLayer
+            groupCard = null
+            groupLayer = null
+            if (animate) {
+                blurSync.hold(600)
+                OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
+                    layer?.let { container.removeView(it) }
+                    AnimationSystem.spring(groupPill, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
+                    AnimationSystem.spring(groupPill, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+                    AnimationSystem.scaleTo(groupPill, 1f, 1f, AnimationSystem.MENU_MORPH)
+                    AnimationSystem.fade(groupPill, 1f, AnimationSystem.QUICK)
+                }
+            } else {
+                OriginTransitionController.cancel(card)
+                AnimationSystem.cancel(card)
+                layer?.let { container.removeView(it) }
+                AnimationSystem.cancel(groupPill)
+                groupPill.translationX = 0f
+                groupPill.translationY = 0f
+                groupPill.scaleX = 1f
+                groupPill.scaleY = 1f
+                groupPill.alpha = 1f
+            }
+        }
+
+        fun askNewGroup() {
+            dialogs?.show(
+                title = "Nhóm thẻ mới",
+                message = "Đặt tên cho nhóm (tối đa 24 ký tự).",
+                positive = "Tạo",
+                negative = "Hủy",
+                defaultInput = ""
+            ) { confirmed, input ->
+                if (!confirmed || input == null) return@show
+                val group = tabManager.addGroup(input)
+                if (group == null) {
+                    toast("Tên trống hoặc đã có nhóm khác dùng tên này")
+                } else {
+                    tabManager.setCurrentGroup(group.id)
+                    afterGroupChanged()
+                }
+            }
+        }
+
+        fun askRenameGroup(group: TabManager.Group) {
+            dialogs?.show(
+                title = "Đổi tên nhóm",
+                message = "Tối đa 24 ký tự.",
+                positive = "Lưu",
+                negative = "Hủy",
+                defaultInput = group.name
+            ) { confirmed, input ->
+                if (!confirmed || input == null) return@show
+                if (tabManager.renameGroup(group.id, input)) afterGroupChanged()
+                else toast("Tên trống hoặc đã có nhóm khác dùng tên này")
+            }
+        }
+
+        // Giữ lâu một nhóm: đổi tên, hoặc xóa (trừ nhóm mặc định); tab của nhóm bị xóa chuyển về nhóm mặc định.
+        fun manageGroup(group: TabManager.Group) {
+            val isMain = group.id == TabManager.MAIN_GROUP_ID
+            val mainName = tabManager.getGroups().first { it.id == TabManager.MAIN_GROUP_ID }.name
+            dialogs?.show(
+                title = "Nhóm “${group.name}”",
+                message = if (isMain) "Nhóm mặc định: đổi tên được nhưng không xóa được."
+                else "Xóa nhóm thì các tab chuyển về nhóm “$mainName”, không bị đóng.",
+                positive = "Đổi tên",
+                negative = "Hủy",
+                neutral = if (isMain) null else "Xóa nhóm",
+                onNeutral = {
+                    dialogs?.show(
+                        title = "Xóa nhóm “${group.name}”?",
+                        message = "Các tab trong nhóm sẽ chuyển về nhóm “$mainName”.",
+                        positive = "Xóa",
+                        negative = "Hủy"
+                    ) { ok, _ ->
+                        if (ok && tabManager.deleteGroup(group.id)) afterGroupChanged()
+                    }
+                }
+            ) { confirmed, _ -> if (confirmed) askRenameGroup(group) }
+        }
+
+        fun showGroupMenu() {
+            if (groupCard != null || tabManager.isPrivateMode) return
+            val d = activity.resources.displayMetrics.density
+            val night = GlassSystem.isDarkPage()
+            val fg = GlassSystem.pagePrimaryText()
+            val radiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * d
+
+            val layer = FrameLayout(activity).apply { setOnClickListener { dismissGroupMenu() } }
+            val card = MenuCardLayout(activity).apply {
+                maxHeightPx = (activity.resources.displayMetrics.heightPixels * Constants.MENU_MAX_HEIGHT_FRACTION).toInt()
+                background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, night)
+                clipToOutline = true
+                clipChildren = true
+                clipToPadding = true
+                isClickable = true
+                foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, d, night)
+            }
+            val glass = GlassSystem.createBlurView(
+                activity, blurTarget, GlassSystem.Preset.MENU_CARD, d, night, rim = false
+            ).apply {
+                isClickable = false
+                isFocusable = false
+            }
+            card.addView(glass, FrameLayout.LayoutParams(-1, -1))
+
+            val list = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(8), 0, dp(8))
+                minimumWidth = dp(240)
+            }
+            fun addRow(
+                label: String,
+                trailing: String?,
+                icon: Drawable?,
+                onClick: () -> Unit,
+                onLongClick: (() -> Unit)? = null
+            ) {
+                val row = LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(18), 0, dp(22), 0)
+                    minimumHeight = dp(48)
+                    isClickable = true
+                    background = activity.roundedPressBackground(night)
+                    setOnClickListener {
+                        dismissGroupMenu()
+                        container.post { onClick() }
+                    }
+                    if (onLongClick != null) {
+                        setOnLongClickListener {
+                            it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                            dismissGroupMenu()
+                            container.post { onLongClick() }
+                            true
+                        }
+                    }
+                }
+                // Ô icon luôn rộng 20dp (kể cả khi trống) để chữ các hàng thẳng cột.
+                row.addView(
+                    ImageView(activity).apply { if (icon != null) setImageDrawable(icon) },
+                    LinearLayout.LayoutParams(dp(20), dp(20))
+                )
+                row.addView(
+                    TextView(activity).apply {
+                        text = label
+                        textSize = 15f
+                        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                        setTextColor(fg)
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        setPadding(dp(14), dp(6), 0, dp(6))
+                    },
+                    LinearLayout.LayoutParams(0, -2, 1f)
+                )
+                if (trailing != null) {
+                    row.addView(
+                        TextView(activity).apply {
+                            text = trailing
+                            textSize = 14f
+                            setTextColor(GlassSystem.pageSecondaryText())
+                            setPadding(dp(12), 0, 0, 0)
+                        },
+                        LinearLayout.LayoutParams(-2, -2)
+                    )
+                }
+                AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
+                list.addView(row, LinearLayout.LayoutParams(-1, -2))
+            }
+
+            val groups = tabManager.getGroups()
+            groups.forEach { g ->
+                val checked = g.id == tabManager.currentGroupId
+                addRow(
+                    label = g.name,
+                    trailing = tabManager.tabCountOf(g.id).toString(),
+                    icon = if (checked) PathIcon(Icons.CHECK, fg) else null,
+                    onClick = {
+                        tabManager.setCurrentGroup(g.id)
+                        afterGroupChanged()
+                    },
+                    onLongClick = { manageGroup(g) }
+                )
+            }
+            list.addView(
+                View(activity).apply { setBackgroundColor(GlassSystem.pageDividerColor()) },
+                LinearLayout.LayoutParams(-1, 1).apply { setMargins(dp(18), dp(4), dp(18), dp(4)) }
+            )
+            addRow(
+                label = "Nhóm thẻ mới",
+                trailing = null,
+                icon = StrokeGlyph(StrokeGlyph.Kind.PLUS, fg, dp(2).toFloat()),
+                onClick = { askNewGroup() }
+            )
+            card.addView(list, FrameLayout.LayoutParams(-2, -2))
+
+            // Thẻ mọc ĐÚNG tại chỗ viên (góc trên-phải của thẻ trùng góc trên-phải của viên, che luôn viên)
+            // rồi bung xuống/sang trái. Đặt bằng margin (x/y sẽ bị spring translation của morph ghi đè).
+            val containerLoc = IntArray(2).also { container.getLocationOnScreen(it) }
+            val anchorLoc = IntArray(2).also { groupPill.getLocationOnScreen(it) }
+            val anchorRight = anchorLoc[0] + groupPill.width - containerLoc[0]
+            layer.addView(
+                card,
+                FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
+                    topMargin = anchorLoc[1] - containerLoc[1]
+                    marginEnd = (container.width - anchorRight).coerceAtLeast(0)
+                }
+            )
+            // Giữ thẻ gần như vô hình trong lúc BlurView vẽ khung thật đầu tiên, để lớp kính dự phòng không nháy.
+            card.alpha = 0.01f
+            card.scaleX = 0.8f
+            card.scaleY = 0.8f
+            container.addView(layer, FrameLayout.LayoutParams(-1, -1))
+            groupLayer = layer
+            groupCard = card
+
+            var started = false
+            fun startAnimation() {
+                if (groupCard !== card || started) return
+                started = true
+                val morphing = OriginTransitionController.open(
+                    card,
+                    groupPill,
+                    endCornerRadiusPx = radiusPx,
+                    springSpec = AnimationSystem.MENU_MORPH,
+                    fadeIn = false,
+                    counterTransformView = glass,
+                    contentViews = { listOf<View>(list) },
+                    contentStart = 0f,
+                    contentSpan = 0.25f,
+                    popScale = Constants.MENU_POP_SCALE,
+                    popTowardTarget = Constants.MENU_POP_TOWARD,
+                    popDelayMs = Constants.MENU_POP_DELAY_MS
+                )
+                if (!morphing) {
+                    card.pivotX = card.width.toFloat()
+                    card.pivotY = 0f
+                    AnimationSystem.enter(card, spec = AnimationSystem.MENU_MORPH)
+                }
+                blurSync.hold(850)
+            }
+            blurSync.hold(1000)
+            val observer = glass.viewTreeObserver
+            if (observer.isAlive) {
+                observer.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+                    override fun onPreDraw(): Boolean {
+                        if (glass.viewTreeObserver.isAlive) glass.viewTreeObserver.removeOnPreDrawListener(this)
+                        // Chờ thêm 2 nhịp vsync (thẻ vẫn ẩn) để frame đầu của animation không lộ lớp kính trong.
+                        val choreographer = android.view.Choreographer.getInstance()
+                        choreographer.postFrameCallback { choreographer.postFrameCallback { startAnimation() } }
+                        return true
+                    }
+                })
+            }
+            card.postDelayed({ startAnimation() }, 200L)
+        }
+
+        groupPill.setOnClickListener {
+            searchPill.hideKeyboard()
+            showGroupMenu()
+        }
+        AnimationSystem.press(groupPill, Constants.PRESS_SCALE_PILL)
+
+        // Back / đóng bảng: thu menu nhóm trước; đóng hẳn thì đưa nhóm đang xem về nhóm của tab đang hiển thị.
+        activeClose = { if (groupCard != null) dismissGroupMenu() else dismissAnimated() }
+        beforeDismiss = {
+            searchPill.hideKeyboard()
+            dismissGroupMenu(false)
+            tabManager.syncGroupToActive()
+        }
         renderCards()
 
         scroll.addView(columns)
@@ -692,9 +998,10 @@ class TabSwitcherController(
         val countPill = createModePill { isPrivate ->
             val changed = onModeChange(isPrivate)
             if (changed) {
-                privateLabel.visibility = if (isPrivate) View.VISIBLE else View.GONE
+                dismissGroupMenu(false)
                 searchPill.collapse(animate = false)
                 tabQuery = ""
+                updateGroupPill()
                 countLabel?.text = "${tabManager.count()} tab"
                 renderCards()
             }
@@ -727,7 +1034,7 @@ class TabSwitcherController(
                 )
             )
             val primary = GlassSystem.pagePrimaryText(if (dark) Color.BLACK else Color.WHITE)
-            privateLabel.setTextColor(primary)
+            groupText.setTextColor(primary)
             searchPill.applyIconColor(primary)
             modeControl?.applyPageTone(dark)
             val addFill = GlassSystem.tabAddButtonFillColor(if (dark) Color.BLACK else Color.WHITE)
