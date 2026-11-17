@@ -815,6 +815,35 @@ half4 main(float2 coord) {
     }
 
     /**
+     * Viên kính rỗng cùng chất liệu với [createGlassIconButton] nhưng không có icon: dùng làm vỏ cho
+     * nút đổi hình (tròn → viên thuốc → thanh tìm kiếm) khi chiều rộng thay đổi. Bo góc luôn là pill
+     * nên mọi chiều rộng đều ra hình viên thuốc; icon/ô nhập do người gọi tự thêm vào.
+     */
+    fun createGlassPill(
+        context: Context,
+        target: BlurTarget,
+        density: Float,
+        isNight: Boolean
+    ): FrameLayout {
+        val preset = Preset.TOOLBAR_BUTTON
+        val pill = FrameLayout(context).apply {
+            background = create(preset, density, isNight)
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            clipToOutline = true
+            isClickable = true
+            isFocusable = true
+        }
+        pill.addView(
+            createBlurView(context, target, preset, density, isNight).apply {
+                isClickable = false
+                isFocusable = false
+            },
+            FrameLayout.LayoutParams(-1, -1)
+        )
+        return pill
+    }
+
+    /**
      * Create a BlurView configured for a named glass surface.
      * [rim] = false khi bề mặt đã có viền riêng vẽ đè bằng [createBorder] (tránh viền chồng đôi).
      */

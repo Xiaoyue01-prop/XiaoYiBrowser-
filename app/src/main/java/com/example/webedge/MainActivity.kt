@@ -334,13 +334,13 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         foreground = { fg },
         density = { d },
         isNight = { isNight },
-        bottomInset = { maxOf(insetBottom, imeBottom) },
-        bottomBarHeightDp = BOTTOM_BAR_HEIGHT_DP
+        topInset = { insetTop },
+        occupiedTop = { downloadPromptController?.occupiedHeight() ?: 0 }
     )
 
     private fun toast(msg: String) = toaster.show(msg)
 
-    /** Toast "Đã đóng tab · Hoàn tác", cùng vị trí với các toast khác. */
+    /** Toast "Đã đóng tab · Hoàn tác", cùng vị trí (đầu màn hình) với các toast khác. */
     private fun showUndoClosedTab(entry: Entry) {
         toaster.show(
             msg = "Đã đóng tab",

@@ -70,6 +70,24 @@ class OverlayBrowserActivity : ComponentActivity() {
     /** Sheet đang ở tông tối (theo nền của chính trang trong sheet). */
     private var darkTone = false
 
+    /** Thông báo nổi kiểu banner ở đầu màn hình, cùng kiểu với MainActivity (không dùng Toast hệ thống ở đáy). */
+    private val toaster: ToastController by lazy {
+        ToastController(
+            context = this,
+            root = { contentRoot ?: FrameLayout(this) },
+            blurTarget = { blurTarget ?: BlurTarget(this) },
+            foreground = { GlassSystem.pagePrimaryText() },
+            density = { resources.displayMetrics.density },
+            isNight = { GlassSystem.isDarkPage() },
+            topInset = { 0 }
+        )
+    }
+
+    private fun toast(msg: String) {
+        if (contentRoot == null || blurTarget == null || isFinishing) return
+        toaster.show(msg)
+    }
+
     @SuppressLint("ClickableViewAccessibility", "SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -317,6 +335,7 @@ class OverlayBrowserActivity : ComponentActivity() {
                 if (!request.isForMainFrame || error.errorCode == ERROR_HOST_LOOKUP) return
                 // Bản https không mở được: chuyển sang Summit, nơi có hộp xác nhận trước khi dùng http.
                 HttpsFirst.fallbackFor(v, request.url.toString())?.let { httpUrl ->
+                    // Giữ Toast hệ thống: sheet đóng ngay sau đó nên banner trong cửa sổ này sẽ biến mất theo.
                     Toast.makeText(this@OverlayBrowserActivity, "Trang không hỗ trợ HTTPS", Toast.LENGTH_SHORT).show()
                     openInSummit(httpUrl)
                 }
@@ -331,7 +350,7 @@ class OverlayBrowserActivity : ComponentActivity() {
                     }
                 }
                 return this@OverlayBrowserActivity.openExternalUrl(request.url.toString(), v) { msg ->
-                    Toast.makeText(this@OverlayBrowserActivity, msg, Toast.LENGTH_SHORT).show()
+                    toast(msg)
                 }
             }
         }
@@ -385,7 +404,7 @@ class OverlayBrowserActivity : ComponentActivity() {
             MenuItem(Icons.COPY, "Sao chép liên kết") {
                 val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("url", url()))
-                Toast.makeText(this, "Đã sao chép liên kết", Toast.LENGTH_SHORT).show()
+                toast("Đã sao chép liên kết")
             },
             MenuItem(Icons.SHARE, "Chia sẻ") {
                 val send = Intent(Intent.ACTION_SEND).apply {

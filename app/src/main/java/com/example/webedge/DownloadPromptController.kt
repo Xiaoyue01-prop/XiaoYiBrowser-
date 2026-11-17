@@ -37,6 +37,17 @@ class DownloadPromptController(
     private var finishing = false
 
 
+    /**
+     * Phần đầu màn hình mà hộp hỏi đang chiếm (px, gồm một khoảng cách nhỏ bên dưới); 0 khi không hiện
+     * hoặc đang đóng. Toast dùng để xếp ngay dưới hộp thay vì đè lên các nút Hủy / Tải xuống.
+     */
+    fun occupiedHeight(): Int {
+        val view = activeView ?: return 0
+        if (finishing) return 0
+        val h = if (view.height > 0) view.height else view.measuredHeight
+        return if (h > 0) h + dp(8) else 0
+    }
+
     fun show(fileName: String, onConfirm: () -> Unit) {
         queue.addLast(Prompt(fileName, onConfirm))
         if (active == null) showNext()

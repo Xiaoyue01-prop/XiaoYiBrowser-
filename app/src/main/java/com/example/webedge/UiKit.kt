@@ -223,10 +223,13 @@ class PathIcon(pathData: String, color: Int) : Drawable(), AdaptiveForegroundDra
 }
 
 /**
- * Icon "Chọn": lưới 2x2, ba vòng tròn rỗng và một dấu tích ở ô trên-phải. Vẽ bằng nét (đầu tròn)
+ * Icon "Chọn": lưới 2x2, ba vòng tròn và một dấu tích ở ô trên-phải. Vẽ bằng nét (đầu tròn)
  * cùng gu với dấu + / ✓ của bảng tab, nên khác các icon đặc của [PathIcon].
+ *
+ * Hai trạng thái: vòng rỗng (chưa chọn hết) và vòng đặc (đã chọn tất cả). Đổi bằng [setFilled],
+ * có spring để ba vòng tròn "đầy" dần thay vì đổi hình đột ngột.
  */
-class SelectGridIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
+class SelectGridIcon(color: Int, filled: Boolean = false) : Drawable(), AdaptiveForegroundDrawable {
     override val adaptiveBaseColor: Int = color
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = color
@@ -234,7 +237,39 @@ class SelectGridIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = Paint.Style.FILL
+    }
     private val check = Path()
+    private var drawAlpha = 255
+    /** 0 = vòng rỗng, 1 = vòng đặc. */
+    private var fill = if (filled) 1f else 0f
+    private var fillAnim: AnimationSystem.FloatSpringHandle? = null
+
+    val isFilled: Boolean get() = fill > 0.5f
+
+    fun setFilled(on: Boolean, animate: Boolean = true) {
+        val to = if (on) 1f else 0f
+        fillAnim?.cancel()
+        fillAnim = null
+        if (!animate || fill == to) {
+            fill = to
+            invalidateSelf()
+            return
+        }
+        fillAnim = AnimationSystem.springFloat(
+            from = fill,
+            to = to,
+            spec = AnimationSystem.SETTLE,
+            minimumVisibleChange = AnimationSystem.NORMALIZED_VALUE_MIN_CHANGE,
+            onUpdate = { v ->
+                fill = v.coerceIn(0f, 1f)
+                invalidateSelf()
+            }
+        )
+    }
+
     override fun draw(canvas: Canvas) {
         val b = bounds
         if (b.width() <= 0 || b.height() <= 0) return
@@ -243,8 +278,14 @@ class SelectGridIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
         val r = 2.7f * u
         fun cx(v: Float) = b.left + v * u
         fun cy(v: Float) = b.top + v * u
+        if (fill > 0.001f) fillPaint.alpha = (drawAlpha * fill).toInt().coerceIn(0, 255)
+        val drawFill = fill > 0.001f
+        // Tô đặc bán kính r rồi nét vẽ đè lên: đĩa đặc có đúng bán kính ngoài của vòng rỗng.
+        if (drawFill) canvas.drawCircle(cx(7f), cy(7f), r, fillPaint)
         canvas.drawCircle(cx(7f), cy(7f), r, paint)
+        if (drawFill) canvas.drawCircle(cx(7f), cy(17f), r, fillPaint)
         canvas.drawCircle(cx(7f), cy(17f), r, paint)
+        if (drawFill) canvas.drawCircle(cx(17f), cy(17f), r, fillPaint)
         canvas.drawCircle(cx(17f), cy(17f), r, paint)
         check.reset()
         check.moveTo(cx(14.4f), cy(7.6f))
@@ -255,11 +296,19 @@ class SelectGridIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
     override fun setAdaptiveForegroundColor(color: Int) {
         if (paint.color != color) {
             paint.color = color
+            fillPaint.color = color
             invalidateSelf()
         }
     }
-    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
-    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+    override fun setAlpha(alpha: Int) {
+        drawAlpha = alpha
+        paint.alpha = alpha
+        invalidateSelf()
+    }
+    override fun setColorFilter(colorFilter: ColorFilter?) {
+        paint.colorFilter = colorFilter
+        fillPaint.colorFilter = colorFilter
+    }
     @Suppress("OVERRIDE_DEPRECATION")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
