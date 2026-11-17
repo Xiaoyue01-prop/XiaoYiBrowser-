@@ -305,6 +305,13 @@ function headerColor(hdEl, I){
   return dark ? [24, 25, 26, 1] : [255, 255, 255, 1];
 }
 
+// Header có nội dung thật: có chữ, hoặc (YouTube khi đã đăng nhập: chỉ có logo/tìm kiếm/menu dạng icon, không có chữ)
+// có icon/ảnh/nút/liên kết. Lớp phủ rỗng (banner cookie trống...) không có gì trong đó nên vẫn bị loại.
+function hasContent(el){
+  if (/\S/.test(el.textContent || '')) return true;
+  try { return !!el.querySelector('svg,img,button,a,input,canvas,[role="button"],[aria-label]'); } catch (e) { return false; }
+}
+
 // Tìm khối header cố định (fixed/sticky) đang chồng lên dải thanh trạng thái, kể cả khi có lớp phủ rỗng
 // (banner cookie...) nằm trên nó. Chọn khối ngoài cùng thấp hơn 30% màn hình và có chữ.
 function findHeader(I){
@@ -321,7 +328,7 @@ function findHeader(I){
           var r = el.getBoundingClientRect();
           // textContent của khối lớn rất nặng: chỉ lấy khi kích thước đã hợp lệ, và chỉ cần biết có chữ hay không.
           if (r.top <= I + 1 && r.width > w * 0.6 && r.height > 8 && r.height < h * 0.3 &&
-              /\S/.test(el.textContent || '')) {
+              hasContent(el)) {
             if (!best || el.contains(best.el)) best = { el: el, cs: cs };
           }
         }
