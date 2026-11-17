@@ -171,3 +171,11 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - Menu trang có ô "In / PDF" cạnh Chia sẻ (`MenuController.printPage()`): `WebView.createPrintDocumentAdapter` + `PrintManager.print`. Tên file lấy từ tiêu đề trang (đã bỏ ký tự cấm), thiếu thì dùng URL rút gọn. Lưu PDF = chọn "Lưu dưới dạng PDF" trong hộp thoại in của hệ thống.
 - Hộp thoại in mở sau 360ms để thẻ menu thu về xong. In từ tab riêng tư vẫn cho phép (người dùng chủ động); dữ liệu đi qua print spooler của hệ thống.
 - Chưa biên dịch/thử trên máy. Cần thử: trang dài nhiều trang, trang tràn viền, tab riêng tư, hủy hộp thoại, in khi đang ở chế độ tối.
+
+## Lịch sử/Dấu trang: nút ba chấm, tìm kiếm, chọn nhiều (2026-11-17)
+
+- `MenuController.showList(title, key, state)` dùng `ListState` (query, searchOpen, selecting, selected) giữ qua các lần dựng lại panel; bật/tắt chế độ chọn hoặc xóa thì dựng lại panel, còn chạm chọn từng dòng chỉ cập nhật tại chỗ (`updateSelectionUi`).
+- Tiêu đề có nút ba chấm (`Icons.MORE_HORIZ`) mở hộp nội tuyến (không nổi) gồm "Tìm kiếm" (ô lọc theo tiêu đề/URL, lọc ngay khi gõ) và "Chọn". Chế độ chọn: nút X thoát, tiêu đề "Chưa chọn"/"Đã chọn N", nút chọn tất cả ở góc phải, nút "Xóa" ở đáy (xóa ngay, không hỏi lại).
+- `SelectGridIcon` (UiKit.kt) là icon nét (đầu tròn) cho "Chọn": lưới 2x2, ba vòng tròn và một dấu tích. Dùng nét thay vì `PathIcon` đặc để cùng gu với dấu + / ✓ của bảng tab; nếu thêm icon mới kiểu này, vẽ bằng nét.
+- `makePanel` có thêm `backIcon`/`backDescription`; `Panel` lộ `head` và `title` để màn danh sách thêm nút và đổi tiêu đề.
+- Chưa biên dịch/thử trên máy. Cần thử: bàn phím khi mở ô tìm kiếm trong thẻ menu, danh sách dài (Xem thêm) kết hợp tìm kiếm và chọn tất cả, nút Back hệ thống trong chế độ chọn, xóa tất cả lịch sử khi đang tìm kiếm.

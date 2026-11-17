@@ -222,6 +222,48 @@ class PathIcon(pathData: String, color: Int) : Drawable(), AdaptiveForegroundDra
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
+/**
+ * Icon "Chọn": lưới 2x2, ba vòng tròn rỗng và một dấu tích ở ô trên-phải. Vẽ bằng nét (đầu tròn)
+ * cùng gu với dấu + / ✓ của bảng tab, nên khác các icon đặc của [PathIcon].
+ */
+class SelectGridIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
+    override val adaptiveBaseColor: Int = color
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val check = Path()
+    override fun draw(canvas: Canvas) {
+        val b = bounds
+        if (b.width() <= 0 || b.height() <= 0) return
+        val u = b.width() / 24f
+        paint.strokeWidth = 2.1f * u
+        val r = 2.7f * u
+        fun cx(v: Float) = b.left + v * u
+        fun cy(v: Float) = b.top + v * u
+        canvas.drawCircle(cx(7f), cy(7f), r, paint)
+        canvas.drawCircle(cx(7f), cy(17f), r, paint)
+        canvas.drawCircle(cx(17f), cy(17f), r, paint)
+        check.reset()
+        check.moveTo(cx(14.4f), cy(7.6f))
+        check.lineTo(cx(16.3f), cy(9.5f))
+        check.lineTo(cx(19.8f), cy(5.0f))
+        canvas.drawPath(check, paint)
+    }
+    override fun setAdaptiveForegroundColor(color: Int) {
+        if (paint.color != color) {
+            paint.color = color
+            invalidateSelf()
+        }
+    }
+    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
 /** Chấm tròn hiển thị số tab đang mở (hiện trên nút Tab khi có từ 2 tab trở lên). */
 class BadgeDrawable(
     private val count: Int,

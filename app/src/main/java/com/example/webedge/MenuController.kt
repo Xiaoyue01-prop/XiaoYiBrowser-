@@ -8,7 +8,9 @@ import android.print.PrintManager
 import android.provider.Settings
 import android.view.autofill.AutofillManager
 import android.graphics.Typeface
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -85,8 +87,18 @@ class MenuController(
         val body: LinearLayout,
         val buttons: LinearLayout,
         val widthDp: Int,
-        val onBack: (() -> Unit)?
+        val onBack: (() -> Unit)?,
+        val head: LinearLayout,
+        val title: TextView
     )
+
+    /** Trạng thái màn danh sách (Lịch sử/Dấu trang) giữ qua các lần dựng lại: tìm kiếm và chế độ chọn. */
+    private class ListState {
+        var selecting = false
+        var searchOpen = false
+        var query = ""
+        val selected = LinkedHashSet<String>()
+    }
 
     private var menuLayer: FrameLayout? = null
     private var menuCard: FrameLayout? = null
@@ -808,7 +820,14 @@ class MenuController(
 
     // ---------------- Các trang trong khung menu ----------------
 
-    private fun makePanel(title: String, hint: String?, widthDp: Int, onBack: (() -> Unit)?): Panel {
+    private fun makePanel(
+        title: String,
+        hint: String?,
+        widthDp: Int,
+        backIcon: String = Icons.ARROW_BACK,
+        backDescription: String = "Quay lại",
+        onBack: (() -> Unit)?
+    ): Panel {
         val page = LinearLayout(activity)
         page.orientation = LinearLayout.VERTICAL
 
@@ -820,7 +839,7 @@ class MenuController(
         head.setPadding(if (onBack != null) dp(14) else dp(22), dp(12), dp(22), dp(2))
         if (onBack != null) {
             val back = GlassSystem.createGlassIconButton(
-                activity, blurTarget, PathIcon(Icons.ARROW_BACK, GlassSystem.pagePrimaryText()), d, isNight(), "Quay lại"
+                activity, blurTarget, PathIcon(backIcon, GlassSystem.pagePrimaryText()), d, isNight(), backDescription
             )
             back.setOnClickListener { onBack() }
             AnimationSystem.press(back, Constants.PRESS_SCALE_PILL)
@@ -864,7 +883,7 @@ class MenuController(
         buttons.clipToPadding = false
         page.addView(buttons)
 
-        return Panel(page, body, buttons, widthDp, onBack)
+        return Panel(page, body, buttons, widthDp, onBack, head, t)
     }
 
     private fun showPanel(p: Panel) {
@@ -887,39 +906,101 @@ class MenuController(
         p.buttons.addView(right, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, h))
     }
 
-    private fun showList(title: String, key: String) {
-        val p = makePanel(title, "Chạm để mở, giữ lâu để xóa", 340) { showMainPage() }
-        var allItems = store.list(key)
+    private fun showList(title: String, key: String, state: ListState = ListState()) {
+        val selecting = state.selecting
+        fun reopen() = showList(title, key, state)
+        fun exitSelect() {
+            state.selecting = false
+            state.selected.clear()
+            reopen()
+        }
+
+        val p = if (selecting) {
+            makePanel("Chưa chọn", null, 340, Icons.CLOSE, "Thoát chế độ chọn") { exitSelect() }
+        } else {
+            makePanel(title, "Chạm để mở, giữ lâu để xóa", 340) { showMainPage() }
+        }
+        val iconColor = GlassSystem.pagePrimaryText()
+        p.head.setPadding(p.head.paddingLeft, p.head.paddingTop, dp(14), p.head.paddingBottom)
+        p.head.addView(View(activity), LinearLayout.LayoutParams(0, 1, 1f))
+
+        fun visibleItems(): List<Entry> {
+            val q = state.query.trim()
+            val all = store.list(key)
+            if (q.isEmpty()) return all
+            return all.filter { it.title.contains(q, ignoreCase = true) || it.url.contains(q, ignoreCase = true) }
+        }
+
+        var allItems = visibleItems()
         var displayedCount = 0
-        val chunkSize = 30 // ✅ BƯỚC 9: Chỉ tải 30 mục mỗi lần
+        val chunkSize = 30 // Chỉ tải 30 mục mỗi lần
+        val checks = HashMap<String, FrameLayout>()
+
+        fun styleCheck(frame: FrameLayout, on: Boolean) {
+            (frame.background as android.graphics.drawable.GradientDrawable).apply {
+                setColor(if (on) accent else Color.TRANSPARENT)
+                setStroke(dp(2), if (on) accent else Color.rgb(150, 150, 158))
+            }
+            frame.getChildAt(0).visibility = if (on) View.VISIBLE else View.INVISIBLE
+        }
+
+        fun updateSelectionUi() {
+            val n = state.selected.size
+            p.title.text = if (n == 0) "Chưa chọn" else "Đã chọn $n"
+            checks.forEach { (url, frame) -> styleCheck(frame, url in state.selected) }
+        }
 
         fun buildRow(entry: Entry) {
             val row = LinearLayout(activity)
-            row.orientation = LinearLayout.VERTICAL
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
             row.setPadding(dp(22), dp(10), dp(22), dp(10))
             row.background = ripple()
+            if (selecting) {
+                val frame = FrameLayout(activity)
+                frame.background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                }
+                frame.addView(ImageView(activity).apply {
+                    setImageDrawable(PathIcon(Icons.CHECK, Color.WHITE))
+                    setPadding(dp(3), dp(3), dp(3), dp(3))
+                }, FrameLayout.LayoutParams(-1, -1))
+                styleCheck(frame, entry.url in state.selected)
+                checks[entry.url] = frame
+                row.addView(frame, LinearLayout.LayoutParams(dp(24), dp(24)).apply { marginEnd = dp(14) })
+            }
+            val col = LinearLayout(activity)
+            col.orientation = LinearLayout.VERTICAL
             val t = TextView(activity)
             t.text = if (entry.title.isBlank() || entry.title == entry.url) UrlUtils.shortUrl(entry.url) else entry.title
             t.textSize = 15f
             stylePrimary(t)
             t.setSingleLine()
             t.ellipsize = TextUtils.TruncateAt.END
-            row.addView(t)
+            col.addView(t)
             val u = TextView(activity)
             u.text = UrlUtils.shortUrl(entry.url)
             u.textSize = 12f
             styleSecondary(u)
             u.setSingleLine()
             u.ellipsize = TextUtils.TruncateAt.END
-            row.addView(u)
-            row.setOnClickListener {
-                close()
-                host.load(entry.url)
-            }
-            row.setOnLongClickListener {
-                store.remove(key, entry.url)
-                showList(title, key) // Tải lại trang sau khi xóa
-                true
+            col.addView(u)
+            row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (selecting) {
+                row.setOnClickListener {
+                    if (!state.selected.add(entry.url)) state.selected.remove(entry.url)
+                    updateSelectionUi()
+                }
+            } else {
+                row.setOnClickListener {
+                    close()
+                    host.load(entry.url)
+                }
+                row.setOnLongClickListener {
+                    store.remove(key, entry.url)
+                    reopen() // Tải lại trang sau khi xóa (giữ nguyên ô tìm kiếm)
+                    true
+                }
             }
             AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
             p.body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -935,11 +1016,12 @@ class MenuController(
 
         fun fill() {
             p.body.removeAllViews()
+            checks.clear()
             displayedCount = 0
-            allItems = store.list(key)
+            allItems = visibleItems()
             if (allItems.isEmpty()) {
                 val empty = TextView(activity)
-                empty.text = "Chưa có gì"
+                empty.text = if (state.query.isBlank()) "Chưa có gì" else "Không tìm thấy"
                 empty.textSize = 15f
                 styleSecondary(empty)
                 empty.setPadding(dp(22), dp(16), dp(22), dp(16))
@@ -947,7 +1029,7 @@ class MenuController(
                 return
             }
             loadMore()
-            // ✅ Nút "Xem thêm" nếu còn ẩn
+            // Nút "Xem thêm" nếu còn ẩn
             if (displayedCount < allItems.size) {
                 val moreBtn = TextView(activity)
                 moreBtn.text = "Xem thêm ${allItems.size - displayedCount} mục..."
@@ -969,15 +1051,143 @@ class MenuController(
             }
         }
 
-        fill()
-        val left: View? = if (key == "history") {
-            panelButton("Xóa tất cả", accent) {
-                store.clearHistory()
-                showList(title, key)
+        // Ô tìm kiếm (chèn ngay dưới tiêu đề); chỉ hiện khi đã mở tìm kiếm.
+        val input = EditText(activity).apply {
+            setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            hint = "Tìm trong ${title.lowercase()}"
+            setHintTextColor(Color.rgb(130, 130, 138))
+            setTextColor(Color.BLACK)
+            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+            textSize = 15f
+            setPadding(dp(14), 0, dp(14), 0)
+            background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+            setText(state.query)
+        }
+        val searchBox = FrameLayout(activity).apply {
+            clipToOutline = true
+            background = GlassSystem.createInputField(12, d, false)
+            addView(GlassSystem.createInputBlurView(activity, blurTarget, d), FrameLayout.LayoutParams(-1, -1))
+            addView(input, FrameLayout.LayoutParams(-1, -1))
+            visibility = if (!selecting && (state.searchOpen || state.query.isNotBlank())) View.VISIBLE else View.GONE
+        }
+        input.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                state.query = s?.toString().orEmpty()
+                fill()
             }
-        } else null
-        addButtons(p, left, panelButton("Xong", accent) { close() })
+        })
+        if (!selecting) {
+            p.page.addView(searchBox, 1, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+                setMargins(dp(22), dp(4), dp(22), dp(6))
+            })
+        }
+
+        fun openSearch() {
+            state.searchOpen = true
+            searchBox.visibility = View.VISIBLE
+            input.post {
+                input.requestFocus()
+                WindowCompat.getInsetsController(activity.window, input).show(WindowInsetsCompat.Type.ime())
+            }
+        }
+
+        if (selecting) {
+            // Nút "chọn tất cả / bỏ chọn tất cả" (icon lưới tròn + dấu tích).
+            val selectAll = GlassSystem.createGlassIconButton(
+                activity, blurTarget, SelectGridIcon(iconColor), d, isNight(), "Chọn tất cả"
+            )
+            selectAll.setOnClickListener {
+                val urls = allItems.map { it.url }
+                if (urls.isNotEmpty() && state.selected.containsAll(urls)) state.selected.removeAll(urls.toSet())
+                else state.selected.addAll(urls)
+                updateSelectionUi()
+            }
+            AnimationSystem.press(selectAll, Constants.PRESS_SCALE_PILL)
+            p.head.addView(selectAll, LinearLayout.LayoutParams(dp(40), dp(40)))
+        } else {
+            // Nút ba chấm: mở hộp "Tìm kiếm" / "Chọn" ngay dưới tiêu đề.
+            val actions = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                background = roundedDrawable(dp(16).toFloat(), if (GlassSystem.isDarkPage()) 0x22FFFFFF else 0x0F000000)
+                setPadding(0, dp(4), 0, dp(4))
+                visibility = View.GONE
+            }
+            fun actionRow(label: String, icon: android.graphics.drawable.Drawable, onClick: () -> Unit) {
+                val r = LinearLayout(activity)
+                r.orientation = LinearLayout.HORIZONTAL
+                r.gravity = Gravity.CENTER_VERTICAL
+                r.setPadding(dp(18), 0, dp(18), 0)
+                r.background = ripple()
+                val l = TextView(activity)
+                l.text = label
+                l.textSize = 16f
+                stylePrimary(l)
+                r.addView(l, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                r.addView(ImageView(activity).apply { setImageDrawable(icon) }, LinearLayout.LayoutParams(dp(22), dp(22)))
+                r.setOnClickListener { onClick() }
+                AnimationSystem.press(r, Constants.PRESS_SCALE_ROW)
+                actions.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
+            }
+            actionRow("Tìm kiếm", PathIcon(Icons.SEARCH, Color.BLACK)) {
+                actions.visibility = View.GONE
+                openSearch()
+            }
+            actionRow("Chọn", SelectGridIcon(Color.BLACK)) {
+                if (store.list(key).isEmpty()) {
+                    host.toast("Chưa có gì để chọn")
+                } else {
+                    state.selecting = true
+                    state.selected.clear()
+                    reopen()
+                }
+            }
+            p.page.addView(actions, 1, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(22), dp(4), dp(22), dp(6))
+            })
+            val more = GlassSystem.createGlassIconButton(
+                activity, blurTarget, PathIcon(Icons.MORE_HORIZ, iconColor), d, isNight(), "Tùy chọn"
+            )
+            more.setOnClickListener {
+                actions.visibility = if (actions.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            }
+            AnimationSystem.press(more, Constants.PRESS_SCALE_PILL)
+            p.head.addView(more, LinearLayout.LayoutParams(dp(40), dp(40)))
+        }
+
+        fill()
+        if (selecting) {
+            updateSelectionUi()
+            val delete = panelButton("Xóa", Theme.DANGER_RED) {
+                val urls = state.selected.toList()
+                if (urls.isEmpty()) {
+                    host.toast("Chưa chọn mục nào")
+                } else {
+                    urls.forEach { store.remove(key, it) }
+                    host.toast("Đã xóa ${urls.size} mục")
+                    exitSelect()
+                }
+            }
+            addButtons(p, delete, panelButton("Xong", accent) { exitSelect() })
+        } else {
+            val left: View? = if (key == "history") {
+                panelButton("Xóa tất cả", accent) {
+                    store.clearHistory()
+                    state.query = ""
+                    state.searchOpen = false
+                    showList(title, key, state)
+                }
+            } else null
+            addButtons(p, left, panelButton("Xong", accent) { close() })
+        }
         showPanel(p)
+        if (!selecting && state.searchOpen && state.query.isBlank()) {
+            // Dựng lại khi đang mở ô tìm kiếm trống: giữ con trỏ ở ô để gõ tiếp.
+            input.post { input.requestFocus() }
+        }
     }
 
     private fun showSettings() {
