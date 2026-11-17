@@ -298,9 +298,11 @@ class TabSwitcherController(
             restoreOverlayState()
         }
 
+        var beforeDismiss: () -> Unit = {}
         fun dismissAnimated() {
             if (closing) return
             closing = true
+            beforeDismiss()
             blurSync.hold(700)
             if (animate) {
                 OriginTransitionController.close(container) { finishDismiss() }
@@ -372,15 +374,51 @@ class TabSwitcherController(
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(6), dp(4), dp(6), dp(6))
         }
-        val heading = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        val titleView = TextView(activity).apply {
-            text = if (tabManager.isPrivateMode) "Tab riêng tư" else "Tab đang mở"
-            textSize = 19f
+        // Thay chữ "Tab đang mở" bằng viên kính tìm kiếm (kính lúp → kéo dài thành thanh nhập từ khóa).
+        // Khung chồng để viên kính bung đè lên nhãn bên phải; nhãn "Riêng tư" tạm thời giữ dấu hiệu chế độ
+        // riêng tư, sau này nhường chỗ cho viên kính "Nhóm thẻ".
+        var tabQuery = ""
+        var onQueryChanged: () -> Unit = {}
+        val headWrap = FrameLayout(activity).apply {
+            clipChildren = false
+            clipToPadding = false
+        }
+        val privateLabel = TextView(activity).apply {
+            text = "Riêng tư"
+            textSize = 15f
             setTypeface(null, android.graphics.Typeface.BOLD)
             setTextColor(GlassSystem.pagePrimaryText())
+            visibility = if (tabManager.isPrivateMode) View.VISIBLE else View.GONE
         }
-        heading.addView(titleView)
-        header.addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val searchPill = GlassSearchPill(
+            activity = activity,
+            blurTarget = blurTarget,
+            isNight = isNight(),
+            iconColor = GlassSystem.pagePrimaryText(),
+            hintText = "Tìm trong tab",
+            onQueryChange = { q ->
+                tabQuery = q
+                onQueryChanged()
+            },
+            onSearchProgress = { p -> privateLabel.alpha = 1f - (p * 3f).coerceIn(0f, 1f) },
+            syncBlur = { ms -> blurSync.hold(ms) }
+        )
+        headWrap.addView(
+            privateLabel,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.END or Gravity.CENTER_VERTICAL
+            ).apply { marginEnd = dp(8) }
+        )
+        headWrap.addView(
+            searchPill.view,
+            FrameLayout.LayoutParams(dp(40), dp(40), Gravity.START or Gravity.CENTER_VERTICAL)
+        )
+        headWrap.addOnLayoutChangeListener { _, l, _, r, _, oldL, _, oldR, _ ->
+            if (r - l != oldR - oldL) searchPill.setMaxWidth(headWrap.width)
+        }
+        beforeDismiss = { searchPill.hideKeyboard() }
+        header.addView(headWrap, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(header)
 
         // Hai cột độc lập trong cùng vùng cuộn: thẻ có thể cao thấp khác nhau như Safari.
@@ -476,9 +514,23 @@ class TabSwitcherController(
             rightColumn.removeAllViews()
             var leftHeight = 0
             var rightHeight = 0
-            var cardIndex = 0
-            for (tab in tabManager.getCurrentTabs()) {
-                val thisIndex = cardIndex++
+            // Lọc theo tiêu đề / URL; chiều cao xem trước tính theo vị trí trong danh sách đầy đủ để thẻ
+            // không nhảy chiều cao khi đang gõ.
+            val allTabs = tabManager.getCurrentTabs()
+            val q = tabQuery.trim()
+            val visibleTabs = if (q.isEmpty()) allTabs else allTabs.filter {
+                it.title.contains(q, ignoreCase = true) || it.url.contains(q, ignoreCase = true)
+            }
+            if (visibleTabs.isEmpty() && q.isNotEmpty()) {
+                leftColumn.addView(TextView(activity).apply {
+                    text = "Không tìm thấy tab nào"
+                    textSize = 15f
+                    setTextColor(GlassSystem.pageSecondaryText())
+                    setPadding(dp(8), dp(24), dp(8), dp(8))
+                })
+            }
+            for (tab in visibleTabs) {
+                val thisIndex = allTabs.indexOfFirst { it.id == tab.id }
                 val previewHeight = previewHeights[thisIndex % previewHeights.size]
                 val card = LinearLayout(activity).apply {
                     orientation = LinearLayout.VERTICAL
@@ -600,6 +652,7 @@ class TabSwitcherController(
                 }
             }
         }
+        onQueryChanged = { renderCards() }
         renderCards()
 
         scroll.addView(columns)
@@ -639,7 +692,9 @@ class TabSwitcherController(
         val countPill = createModePill { isPrivate ->
             val changed = onModeChange(isPrivate)
             if (changed) {
-                titleView.text = if (isPrivate) "Tab riêng tư" else "Tab đang mở"
+                privateLabel.visibility = if (isPrivate) View.VISIBLE else View.GONE
+                searchPill.collapse(animate = false)
+                tabQuery = ""
                 countLabel?.text = "${tabManager.count()} tab"
                 renderCards()
             }
@@ -671,7 +726,9 @@ class TabSwitcherController(
                     GlassSystem.tabStatusFadeEndColor(if (dark) Color.BLACK else Color.WHITE)
                 )
             )
-            titleView.setTextColor(GlassSystem.pagePrimaryText(if (dark) Color.BLACK else Color.WHITE))
+            val primary = GlassSystem.pagePrimaryText(if (dark) Color.BLACK else Color.WHITE)
+            privateLabel.setTextColor(primary)
+            searchPill.applyIconColor(primary)
             modeControl?.applyPageTone(dark)
             val addFill = GlassSystem.tabAddButtonFillColor(if (dark) Color.BLACK else Color.WHITE)
             val addStroke = GlassSystem.tabAddButtonStrokeColor(if (dark) Color.BLACK else Color.WHITE)
