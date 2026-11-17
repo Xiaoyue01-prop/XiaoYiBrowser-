@@ -155,7 +155,7 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 
 - `TabOperationsController.closeTab()` là điểm duy nhất ghi lại tab đã đóng: chỉ tab thường, bỏ URL rỗng/`about:`; tab riêng tư không bao giờ được ghi. Dữ liệu nằm ở `Store.list("closed_tabs")` (tối đa `Constants.CLOSED_TABS_MAX` = 10, trùng URL thì đẩy lên đầu), `Entry.desktop` (khóa JSON `"m"`) giữ chế độ trang máy tính. Không lưu thumbnail vì `Store.saveTabs()` tự xóa ảnh của tab không còn mở.
 - `Store.clearHistory()` xóa luôn danh sách này (cả "Xóa tất cả" lịch sử lẫn "Xóa dữ liệu app").
-- Đóng tab → toast "Đã đóng tab · Hoàn tác" (`ToastController.show(actionLabel, onAction, extraBottomPx)`, ở lại `TOAST_ACTION_DURATION_MS`). Giữ lâu nút `+` trong bảng tab → `showClosedTabsPopup()`. Cả hai đi qua `MainActivity.reopenClosedTab()` → `openInForeground(url, title, desktop)`.
+- Đóng tab → toast "Đã đóng tab · Hoàn tác" (`ToastController.show(actionLabel, onAction)`, cùng vị trí với mọi toast khác, ở lại `TOAST_ACTION_DURATION_MS`). Giữ lâu nút `+` trong bảng tab → `showClosedTabsSheet()` (bottom sheet `BrowserBottomSheet`). Cả hai đi qua `MainActivity.reopenClosedTab()` → `openInForeground(url, title, desktop)`.
 - Chỉ khôi phục URL; lịch sử back/forward và vị trí cuộn không được giữ.
 - Chưa biên dịch trong môi trường chỉnh sửa (không có Kotlin/Android SDK): chạy CI rồi thử trên máy: đóng tab bằng vuốt và nút ×, đóng tab cuối, Hoàn tác khi bảng tab đang mở, giữ lâu `+` (danh sách rỗng, danh sách dài, chế độ riêng tư), tab trang máy tính mở lại đúng UA, xóa lịch sử.
 

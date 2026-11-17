@@ -340,17 +340,15 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     private fun toast(msg: String) = toaster.show(msg)
 
-    /** Toast "Đã đóng tab · Hoàn tác". Khi bảng tab đang mở, nâng toast lên trên thanh đáy của bảng. */
+    /** Toast "Đã đóng tab · Hoàn tác", cùng vị trí với các toast khác. */
     private fun showUndoClosedTab(entry: Entry) {
-        val switcherOpen = ::tabSwitcherController.isInitialized && tabSwitcherController.isShowing
         toaster.show(
             msg = "Đã đóng tab",
             actionLabel = "Hoàn tác",
             onAction = {
                 if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
                 reopenClosedTab(entry)
-            },
-            extraBottomPx = if (switcherOpen) dp(56) else 0
+            }
         )
     }
 

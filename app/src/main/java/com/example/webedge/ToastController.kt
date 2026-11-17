@@ -29,9 +29,8 @@ class ToastController(
 
     /**
      * [actionLabel]/[onAction]: nút bấm được ở cuối toast (ví dụ "Hoàn tác"); toast ở lại lâu hơn.
-     * [extraBottomPx]: nâng toast lên khi có overlay toàn màn hình (bảng tab) che thanh đáy.
      */
-    fun show(msg: String, actionLabel: String? = null, onAction: (() -> Unit)? = null, extraBottomPx: Int = 0) {
+    fun show(msg: String, actionLabel: String? = null, onAction: (() -> Unit)? = null) {
         val host = root()
         toastView?.let { host.removeView(it) }
         val label = TextView(context).apply {
@@ -89,7 +88,7 @@ class ToastController(
         ).apply {
             leftMargin = dp(14)
             rightMargin = dp(14)
-            bottomMargin = bottomInset() + dp(10) + dp(bottomBarHeightDp) + dp(14) + extraBottomPx
+            bottomMargin = bottomInset() + dp(10) + dp(bottomBarHeightDp) + dp(14)
         }
         host.addView(t, lp)
         toastView = t
