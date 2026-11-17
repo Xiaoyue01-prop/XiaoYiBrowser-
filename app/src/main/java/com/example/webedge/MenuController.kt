@@ -1215,7 +1215,8 @@ class MenuController(
                 curWidth = w.coerceIn(wCircle.toFloat(), maxOf(searchWidth, wPill.toFloat()))
                 val lp = surface.layoutParams
                 val iw = curWidth.toInt()
-                surface.pivotX = curWidth
+                // Pivot ở tâm như nút Tab / menu trang: nhấn và nảy phình đều quanh tâm, không lệch về một phía.
+                surface.pivotX = curWidth / 2f
                 surface.pivotY = dp(20).toFloat()
                 if (lp.width != iw) {
                     lp.width = iw
@@ -1259,14 +1260,27 @@ class MenuController(
                 render(curWidth) // cập nhật ngay hiển thị/khả năng nhận chạm của các icon theo chế độ mới
                 syncBlurFor(900)
                 val expanding = target > curWidth
-                // Như nút Tab / menu trang: nút nảy phình lên một nhịp rồi mới nở ra.
+                // Cùng chuỗi nảy với nút Tab / menu trang (OriginTransitionController): MENU_POP_SCALE,
+                // MENU_POP_DELAY_MS, MENU_POP khi nảy ra, MENU_POP_BACK khi hạ về. Nút nảy to trước rồi mới nở ra;
+                // lúc đóng thì thu vào khung nảy to rồi nút hạ về chỗ cũ.
                 val popFirst = expanding && newMode == modePill && curWidth <= wCircle + 1f
-                if (popFirst) AnimationSystem.scaleTo(surface, 1.22f, 1.22f, AnimationSystem.MENU_POP)
+                val collapsingToCircle = target < curWidth - 1f && newMode == modeCircle && !leavingToSelect
+                AnimationSystem.unclipParents(surface) // đóng bằng chạm ra ngoài thì chưa có lần nhấn nào mở cắt xén
+                if (popFirst) {
+                    AnimationSystem.scaleTo(surface, Constants.MENU_POP_SCALE, Constants.MENU_POP_SCALE, AnimationSystem.MENU_POP)
+                }
 
                 fun run() {
                     if (mode != newMode) return
                     widthAnim?.cancel()
-                    if (popFirst) AnimationSystem.scaleTo(surface, 1f, 1f, AnimationSystem.MENU_POP_BACK)
+                    // Mở: cỡ nảy thu dần về 1 theo cùng spring với lúc viên thuốc nở nên hai chuyển động khớp nhau.
+                    if (popFirst) AnimationSystem.scaleTo(surface, 1f, 1f, AnimationSystem.MENU_MORPH)
+                    // Đóng: viên thuốc thu vào khung nảy to (như thẻ menu thu vào nút Tab / menu trang).
+                    if (collapsingToCircle) {
+                        AnimationSystem.scaleTo(
+                            surface, Constants.MENU_POP_SCALE, Constants.MENU_POP_SCALE, AnimationSystem.MENU_MORPH_CLOSE
+                        )
+                    }
                     widthAnim = AnimationSystem.springFloat(
                         from = curWidth,
                         to = target,
@@ -1275,12 +1289,9 @@ class MenuController(
                         onEnd = { canceled, _, _ ->
                             if (!canceled) {
                                 render(target)
-                                if (newMode == modeCircle && !leavingToSelect) {
-                                    // Thu về xong: nút nảy nhẹ một nhịp rồi đứng yên.
-                                    AnimationSystem.scaleTo(surface, 1.14f, 1.14f, AnimationSystem.MENU_POP)
-                                    surface.postDelayed({
-                                        if (mode == modeCircle) AnimationSystem.scaleTo(surface, 1f, 1f, AnimationSystem.MENU_POP_BACK)
-                                    }, 70L)
+                                if (collapsingToCircle) {
+                                    // Thu về xong: nút hạ từ khung nảy về cỡ thật (MENU_POP_BACK), giống nút Tab / menu trang.
+                                    AnimationSystem.scaleTo(surface, 1f, 1f, AnimationSystem.MENU_POP_BACK)
                                 }
                                 onEnd?.invoke()
                             }
