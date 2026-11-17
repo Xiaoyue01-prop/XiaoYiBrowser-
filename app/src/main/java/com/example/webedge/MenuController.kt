@@ -1173,7 +1173,21 @@ class MenuController(
                 isClickable = true
                 visibility = View.GONE
             }
-            val frame = FrameLayout(activity)
+            // Chỉ trang quyết định kích thước; lớp bắt chạm bám theo (nếu để MATCH_PARENT thường, lúc nó hiện ra
+            // sẽ kéo thẻ menu cao hết cỡ).
+            val frame = object : FrameLayout(activity) {
+                override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                    val page = getChildAt(0)
+                    measureChild(page, widthMeasureSpec, heightMeasureSpec)
+                    setMeasuredDimension(page.measuredWidth, page.measuredHeight)
+                    val cover = getChildAt(1)
+                    val top = (cover.layoutParams as LayoutParams).topMargin
+                    cover.measure(
+                        MeasureSpec.makeMeasureSpec(measuredWidth, MeasureSpec.EXACTLY),
+                        MeasureSpec.makeMeasureSpec((measuredHeight - top).coerceAtLeast(0), MeasureSpec.EXACTLY)
+                    )
+                }
+            }
             frame.addView(p.page, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             frame.addView(
                 scrim,
@@ -1201,6 +1215,8 @@ class MenuController(
                 curWidth = w.coerceIn(wCircle.toFloat(), maxOf(searchWidth, wPill.toFloat()))
                 val lp = surface.layoutParams
                 val iw = curWidth.toInt()
+                surface.pivotX = curWidth
+                surface.pivotY = dp(20).toFloat()
                 if (lp.width != iw) {
                     lp.width = iw
                     surface.layoutParams = lp
@@ -1241,20 +1257,37 @@ class MenuController(
                     return
                 }
                 render(curWidth) // cập nhật ngay hiển thị/khả năng nhận chạm của các icon theo chế độ mới
-                syncBlurFor(700)
-                widthAnim = AnimationSystem.springFloat(
-                    from = curWidth,
-                    to = target,
-                    // Mở ra: nảy nhẹ như các nút khác của Summit; thu về: gọn, không nảy.
-                    spec = if (target > curWidth) AnimationSystem.SETTLE else AnimationSystem.MENU_MORPH_CLOSE,
-                    onUpdate = { w -> if (surface.isAttachedToWindow) render(w) },
-                    onEnd = { canceled, _, _ ->
-                        if (!canceled) {
-                            render(target)
-                            onEnd?.invoke()
+                syncBlurFor(900)
+                val expanding = target > curWidth
+                // Như nút Tab / menu trang: nút nảy phình lên một nhịp rồi mới nở ra.
+                val popFirst = expanding && newMode == modePill && curWidth <= wCircle + 1f
+                if (popFirst) AnimationSystem.scaleTo(surface, 1.22f, 1.22f, AnimationSystem.MENU_POP)
+
+                fun run() {
+                    if (mode != newMode) return
+                    widthAnim?.cancel()
+                    if (popFirst) AnimationSystem.scaleTo(surface, 1f, 1f, AnimationSystem.MENU_POP_BACK)
+                    widthAnim = AnimationSystem.springFloat(
+                        from = curWidth,
+                        to = target,
+                        spec = if (expanding) AnimationSystem.MENU_MORPH else AnimationSystem.MENU_MORPH_CLOSE,
+                        onUpdate = { w -> if (surface.isAttachedToWindow) render(w) },
+                        onEnd = { canceled, _, _ ->
+                            if (!canceled) {
+                                render(target)
+                                if (newMode == modeCircle && !leavingToSelect) {
+                                    // Thu về xong: nút nảy nhẹ một nhịp rồi đứng yên.
+                                    AnimationSystem.scaleTo(surface, 1.14f, 1.14f, AnimationSystem.MENU_POP)
+                                    surface.postDelayed({
+                                        if (mode == modeCircle) AnimationSystem.scaleTo(surface, 1f, 1f, AnimationSystem.MENU_POP_BACK)
+                                    }, 70L)
+                                }
+                                onEnd?.invoke()
+                            }
                         }
-                    }
-                )
+                    )
+                }
+                if (popFirst) surface.postDelayed({ run() }, Constants.MENU_POP_DELAY_MS) else run()
             }
 
             fun showKeyboard() {
