@@ -420,22 +420,51 @@ function shiftVideoHost(hd, I){
 }
 
 // Player có thể xuất hiện/được dựng lại SAU lúc header được dò (trang xem video tải khi đã đăng nhập, chuyển video
-// kiểu SPA, YouTube thay khối player). Khi đó lần dò header "mới" đã qua rồi nên player không bao giờ được hạ xuống
-// và header đè lên nó. Kiểm tra lại định kỳ (tối đa 4 lần/giây): chỉ làm việc khi có video lớn đang bị header đè.
-var lateAt = 0;
+// kiểu SPA, YouTube thay khối player). Kiểm tra lại định kỳ (tối đa 4 lần/giây), chỉ làm việc khi có video lớn
+// đang bị header đè. Thử cách cũ (đổi top của khối sticky/fixed) trước; nếu sau đó vẫn bị đè thì dùng cách dự phòng
+// theo hình học: tìm "khung player" (tổ tiên rộng bằng màn hình, cao cỡ player) rồi dời nó bằng transform,
+// không phụ thuộc position/top của YouTube.
+var lateAt = 0, lateTries = 0, lateVideo = null;
+function bigVideo(){
+  var vids = document.getElementsByTagName('video'), best = null, area = 0;
+  for (var i = 0; i < vids.length; i++) {
+    var r = vids[i].getBoundingClientRect();
+    if (r.width * r.height > area) { area = r.width * r.height; best = vids[i]; }
+  }
+  return area < 20000 ? null : best;
+}
+function playerBox(v, hd){
+  var w = window.innerWidth, h = window.innerHeight;
+  var vr = v.getBoundingClientRect(), box = null;
+  for (var el = v.parentElement; el && el !== document.documentElement && el !== document.body; el = el.parentElement) {
+    if (el === hd.el || el.contains(hd.el)) break;
+    var r = el.getBoundingClientRect();
+    if (r.height > h * 0.6) break;
+    if (r.width >= w * 0.9 && r.top <= vr.top + 1 && r.bottom >= vr.bottom - 1) box = el;
+  }
+  return box;
+}
 function lateVideoHost(hd, I){
   var now = Date.now();
   if (now - lateAt < 250) return;
   lateAt = now;
   try {
-    var vids = document.getElementsByTagName('video');
-    if (!vids.length) return;
+    var v = bigVideo();
+    if (!v) return;
     var hb = hd.el.getBoundingClientRect().bottom;
-    for (var i = 0; i < vids.length; i++) {
-      var vr = vids[i].getBoundingClientRect();
-      if (vr.width * vr.height < 20000) continue;
-      if (vr.top < hb - 4 && vr.top >= I - 4 && vr.bottom > hb) { shiftVideoHost(hd, I); return; }
-    }
+    var vr = v.getBoundingClientRect();
+    if (!(vr.top < hb - 4 && vr.top >= I - 4 && vr.bottom > hb)) { lateTries = 0; return; }   // không bị đè
+    if (lateVideo !== v) { lateVideo = v; lateTries = 0; }
+    if (lateTries >= 4) return;
+    lateTries++;
+    if (lateTries <= 1) { shiftVideoHost(hd, I); return; }
+    var box = playerBox(v, hd);
+    if (!box) return;
+    var delta = hb - box.getBoundingClientRect().top;
+    if (delta < 4) return;
+    var cur = getComputedStyle(box).transform;
+    box.setAttribute('data-edge-xf', '1');
+    box.style.setProperty('transform', 'translateY(' + delta + 'px)' + (cur && cur !== 'none' ? ' ' + cur : ''), 'important');
   } catch (e) {}
 }
 
@@ -562,7 +591,7 @@ function inFs(){ return !!(document.fullscreenElement || document.webkitFullscre
 var wasFs = false;
 function edgeResetAll(){
   try {
-    var els = document.querySelectorAll('[data-edge-shift],[data-edge-hd],[data-edge-hdbg],[data-edge-pad]');
+    var els = document.querySelectorAll('[data-edge-shift],[data-edge-hd],[data-edge-hdbg],[data-edge-pad],[data-edge-xf]');
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
       if (el.hasAttribute('data-edge-pad')) {
@@ -572,6 +601,7 @@ function edgeResetAll(){
       if (el.hasAttribute('data-edge-shift') || el.hasAttribute('data-edge-hd') || el.hasAttribute('data-edge-hdbg')) {
         el.style.removeProperty('top');
       }
+      if (el.hasAttribute('data-edge-xf')) { el.style.removeProperty('transform'); el.removeAttribute('data-edge-xf'); }
       el.removeAttribute('data-edge-shift');
       el.removeAttribute('data-edge-hd');
       el.removeAttribute('data-edge-hdbg');
