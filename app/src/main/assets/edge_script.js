@@ -10,8 +10,6 @@ if (window.__edgeStarted) {
   return;
 }
 window.__edgeStarted = true;
-var EDGE_DEBUG = true;   // GỠ khi xong: nút 🐞 chẩn đoán trên YouTube
-var dbg = { run: 0, hd: 0, fresh: 0, late: 0, over: 0 };
 
 var last = '';
 var lastPageBg = '';
@@ -456,14 +454,13 @@ function playerBox(v, hd){
 function lateVideoHost(hd, I){
   var now = Date.now();
   if (now - lateAt < 250) return;
-  lateAt = now; dbg.late++;
+  lateAt = now;
   try {
     var v = bigVideo();
     if (!v) return;
     var hb = hd.el.getBoundingClientRect().bottom;
     var vr = v.getBoundingClientRect();
     if (!(vr.top < hb - 4 && vr.top >= I - 4 && vr.bottom > hb)) { lateTries = 0; return; }   // không bị đè
-    dbg.over++;
     if (lateVideo !== v) { lateVideo = v; lateTries = 0; }
     if (lateTries >= 4) return;
     lateTries++;
@@ -525,7 +522,6 @@ function cachedHeader(I){
 
 function runEdge(){
   var I = window.__edgeInset || 0;
-  dbg.run++;
   if (!I || !document.elementsFromPoint) return;
   try {
     var hd = cachedHeader(I), fresh = false;
@@ -534,7 +530,6 @@ function runEdge(){
       if (hd) { fresh = true; hdCache = { el: hd.el, at: Date.now() }; }
     }
     if (hd) {
-      dbg.hd++; if (fresh) dbg.fresh++;
       var topNow = parseFloat(hd.cs.top);
       if (isNaN(topNow) || topNow < I - 0.5) {
         hd.el.style.setProperty('top', I + 'px', 'important');
@@ -1163,60 +1158,6 @@ window.__edgePerfReport = function(){
   return JSON.stringify(out);
 };
 
-// ---- Chẩn đoán (chỉ trên YouTube): chạm nút 🐞 bên phải màn hình để hiện bảng thông tin, rồi chụp màn hình ----
-function dbgDesc(el){
-  var cs = getComputedStyle(el), r = el.getBoundingClientRect();
-  var c = (typeof el.className === 'string' ? el.className : '').trim().split(/\s+/).slice(0, 2).join('.');
-  var at = '';
-  ['data-edge-hd', 'data-edge-shift', 'data-edge-xf', 'data-edge-hdbg'].forEach(function(a){ if (el.hasAttribute(a)) at += ' [' + a.slice(10) + ']'; });
-  return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (c ? '.' + c : '') + ' ' + cs.position +
-    ' top=' + cs.top + ' tf=' + (cs.transform === 'none' ? '-' : 'Y') +
-    ' r=' + Math.round(r.top) + '/' + Math.round(r.height) + 'x' + Math.round(r.width) + at;
-}
-function dbgDump(){
-  var L = [], I = window.__edgeInset || 0;
-  try {
-    L.push('I=' + I + ' H=' + window.innerHeight + ' W=' + window.innerWidth + ' dpr=' + window.devicePixelRatio);
-    L.push('run=' + dbg.run + ' hd=' + dbg.hd + ' fresh=' + dbg.fresh + ' late=' + dbg.late + ' over=' + dbg.over + ' tries=' + lateTries);
-    var hd = null; try { hd = findHeader(I); } catch (e) {}
-    L.push('HEADER: ' + (hd ? dbgDesc(hd.el) : 'khong tim thay') + ' | cache=' + (hdCache ? 'co' : 'khong'));
-    var v = bigVideo();
-    if (!v) { L.push('VIDEO: khong co'); }
-    else {
-      var vr = v.getBoundingClientRect();
-      L.push('VIDEO r=' + Math.round(vr.top) + '/' + Math.round(vr.height) + 'x' + Math.round(vr.width) +
-        (hd ? ' hb=' + Math.round(hd.el.getBoundingClientRect().bottom) : ''));
-      var n = 0;
-      for (var el = v.parentElement; el && n < 14; el = el.parentElement, n++) {
-        L.push((n + 1) + ' ' + dbgDesc(el));
-        if (el === document.body) break;
-      }
-    }
-  } catch (e) { L.push('loi: ' + e); }
-  return L.join('\n');
-}
-function dbgInstall(){
-  if (!EDGE_DEBUG || !/youtube\.com$/.test(location.hostname)) return;
-  var root = document.documentElement;
-  if (!root || document.getElementById('__edgeDbgBtn')) return;
-  var btn = document.createElement('div');
-  btn.id = '__edgeDbgBtn';
-  btn.textContent = '\uD83D\uDC1E';
-  btn.setAttribute('style', 'position:fixed;right:6px;top:52%;width:46px;height:46px;line-height:46px;text-align:center;font-size:22px;' +
-    'border-radius:23px;background:#d33;color:#fff;z-index:2147483647;opacity:.85');
-  var box = document.createElement('pre');
-  box.id = '__edgeDbgBox';
-  box.setAttribute('style', 'position:fixed;left:0;right:0;top:18%;max-height:62%;overflow:auto;margin:0;padding:8px;background:rgba(0,0,0,.9);' +
-    'color:#7f7;font:10px/1.25 monospace;white-space:pre-wrap;word-break:break-all;z-index:2147483646;display:none;user-select:text');
-  btn.addEventListener('click', function(){
-    if (box.style.display === 'none') { box.textContent = dbgDump(); box.style.display = 'block'; }
-    else { box.style.display = 'none'; }
-  });
-  root.appendChild(box);
-  root.appendChild(btn);
-}
-setTimeout(dbgInstall, 1200);
-setTimeout(dbgInstall, 3500);
 setTimeout(window.__edgeRun, 100);
 setTimeout(window.__edgeRun, 800);
 setTimeout(window.__edgeRun, 2000);
