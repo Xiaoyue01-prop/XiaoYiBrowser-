@@ -64,8 +64,12 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
         // Private WebViews must not participate in Android's automatic view-state snapshots
         // or expose form values to the platform Autofill service.
         view.isSaveEnabled = !tab.isPrivate
-        if (tab.isPrivate) {
-            view.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+        // Tab thường tham gia Android Autofill rõ ràng (dịch vụ do người dùng chọn: Google, Bitwarden...);
+        // Summit không tự lưu mật khẩu. Tab riêng tư tắt hẳn.
+        view.importantForAutofill = if (tab.isPrivate) {
+            View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+        } else {
+            View.IMPORTANT_FOR_AUTOFILL_YES
         }
         view.setBackgroundColor(Color.WHITE)
         val settings = view.settings

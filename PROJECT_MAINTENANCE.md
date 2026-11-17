@@ -158,3 +158,16 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - Đóng tab → toast "Đã đóng tab · Hoàn tác" (`ToastController.show(actionLabel, onAction, extraBottomPx)`, ở lại `TOAST_ACTION_DURATION_MS`). Giữ lâu nút `+` trong bảng tab → `showClosedTabsPopup()`. Cả hai đi qua `MainActivity.reopenClosedTab()` → `openInForeground(url, title, desktop)`.
 - Chỉ khôi phục URL; lịch sử back/forward và vị trí cuộn không được giữ.
 - Chưa biên dịch trong môi trường chỉnh sửa (không có Kotlin/Android SDK): chạy CI rồi thử trên máy: đóng tab bằng vuốt và nút ×, đóng tab cuối, Hoàn tác khi bảng tab đang mở, giữ lâu `+` (danh sách rỗng, danh sách dài, chế độ riêng tư), tab trang máy tính mở lại đúng UA, xóa lịch sử.
+
+## Mật khẩu & tự điền (2026-11-17)
+
+- Summit dùng Android Autofill của hệ thống, không có kho mật khẩu riêng và không dùng Credential Manager (trình duyệt cần được Google cấp quyền "privileged app"). Dịch vụ do người dùng chọn: Google Password Manager, Bitwarden, 1Password...
+- `TabWebViewConfigurator.configure()`: tab thường `IMPORTANT_FOR_AUTOFILL_YES`, tab riêng tư `NO_EXCLUDE_DESCENDANTS` (giữ nguyên). Không đổi `importantForAutofill` của WebView ở chỗ khác.
+- Cài đặt có dòng "Mật khẩu & tự điền" (`MenuController.autofillServiceLabel()` / `openAutofillSettings()`): hiện tên dịch vụ đang chọn hoặc "Chưa bật"; bấm mở `Settings.ACTION_CREDENTIAL_PROVIDER` (API 34+), lỗi thì mở Cài đặt chung. Tên dịch vụ cần `<queries>` trong manifest (Android 11+). Trạng thái dòng này chỉ cập nhật khi mở lại màn Cài đặt.
+- Chưa biên dịch/chưa thử trên máy. Cần thử: đăng nhập một bước và hai bước, hỏi lưu mật khẩu sau đăng nhập, đổi mật khẩu, khung gợi ý không bị lớp kính che, tab riêng tư không hiện gợi ý, và với từng dịch vụ (Google, Bitwarden).
+
+## In và lưu PDF (2026-11-17)
+
+- Menu trang có ô "In / PDF" cạnh Chia sẻ (`MenuController.printPage()`): `WebView.createPrintDocumentAdapter` + `PrintManager.print`. Tên file lấy từ tiêu đề trang (đã bỏ ký tự cấm), thiếu thì dùng URL rút gọn. Lưu PDF = chọn "Lưu dưới dạng PDF" trong hộp thoại in của hệ thống.
+- Hộp thoại in mở sau 360ms để thẻ menu thu về xong. In từ tab riêng tư vẫn cho phép (người dùng chủ động); dữ liệu đi qua print spooler của hệ thống.
+- Chưa biên dịch/thử trên máy. Cần thử: trang dài nhiều trang, trang tràn viền, tab riêng tư, hủy hộp thoại, in khi đang ở chế độ tối.

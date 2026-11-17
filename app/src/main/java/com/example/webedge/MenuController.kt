@@ -3,6 +3,10 @@ package com.example.webedge
 import android.app.Activity
 import android.graphics.Color
 import android.content.Intent
+import android.print.PrintAttributes
+import android.print.PrintManager
+import android.provider.Settings
+import android.view.autofill.AutofillManager
 import android.graphics.Typeface
 import android.text.InputType
 import android.text.TextUtils
@@ -271,6 +275,26 @@ class MenuController(
     private fun ripple(): android.graphics.drawable.Drawable = activity.roundedPressBackground(GlassSystem.isDarkPage())
 
     private fun onOff(b: Boolean): String = if (b) "Bật" else "Tắt"
+
+    /** Tên dịch vụ tự điền đang chọn (Google, Bitwarden...); null nếu chưa bật hoặc không đọc được. */
+    private fun autofillServiceLabel(): String? = runCatching {
+        val manager = activity.getSystemService(AutofillManager::class.java) ?: return null
+        if (!manager.isAutofillSupported || !manager.hasEnabledAutofillServices()) return null
+        val component = Settings.Secure.getString(activity.contentResolver, "autofill_service")
+            ?.substringBefore('/')?.takeIf { it.isNotBlank() } ?: return "Đã bật"
+        val pm = activity.packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(component, 0)).toString()
+    }.getOrDefault("Đã bật")
+
+    /** Mở trang cài đặt chọn dịch vụ mật khẩu/tự điền của hệ thống. */
+    private fun openAutofillSettings() {
+        val attempts = listOf(Settings.ACTION_CREDENTIAL_PROVIDER, Settings.ACTION_SETTINGS)
+        for (action in attempts) {
+            val opened = runCatching { activity.startActivity(Intent(action)) }.isSuccess
+            if (opened) return
+        }
+        host.toast("Không mở được cài đặt mật khẩu của hệ thống")
+    }
 
     /** Mở menu; nếu đang mở thì đóng. */
     fun toggle(requested: Kind = Kind.MAIN) {
@@ -663,6 +687,10 @@ class MenuController(
             quick.orientation = LinearLayout.HORIZONTAL
             quick.setPadding(dp(8), 0, dp(8), 0)
             cell(quick, "Chia sẻ", Icons.SHARE) { shareUrl() }
+            cell(quick, "In / PDF", Icons.PRINT) {
+                // Chờ thẻ menu thu về xong rồi mới mở hộp thoại in của hệ thống.
+                root.postDelayed({ printPage() }, 360L)
+            }
             cell(
                 quick,
                 if (marked) "Bỏ lưu" else "Lưu trang",
@@ -751,6 +779,22 @@ class MenuController(
         if (host.currentUrl.isBlank()) return
         val added = store.toggleBookmark(host.web.title ?: host.currentUrl, host.currentUrl)
         host.toast(if (added) "Đã thêm dấu trang" else "Đã bỏ dấu trang")
+    }
+
+    /** In trang đang xem hoặc lưu thành PDF qua hộp thoại in của hệ thống (chọn "Lưu dưới dạng PDF"). */
+    private fun printPage() {
+        if (host.currentUrl.isBlank()) return
+        val view = host.web
+        val manager = activity.getSystemService(PrintManager::class.java)
+        if (manager == null) {
+            host.toast("Máy không hỗ trợ in")
+            return
+        }
+        val name = (view.title?.takeIf { it.isNotBlank() } ?: UrlUtils.shortUrl(host.currentUrl))
+            .replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().take(60).ifBlank { "Summit" }
+        runCatching {
+            manager.print(name, view.createPrintDocumentAdapter(name), PrintAttributes.Builder().build())
+        }.onFailure { host.toast("Không in được trang này") }
     }
 
     private fun shareUrl() {
@@ -1007,6 +1051,19 @@ class MenuController(
             if (!store.autoHideBar) host.setBarHidden(false)
             showSettings()
         }
+
+        val autofillLabel = autofillServiceLabel()
+        addRow("Mật khẩu & tự điền", autofillLabel ?: "Chưa bật", fg) { openAutofillSettings() }
+        val autofillHint = TextView(activity)
+        autofillHint.text = if (autofillLabel == null) {
+            "Chọn trình quản lý mật khẩu của máy (Google, Bitwarden...) để Summit tự điền và lưu mật khẩu. Tab riêng tư không dùng tự điền."
+        } else {
+            "Mật khẩu do $autofillLabel quản lý, Summit không lưu mật khẩu. Tab riêng tư không dùng tự điền."
+        }
+        autofillHint.textSize = 12f
+        styleSecondary(autofillHint)
+        autofillHint.setPadding(dp(22), 0, dp(22), dp(6))
+        p.body.addView(autofillHint)
 
         addSwitchRow("Gợi ý chế độ đọc cho bài báo", store.readerHintEnabled) { enabled ->
             store.readerHintEnabled = enabled
