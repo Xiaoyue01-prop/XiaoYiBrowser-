@@ -340,6 +340,26 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     private fun toast(msg: String) = toaster.show(msg)
 
+    /** Toast "Đã đóng tab · Hoàn tác". Khi bảng tab đang mở, nâng toast lên trên thanh đáy của bảng. */
+    private fun showUndoClosedTab(entry: Entry) {
+        val switcherOpen = ::tabSwitcherController.isInitialized && tabSwitcherController.isShowing
+        toaster.show(
+            msg = "Đã đóng tab",
+            actionLabel = "Hoàn tác",
+            onAction = {
+                if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
+                reopenClosedTab(entry)
+            },
+            extraBottomPx = if (switcherOpen) dp(56) else 0
+        )
+    }
+
+    /** Mở lại một tab đã đóng (từ Hoàn tác hoặc danh sách giữ lâu nút +) và bỏ nó khỏi danh sách. */
+    private fun reopenClosedTab(entry: Entry) {
+        store.removeClosedTab(entry.url)
+        tabOperations.openInForeground(entry.url, entry.title, entry.desktop)
+    }
+
     // lazy vì Store chỉ có sau onCreate.
     private val readerSuggestion: ReaderSuggestionController by lazy {
         ReaderSuggestionController(
@@ -554,7 +574,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 popup.close(immediate = true)
                 downloadPromptController?.dismissAll()
                 privateProfileManager.endSession()
-            }
+            },
+            rememberClosedTab = { title, url, desktop -> store.addClosedTab(title, url, desktop) },
+            showUndoClosed = ::showUndoClosedTab
         )
         d = resources.displayMetrics.density
         // Giao diện ứng dụng giữ nền tảng sáng; các native overlay tự thích nghi theo màu nền thực của trang web.
@@ -813,7 +835,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             shortUrl = UrlUtils::shortUrl,
             onOverlayOpened = { orbController?.setTemporarilyHidden(true) },
             onOverlayClosed = { syncOrbMenuVisibility() },
-            onModeChange = ::switchTabMode
+            onModeChange = ::switchTabMode,
+            onReopenClosedTab = ::reopenClosedTab
         )
         menu.originView = menuBtn
         menu.pageOriginView = toolbar.pageMenuBtn

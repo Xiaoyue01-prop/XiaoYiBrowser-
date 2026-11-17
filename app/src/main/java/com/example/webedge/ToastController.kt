@@ -6,6 +6,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import eightbitlab.com.blurview.BlurTarget
 
@@ -26,7 +27,11 @@ class ToastController(
 ) {
     private var toastView: View? = null
 
-    fun show(msg: String) {
+    /**
+     * [actionLabel]/[onAction]: nút bấm được ở cuối toast (ví dụ "Hoàn tác"); toast ở lại lâu hơn.
+     * [extraBottomPx]: nâng toast lên khi có overlay toàn màn hình (bảng tab) che thanh đáy.
+     */
+    fun show(msg: String, actionLabel: String? = null, onAction: (() -> Unit)? = null, extraBottomPx: Int = 0) {
         val host = root()
         toastView?.let { host.removeView(it) }
         val label = TextView(context).apply {
@@ -38,13 +43,45 @@ class ToastController(
             setPadding(dp(14), dp(12), dp(14), dp(12))
         }
         val t = GlassSystem.createBannerCard(context, blurTarget(), density(), isNight())
-        t.addView(
-            label,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+        var dismissed = false
+        fun dismiss() {
+            if (dismissed) return
+            dismissed = true
+            AnimationSystem.exit(t, offsetY = dp(16).toFloat(), toScale = 1f) {
+                host.removeView(t)
+                if (toastView === t) toastView = null
+            }
+        }
+        if (actionLabel != null && onAction != null) {
+            val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            row.addView(label.apply { gravity = Gravity.CENTER_VERTICAL or Gravity.START }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(TextView(context).apply {
+                text = actionLabel
+                textSize = 14f
+                setTextColor(Theme.safariButtonBlue(isNight()))
+                setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD))
+                gravity = Gravity.CENTER
+                setPadding(dp(14), dp(12), dp(16), dp(12))
+                background = context.roundedPressBackground(isNight())
+                isClickable = true
+                isFocusable = true
+                contentDescription = actionLabel
+                setOnClickListener {
+                    if (dismissed) return@setOnClickListener
+                    dismiss()
+                    onAction()
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            t.addView(row, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        } else {
+            t.addView(
+                label,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
             )
-        )
+        }
         val lp = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -52,16 +89,12 @@ class ToastController(
         ).apply {
             leftMargin = dp(14)
             rightMargin = dp(14)
-            bottomMargin = bottomInset() + dp(10) + dp(bottomBarHeightDp) + dp(14)
+            bottomMargin = bottomInset() + dp(10) + dp(bottomBarHeightDp) + dp(14) + extraBottomPx
         }
         host.addView(t, lp)
         toastView = t
         AnimationSystem.enter(t, offsetY = dp(24).toFloat(), fromScale = 1f)
-        t.postDelayed({
-            AnimationSystem.exit(t, offsetY = dp(16).toFloat(), toScale = 1f) {
-                host.removeView(t)
-                if (toastView === t) toastView = null
-            }
-        }, Constants.TOAST_DURATION_MS)
+        t.postDelayed({ dismiss() },
+            if (actionLabel != null) Constants.TOAST_ACTION_DURATION_MS else Constants.TOAST_DURATION_MS)
     }
 }

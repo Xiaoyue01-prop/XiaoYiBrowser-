@@ -12,7 +12,7 @@ import java.io.File
 import java.io.FileOutputStream
 
 enum class PermissionState { ASK, ALLOW, DENY }
-data class Entry(val title: String, val url: String, val time: Long)
+data class Entry(val title: String, val url: String, val time: Long, val desktop: Boolean = false)
 data class SitePermissionEntry(val origin: String, val media: PermissionState, val location: PermissionState)
 data class PersistedTab(
     val id: Long,
@@ -27,6 +27,7 @@ data class PersistedTab(
 class Store(context: Context) {
     companion object {
         private const val TAG = "Store"
+        private const val CLOSED_TABS_KEY = "closed_tabs"
         // Tab preview chỉ cần đủ nét để hiển thị trong lưới, không cần giữ ảnh gần full-resolution.
         private const val MAX_PREVIEW_WIDTH_PX = 420
         private const val MAX_PREVIEW_HEIGHT_PX = 900
@@ -264,7 +265,7 @@ class Store(context: Context) {
         for (i in 0 until arr.length()) {
             // ✅ optJSONObject thay getJSONObject: gặp item lỗi thì bỏ qua, không crash
             val o = arr.optJSONObject(i) ?: continue
-            out.add(Entry(o.optString("t"), o.optString("u"), o.optLong("d")))
+            out.add(Entry(o.optString("t"), o.optString("u"), o.optLong("d"), o.optBoolean("m", false)))
         }
         // ✅ Ghi vào cache để lần sau khỏi đọc lại
         listCache[key] = out
@@ -279,7 +280,9 @@ class Store(context: Context) {
         val items = listCache[key] ?: return
         val arr = JSONArray()
         for (e in items) {
-            arr.put(JSONObject().put("t", e.title).put("u", e.url).put("d", e.time))
+            val item = JSONObject().put("t", e.title).put("u", e.url).put("d", e.time)
+            if (e.desktop) item.put("m", true)
+            arr.put(item)
         }
         sp.edit().putString(key, arr.toString()).apply()
     }
@@ -306,6 +309,26 @@ class Store(context: Context) {
         historyDirty = false
         handler.removeCallbacks(persistHistory)
         save("history", emptyList())
+        // Tab đã đóng cũng là lịch sử duyệt web: xóa cùng lúc để không còn URL cũ nào sót lại.
+        clearClosedTabs()
+    }
+
+    // =================== Tab đã đóng gần đây (chỉ tab thường) ===================
+    /** Ghi một tab thường vừa đóng lên đầu danh sách; trùng URL thì đẩy lên đầu thay vì thêm mục mới. */
+    fun addClosedTab(title: String, url: String, desktop: Boolean) {
+        if (url.isBlank() || url.startsWith("about:")) return
+        val l = list(CLOSED_TABS_KEY)
+        l.removeAll { it.url == url }
+        l.add(0, Entry(title.ifBlank { url }, url, System.currentTimeMillis(), desktop))
+        while (l.size > Constants.CLOSED_TABS_MAX) l.removeAt(l.size - 1)
+        save(CLOSED_TABS_KEY, l)
+    }
+    fun closedTabs(): List<Entry> = list(CLOSED_TABS_KEY).toList()
+    /** Bỏ một mục khỏi danh sách (sau khi đã mở lại, để không bị lặp). */
+    fun removeClosedTab(url: String) = remove(CLOSED_TABS_KEY, url)
+    fun clearClosedTabs() {
+        if (list(CLOSED_TABS_KEY).isEmpty()) return
+        save(CLOSED_TABS_KEY, emptyList())
     }
     fun isBookmarked(url: String): Boolean = list("bookmarks").any { it.url == url }
     // Trả về true nếu sau khi bấm thì trang đã được thêm vào dấu trang

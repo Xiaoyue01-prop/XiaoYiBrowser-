@@ -6,6 +6,8 @@ import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.text.TextUtils
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -48,7 +50,8 @@ class TabSwitcherController(
     private val shortUrl: (String) -> String,
     private val onOverlayOpened: () -> Unit = {},
     private val onOverlayClosed: () -> Unit = {},
-    private val onModeChange: (Boolean) -> Boolean = { false }
+    private val onModeChange: (Boolean) -> Boolean = { false },
+    private val onReopenClosedTab: (Entry) -> Unit = {}
 ) {
     // TextView hiển thị "N tab"; cập nhật khi đóng tab mà không dựng lại bảng.
     private var countLabel: TextView? = null
@@ -86,6 +89,7 @@ class TabSwitcherController(
         fillColor: Int,
         strokeColor: Int,
         iconTextSize: Float,
+        onLongClick: ((View) -> Unit)? = null,
         onClick: () -> Unit
     ): FrameLayout {
         val button = FrameLayout(activity).apply {
@@ -118,8 +122,115 @@ class TabSwitcherController(
             setPadding(dp(14), dp(14), dp(14), dp(14))
         }, FrameLayout.LayoutParams(-1, -1))
         button.setOnClickListener { onClick() }
+        if (onLongClick != null) {
+            button.setOnLongClickListener {
+                it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                onLongClick(it)
+                true
+            }
+        }
         AnimationSystem.attachGlassPress(button)
         return button
+    }
+
+    /**
+     * Popup "Tab đã đóng gần đây" nổi ngay trên nút [anchor] (giữ lâu nút +). Chạm ngoài popup để đóng.
+     * Chỉ dành cho nhóm tab thường; ở chế độ riêng tư không hiện gì vì tab riêng tư không bao giờ được ghi lại.
+     */
+    private fun showClosedTabsPopup(container: FrameLayout, anchor: View, onPick: (Entry) -> Unit) {
+        if (tabManager.isPrivateMode) return
+        val density = activity.resources.displayMetrics.density
+        val dark = GlassSystem.isDarkPage()
+        val primary = GlassSystem.pagePrimaryText()
+        val secondary = GlassSystem.pageSecondaryText()
+        var popup: View? = null
+        val scrim = View(activity).apply { isClickable = true; isFocusable = false }
+        fun dismissPopup() {
+            val p = popup ?: return
+            popup = null
+            AnimationSystem.exit(p, offsetY = dp(12).toFloat(), toScale = 0.96f) {
+                container.removeView(p)
+                container.removeView(scrim)
+            }
+        }
+        scrim.setOnClickListener { dismissPopup() }
+
+        val list = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        fun label(text: String, sizeSp: Float, color: Int, bold: Boolean = false) = TextView(activity).apply {
+            this.text = text
+            textSize = sizeSp
+            setTextColor(color)
+            if (bold) setTypeface(typeface, Typeface.BOLD)
+            setSingleLine()
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        list.addView(label("Tab đã đóng gần đây", 13f, secondary, bold = true).apply {
+            setPadding(dp(20), dp(8), dp(20), dp(6))
+        })
+        val entries = store.closedTabs()
+        if (entries.isEmpty()) {
+            list.addView(label("Chưa có tab nào đã đóng", 15f, secondary).apply {
+                setPadding(dp(20), dp(10), dp(20), dp(14))
+            })
+        } else {
+            entries.forEach { entry ->
+                val row = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(20), dp(8), dp(20), dp(8))
+                    background = activity.roundedPressBackground(dark)
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        dismissPopup()
+                        onPick(entry)
+                    }
+                }
+                row.addView(label(entry.title.ifBlank { entry.url }, 15f, primary))
+                row.addView(label(shortUrl(entry.url), 12f, secondary))
+                AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
+                list.addView(row, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+            list.addView(label("Xóa danh sách", 15f, Theme.DANGER_RED).apply {
+                setPadding(dp(20), dp(12), dp(20), dp(8))
+                background = activity.roundedPressBackground(dark)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    store.clearClosedTabs()
+                    dismissPopup()
+                }
+            })
+        }
+
+        val card = GlassSystem.createBannerCard(activity, blurTarget, density, dark)
+        card.addView(ScrollView(activity).apply {
+            isVerticalScrollBarEnabled = false
+            addView(list)
+        }, FrameLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        // Neo popup ngay trên nút +: tính khoảng cách từ đáy overlay tới mép trên của nút.
+        val a = IntArray(2); val c = IntArray(2)
+        anchor.getLocationInWindow(a); container.getLocationInWindow(c)
+        val anchorTop = a[1] - c[1]
+        val width = minOf(container.width - dp(32), dp(340))
+        val maxHeight = (anchorTop - dp(96)).coerceAtLeast(dp(120))
+        val lp = FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply {
+            leftMargin = dp(16)
+            bottomMargin = (container.height - anchorTop) + dp(10)
+        }
+        container.addView(scrim, FrameLayout.LayoutParams(-1, -1))
+        container.addView(card, lp)
+        popup = card
+        // Danh sách dài hơn khoảng trống phía trên thì giới hạn chiều cao và cho cuộn.
+        card.post {
+            if (card.height > maxHeight) {
+                card.layoutParams = (card.layoutParams as FrameLayout.LayoutParams).apply { height = maxHeight }
+            }
+        }
+        AnimationSystem.enter(card, offsetY = dp(12).toFloat(), fromScale = 0.96f)
     }
 
     /**
@@ -528,7 +639,13 @@ class TabSwitcherController(
             iconColor = Theme.safariButtonBlue(isNight()),
             fillColor = if (isNight()) Color.argb(88, 68, 70, 78) else Color.argb(105, 255, 255, 255),
             strokeColor = if (isNight()) Color.argb(115, 220, 220, 230) else Color.argb(135, 125, 125, 136),
-            iconTextSize = 27f
+            iconTextSize = 27f,
+            onLongClick = { anchor ->
+                showClosedTabsPopup(container, anchor) { entry ->
+                    onReopenClosedTab(entry)
+                    dismissAnimated()
+                }
+            }
         ) {
             onCreateTab()
             dismissAnimated()
