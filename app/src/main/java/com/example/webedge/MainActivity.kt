@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.net.http.SslError
 import android.os.Bundle
 import android.os.SystemClock
 import android.os.Handler
@@ -14,6 +15,8 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.webkit.CookieManager
+import android.webkit.HttpAuthHandler
+import android.webkit.SslErrorHandler
 import android.webkit.WebStorage
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -220,6 +223,13 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 }
             }
         }
+        override fun confirmSslError(view: WebView, handler: SslErrorHandler, error: SslError) =
+            PageErrors.confirmSsl(this@MainActivity.glassDialog, handler, error)
+        override fun requestHttpAuth(view: WebView, handler: HttpAuthHandler, host: String?, realm: String?) =
+            PageErrors.promptHttpAuth(
+                this@MainActivity.glassDialog, handler, host, realm,
+                insecure = view.url?.startsWith("http://", ignoreCase = true) == true
+            )
         override fun showDomain() = this@MainActivity.showDomain()
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
         override fun updateNav() = this@MainActivity.updateNav()

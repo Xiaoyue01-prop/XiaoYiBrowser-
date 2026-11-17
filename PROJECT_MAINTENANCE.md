@@ -140,3 +140,13 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 - Chưa có (v1): xin quyền camera/mic/vị trí, toàn màn hình video, tải xuống trong sheet (chuyển sang Summit), 
 - Chưa làm `CustomTabsService` (warmup/mayLaunchUrl/session): app như Facebook/Telegram chỉ gửi `ACTION_VIEW` thường tới trình duyệt mặc định thì vẫn mở được sheet này, nhưng app đòi Custom Tabs đúng chuẩn thì không kết nối được.
 - Chưa build/chạy thử trong môi trường chỉnh sửa (không có SDK); CI lần đầu là kiểm tra biên dịch. Cần thử: link từ Telegram/Messages/Gmail khi Summit chưa chạy và đang chạy, Back khi có lịch sử, kéo xuống/✕/chạm vùng tối, "Mở trong Summit", link `tel:`/`intent:`, bàn phím trong ô nhập, tải file.
+
+## Trang lỗi, lỗi SSL và HTTP Auth (2026-11-17)
+
+- Toàn bộ nằm trong `PageErrors.kt`; `BrowserWebViewClient` chỉ gọi vào. `MainActivity` chỉ có hai hàm glue trong `webClientHost` (`confirmSslError`, `requestHttpAuth`).
+- Lỗi tải khung chính: `onReceivedError` nạp trang lỗi riêng bằng `loadDataWithBaseURL(failedUrl, ...)` (URL thanh địa chỉ vẫn là trang lỗi; tab lưu đĩa vẫn là URL thật). Nút Thử lại và sự kiện `online` chạy `location.replace(failedUrl)`; reload/kéo-để-tải-lại trên trang lỗi cũng tự thử lại nhờ kiểm tra `navigation.type === 'reload'` (chưa kiểm chứng trên máy).
+- Bỏ qua (không hiện trang lỗi): `ERR_ABORTED`, `ERR_BLOCKED_BY_CLIENT`, scheme lạ (chỉ toast). Trang lỗi không vào lịch sử (`isErrorPage`: tiêu đề `PageErrors.TITLE` hoặc cùng URL trong 2.5s sau lỗi).
+- SSL: chỉ hỏi khi lỗi thuộc host của trang chính ở tab đang xem; tài nguyên con host khác bị chặn im lặng. "Vẫn tiếp tục" chỉ nhớ theo (host, loại lỗi) trong phiên chạy, không lưu đĩa. Nhiều lỗi cùng khóa gộp một hộp thoại.
+- HTTP Auth: hộp đăng nhập kính mờ (`GlassDialogController.showCredentials`, ô mật khẩu ẩn ký tự). Không lưu mật khẩu; bị hỏi lại trong 30s thì báo "chưa đúng".
+- Chưa làm: `OverlayBrowserActivity` và `PopupWindowController` có WebViewClient riêng nên vẫn dùng hành vi mặc định (SSL lỗi bị chặn, HTTP Auth bị hủy). Thêm quyền `ACCESS_NETWORK_STATE` để nhận biết "không có mạng".
+- Test tay: https://expired.badssl.com, https://wrong.host.badssl.com, https://self-signed.badssl.com, https://httpbin.org/basic-auth/u/p (u/p), tên miền không tồn tại, bật chế độ máy bay rồi mở trang, rồi tắt chế độ máy bay (kỳ vọng tự tải lại), tab riêng tư. Chưa biên dịch tại môi trường chỉnh sửa; CI là kiểm tra đầu tiên.

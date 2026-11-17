@@ -1,13 +1,17 @@
 package com.example.webedge
 
 import android.graphics.Bitmap
+import android.net.http.SslError
 import android.view.ViewGroup
+import android.webkit.HttpAuthHandler
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import java.util.WeakHashMap
 
 /** Những gì [BrowserWebViewClient] cần từ Activity. */
 internal interface BrowserWebViewHost {
@@ -28,6 +32,10 @@ internal interface BrowserWebViewHost {
     fun forgetPageBackground(view: WebView)
     /** Bản https của một trang http không mở được: hỏi người dùng có muốn mở bằng http không. */
     fun confirmHttpFallback(view: WebView, httpUrl: String)
+    /** Chứng chỉ SSL của trang chính có vấn đề: hỏi người dùng, rồi trả lời [handler] đúng một lần. */
+    fun confirmSslError(view: WebView, handler: SslErrorHandler, error: SslError)
+    /** Máy chủ yêu cầu HTTP Auth: hỏi tên người dùng và mật khẩu, rồi trả lời [handler] đúng một lần. */
+    fun requestHttpAuth(view: WebView, handler: HttpAuthHandler, host: String?, realm: String?)
     /** Bỏ nền trang đang áp lên cửa sổ (khi điều hướng hoặc renderer chết). */
     fun clearWindowPageBackground()
     fun showDomain()
@@ -44,6 +52,13 @@ internal interface BrowserWebViewHost {
 
 /** WebViewClient dùng chung cho mọi tab của trình duyệt. */
 internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebViewClient() {
+
+    /** URL khung chính đang tải của mỗi WebView (từ onPageStarted): để biết lỗi SSL thuộc trang chính hay tài nguyên con. */
+    private val mainUrls = WeakHashMap<WebView, String>()
+
+    /** Lần tải lỗi gần nhất của mỗi WebView: để các onPageFinished sau lỗi không ghi lịch sử. */
+    private class FailedLoad(val url: String, val at: Long)
+    private val failedLoads = WeakHashMap<WebView, FailedLoad>()
 
     /** Chặn quảng cáo bật toàn cục và chưa bị tắt cho site của [url]. */
     private fun adBlockActiveFor(url: String?): Boolean {
@@ -81,16 +96,66 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         host.handleSpecialUrl(url, view)
 
     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-        if (request.isForMainFrame && !host.isDestroyed && view === host.web) {
-            if (error.errorCode != ERROR_HOST_LOOKUP) {
-                HttpsFirst.fallbackFor(view, request.url.toString())?.let { httpUrl ->
-                    host.confirmHttpFallback(view, httpUrl)
-                    return
-                }
-            }
-            host.toast("Không tải được trang (${error.errorCode})")
-            AnimationSystem.fade(view, 1f, AnimationSystem.SETTLE)
+        if (!request.isForMainFrame || host.isDestroyed) return
+        val description = error.description?.toString()
+        if (PageErrors.isIgnorable(error.errorCode, description)) return
+        val failedUrl = request.url.toString()
+        if (error.errorCode == ERROR_UNSUPPORTED_SCHEME) {
+            // Liên kết kiểu lạ (không có app mở): giữ nguyên trang đang xem.
+            if (view === host.web) host.toast("Không mở được liên kết này")
+            return
         }
+        if (view === host.web && error.errorCode != ERROR_HOST_LOOKUP) {
+            HttpsFirst.fallbackFor(view, failedUrl)?.let { httpUrl ->
+                host.confirmHttpFallback(view, httpUrl)
+                return
+            }
+        }
+        failedLoads[view] = FailedLoad(failedUrl, System.currentTimeMillis())
+        val info = PageErrors.describe(error.errorCode, description, PageErrors.isOffline(view.context))
+        val html = PageErrors.html(failedUrl, info, description)
+        val base = PageErrors.baseUrlFor(failedUrl)
+        // Nạp sau khi callback trả về: nạp ngay trong onReceivedError dễ bị lượt tải lỗi ghi đè.
+        view.post {
+            if (!host.isDestroyed) view.loadDataWithBaseURL(base, html, "text/html", "utf-8", base)
+        }
+        if (view === host.web) AnimationSystem.fade(view, 1f, AnimationSystem.SETTLE)
+    }
+
+    override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+        // Đã được người dùng cho phép (cùng host, cùng loại lỗi) trong phiên này: tài nguyên con cũng đi tiếp.
+        if (PageErrors.isSslAllowed(error)) {
+            handler.proceed()
+            return
+        }
+        // Chỉ hỏi khi lỗi thuộc trang chính đang xem; tài nguyên con của host khác bị chặn im lặng.
+        if (host.isDestroyed || view !== host.web || !isMainFrameHost(view, error.url)) {
+            handler.cancel()
+            return
+        }
+        host.confirmSslError(view, handler, error)
+    }
+
+    override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, authHost: String?, realm: String?) {
+        if (host.isDestroyed || view !== host.web) {
+            handler.cancel()
+            return
+        }
+        host.requestHttpAuth(view, handler, authHost, realm)
+    }
+
+    private fun isMainFrameHost(view: WebView, errorUrl: String?): Boolean {
+        val errorHost = PageErrors.hostOf(errorUrl) ?: return false
+        return errorHost == PageErrors.hostOf(mainUrls[view]) ||
+            errorHost == PageErrors.hostOf(view.url) ||
+            errorHost == PageErrors.hostOf(view.originalUrl)
+    }
+
+    /** Trang vừa tải xong là trang lỗi (hoặc lượt tải lỗi ngay trước đó): không đưa vào lịch sử. */
+    private fun isErrorPage(view: WebView, url: String): Boolean {
+        if (view.title == PageErrors.TITLE) return true
+        val failed = failedLoads[view] ?: return false
+        return failed.url == url && System.currentTimeMillis() - failed.at < PageErrors.HISTORY_SKIP_MS
     }
 
     override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
@@ -100,6 +165,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
     }
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+        mainUrls[view] = url
         YouTubeAdBlocker.onMainFrameNavigation(view, url)
         AdBlocker.onMainFrameNavigation(view, url)
         host.tabManager.updateForWebView(view, url, view.title ?: url)
@@ -160,7 +226,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         HttpsFirst.onLoaded(view, url)
         host.tabManager.updateForWebView(view, url, view.title ?: url)
         // Private pages never enter the persisted browsing history.
-        if (host.tabManager.getForWebView(view)?.isPrivate != true) {
+        if (host.tabManager.getForWebView(view)?.isPrivate != true && !isErrorPage(view, url)) {
             host.store.addHistory(view.title ?: "", url)
         }
         if (adBlockActiveFor(url)) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)

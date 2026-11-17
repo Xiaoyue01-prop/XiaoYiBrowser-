@@ -4,8 +4,10 @@ import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
 import android.view.Gravity
+import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -40,7 +42,9 @@ class GlassDialogController(
         val defaultInput: String?,
         val neutral: String?,
         val onNeutral: (() -> Unit)?,
-        val onResult: (confirmed: Boolean, input: String?) -> Unit
+        val onResult: (confirmed: Boolean, input: String?) -> Unit,
+        /** Khác null: hộp đăng nhập (hai ô tên người dùng/mật khẩu), kết quả trả qua đây thay cho [onResult]. */
+        val onCredentials: ((confirmed: Boolean, user: String, password: String) -> Unit)? = null
     )
 
     private val queue = ArrayDeque<Request>()
@@ -48,6 +52,7 @@ class GlassDialogController(
     private var activeLayer: FrameLayout? = null
     private var activeCard: View? = null
     private var activeInput: EditText? = null
+    private var activePassword: EditText? = null
     private var finishing = false
 
     val isShowing: Boolean get() = active != null
@@ -72,6 +77,23 @@ class GlassDialogController(
         if (active == null) showNext()
     }
 
+    /**
+     * Hộp đăng nhập (HTTP Auth): ô tên người dùng và ô mật khẩu ẩn ký tự. [onResult] được gọi đúng một lần;
+     * user/password chỉ có giá trị khi confirmed = true.
+     */
+    fun showCredentials(
+        title: String?,
+        message: String,
+        positive: String,
+        negative: String,
+        onResult: (confirmed: Boolean, user: String, password: String) -> Unit
+    ) {
+        queue.addLast(
+            Request(title, message, positive, negative, "", null, null, { _, _ -> }, onResult)
+        )
+        if (active == null) showNext()
+    }
+
     /** Back hệ thống hoặc chạm ra ngoài: tính như chọn phương án phủ định. */
     fun cancelCurrent() = finish(false)
 
@@ -90,7 +112,13 @@ class GlassDialogController(
         activeLayer = null
         activeCard = null
         activeInput = null
-        for (r in pending) runCatching { r.onResult(false, null) }
+        activePassword = null
+        for (r in pending) {
+            runCatching {
+                val creds = r.onCredentials
+                if (creds != null) creds(false, "", "") else r.onResult(false, null)
+            }
+        }
     }
 
 
@@ -176,30 +204,53 @@ class GlassDialogController(
         scroll.addView(messageView)
         content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
+        activeInput = null
+        activePassword = null
         if (req.defaultInput != null) {
-            val input = EditText(activity).apply {
-                setSingleLine()
-                setText(req.defaultInput)
-                setSelectAllOnFocus(true)
-                setTextColor(GlassSystem.pagePrimaryText())
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                textSize = 15f
-                setPadding(dp(14), 0, dp(14), 0)
-                background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+            val creds = req.onCredentials != null
+            fun field(initial: String, hintText: String?, password: Boolean, last: Boolean): EditText {
+                val input = EditText(activity).apply {
+                    setSingleLine()
+                    if (password) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    setText(initial)
+                    setSelectAllOnFocus(true)
+                    setTextColor(GlassSystem.pagePrimaryText())
+                    if (hintText != null) {
+                        hint = hintText
+                        setHintTextColor(androidx.core.graphics.ColorUtils.setAlphaComponent(GlassSystem.pagePrimaryText(), 110))
+                    }
+                    if (creds) {
+                        importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+                        imeOptions = if (last) EditorInfo.IME_ACTION_DONE else EditorInfo.IME_ACTION_NEXT
+                        if (last) {
+                            setOnEditorActionListener { _, actionId, _ ->
+                                if (actionId == EditorInfo.IME_ACTION_DONE) { finish(true); true } else false
+                            }
+                        }
+                    }
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    textSize = 15f
+                    setPadding(dp(14), 0, dp(14), 0)
+                    background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+                }
+                val inputGlass = FrameLayout(activity).apply {
+                    clipToOutline = true
+                    background = GlassSystem.createInputField(12, d, night)
+                    addView(GlassSystem.createInputBlurView(activity, blurTarget, d), FrameLayout.LayoutParams(-1, -1))
+                    addView(input, FrameLayout.LayoutParams(-1, -1))
+                }
+                content.addView(
+                    inputGlass,
+                    LinearLayout.LayoutParams(-1, dp(44)).apply { setMargins(dp(22), 0, dp(22), if (last) dp(18) else dp(10)) }
+                )
+                return input
             }
-            activeInput = input
-            val inputGlass = FrameLayout(activity).apply {
-                clipToOutline = true
-                background = GlassSystem.createInputField(12, d, night)
-                addView(GlassSystem.createInputBlurView(activity, blurTarget, d), FrameLayout.LayoutParams(-1, -1))
-                addView(input, FrameLayout.LayoutParams(-1, -1))
+            if (creds) {
+                activeInput = field("", "Tên người dùng", password = false, last = false)
+                activePassword = field("", "Mật khẩu", password = true, last = true)
+            } else {
+                activeInput = field(req.defaultInput, null, password = false, last = true)
             }
-            content.addView(
-                inputGlass,
-                LinearLayout.LayoutParams(-1, dp(44)).apply { setMargins(dp(22), 0, dp(22), dp(18)) }
-            )
-        } else {
-            activeInput = null
         }
 
         content.addView(gapView(), LinearLayout.LayoutParams(-1, 1))
@@ -272,12 +323,20 @@ class GlassDialogController(
         val layer = activeLayer
         val input = activeInput
         val text = if (confirmed) input?.text?.toString() else null
+        val password = if (confirmed) activePassword?.text?.toString().orEmpty() else ""
         if (input != null && layer != null) {
             WindowCompat.getInsetsController(activity.window, layer).hide(WindowInsetsCompat.Type.ime())
         }
 
         // Trả kết quả ngay để trang không phải chờ hiệu ứng đóng.
-        runCatching { if (neutral) req.onNeutral?.invoke() else req.onResult(confirmed, text) }
+        runCatching {
+            val creds = req.onCredentials
+            when {
+                neutral -> req.onNeutral?.invoke()
+                creds != null -> creds(confirmed, text.orEmpty(), password)
+                else -> req.onResult(confirmed, text)
+            }
+        }
 
         if (layer == null) {
             active = null
@@ -295,6 +354,7 @@ class GlassDialogController(
                 activeLayer = null
                 activeCard = null
                 activeInput = null
+                activePassword = null
             }
             showNext()
         }
