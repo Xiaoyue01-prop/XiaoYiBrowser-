@@ -797,8 +797,8 @@ class TabSwitcherController(
 
             val list = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(0, dp(8), 0, dp(8))
-                minimumWidth = dp(240)
+                setPadding(0, dp(6), 0, dp(6))
+                minimumWidth = dp(168)
             }
             fun addRow(
                 label: String,
@@ -810,8 +810,8 @@ class TabSwitcherController(
                 val row = LinearLayout(activity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(18), 0, dp(22), 0)
-                    minimumHeight = dp(48)
+                    setPadding(dp(16), 0, dp(18), 0)
+                    minimumHeight = dp(44)
                     isClickable = true
                     background = activity.roundedPressBackground(night)
                     setOnClickListener {
@@ -830,17 +830,18 @@ class TabSwitcherController(
                 // Ô icon luôn rộng 20dp (kể cả khi trống) để chữ các hàng thẳng cột.
                 row.addView(
                     ImageView(activity).apply { if (icon != null) setImageDrawable(icon) },
-                    LinearLayout.LayoutParams(dp(20), dp(20))
+                    LinearLayout.LayoutParams(dp(18), dp(18))
                 )
                 row.addView(
                     TextView(activity).apply {
                         text = label
-                        textSize = 15f
+                        textSize = 14f
                         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                         setTextColor(fg)
                         maxLines = 1
+                        maxWidth = dp(150)
                         ellipsize = TextUtils.TruncateAt.END
-                        setPadding(dp(14), dp(6), 0, dp(6))
+                        setPadding(dp(12), dp(4), 0, dp(4))
                     },
                     LinearLayout.LayoutParams(0, -2, 1f)
                 )
@@ -848,9 +849,9 @@ class TabSwitcherController(
                     row.addView(
                         TextView(activity).apply {
                             text = trailing
-                            textSize = 14f
+                            textSize = 13f
                             setTextColor(GlassSystem.pageSecondaryText())
-                            setPadding(dp(12), 0, 0, 0)
+                            setPadding(dp(10), 0, 0, 0)
                         },
                         LinearLayout.LayoutParams(-2, -2)
                     )
@@ -875,7 +876,7 @@ class TabSwitcherController(
             }
             list.addView(
                 View(activity).apply { setBackgroundColor(GlassSystem.pageDividerColor()) },
-                LinearLayout.LayoutParams(-1, 1).apply { setMargins(dp(18), dp(4), dp(18), dp(4)) }
+                LinearLayout.LayoutParams(-1, 1).apply { setMargins(dp(16), dp(3), dp(16), dp(3)) }
             )
             addRow(
                 label = "Nhóm thẻ mới",
