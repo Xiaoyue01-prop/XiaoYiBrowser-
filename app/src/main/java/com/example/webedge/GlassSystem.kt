@@ -50,6 +50,11 @@ import eightbitlab.com.blurview.BlurView
  * Drawable helpers are the first-frame/fallback layer; BlurView is the primary renderer.
  */
 object GlassSystem {
+    /** Allows an in-flight origin morph to keep a glass rim aligned with its animated clip radius. */
+    interface MorphCornerRadiusTarget {
+        fun setMorphCornerRadiusPx(radiusPx: Float)
+    }
+
     // One adaptive material system: consistent frost, edge and corner language on light or dark pages.
     private const val GLASS_BLUR_RADIUS_DP = 16f
     // Shared frost density: the blur is deliberately strong enough to soften text beneath
@@ -479,7 +484,14 @@ object GlassSystem {
      * Viền liquid glass: vòng ngoài xám lạnh dạng gradient + vành sáng mảnh bên trong.
      * Vẽ như một Drawable độc lập nên dùng được cho mọi bề mặt kính; phần trong để trống.
      */
-    private class GlassRimDrawable(private val radiusPx: Float, density: Float) : Drawable() {
+    private class GlassRimDrawable(radiusPx: Float, density: Float) : Drawable(), MorphCornerRadiusTarget {
+        private var radiusPx: Float = radiusPx
+
+        override fun setMorphCornerRadiusPx(radiusPx: Float) {
+            if (this.radiusPx == radiusPx) return
+            this.radiusPx = radiusPx.coerceAtLeast(0f)
+            invalidateSelf()
+        }
         private val outerW = RIM_OUTER_DP * density
         private val hiW = RIM_HIGHLIGHT_DP * density
         private val outerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {

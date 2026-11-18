@@ -488,10 +488,17 @@ object OriginTransitionController {
             val a = t * t * (3f - 2f * t)
             provider().forEach { it.alpha = a }
         }
+        // Keep the visible Liquid Glass rim on the exact same corner-radius curve as the
+        // morph clip. The card's foreground drawable otherwise keeps the preset's final
+        // radius while the parent outline starts as a pill, so hardware clipping can shave
+        // off the rim at the four corners until the animation settles.
+        val morphRadius = lerp(m.startRadius, m.endRadius, p.coerceIn(0f, 1f))
         m.outline?.let {
-            it.radius = lerp(m.startRadius, m.endRadius, p.coerceIn(0f, 1f))
+            it.radius = morphRadius
             v.invalidateOutline()
         }
+        (v.foreground as? GlassSystem.MorphCornerRadiusTarget)
+            ?.setMorphCornerRadiusPx(morphRadius)
     }
 
     private fun animateTo(m: Morph, to: Float, spec: AnimationSystem.SpringSpec, onEnd: () -> Unit) {
