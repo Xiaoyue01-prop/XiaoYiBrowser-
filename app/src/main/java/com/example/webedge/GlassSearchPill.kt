@@ -220,29 +220,38 @@ class GlassSearchPill(
         val generation = ++morphGeneration
         syncBlur(900)
         AnimationSystem.unclipParents(view)
-        // Khung viên thuốc lúc nghỉ (toạ độ màn hình), chụp TRƯỚC khi đổi rộng: đây là điểm neo của morph.
-        // Không dùng searchGlyph làm nút gốc vì nó nằm ngay trong vỏ đang morph: bị ẩn mất và neo sai chỗ.
+        // Khung viên thuốc lúc nghỉ (toạ độ màn hình), chụp TRƯỚC khi đổi bề rộng. Không dùng searchGlyph
+        // làm nút gốc vì nó nằm ngay trong vỏ đang morph: bị ẩn mất và neo sai chỗ.
         val rest = OriginTransitionController.boundsOnScreen(view)?.let {
             android.graphics.RectF(it.left, it.top, it.left + restWidth, it.bottom)
         }
-        // Nội dung phải VISIBLE (alpha 0) thì morph mới làm chúng hiện dần được; alpha một mình không đủ
-        // vì setGlyph đã đặt INVISIBLE lúc đứng yên.
+        // Nội dung phải VISIBLE (alpha 0) thì morph mới làm chúng hiện dần được.
         input.alpha = 0f
         input.visibility = View.VISIBLE
         closeGlyph.alpha = 0f
         closeGlyph.visibility = View.VISIBLE
         setGlyph(searchGlyph, 1f)
-        setWidth(searchWidth.toInt())
+
+        // Đoạn 1: viên thuốc nảy to lên (cùng chuỗi với nút Thẻ / menu ba chấm), vẫn ở bề rộng nghỉ.
+        val pop = Constants.MENU_POP_SCALE
+        view.pivotX = restWidth / 2f
+        view.pivotY = view.height / 2f
+        AnimationSystem.scaleTo(view, pop, pop, AnimationSystem.MENU_POP)
+        val popped = rest?.let {
+            val hw = it.width() * pop / 2f
+            val hh = it.height() * pop / 2f
+            android.graphics.RectF(it.centerX() - hw, it.centerY() - hh, it.centerX() + hw, it.centerY() + hh)
+        }
 
         var done = false
         fun start() {
             if (done) return
             done = true
             if (generation != morphGeneration || !searching || !view.isAttachedToWindow) return
-            val opened = rest != null && OriginTransitionController.open(
+            val opened = popped != null && OriginTransitionController.open(
                 view = view,
                 origin = null,
-                originRect = rest,
+                originRect = popped,
                 endCornerRadiusPx = dp(20).toFloat(),
                 fadeIn = false,
                 springSpec = AnimationSystem.MENU_MORPH,
@@ -251,12 +260,16 @@ class GlassSearchPill(
                 contentStart = 0.22f,
                 contentSpan = 0.48f
             )
-            if (!opened) showSearchContent()
+            if (!opened) {
+                view.scaleX = 1f
+                view.scaleY = 1f
+                showSearchContent()
+            }
         }
-        // Đợi lần layout kế tiếp để vỏ đã có bề rộng đích (post có thể chạy trước layout).
-        if (view.width >= searchWidth.toInt() - 1) {
-            view.post { start() }
-        } else {
+        // Đoạn 2: sau MENU_POP_DELAY_MS mới kéo dài vỏ và bung từ khung nảy. Đợi layout để vỏ có bề rộng đích.
+        view.postDelayed({
+            if (generation != morphGeneration || !searching || !view.isAttachedToWindow) return@postDelayed
+            setWidth(searchWidth.toInt())
             view.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
                 override fun onLayoutChange(
                     v: View, l: Int, t: Int, r: Int, b: Int, ol: Int, ot: Int, or: Int, ob: Int
@@ -267,7 +280,7 @@ class GlassSearchPill(
                 }
             })
             view.postDelayed({ start() }, 120) // lưới an toàn nếu không có layout mới
-        }
+        }, Constants.MENU_POP_DELAY_MS)
     }
 
     /** Trạng thái bung đầy đủ, không animation. */
@@ -286,6 +299,8 @@ class GlassSearchPill(
         syncBlur(900)
         if (!view.isAttachedToWindow) {
             OriginTransitionController.cancel(view)
+            view.scaleX = 1f
+            view.scaleY = 1f
             setWidth(restWidth)
             setGlyph(searchGlyph, 1f)
             setGlyph(input, 0f)
@@ -294,7 +309,9 @@ class GlassSearchPill(
             return
         }
         if (curWidth <= restWidth + 1f) {
+            // Đóng khi mới nảy (chưa kịp bung): chỉ cần hạ viên thuốc về cỡ thật.
             OriginTransitionController.cancel(view)
+            AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_POP_BACK)
             setWidth(restWidth)
             onSearchProgress(0f)
             return
@@ -302,6 +319,11 @@ class GlassSearchPill(
         OriginTransitionController.close(view, springSpec = AnimationSystem.MENU_MORPH_CLOSE) {
             if (generation != morphGeneration) return@close
             setWidth(restWidth)
+            // Thu về khung nảy xong thì hạ về cỡ thật (MENU_POP_BACK), giống nút Thẻ / menu ba chấm.
+            view.pivotX = restWidth / 2f
+            view.scaleX = Constants.MENU_POP_SCALE
+            view.scaleY = Constants.MENU_POP_SCALE
+            AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_POP_BACK)
             setGlyph(searchGlyph, 1f)
             setGlyph(input, 0f)
             setGlyph(closeGlyph, 0f)
@@ -340,6 +362,9 @@ class GlassSearchPill(
         if (animate) collapseMorph() else {
             morphGeneration++
             OriginTransitionController.cancel(view)
+            AnimationSystem.cancel(view)
+            view.scaleX = 1f
+            view.scaleY = 1f
             setWidth(restWidth)
             setGlyph(searchGlyph, 1f)
             setGlyph(input, 0f)
