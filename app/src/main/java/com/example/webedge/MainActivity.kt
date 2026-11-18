@@ -237,6 +237,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun updateTabBadge() = this@MainActivity.updateTabBadge()
         override fun activateTab(tab: TabManager.Tab) = this@MainActivity.activateTab(tab)
         override fun checkReaderHint(view: WebView, url: String) {
+            if (HomePage.isHome(url)) return
             if (!store.readerHintEnabled || readerModeController?.isActive == true || urlBar.hasFocus()) return
             val isPrivate = tabManager.getForWebView(view)?.isPrivate == true
             readerSuggestion.check(view, url, isPrivate) { view === web && !isActivityDestroyed }

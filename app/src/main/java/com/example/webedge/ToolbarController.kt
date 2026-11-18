@@ -339,6 +339,11 @@ internal class ToolbarController(
     }
 
     fun showDomain() {
+        // Trang chủ Summit: để trống thanh địa chỉ thay vì hiện host nội bộ.
+        if (HomePage.isHome(host.currentUrl)) {
+            setUrlText("")
+            return
+        }
         val domain = try {
             Uri.parse(host.currentUrl).host
         } catch (e: Exception) {

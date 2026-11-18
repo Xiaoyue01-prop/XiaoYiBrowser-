@@ -212,6 +212,8 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         view: WebView,
         request: WebResourceRequest
     ): WebResourceResponse? {
+        // Trang chủ Summit nằm trong assets: phục vụ tại chỗ, không đi qua bộ chặn quảng cáo.
+        HomePage.intercept(view.context, request)?.let { return it }
         if (host.store.adBlockEnabled && AdBlocker.shouldBlock(request, view, host.store::isAdBlockDisabledFor)) {
             YouTubeAdBlocker.recordGlobalBlockIfRelevant(request, view)
             return AdBlocker.createEmptyResponse()

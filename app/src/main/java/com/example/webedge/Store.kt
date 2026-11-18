@@ -100,7 +100,7 @@ class Store(context: Context) {
         writeList("history")
     }
     var homeUrl: String
-    get() = sp.getString("home", "https://www.google.com") ?: "https://www.google.com"
+    get() = sp.getString("home", HomePage.URL) ?: HomePage.URL
     set(v) { sp.edit().putString("home", v).apply() }
     // 0 = Google, 1 = Bing, 2 = DuckDuckGo
     var searchEngine: Int
@@ -314,7 +314,7 @@ class Store(context: Context) {
         sp.edit().putString(key, arr.toString()).apply()
     }
     fun addHistory(title: String, url: String) {
-        if (url.isBlank() || url.startsWith("about:")) return
+        if (url.isBlank() || url.startsWith("about:") || HomePage.isHome(url)) return
         val l = list("history")
         val entry = Entry(title.ifBlank { url }, url, System.currentTimeMillis())
         if (l.isNotEmpty() && l[0].url == url) {
@@ -343,7 +343,7 @@ class Store(context: Context) {
     // =================== Tab đã đóng gần đây (chỉ tab thường) ===================
     /** Ghi một tab thường vừa đóng lên đầu danh sách; trùng URL thì đẩy lên đầu thay vì thêm mục mới. */
     fun addClosedTab(title: String, url: String, desktop: Boolean) {
-        if (url.isBlank() || url.startsWith("about:")) return
+        if (url.isBlank() || url.startsWith("about:") || HomePage.isHome(url)) return
         val l = list(CLOSED_TABS_KEY)
         l.removeAll { it.url == url }
         l.add(0, Entry(title.ifBlank { url }, url, System.currentTimeMillis(), desktop))

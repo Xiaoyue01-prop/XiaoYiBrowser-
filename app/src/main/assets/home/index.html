@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src https://api.open-meteo.com">
+<title>Trang chủ</title>
+<link rel="stylesheet" href="home.css">
+</head>
+<body>
+<main>
+  <img id="cat" src="summit_cat.webp" alt="" draggable="false">
+  <svg id="clock" viewBox="0 0 400 142" role="img" aria-label="Đồng hồ"><text id="clockText" x="0" y="0"></text></svg>
+  <p id="greeting"></p>
+  <div id="weather" hidden>
+    <span id="wIcon" aria-hidden="true"></span>
+    <span id="wTemp"></span>
+    <span id="wText">
+      <span id="wDesc"></span>
+      <span id="wSub"></span>
+    </span>
+  </div>
+</main>
+<script src="home.js"></script>
+</body>
+</html>

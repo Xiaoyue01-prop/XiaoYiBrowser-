@@ -713,7 +713,8 @@ class TabSwitcherController(
                     setPadding(dp(3), dp(9), dp(3), 0)
                 })
                 card.addView(TextView(activity).apply {
-                    text = shortUrl(tab.url).ifBlank { store.homeUrl }
+                    val shownUrl = tab.url.ifBlank { store.homeUrl }
+                    text = if (HomePage.isHome(shownUrl)) "Trang chủ" else shortUrl(shownUrl)
                     textSize = 12f
                     setTextColor(GlassSystem.pageSecondaryText())
                     setTypeface(null, android.graphics.Typeface.BOLD)

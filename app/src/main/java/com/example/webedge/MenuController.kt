@@ -1257,7 +1257,7 @@ class MenuController(
         }
 
         addRow("Công cụ tìm kiếm", engines[store.searchEngine], fg) { chooseEngine() }
-        addRow("Trang chủ", UrlUtils.shortUrl(store.homeUrl), fg) { editHome() }
+        addRow("Trang chủ", if (HomePage.isHome(store.homeUrl)) "Summit" else UrlUtils.shortUrl(store.homeUrl), fg) { editHome() }
         addRow("Tràn viền nội dung (thử nghiệm)", onOff(store.edgeMode), fg) {
             store.edgeMode = !store.edgeMode
             host.applyInsets()
@@ -1345,7 +1345,8 @@ class MenuController(
         val input = EditText(activity)
         input.setSingleLine()
         input.inputType = InputType.TYPE_TEXT_VARIATION_URI
-        input.setText(store.homeUrl)
+        input.setText(if (HomePage.isHome(store.homeUrl)) "" else store.homeUrl)
+        input.hint = "Để trống = trang chủ Summit"
         input.setTextColor(Color.BLACK)
         input.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
         input.textSize = 15f
@@ -1365,7 +1366,7 @@ class MenuController(
             panelButton("Hủy", accent) { showSettings() },
             panelButton("Lưu", accent) {
                 val t = input.text.toString().trim()
-                if (t.isNotEmpty()) store.homeUrl = UrlUtils.toUrl(t, store.searchEngine)
+                store.homeUrl = if (t.isNotEmpty()) UrlUtils.toUrl(t, store.searchEngine) else HomePage.URL
                 showSettings()
             }
         )
