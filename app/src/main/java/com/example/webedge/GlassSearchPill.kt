@@ -39,6 +39,8 @@ class GlassSearchPill(
     private var iconColor: Int,
     hintText: String,
     initialQuery: String = "",
+    /** Dựng lại ở dạng thanh tìm kiếm dù từ khóa còn trống (giữ ô tìm kiếm mở qua lần dựng lại trang). */
+    startInSearch: Boolean = false,
     private val onQueryChange: (String) -> Unit,
     /** Chạm nút chọn trong viên thuốc. */
     private val onSelect: () -> Unit,
@@ -47,7 +49,9 @@ class GlassSearchPill(
     /** 0 = chưa bung thanh tìm kiếm, 1 = đã bung hết: để bên ngoài làm mờ các nút bị đè. */
     private val onSearchProgress: (Float) -> Unit = {},
     /** Giữ kính mờ chụp lại nền mỗi khung hình trong lúc chuyển động. */
-    private val syncBlur: (Long) -> Unit = {}
+    private val syncBlur: (Long) -> Unit = {},
+    /** Chế độ viên đổi: [pillOpen] = đang là viên thuốc (kính lúp + chọn), [searchOpen] = đang là thanh tìm kiếm. */
+    private val onModeChange: (pillOpen: Boolean, searchOpen: Boolean) -> Unit = { _, _ -> }
 ) {
     private val modeCircle = 0
     private val modePill = 1
@@ -87,7 +91,7 @@ class GlassSearchPill(
     var query: String = initialQuery
         private set
 
-    private var mode = if (initialQuery.isNotBlank()) modeSearch else modeCircle
+    private var mode = if (startInSearch || initialQuery.isNotBlank()) modeSearch else modeCircle
 
     /** Đang ở chế độ chọn: viên chỉ còn nút tròn "chọn tất cả" ở chỗ ba chấm. */
     private var selecting = false
@@ -234,6 +238,7 @@ class GlassSearchPill(
 
     private fun setMode(newMode: Int, animate: Boolean = true, onEnd: (() -> Unit)? = null) {
         mode = newMode
+        onModeChange(newMode == modePill, newMode == modeSearch)
         val target = when (newMode) {
             modePill -> wPill.toFloat()
             modeSearch -> searchWidth
@@ -312,12 +317,15 @@ class GlassSearchPill(
 
     // ---------------- Chế độ chọn ----------------
 
-    /** Viên thu về nút tròn; nút chọn ở lại chỗ ba chấm làm nút "chọn tất cả". */
-    fun enterSelectMode(animate: Boolean = true) {
+    /**
+     * Viên thu về nút tròn; nút chọn ở lại chỗ ba chấm làm nút "chọn tất cả".
+     * [onEnd] chạy khi viên đã thu xong (hoặc ngay nếu không có animation).
+     */
+    fun enterSelectMode(animate: Boolean = true, onEnd: (() -> Unit)? = null) {
         selecting = true
         selectIcon.setFilled(false, animate = false)
         selectGlyph.contentDescription = "Chọn tất cả"
-        setMode(modeCircle, animate)
+        setMode(modeCircle, animate, onEnd)
     }
 
     /** Thoát chế độ chọn: nút "chọn tất cả" trở lại thành ba chấm. */
@@ -345,7 +353,8 @@ class GlassSearchPill(
 
     // ---------------- Tìm kiếm ----------------
 
-    private fun showKeyboard() {
+    /** Đưa con trỏ vào ô tìm kiếm và mở bàn phím. */
+    fun showKeyboard() {
         input.post {
             input.requestFocus()
             WindowCompat.getInsetsController(activity.window, input).show(WindowInsetsCompat.Type.ime())

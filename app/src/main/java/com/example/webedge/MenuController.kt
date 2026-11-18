@@ -8,9 +8,7 @@ import android.print.PrintManager
 import android.provider.Settings
 import android.view.autofill.AutofillManager
 import android.graphics.Typeface
-import android.text.Editable
 import android.text.InputType
-import android.text.TextWatcher
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -1078,14 +1076,8 @@ class MenuController(
             p.head.addView(selectAll, LinearLayout.LayoutParams(dp(40), dp(40)))
             selectAllButton = selectAll
         } else {
-            // Một viên kính duy nhất đổi hình theo chiều rộng: nút ba chấm (tròn) → viên thuốc chứa
+            // Nút ba chấm dùng chung (GlassSearchPill, cùng lớp với bảng tab): nút ba chấm (tròn) → viên thuốc chứa
             // kính lúp + chọn tất cả → thanh tìm kiếm kéo dài tới cạnh nút quay lại.
-            // Mọi thứ chạy theo MỘT giá trị (chiều rộng) bằng spring, nên đảo chiều giữa chừng vẫn mượt.
-            val modeCircle = 0
-            val modePill = 1
-            val modeSearch = 2
-            val wCircle = dp(40)
-            val wPill = dp(88)
             val backWidth = dp(40)
             val gapToBack = dp(8)
             val sideInset = dp(14)
@@ -1098,81 +1090,54 @@ class MenuController(
             headWrap.addView(p.head, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             p.page.addView(headWrap, 0, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-            val surface = GlassSystem.createGlassPill(activity, blurTarget, d, isNight())
-            surface.contentDescription = "Tùy chọn"
-            headWrap.addView(
-                surface,
-                FrameLayout.LayoutParams(wCircle, dp(40), Gravity.TOP or Gravity.END).apply {
-                    topMargin = p.head.paddingTop
-                    marginEnd = sideInset
-                }
-            )
-
-            fun glassGlyph(drawable: android.graphics.drawable.Drawable, description: String?, clickable: Boolean) =
-                ImageView(activity).apply {
-                    setImageDrawable(drawable)
-                    setPadding(dp(10), dp(10), dp(10), dp(10))
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    if (description != null) contentDescription = description
-                    if (clickable) {
-                        isClickable = true
-                        isFocusable = true
-                    } else {
-                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                    }
-                }
-
-            val dots = glassGlyph(PathIcon(Icons.MORE_HORIZ, iconColor), null, false)
-            val searchGlyph = glassGlyph(PathIcon(Icons.SEARCH, iconColor), "Tìm kiếm", true)
-            val selectGlyph = glassGlyph(SelectGridIcon(iconColor), "Chọn", true)
-            val closeGlyph = glassGlyph(PathIcon(Icons.CLOSE, iconColor), "Đóng tìm kiếm", true)
-
-            val input = EditText(activity).apply {
-                setSingleLine()
-                inputType = InputType.TYPE_CLASS_TEXT
-                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
-                hint = "Tìm trong ${title.lowercase()}"
-                setHintTextColor(GlassSystem.pageSecondaryText())
-                setTextColor(iconColor)
-                setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-                textSize = 15f
-                setPadding(dp(2), 0, dp(2), 0)
-                background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
-                setText(state.query)
-            }
-            input.setOnEditorActionListener { v, actionId, _ ->
-                if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) {
-                    WindowCompat.getInsetsController(activity.window, v).hide(WindowInsetsCompat.Type.ime())
-                    true
-                } else false
-            }
-            input.addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-                override fun afterTextChanged(s: Editable?) {
-                    state.query = s?.toString().orEmpty()
-                    fill()
-                }
-            })
-
-            val side = Gravity.CENTER_VERTICAL
-            surface.addView(dots, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.END or side))
-            surface.addView(searchGlyph, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.START or side))
-            surface.addView(selectGlyph, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.END or side))
-            surface.addView(closeGlyph, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.END or side))
-            surface.addView(
-                input,
-                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40), side).apply {
-                    marginStart = dp(40)
-                    marginEnd = dp(40)
-                }
-            )
-
             // Chạm ra ngoài khi viên thuốc đang bung thì thu về (lớp này chỉ phủ phần dưới tiêu đề).
             val scrim = View(activity).apply {
                 isClickable = true
                 visibility = View.GONE
             }
+            lateinit var pill: GlassSearchPill
+            pill = GlassSearchPill(
+                activity = activity,
+                blurTarget = blurTarget,
+                isNight = isNight(),
+                iconColor = iconColor,
+                hintText = "Tìm trong ${title.lowercase()}",
+                initialQuery = state.query,
+                startInSearch = state.searchOpen,
+                onQueryChange = { q ->
+                    state.query = q
+                    fill()
+                },
+                // Chọn: viên thu về tròn, nút chọn ở lại đúng chỗ nút ba chấm rồi dựng lại trang ở chế độ chọn.
+                onSelect = {
+                    if (store.list(key).isEmpty()) {
+                        host.toast("Chưa có gì để chọn")
+                    } else {
+                        pill.enterSelectMode {
+                            state.selecting = true
+                            state.selected.clear()
+                            reopen()
+                        }
+                    }
+                },
+                onSelectAll = {}, // nút chọn tất cả thật nằm ở trang chế độ chọn (dựng lại bằng reopen)
+                onSearchProgress = { progress -> p.title.alpha = 1f - (progress * 3f).coerceIn(0f, 1f) },
+                onModeChange = { pillOpen, searchOpen ->
+                    state.searchOpen = searchOpen
+                    scrim.visibility = if (pillOpen) View.VISIBLE else View.GONE
+                },
+                syncBlur = { ms -> syncBlurFor(ms) }
+            )
+            state.searchOpen = pill.isSearching
+            headWrap.addView(
+                pill.view,
+                FrameLayout.LayoutParams(pill.restWidthPx, dp(40), Gravity.TOP or Gravity.END).apply {
+                    topMargin = p.head.paddingTop
+                    marginEnd = sideInset
+                }
+            )
+            pill.setMaxWidth(0) // bề rộng tạm khi dựng lại đang ở thanh tìm kiếm; đo lại chính xác ngay khi có kích thước
+
             // Chỉ trang quyết định kích thước; lớp bắt chạm bám theo (nếu để MATCH_PARENT thường, lúc nó hiện ra
             // sẽ kéo thẻ menu cao hết cỡ).
             val frame = object : FrameLayout(activity) {
@@ -1197,175 +1162,16 @@ class MenuController(
             )
             content = frame
 
-            var mode = if (state.searchOpen || state.query.isNotBlank()) modeSearch else modeCircle
-            state.searchOpen = mode == modeSearch
-            var searchWidth = (wPill + dp(80)).toFloat() // tạm; đo lại chính xác khi đã có kích thước
-            var curWidth = wCircle.toFloat()
-            var leavingToSelect = false
-            var widthAnim: AnimationSystem.FloatSpringHandle? = null
-
-            fun sat(x: Float) = x.coerceIn(0f, 1f)
-            fun setGlyph(v: View, a: Float, keepVisible: Boolean = false) {
-                v.alpha = a
-                v.visibility = if (a < 0.02f && !keepVisible) View.INVISIBLE else View.VISIBLE
-            }
-
-            // Vẽ viên kính ở chiều rộng [w]; độ mờ của từng icon suy ra từ chiều rộng nên luôn khớp hình.
-            fun render(w: Float) {
-                curWidth = w.coerceIn(wCircle.toFloat(), maxOf(searchWidth, wPill.toFloat()))
-                val lp = surface.layoutParams
-                val iw = curWidth.toInt()
-                // Pivot ở tâm như nút Tab / menu trang: nhấn và nảy phình đều quanh tâm, không lệch về một phía.
-                surface.pivotX = curWidth / 2f
-                surface.pivotY = dp(20).toFloat()
-                if (lp.width != iw) {
-                    lp.width = iw
-                    surface.layoutParams = lp
-                }
-                val toPill = sat((curWidth - wCircle) / (wPill - wCircle).toFloat())
-                val toSearch = if (searchWidth > wPill) sat((curWidth - wPill) / (searchWidth - wPill)) else 0f
-                val pillIn = sat((toPill - 0.35f) / 0.5f)
-                if (leavingToSelect) {
-                    // Viên thuốc thu về tròn: nút chọn tất cả ở lại đúng chỗ nút ba chấm, kính lúp tan đi.
-                    setGlyph(dots, 0f)
-                    setGlyph(selectGlyph, 1f)
-                    setGlyph(searchGlyph, pillIn)
-                } else {
-                    setGlyph(dots, sat(1f - toPill * 2.5f))
-                    setGlyph(selectGlyph, pillIn * (1f - sat(toSearch * 3f)))
-                    setGlyph(searchGlyph, pillIn)
-                }
-                val searchIn = sat((toSearch - 0.35f) / 0.45f)
-                setGlyph(closeGlyph, searchIn)
-                setGlyph(input, searchIn, keepVisible = mode == modeSearch)
-                p.title.alpha = 1f - sat(toSearch * 3f)
-            }
-
-            fun setMode(newMode: Int, animate: Boolean = true, onEnd: (() -> Unit)? = null) {
-                mode = newMode
-                state.searchOpen = newMode == modeSearch
-                scrim.visibility = if (newMode == modePill) View.VISIBLE else View.GONE
-                val target = when (newMode) {
-                    modePill -> wPill.toFloat()
-                    modeSearch -> searchWidth
-                    else -> wCircle.toFloat()
-                }
-                widthAnim?.cancel()
-                widthAnim = null
-                if (!animate || !surface.isAttachedToWindow) {
-                    render(target)
-                    onEnd?.invoke()
-                    return
-                }
-                render(curWidth) // cập nhật ngay hiển thị/khả năng nhận chạm của các icon theo chế độ mới
-                syncBlurFor(900)
-                val expanding = target > curWidth
-                // Cùng chuỗi nảy với nút Tab / menu trang (OriginTransitionController): MENU_POP_SCALE,
-                // MENU_POP_DELAY_MS, MENU_POP khi nảy ra, MENU_POP_BACK khi hạ về. Nút nảy to trước rồi mới nở ra;
-                // lúc đóng thì thu vào khung nảy to rồi nút hạ về chỗ cũ.
-                val popFirst = expanding && newMode == modePill && curWidth <= wCircle + 1f
-                val collapsingToCircle = target < curWidth - 1f && newMode == modeCircle && !leavingToSelect
-                AnimationSystem.unclipParents(surface) // đóng bằng chạm ra ngoài thì chưa có lần nhấn nào mở cắt xén
-                if (popFirst) {
-                    AnimationSystem.scaleTo(surface, Constants.MENU_POP_SCALE, Constants.MENU_POP_SCALE, AnimationSystem.MENU_POP)
-                }
-
-                fun run() {
-                    if (mode != newMode) return
-                    widthAnim?.cancel()
-                    // Mở: cỡ nảy thu dần về 1 theo cùng spring với lúc viên thuốc nở nên hai chuyển động khớp nhau.
-                    if (popFirst) AnimationSystem.scaleTo(surface, 1f, 1f, AnimationSystem.MENU_MORPH)
-                    // Đóng: viên thuốc thu vào khung nảy to (như thẻ menu thu vào nút Tab / menu trang).
-                    if (collapsingToCircle) {
-                        AnimationSystem.scaleTo(
-                            surface, Constants.MENU_POP_SCALE, Constants.MENU_POP_SCALE, AnimationSystem.MENU_MORPH_CLOSE
-                        )
-                    }
-                    widthAnim = AnimationSystem.springFloat(
-                        from = curWidth,
-                        to = target,
-                        spec = if (expanding) AnimationSystem.MENU_MORPH else AnimationSystem.MENU_MORPH_CLOSE,
-                        onUpdate = { w -> if (surface.isAttachedToWindow) render(w) },
-                        onEnd = { canceled, _, _ ->
-                            if (!canceled) {
-                                render(target)
-                                if (collapsingToCircle) {
-                                    // Thu về xong: nút hạ từ khung nảy về cỡ thật (MENU_POP_BACK), giống nút Tab / menu trang.
-                                    AnimationSystem.scaleTo(surface, 1f, 1f, AnimationSystem.MENU_POP_BACK)
-                                }
-                                onEnd?.invoke()
-                            }
-                        }
-                    )
-                }
-                if (popFirst) surface.postDelayed({ run() }, Constants.MENU_POP_DELAY_MS) else run()
-            }
-
-            fun showKeyboard() {
-                input.post {
-                    input.requestFocus()
-                    WindowCompat.getInsetsController(activity.window, input).show(WindowInsetsCompat.Type.ime())
-                }
-            }
-
             headWrap.addOnLayoutChangeListener { _, l, _, r, _, oldL, _, oldR, _ ->
                 if (r - l != oldR - oldL) {
-                    val avail = headWrap.width - p.head.paddingLeft - backWidth - gapToBack - sideInset
-                    searchWidth = maxOf(avail, wPill + dp(40)).toFloat()
-                    if (mode == modeSearch && widthAnim?.isRunning != true) render(searchWidth)
+                    pill.setMaxWidth(headWrap.width - p.head.paddingLeft - backWidth - gapToBack - sideInset)
                 }
             }
 
-            scrim.setOnClickListener { if (mode == modePill) setMode(modeCircle) }
+            scrim.setOnClickListener { pill.collapseActions() }
 
-            // Chạm nút ba chấm: bung thành viên thuốc; chạm lại vào khoảng trống thì thu về.
-            surface.setOnClickListener {
-                if (leavingToSelect) return@setOnClickListener
-                when (mode) {
-                    modeCircle -> setMode(modePill)
-                    modePill -> setMode(modeCircle)
-                    else -> Unit
-                }
-            }
-            AnimationSystem.press(surface, Constants.PRESS_SCALE_PILL)
-
-            // Kính lúp: viên thuốc kéo dài thành thanh tìm kiếm.
-            searchGlyph.setOnClickListener {
-                if (leavingToSelect) return@setOnClickListener
-                if (mode == modePill) setMode(modeSearch)
-                showKeyboard()
-            }
-            AnimationSystem.press(searchGlyph, Constants.PRESS_SCALE_CELL)
-
-            // Dấu X trong thanh tìm kiếm: xóa từ khóa, thanh thu về nút ba chấm.
-            closeGlyph.setOnClickListener {
-                if (mode != modeSearch) return@setOnClickListener
-                input.clearFocus()
-                WindowCompat.getInsetsController(activity.window, input).hide(WindowInsetsCompat.Type.ime())
-                if (state.query.isNotEmpty()) input.setText("")
-                setMode(modeCircle)
-            }
-            AnimationSystem.press(closeGlyph, Constants.PRESS_SCALE_CELL)
-
-            // Chọn tất cả: viên thuốc thu về tròn, nút này thế chỗ nút ba chấm rồi vào chế độ chọn.
-            selectGlyph.setOnClickListener {
-                if (mode != modePill || leavingToSelect) return@setOnClickListener
-                if (store.list(key).isEmpty()) {
-                    host.toast("Chưa có gì để chọn")
-                    return@setOnClickListener
-                }
-                leavingToSelect = true
-                setMode(modeCircle) {
-                    state.selecting = true
-                    state.selected.clear()
-                    reopen()
-                }
-            }
-            AnimationSystem.press(selectGlyph, Constants.PRESS_SCALE_CELL)
-
-            render(if (mode == modeSearch) searchWidth else wCircle.toFloat())
             // Dựng lại khi đang mở ô tìm kiếm trống: giữ con trỏ ở ô để gõ tiếp.
-            if (mode == modeSearch && state.query.isBlank()) showKeyboard()
+            if (pill.isSearching && state.query.isBlank()) pill.showKeyboard()
         }
 
         fill()
