@@ -23,9 +23,8 @@ import eightbitlab.com.blurview.BlurTarget
  * Viên kính tìm kiếm dùng chung: đứng yên ở dạng viên thuốc (kính lúp, và nút chọn nếu có [onSelect]),
  * chạm kính lúp thì kéo dài thành thanh tìm kiếm tới [setMaxWidth]; chạm X thì xóa từ khóa và thu về.
  *
- * Cùng cơ chế với viên kính ở Lịch sử / Dấu trang (MenuController.showList): mọi thứ chạy theo MỘT giá trị
- * chiều rộng bằng spring MENU_MORPH / MENU_MORPH_CLOSE, độ mờ từng icon suy ra từ chiều rộng nên đảo chiều
- * giữa chừng vẫn mượt. Khác ở chỗ không có trạng thái "nút tròn ba chấm".
+ * Vỏ kính bung/thu bằng OriginTransitionController từ chính kính lúp; nội dung nhập và nút đóng
+ * xuất hiện theo tiến trình morph. Khác ở chỗ không có trạng thái "nút tròn ba chấm".
  *
  * Lịch sử / Dấu trang chưa dùng lớp này; sẽ chuyển sang sau khi bản bảng tab chạy ổn trên máy.
  */
@@ -78,7 +77,7 @@ class GlassSearchPill(
 
     private var searchWidth = (restWidth + dp(80)).toFloat() // tạm; bên ngoài báo lại bằng setMaxWidth
     private var curWidth = restWidth.toFloat()
-    private var widthAnim: AnimationSystem.FloatSpringHandle? = null
+    private var morphGeneration = 0
 
     init {
         input.setOnEditorActionListener { v, actionId, _ ->
@@ -140,7 +139,9 @@ class GlassSearchPill(
     /** Chiều rộng tối đa khi bung (thường là bề rộng khung chứa). */
     fun setMaxWidth(px: Int) {
         searchWidth = maxOf(px, restWidth + wGlyph).toFloat()
-        if (searching && widthAnim?.isRunning != true) render(searchWidth)
+        if (searching) {
+            setWidth(searchWidth.toInt())
+        }
     }
 
     /** Đổi màu icon / chữ khi trang đổi sáng-tối. */
@@ -153,15 +154,12 @@ class GlassSearchPill(
         input.setHintTextColor(GlassSystem.pageSecondaryText())
     }
 
-    // Vẽ viên kính ở chiều rộng [w]; độ mờ từng icon suy ra từ chiều rộng nên luôn khớp hình.
+    // Cập nhật trạng thái nội dung. Hình học của vỏ kính được điều khiển bởi
+    // OriginTransitionController để nó bung từ đúng khung kính lúp, không chỉ kéo rộng layout.
     private fun render(w: Float) {
         curWidth = w.coerceIn(restWidth.toFloat(), maxOf(searchWidth, restWidth.toFloat()))
         val lp = view.layoutParams
         val iw = curWidth.toInt()
-        // Neo morph ở mép trái: kính lúp giữ nguyên vị trí, mặt kính chỉ bung sang phải.
-        // Không scale cả View vì việc scale sẽ làm méo blur/rim trong lúc chuyển động.
-        view.pivotX = 0f
-        view.pivotY = dp(20).toFloat()
         if (lp != null && lp.width != iw) {
             lp.width = iw
             view.layoutParams = lp
@@ -175,24 +173,70 @@ class GlassSearchPill(
         onSearchProgress(toSearch)
     }
 
-    private fun animateTo(target: Float) {
-        widthAnim?.cancel()
-        widthAnim = null
+    private fun setWidth(width: Int) {
+        val lp = view.layoutParams ?: return
+        if (lp.width != width) {
+            lp.width = width
+            view.layoutParams = lp
+        }
+        curWidth = width.toFloat()
+    }
+
+    private fun expandMorph() {
+        val generation = ++morphGeneration
+        syncBlur(900)
+        AnimationSystem.unclipParents(view)
+        // Đo bề mặt ở kích thước đích trước; controller sẽ lấy khung kính lúp làm điểm neo.
+        setWidth(searchWidth.toInt())
+        view.post {
+            if (generation != morphGeneration || !searching || !view.isAttachedToWindow) return@post
+            val opened = OriginTransitionController.open(
+                view = view,
+                origin = searchGlyph,
+                endCornerRadiusPx = dp(20).toFloat(),
+                fadeIn = false,
+                springSpec = AnimationSystem.MENU_MORPH,
+                contentViews = { listOf(input, closeGlyph) },
+                onProgress = { p -> onSearchProgress(sat(p)) },
+                contentStart = 0.22f,
+                contentSpan = 0.48f
+            )
+            if (!opened) {
+                setWidth(searchWidth.toInt())
+                setGlyph(searchGlyph, 1f)
+                setGlyph(input, 1f)
+                setGlyph(closeGlyph, 1f)
+                onSearchProgress(1f)
+            }
+        }
+    }
+
+    private fun collapseMorph() {
+        val generation = ++morphGeneration
+        syncBlur(900)
         if (!view.isAttachedToWindow) {
-            render(target)
+            OriginTransitionController.cancel(view)
+            setWidth(restWidth)
+            setGlyph(searchGlyph, 1f)
+            setGlyph(input, 0f)
+            setGlyph(closeGlyph, 0f)
+            onSearchProgress(0f)
             return
         }
-        render(curWidth) // cập nhật ngay hiển thị / khả năng nhận chạm của icon theo chế độ mới
-        syncBlur(900)
-        val expanding = target > curWidth
-        AnimationSystem.unclipParents(view)
-        widthAnim = AnimationSystem.springFloat(
-            from = curWidth,
-            to = target,
-            spec = if (expanding) AnimationSystem.MENU_MORPH else AnimationSystem.MENU_MORPH_CLOSE,
-            onUpdate = { w -> if (view.isAttachedToWindow) render(w) },
-            onEnd = { canceled, _, _ -> if (!canceled) render(target) }
-        )
+        if (curWidth <= restWidth + 1f) {
+            OriginTransitionController.cancel(view)
+            setWidth(restWidth)
+            onSearchProgress(0f)
+            return
+        }
+        OriginTransitionController.close(view, springSpec = AnimationSystem.MENU_MORPH_CLOSE) {
+            if (generation != morphGeneration) return@close
+            setWidth(restWidth)
+            setGlyph(searchGlyph, 1f)
+            setGlyph(input, 0f)
+            setGlyph(closeGlyph, 0f)
+            onSearchProgress(0f)
+        }
     }
 
     private fun showKeyboard() {
@@ -209,8 +253,12 @@ class GlassSearchPill(
 
     /** Bung thành thanh tìm kiếm và mở bàn phím. */
     fun expand() {
+        if (searching) {
+            showKeyboard()
+            return
+        }
         searching = true
-        animateTo(searchWidth)
+        expandMorph()
         showKeyboard()
     }
 
@@ -219,10 +267,14 @@ class GlassSearchPill(
         hideKeyboard()
         searching = false
         if (input.text.isNotEmpty()) input.setText("")
-        if (animate) animateTo(restWidth.toFloat()) else {
-            widthAnim?.cancel()
-            widthAnim = null
-            render(restWidth.toFloat())
+        if (animate) collapseMorph() else {
+            morphGeneration++
+            OriginTransitionController.cancel(view)
+            setWidth(restWidth)
+            setGlyph(searchGlyph, 1f)
+            setGlyph(input, 0f)
+            setGlyph(closeGlyph, 0f)
+            onSearchProgress(0f)
         }
     }
 }
