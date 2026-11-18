@@ -32,6 +32,72 @@
   }
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
+  // ---- Spring (cùng thông số với AnimationSystem.kt của app) ----
+  // response = thời gian một chu kỳ (giây), z = damping ratio. stiffness = (2π / response)².
+  var SETTLE = { r: 0.50, z: 0.76 };   // bung/mở bề mặt: vượt đích ~4-5% rồi đứng yên
+  var DISMISS = { r: 0.40, z: 0.90 };  // đóng lại: gần như không nảy
+  var reduced = false;
+  try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+
+  var live = [];
+  var rafId = 0;
+  var lastT = 0;
+
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+
+  function Spring(spec, eps, onUpdate, onEnd) {
+    this.x = 0; this.v = 0; this.target = 0; this.delay = 0; this.live = false;
+    this.eps = eps; this.onUpdate = onUpdate; this.onEnd = onEnd;
+    this.setSpec(spec);
+  }
+  Spring.prototype.setSpec = function (spec) {
+    var w = 2 * Math.PI / spec.r;
+    this.k = w * w;
+    this.c = 2 * spec.z * w;
+  };
+  Spring.prototype.jump = function (x) { this.stop(); this.x = x; this.v = 0; this.target = x; };
+  // Đang chạy thì giữ nguyên vị trí và vận tốc, chỉ đổi đích (ngắt giữa chừng vẫn mượt).
+  Spring.prototype.go = function (to, delaySec) {
+    this.target = to;
+    this.delay = delaySec || 0;
+    if (!this.live) {
+      this.live = true;
+      live.push(this);
+      if (!rafId) { lastT = 0; rafId = requestAnimationFrame(tick); }
+    }
+  };
+  Spring.prototype.stop = function () {
+    this.live = false;
+    var i = live.indexOf(this);
+    if (i >= 0) live.splice(i, 1);
+  };
+
+  function tick(now) {
+    var dt = lastT ? Math.min((now - lastT) / 1000, 0.05) : 1 / 60;
+    lastT = now;
+    var list = live.slice();
+    for (var s = 0; s < list.length; s++) {
+      var sp = list[s];
+      if (!sp.live) continue;
+      if (sp.delay > 0) { sp.delay -= dt; continue; }
+      var n = Math.max(1, Math.ceil(dt * 240));
+      var h = dt / n;
+      for (var i = 0; i < n; i++) {
+        sp.v += (-sp.k * (sp.x - sp.target) - sp.c * sp.v) * h;
+        sp.x += sp.v * h;
+      }
+      if (Math.abs(sp.x - sp.target) < sp.eps && Math.abs(sp.v) < sp.eps * 10) {
+        sp.x = sp.target; sp.v = 0;
+        sp.stop();
+        sp.onUpdate(sp.x);
+        if (sp.onEnd) sp.onEnd();
+      } else {
+        sp.onUpdate(sp.x);
+      }
+    }
+    rafId = live.length ? requestAnimationFrame(tick) : 0;
+  }
+
   // ---- Đồng hồ ----
   var clockText = $('clockText');
   var clockSvg = $('clock');
@@ -40,12 +106,104 @@
   try { is12h = !!new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hour12; } catch (e) {}
 
   var lastClock = '';
-  function renderClock() {
+
+  // Khi phút nhảy: chữ số nào đổi thì lăn lên (số cũ trượt lên rồi mờ, số mới trồi từ dưới lên),
+  // dùng spring SETTLE như mọi bề mặt khác trong Summit. Chữ số không đổi đứng yên.
+  var ROLL = 58;
+  var rollG = null;
+  var rollSprings = [];
+  var rollShown = [];
+
+  function digitColor(str, idx) {
+    var di = 0;
+    for (var i = 0; i < idx; i++) if (str.charAt(i) !== ':') di++;
+    return COLORS[di % COLORS.length];
+  }
+
+  function place(node, y, op) {
+    node.setAttribute('transform', 'translate(0 ' + y.toFixed(2) + ')');
+    node.setAttribute('opacity', op.toFixed(3));
+  }
+
+  function glyph(parent, ch, x, color) {
+    var t = document.createElementNS(SVGNS, 'text');
+    t.setAttribute('class', 'glyph');
+    t.setAttribute('x', x);
+    t.setAttribute('y', 0);
+    t.setAttribute('fill', color);
+    t.setAttribute('stroke', color);
+    t.setAttribute('stroke-width', '10');
+    t.setAttribute('stroke-linejoin', 'round');
+    t.textContent = ch;
+    parent.appendChild(t);
+    return t;
+  }
+
+  function endRoll() {
+    for (var i = 0; i < rollShown.length; i++) {
+      rollShown[i].removeAttribute('fill-opacity');
+      rollShown[i].removeAttribute('stroke-opacity');
+    }
+    rollShown = [];
+    if (rollG && rollG.parentNode) rollG.parentNode.removeChild(rollG);
+    rollG = null;
+    rollSprings = [];
+  }
+
+  function cancelRoll() {
+    for (var i = 0; i < rollSprings.length; i++) rollSprings[i].stop();
+    endRoll();
+  }
+
+  function rollGlyphs(oldText, newText) {
+    cancelRoll();
+    var n = newText.length;
+    var off = oldText.length - n;        // so khớp từ bên phải: dấu ':' luôn thẳng hàng
+    var spans = clockText.childNodes;
+    var g = document.createElementNS(SVGNS, 'g');
+    clockSvg.appendChild(g);
+    rollG = g;
+    var rank = 0;
+    for (var i = n - 1; i >= 0; i--) {
+      var ch = newText.charAt(i);
+      var j = i + off;
+      var oc = j >= 0 ? oldText.charAt(j) : '';
+      if (ch === ':' || ch === oc) continue;
+      var ext;
+      try { ext = clockText.getExtentOfChar(i); } catch (e) { continue; }
+      var inc = glyph(g, ch, ext.x, digitColor(newText, i));
+      var out = (oc && oc !== ':') ? glyph(g, oc, ext.x, digitColor(oldText, j)) : null;
+      place(inc, ROLL, 0);
+      if (out) place(out, 0, 1);
+      var tsp = spans[i];
+      tsp.setAttribute('fill-opacity', '0');
+      tsp.setAttribute('stroke-opacity', '0');
+      rollShown.push(tsp);
+      (function (inc, out, delay) {
+        var sp = new Spring(SETTLE, 0.002, function (p) {
+          place(inc, ROLL * (1 - p), clamp(p * 2.2, 0, 1));
+          if (out) place(out, -ROLL * p, clamp(1 - p * 2.2, 0, 1));
+        }, function () {
+          for (var k = 0; k < rollSprings.length; k++) if (rollSprings[k].live) return;
+          endRoll();
+        });
+        sp.jump(0);
+        sp.go(1, delay);                 // so le nhẹ, từ chữ số bên phải sang trái
+        rollSprings.push(sp);
+      })(inc, out, rank * 0.032);
+      rank++;
+    }
+    if (!rank) endRoll();
+  }
+
+  function renderClock(animate) {
     var d = new Date();
     var h = d.getHours();
     var text = (is12h ? String(h % 12 || 12) : pad(h)) + ':' + pad(d.getMinutes());
     if (text !== lastClock) {
+      var prev = lastClock;
       lastClock = text;
+      cancelRoll();
       clear(clockText);
       var di = 0;
       for (var i = 0; i < text.length; i++) {
@@ -67,6 +225,7 @@
         clockText.appendChild(span);
       }
       fitClock();
+      if (animate && prev && !reduced && !document.hidden) rollGlyphs(prev, text);
     }
     greetingEl.textContent = greeting(h);
   }
@@ -91,7 +250,7 @@
   // Cập nhật đúng lúc sang phút mới, không polling mỗi giây.
   function scheduleTick() {
     setTimeout(function () {
-      renderClock();
+      renderClock(true);
       scheduleTick();
     }, 60000 - (Date.now() % 60000) + 50);
   }
@@ -130,19 +289,83 @@
 
   function cityKey(c) { return c.name + '|' + c.lat + '|' + c.lon; }
 
+  var inner = $('wInner');
+  var chev = $('wChevron');
+  var isOpen = false;
+
+  // Mở/đóng thẻ: spring tiến độ (pS: 0 đóng .. 1 mở) nhân với spring chiều cao nội dung (sS).
+  // Chiều cao, độ mờ nội dung và mũi tên xoay đều chạy theo cùng một spring nên luôn khớp nhau.
+  function render() {
+    detail.style.height = Math.max(0, pS.x * sS.x) + 'px';
+    inner.style.opacity = clamp(pS.x * 1.5, 0, 1);
+    chev.style.transform = 'rotate(' + (180 * pS.x).toFixed(1) + 'deg)';
+  }
+  function settled() {
+    if (pS.live || sS.live) return;
+    detail.style.height = '';
+    inner.style.opacity = '';
+    if (isOpen) {
+      chev.style.transform = 'rotate(180deg)';
+    } else {
+      detail.hidden = true;
+      chev.style.transform = '';
+    }
+  }
+  var pS = new Spring(SETTLE, 0.002, render, settled);
+  var sS = new Spring(SETTLE, 0.4, render, settled);
+
   function setOpen(open) {
-    detail.hidden = !open;
+    isOpen = open;
     card.classList.toggle('open', open);
     head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (reduced) {
+      detail.hidden = !open;
+      chev.style.transform = open ? 'rotate(180deg)' : '';
+      return;
+    }
+    if (open) {
+      if (detail.hidden) {
+        detail.hidden = false;
+        detail.style.height = '0px';
+        inner.style.opacity = '0';
+        pS.jump(0);
+        sS.jump(inner.offsetHeight);
+      } else {
+        sS.go(inner.offsetHeight);
+      }
+      pS.setSpec(SETTLE);
+      pS.go(1);
+    } else {
+      pS.setSpec(DISMISS);
+      pS.go(0);
+    }
+  }
+
+  // Đổi nội dung trong thẻ đang mở (ô tìm thành phố, danh sách kết quả): chiều cao đổi bằng spring.
+  function resizeOpen(mutate) {
+    if (!isOpen || detail.hidden || reduced) { mutate(); return; }
+    if (pS.live) {                      // đang mở dở: chỉ đổi đích chiều cao
+      mutate();
+      sS.go(inner.offsetHeight);
+      return;
+    }
+    var old = inner.offsetHeight;
+    pS.jump(1);
+    sS.jump(old);
+    detail.style.height = old + 'px';
+    mutate();
+    sS.go(inner.offsetHeight);
   }
 
   function setPicker(open) {
-    picker.hidden = !open;
-    if (open) {
-      query.value = '';
-      clear(results);
-      setTimeout(function () { query.focus(); }, 50);
-    }
+    resizeOpen(function () {
+      picker.hidden = !open;
+      if (open) {
+        query.value = '';
+        clear(results);
+      }
+    });
+    if (open) setTimeout(function () { query.focus(); }, 50);
   }
 
   function showEmpty() {
@@ -275,37 +498,41 @@
       .then(function (r) { if (!r.ok) throw new Error('http'); return r.json(); })
       .then(function (j) {
         if (seq !== searchSeq) return;
-        clear(results);
         var list = (j && j.results) || [];
-        if (!list.length) { results.appendChild(el('div', 'none', 'Không tìm thấy thành phố này')); return; }
-        list.forEach(function (r) {
-          var b = el('button', null, r.name);
-          var extra = [r.admin1, r.country].filter(function (x) { return x && x !== r.name; }).join(', ');
-          if (extra) b.appendChild(el('span', null, ' · ' + extra));
-          b.type = 'button';
-          b.addEventListener('click', function () {
-            chooseCity({ name: r.name, lat: r.latitude, lon: r.longitude });
+        resizeOpen(function () {
+          clear(results);
+          if (!list.length) { results.appendChild(el('div', 'none', 'Không tìm thấy thành phố này')); return; }
+          list.forEach(function (r) {
+            var b = el('button', null, r.name);
+            var extra = [r.admin1, r.country].filter(function (x) { return x && x !== r.name; }).join(', ');
+            if (extra) b.appendChild(el('span', null, ' · ' + extra));
+            b.type = 'button';
+            b.addEventListener('click', function () {
+              chooseCity({ name: r.name, lat: r.latitude, lon: r.longitude });
+            });
+            results.appendChild(b);
           });
-          results.appendChild(b);
         });
       })
       .catch(function () {
         if (seq !== searchSeq) return;
-        clear(results);
-        results.appendChild(el('div', 'none', 'Không tìm được, kiểm tra mạng rồi thử lại'));
+        resizeOpen(function () {
+          clear(results);
+          results.appendChild(el('div', 'none', 'Không tìm được, kiểm tra mạng rồi thử lại'));
+        });
       });
   }
 
   query.addEventListener('input', function () {
     clearTimeout(searchTimer);
     var q = query.value.trim();
-    if (q.length < 2) { searchSeq++; clear(results); return; }
+    if (q.length < 2) { searchSeq++; resizeOpen(function () { clear(results); }); return; }
     searchTimer = setTimeout(function () { searchCity(q); }, 350);
   });
 
   // ---- Tương tác ----
   head.addEventListener('click', function () {
-    var open = detail.hidden;
+    var open = !isOpen;
     setOpen(open);
     // Chưa chọn thành phố: mở thẳng ô tìm.
     if (open && !city) setPicker(true);
@@ -316,10 +543,10 @@
   });
 
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) { renderClock(); loadWeather(false); }
+    if (!document.hidden) { renderClock(false); loadWeather(false); }
   });
 
-  renderClock();
+  renderClock(false);
   scheduleTick();
   loadWeather(false);
 })();
