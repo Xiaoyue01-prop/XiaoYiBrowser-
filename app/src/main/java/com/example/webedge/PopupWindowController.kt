@@ -241,17 +241,9 @@ class PopupWindowController(
         dlg.window?.let { BrowserSheetMotion.configureWindow(it, root, night) }
         dlg.setOnDismissListener {
             GlassSystem.removePageToneObserver(root)
-            if (webView === popup) {
-                popup.stopLoading()
-                (popup.parent as? ViewGroup)?.removeView(popup)
-                popup.webChromeClient = WebChromeClient()
-                popup.webViewClient = WebViewClient()
-                popup.destroy()
-                webView = null
-                dialog = null
-                sheet = null
-                scrim = null
-                closing = false
+            if (dialog === dlg) {
+                releasePopup()
+                dialog = null; sheet = null; scrim = null; closing = false
             }
         }
         webView = popup
@@ -294,8 +286,27 @@ class PopupWindowController(
     }
 
     /** [immediate] = true: đóng ngay không animation (khi Activity đang bị huỷ). */
+    /** Hủy WebView popup NGAY. Idempotent: dùng cho cả dismiss listener lẫn close(immediate). */
+    private fun releasePopup() {
+        val popup = webView ?: return
+        webView = null
+        runCatching { popup.stopLoading() }
+        (popup.parent as? ViewGroup)?.removeView(popup)
+        popup.webChromeClient = WebChromeClient()
+        popup.webViewClient = WebViewClient()
+        runCatching { popup.destroy() }
+    }
+
+    /** [immediate] = true: đóng ngay không animation (khi Activity đang bị huỷ). */
     fun close(immediate: Boolean = false) {
-        if (immediate) dialog?.dismiss() else animateClose()
+        if (!immediate) { animateClose(); return }
+        val dlg = dialog
+        // Dialog.dismiss() post OnDismissListener qua Handler -> chạy SAU hàm này.
+        // Nếu để listener hủy WebView thì PrivateProfileManager.endSession() sẽ xóa profile
+        // khi vẫn còn WebView sống trên đó -> deleteProfile fail, cookie riêng tư nằm lại trên đĩa.
+        releasePopup()
+        dialog = null; sheet = null; scrim = null; closing = false
+        dlg?.dismiss()
     }
 
 }

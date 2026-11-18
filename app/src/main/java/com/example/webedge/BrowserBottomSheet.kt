@@ -30,6 +30,7 @@ class BrowserBottomSheet(
     private var scrimView: View? = null
     private var closing = false
     private var glassDialog: GlassDialogController? = null
+    private var releaseNow: (() -> Unit)? = null
 
     val isShowing: Boolean get() = dialog?.isShowing == true
 
@@ -205,20 +206,7 @@ class BrowserBottomSheet(
         }
         dlg.setContentView(windowRoot)
         dlg.window?.let { BrowserSheetMotion.configureWindow(it, windowRoot, night) }
-        dlg.setOnDismissListener {
-            GlassSystem.removePageToneObserver(windowRoot)
-            glassDialog?.cancelAll()
-            if (dialog === dlg) {
-                glassDialog = null
-                dialog = null
-                sheetView = null
-                scrimView = null
-                closing = false
-            }
-            onDismiss()
-        }
-
-        glassDialog = GlassDialogController(
+        val gd = GlassDialogController(
             activity = activity,
             root = windowRoot,
             blurTarget = blurTarget,
@@ -227,6 +215,27 @@ class BrowserBottomSheet(
             fg = foreground,
             accent = accent
         )
+        var released = false
+        val release = {
+            if (!released) {
+                released = true
+                GlassSystem.removePageToneObserver(windowRoot)
+                // Hủy hộp thoại CỦA SHEET NÀY, không đọc field chung (có thể đã là sheet mới).
+                gd.cancelAll()
+                if (dialog === dlg) {
+                    glassDialog = null
+                    dialog = null
+                    sheetView = null
+                    scrimView = null
+                    closing = false
+                    releaseNow = null
+                }
+                onDismiss()
+            }
+        }
+        dlg.setOnDismissListener { release() }
+        glassDialog = gd
+        releaseNow = release
         dialog = dlg
         sheetView = sheet
         scrimView = scrim
@@ -271,7 +280,12 @@ class BrowserBottomSheet(
 
     fun dismiss(immediate: Boolean = false) {
         val dlg = dialog ?: return
-        if (immediate) dlg.dismiss() else animateClose()
+        if (immediate) {
+            val release = releaseNow
+            // Dọn NGAY, trước khi show() dựng sheet mới; listener được post sẽ thành no-op.
+            dlg.dismiss()
+            release?.invoke()
+        } else animateClose()
     }
 
     private companion object {

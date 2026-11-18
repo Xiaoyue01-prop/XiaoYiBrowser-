@@ -1093,6 +1093,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             requestMediaState(target)
         }
         tabManager.switchTo(tab.id)
+        // Nội dung riêng tư không được nằm lại trên notification/lock screen.
+        if (tab.isPrivate) ReaderLiveUpdate.cancel(this)
         // Prevent address/find text from a private session entering Android's saved view hierarchy.
         if (toolbar.isCreated) {
             urlBar.isSaveEnabled = !tab.isPrivate
@@ -1356,10 +1358,15 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         ReaderLiveUpdate.cancel(this)
     }
 
+    /** Tab đang xem có phải tab riêng tư không; false khi Activity chưa khởi tạo đủ. */
+    private fun isActiveTabPrivate(): Boolean =
+        ::tabManager.isInitialized && ::web.isInitialized &&
+            tabManager.getForWebView(web)?.isPrivate == true
+
     override fun onStop() {
         if (::pipController.isInitialized) pipController.trace("onStop inPip=$isInPictureInPictureMode entering=${pipController.isEntering}")
         // Đang ở Reader mà vuốt ra màn hình chính: hiện % đã đọc dưới dạng Live Update (chỉ hiển thị, không có nút).
-        if (!isChangingConfigurations) {
+        if (!isChangingConfigurations && !isActiveTabPrivate()) {
             readerModeController?.readingSnapshot()?.let { snapshot ->
                 ReaderLiveUpdate.post(this, snapshot.title, snapshot.host, snapshot.percent)
             }
@@ -1529,7 +1536,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         fullscreenVideoController?.destroy()
         webMedia.release()
         // Gỡ listener và giải phóng toàn bộ WebView sau khi các controller phụ thuộc đã dừng.
-        tabWebViewLifecycle.detachCallbacks(web)
+        if (::web.isInitialized) tabWebViewLifecycle.detachCallbacks(web)
 
         // Dừng nhận yêu cầu lưu tab mới; các tác vụ ghi đã xếp hàng vẫn được hoàn tất.
         if (::tabPersistence.isInitialized) tabPersistence.close()

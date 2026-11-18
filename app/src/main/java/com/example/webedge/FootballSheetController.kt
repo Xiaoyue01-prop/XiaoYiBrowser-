@@ -66,7 +66,7 @@ class FootballSheetController(
         }
         cache = emptyList(); errorText = null; query = ""
         buildPage(page)
-        sheet.show("Tỉ số bóng đá", content, onDismiss = { s.cancel(); scope = null })
+        sheet.show("Tỉ số bóng đá", content, onDismiss = { s.cancel(); if (scope === s) scope = null })
         if (FootballPins.apiKey(activity).isNotBlank()) load(page)
     }
 

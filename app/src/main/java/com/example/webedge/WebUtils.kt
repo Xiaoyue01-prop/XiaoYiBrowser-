@@ -2,6 +2,7 @@ package com.example.webedge
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.webkit.WebSettings
@@ -106,27 +107,36 @@ fun Activity.openExternalUrl(url: String, fallbackView: WebView, toast: (String)
     val uri = try { Uri.parse(url) } catch (_: Exception) { return false }
     val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
     if (scheme in INTERNAL_URL_SCHEMES) return false
-    return try {
-        val intent = if (scheme == "intent") {
-            Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
-        } else {
-            Intent(Intent.ACTION_VIEW, uri)
-        }
-        intent.component = null
-        intent.addCategory(Intent.CATEGORY_BROWSABLE)
-        val fallback = intent.getStringExtra("browser_fallback_url")?.takeIf {
-            val fallbackScheme = runCatching { Uri.parse(it).scheme }.getOrNull()
-            fallbackScheme.equals("https", ignoreCase = true) || fallbackScheme.equals("http", ignoreCase = true)
-        }
-        when {
-            intent.resolveActivity(packageManager) != null -> startActivity(intent)
-            !fallback.isNullOrBlank() -> fallbackView.loadUrl(fallback)
-            else -> toast("Không tìm thấy ứng dụng để mở liên kết này")
-        }
-        true
+
+    val intent = try {
+        if (scheme == "intent") Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+        else Intent(Intent.ACTION_VIEW, uri)
     } catch (_: Exception) {
-        toast("Không thể mở liên kết bên ngoài")
+        toast("Không thể mở liên kết bên ngoài"); return true
+    }
+    // intent: không được nhắm thẳng vào component của app khác, kể cả qua selector.
+    intent.component = null
+    intent.selector = null
+    intent.addCategory(Intent.CATEGORY_BROWSABLE)
+
+    val fallback = intent.getStringExtra("browser_fallback_url")?.takeIf {
+        val s = runCatching { Uri.parse(it).scheme }.getOrNull()
+        s.equals("https", ignoreCase = true) || s.equals("http", ignoreCase = true)
+    }
+
+    // KHÔNG dùng resolveActivity: từ API 30 nó bị lọc theo package visibility nên gần như luôn null.
+    // startActivity thì hệ thống phân giải không bị lọc: cứ thử rồi bắt ActivityNotFoundException.
+    return try {
+        startActivity(intent)
         true
+    } catch (_: ActivityNotFoundException) {
+        if (!fallback.isNullOrBlank()) fallbackView.loadUrl(fallback)
+        else toast("Không tìm thấy ứng dụng để mở liên kết này")
+        true
+    } catch (_: SecurityException) {
+        toast("Không được phép mở liên kết này"); true
+    } catch (_: Exception) {
+        toast("Không thể mở liên kết bên ngoài"); true
     }
 }
 

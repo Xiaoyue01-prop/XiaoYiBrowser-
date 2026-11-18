@@ -82,6 +82,8 @@ class BrowserToolsController(
     private var downloadEmptyView: View? = null
 
     fun showDownloads() {
+        // Dọn sheet cũ TRƯỚC khi dựng nội dung mới: onDismiss cũ đụng các field dùng chung.
+        sheet.dismiss(immediate = true)
         clearActiveToneUpdates()
         val page = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -344,6 +346,8 @@ class BrowserToolsController(
     }
 
     fun showPrivacy() {
+        // renderPrivacy() đăng ký tone callback TRƯỚC sheet.show(), nên phải dọn ở đây.
+        sheet.dismiss(immediate = true)
         clearActiveToneUpdates()
         val page = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
