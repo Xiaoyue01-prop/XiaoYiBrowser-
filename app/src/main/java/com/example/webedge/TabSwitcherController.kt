@@ -778,8 +778,18 @@ class TabSwitcherController(
             val radiusPx = GlassSystem.Preset.MENU_CARD.radiusDp * d
 
             val layer = FrameLayout(activity).apply { setOnClickListener { dismissGroupMenu() } }
+            val maxPanelWidth = (container.width - dp(24)).coerceAtLeast(dp(160))
+            val panelWidth = (container.width * 0.55f).toInt()
+                .coerceIn(minOf(dp(180), maxPanelWidth), maxPanelWidth)
+            val containerLocForTop = IntArray(2).also { container.getLocationOnScreen(it) }
+            val anchorLocForTop = IntArray(2).also { groupPill.getLocationOnScreen(it) }
+            val anchorTop = anchorLocForTop[1] - containerLocForTop[1]
+            val availableHeight = (container.height - anchorTop - dp(16)).coerceAtLeast(dp(120))
             val card = MenuCardLayout(activity).apply {
-                maxHeightPx = (activity.resources.displayMetrics.heightPixels * Constants.MENU_MAX_HEIGHT_FRACTION).toInt()
+                maxHeightPx = minOf(
+                    (activity.resources.displayMetrics.heightPixels * Constants.MENU_MAX_HEIGHT_FRACTION).toInt(),
+                    availableHeight
+                )
                 background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, night)
                 clipToOutline = true
                 clipChildren = true
@@ -795,12 +805,42 @@ class TabSwitcherController(
             }
             card.addView(glass, FrameLayout.LayoutParams(-1, -1))
 
-            val list = LinearLayout(activity).apply {
+            // Nội dung có chiều rộng cố định theo tỷ lệ màn hình; chiều cao tự nhiên theo số nhóm.
+            // Chỉ danh sách nhóm cuộn khi vượt giới hạn, còn hành động tạo nhóm luôn nằm bên dưới.
+            val content = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(0, dp(6), 0, dp(6))
-                minimumWidth = dp(132)
             }
+            val groupScroll = object : ScrollView(activity) {
+                override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                    // Chừa chỗ cho đường phân cách và hàng tạo nhóm để chúng luôn nhìn thấy được.
+                    val maxGroupHeight = (card.maxHeightPx - dp(53)).coerceAtLeast(dp(46))
+                    val parentMode = View.MeasureSpec.getMode(heightMeasureSpec)
+                    val parentSize = View.MeasureSpec.getSize(heightMeasureSpec)
+                    val heightCap = if (parentMode == View.MeasureSpec.UNSPECIFIED) {
+                        maxGroupHeight
+                    } else {
+                        minOf(parentSize, maxGroupHeight)
+                    }
+                    super.onMeasure(
+                        widthMeasureSpec,
+                        View.MeasureSpec.makeMeasureSpec(heightCap, View.MeasureSpec.AT_MOST)
+                    )
+                }
+            }.apply {
+                isFillViewport = false
+                isVerticalScrollBarEnabled = false
+                overScrollMode = View.OVER_SCROLL_NEVER
+                clipToPadding = false
+            }
+            val groupList = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(6), 0, 0)
+            }
+            groupScroll.addView(groupList, FrameLayout.LayoutParams(-1, -2))
+            content.addView(groupScroll, LinearLayout.LayoutParams(-1, -2))
+
             fun addRow(
+                target: LinearLayout,
                 label: String,
                 trailing: String?,
                 icon: Drawable?,
@@ -827,7 +867,7 @@ class TabSwitcherController(
                         }
                     }
                 }
-                // Ô icon luôn rộng 20dp (kể cả khi trống) để chữ các hàng thẳng cột.
+                // Ô icon luôn rộng cố định (kể cả khi trống) để chữ các hàng thẳng cột.
                 row.addView(
                     ImageView(activity).apply { if (icon != null) setImageDrawable(icon) },
                     LinearLayout.LayoutParams(dp(18), dp(18))
@@ -839,7 +879,7 @@ class TabSwitcherController(
                         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                         setTextColor(fg)
                         maxLines = 1
-                        maxWidth = dp(120)
+                        setSingleLine(true)
                         ellipsize = TextUtils.TruncateAt.END
                         setPadding(dp(12), dp(4), 0, dp(4))
                     },
@@ -857,13 +897,14 @@ class TabSwitcherController(
                     )
                 }
                 AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
-                list.addView(row, LinearLayout.LayoutParams(-1, -2))
+                target.addView(row, LinearLayout.LayoutParams(-1, -2))
             }
 
             val groups = tabManager.getGroups()
             groups.forEach { g ->
                 val checked = g.id == tabManager.currentGroupId
                 addRow(
+                    target = groupList,
                     label = g.name,
                     trailing = null,
                     icon = if (checked) PathIcon(Icons.CHECK, fg) else null,
@@ -874,17 +915,18 @@ class TabSwitcherController(
                     onLongClick = { manageGroup(g) }
                 )
             }
-            list.addView(
+            content.addView(
                 View(activity).apply { setBackgroundColor(GlassSystem.pageDividerColor()) },
                 LinearLayout.LayoutParams(-1, 1).apply { setMargins(dp(16), dp(3), dp(16), dp(3)) }
             )
             addRow(
+                target = content,
                 label = "Nhóm thẻ mới",
                 trailing = null,
                 icon = StrokeGlyph(StrokeGlyph.Kind.PLUS, fg, dp(2).toFloat()),
                 onClick = { askNewGroup() }
             )
-            card.addView(list, FrameLayout.LayoutParams(-2, -2))
+            card.addView(content, FrameLayout.LayoutParams(-1, -2))
 
             // Thẻ mọc ĐÚNG tại chỗ viên (góc trên-phải của thẻ trùng góc trên-phải của viên, che luôn viên)
             // rồi bung xuống/sang trái. Đặt bằng margin (x/y sẽ bị spring translation của morph ghi đè).
@@ -893,7 +935,7 @@ class TabSwitcherController(
             val anchorRight = anchorLoc[0] + groupPill.width - containerLoc[0]
             layer.addView(
                 card,
-                FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
+                FrameLayout.LayoutParams(panelWidth, -2, Gravity.TOP or Gravity.END).apply {
                     topMargin = anchorLoc[1] - containerLoc[1]
                     marginEnd = (container.width - anchorRight).coerceAtLeast(0)
                 }
@@ -917,7 +959,7 @@ class TabSwitcherController(
                     springSpec = AnimationSystem.MENU_MORPH,
                     fadeIn = false,
                     counterTransformView = glass,
-                    contentViews = { listOf<View>(list) },
+                    contentViews = { listOf<View>(content) },
                     contentStart = 0f,
                     contentSpan = 0.25f,
                     popScale = Constants.MENU_POP_SCALE,
