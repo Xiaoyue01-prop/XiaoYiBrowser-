@@ -62,7 +62,7 @@ object Constants {
     /** Toast có nút hành động (Hoàn tác) cần ở lại lâu hơn để kịp bấm. */
     const val TOAST_ACTION_DURATION_MS = 4000L
     /** Số tab đã đóng gần đây được giữ lại. */
-    const val CLOSED_TABS_MAX = 10
+    const val CLOSED_TABS_MAX = 30
     const val SAVE_TABS_DEBOUNCE_MS = 600L
     const val HISTORY_PERSIST_DELAY_MS = 2000L
 

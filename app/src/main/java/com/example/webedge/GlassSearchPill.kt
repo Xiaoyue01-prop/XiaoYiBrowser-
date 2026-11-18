@@ -45,6 +45,9 @@ class GlassSearchPill(
     private val wGlyph = dp(40)
     private val restWidth = if (onSelect != null) dp(88) else dp(40)
 
+    /** Bề rộng lúc nghỉ (px): bên ngoài dùng để đặt LayoutParams ban đầu cho vỏ kính. */
+    val restWidthPx: Int get() = restWidth
+
     /** Vỏ kính; bên ngoài đặt vào khung chồng ở góc trái, rộng [restWidth], cao 40dp. */
     val view: FrameLayout = GlassSystem.createGlassPill(
         activity, blurTarget, activity.resources.displayMetrics.density, isNight

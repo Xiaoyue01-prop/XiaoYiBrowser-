@@ -835,6 +835,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             onOverlayClosed = { syncOrbMenuVisibility() },
             onModeChange = ::switchTabMode,
             onReopenClosedTab = ::reopenClosedTab,
+            onCloseTabs = ::closeBrowserTabs,
             dialogs = glassDialog,
             toast = { message -> toast(message) }
         )
@@ -1220,6 +1221,21 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     private fun closeBrowserTab(tab: TabManager.Tab) {
         tabOperations.closeTab(tab)
+    }
+
+    /** Đóng nhiều tab từ chế độ chọn của MenuTabs; một toast "Hoàn tác" chung mở lại tất cả. */
+    private fun closeBrowserTabs(tabs: List<TabManager.Tab>) {
+        val entries = tabOperations.closeTabs(tabs)
+        if (entries.isEmpty()) return
+        toaster.show(
+            msg = "Đã đóng ${tabs.size} tab",
+            actionLabel = "Hoàn tác",
+            onAction = {
+                if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
+                // Mở lại theo thứ tự cũ: mục cuối mở sau cùng nên là tab đang xem.
+                entries.forEach { reopenClosedTab(it) }
+            }
+        )
     }
 
     /** Giải phóng WebView của các tab nền lâu không dùng để tiết kiệm RAM; mở lại tab sẽ tải lại từ URL đã lưu. */

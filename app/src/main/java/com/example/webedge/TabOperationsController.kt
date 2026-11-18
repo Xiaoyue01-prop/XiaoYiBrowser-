@@ -40,18 +40,37 @@ class TabOperationsController(
         return tab
     }
 
-    fun closeTab(tab: TabManager.Tab): Boolean {
+    fun closeTab(tab: TabManager.Tab): Boolean = closeInternal(tab, announce = true) != null
+
+    /**
+     * Đóng nhiều tab một lượt (chế độ chọn): không hiện toast Hoàn tác riêng từng tab; trả về các mục đã ghi
+     * để nơi gọi hiện MỘT toast hoàn tác chung. Tab đang hiển thị đóng sau cùng để chỉ phải đổi WebView một lần.
+     */
+    fun closeTabs(tabs: List<TabManager.Tab>): List<Entry> {
+        val entries = mutableListOf<Entry>()
+        for (tab in tabs.sortedBy { it.isActive }) {
+            val result = closeInternal(tab, announce = false) ?: continue
+            result.entry?.let { entries.add(it) }
+        }
+        return entries
+    }
+
+    private class CloseResult(val entry: Entry?)
+
+    private fun closeInternal(tab: TabManager.Tab, announce: Boolean): CloseResult? {
         val wasActive = tab.isActive
         if (wasActive) captureActiveTab()
-        val removed = tabManager.close(tab.id) ?: return false
+        val removed = tabManager.close(tab.id) ?: return null
         if (wasActive) tabManager.getActive()?.let(activateTab)
+        var entry: Entry? = null
         // Đọc URL/tiêu đề trước khi hủy WebView. Tab riêng tư tuyệt đối không được ghi lại.
         if (!removed.isPrivate) {
             val url = (removed.webView?.url ?: removed.url).orEmpty()
             if (url.isNotBlank() && !url.startsWith("about:")) {
                 val title = (removed.webView?.title ?: removed.title).orEmpty().ifBlank { url }
                 rememberClosedTab(title, url, removed.desktop)
-                showUndoClosed(Entry(title, url, System.currentTimeMillis(), removed.desktop))
+                entry = Entry(title, url, System.currentTimeMillis(), removed.desktop)
+                if (announce) showUndoClosed(entry)
             }
         }
         removed.webView?.let { view ->
@@ -60,6 +79,6 @@ class TabOperationsController(
         if (removed.isPrivate && tabManager.privateCount() == 0) {
             onPrivateSessionEnded()
         }
-        return true
+        return CloseResult(entry)
     }
 }
