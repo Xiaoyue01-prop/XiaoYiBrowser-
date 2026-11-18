@@ -798,7 +798,7 @@ class TabSwitcherController(
             val list = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, dp(6), 0, dp(6))
-                minimumWidth = dp(168)
+                minimumWidth = dp(132)
             }
             fun addRow(
                 label: String,
@@ -811,7 +811,7 @@ class TabSwitcherController(
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
                     setPadding(dp(16), 0, dp(18), 0)
-                    minimumHeight = dp(44)
+                    minimumHeight = dp(46)
                     isClickable = true
                     background = activity.roundedPressBackground(night)
                     setOnClickListener {
@@ -835,11 +835,11 @@ class TabSwitcherController(
                 row.addView(
                     TextView(activity).apply {
                         text = label
-                        textSize = 14f
+                        textSize = 15f
                         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                         setTextColor(fg)
                         maxLines = 1
-                        maxWidth = dp(150)
+                        maxWidth = dp(120)
                         ellipsize = TextUtils.TruncateAt.END
                         setPadding(dp(12), dp(4), 0, dp(4))
                     },
@@ -865,7 +865,7 @@ class TabSwitcherController(
                 val checked = g.id == tabManager.currentGroupId
                 addRow(
                     label = g.name,
-                    trailing = tabManager.tabCountOf(g.id).toString(),
+                    trailing = null,
                     icon = if (checked) PathIcon(Icons.CHECK, fg) else null,
                     onClick = {
                         tabManager.setCurrentGroup(g.id)
