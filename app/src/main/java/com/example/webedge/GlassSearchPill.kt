@@ -158,8 +158,9 @@ class GlassSearchPill(
         curWidth = w.coerceIn(restWidth.toFloat(), maxOf(searchWidth, restWidth.toFloat()))
         val lp = view.layoutParams
         val iw = curWidth.toInt()
-        // Pivot ở tâm để nhấn và nảy phình đều quanh tâm, không lệch về một phía.
-        view.pivotX = curWidth / 2f
+        // Neo morph ở mép trái: kính lúp giữ nguyên vị trí, mặt kính chỉ bung sang phải.
+        // Không scale cả View vì việc scale sẽ làm méo blur/rim trong lúc chuyển động.
+        view.pivotX = 0f
         view.pivotY = dp(20).toFloat()
         if (lp != null && lp.width != iw) {
             lp.width = iw
