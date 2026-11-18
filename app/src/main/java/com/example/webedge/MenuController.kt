@@ -101,6 +101,8 @@ class MenuController(
     private var menuLayer: FrameLayout? = null
     private var menuCard: FrameLayout? = null
     private var menuBackAction: (() -> Unit)? = null
+    /** Bề rộng (px) của trang menu đang hiển thị; [relayout] dùng để thẻ không tràn ra ngoài lề trái. */
+    private var pageWidthPx = 0
     private var menuAnimationStarted = false
     private var toolbarCompact = false
     private var menuWasOpenBeforeCompact = false
@@ -519,6 +521,7 @@ class MenuController(
         menuLayer = null
         menuCard = null
         menuBackAction = null
+        pageWidthPx = 0
         menuAnimationStarted = false
         menuWasOpenBeforeCompact = false
         compactFallback = null
@@ -586,7 +589,16 @@ class MenuController(
             } else originBounds
             val right = rootLoc[0] + root.width - rightRef.right
             val bottom = rootLoc[1] + root.height - bottomRef.bottom
-            lp.rightMargin = maxOf(right.toInt(), host.insetRight + dp(8))
+            var rightMargin = maxOf(right.toInt(), host.insetRight + dp(8))
+            // Các trang con (Lịch sử, Dấu trang, Cài đặt) rộng hơn trang chính. Thẻ neo theo nút ba chấm và mọc
+            // sang trái, nên nếu nút cách mép phải hơn ~14dp thì mép trái thẻ tụt sát/vượt lề màn hình và thẻ
+            // trông bị lệch trái. Kéo thẻ sang phải vừa đủ để mép trái luôn cách lề tối thiểu 14dp; thẻ vẫn phủ
+            // trọn nút gốc nên morph không đổi.
+            if (pageWidthPx > 0 && root.width > 0) {
+                val maxRight = root.width - host.insetLeft - dp(14) - pageWidthPx
+                rightMargin = minOf(rightMargin, maxOf(maxRight, host.insetRight + dp(8)))
+            }
+            lp.rightMargin = rightMargin
             lp.bottomMargin = maxOf(bottom.toInt() - dp(2), maxOf(host.insetBottom, host.imeBottom) + dp(4))
         } else {
             lp.rightMargin = host.insetRight + dp(14)
@@ -601,6 +613,9 @@ class MenuController(
         val card = menuCard as? MenuCardLayout ?: return
         val maxW = activity.resources.displayMetrics.widthPixels - dp(28) - host.insetLeft - host.insetRight
         val w = maxOf(minOf(dp(widthDp), maxW), minOf(coverMinWidthPx(), maxW))
+        pageWidthPx = w
+        // Trang mới có thể rộng hơn trang cũ: đặt lại lề phải ngay để thẻ không tràn sang trái.
+        relayout()
         card.dropLeavingPages()
         val oldW = card.width
         val oldH = card.height

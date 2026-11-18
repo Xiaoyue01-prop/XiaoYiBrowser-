@@ -268,7 +268,14 @@ class GlassSearchPill(
         }
 
         fun run() {
-            if (mode != newMode) return
+            if (mode != newMode) {
+                // Bị đổi chế độ trong lúc chờ nảy (vd. chạm ba chấm hai lần liên tiếp): nếu không hạ về 1
+                // thì nút kẹt ở cỡ nảy to và trông bị phình/lệch.
+                if (popFirst) {
+                    AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_POP_BACK)
+                }
+                return
+            }
             widthAnim?.cancel()
             // Mở: cỡ nảy thu dần về 1 theo cùng spring với lúc viên thuốc nở nên hai chuyển động khớp nhau.
             if (popFirst) AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_MORPH)
