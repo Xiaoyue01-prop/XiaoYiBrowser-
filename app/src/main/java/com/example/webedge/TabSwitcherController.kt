@@ -278,7 +278,7 @@ class TabSwitcherController(
         captureActiveTab()
         val captureMs = android.os.SystemClock.uptimeMillis() - captureStart
 
-        val container = FrameLayout(activity).apply {
+        val container = TouchWatchFrameLayout(activity).apply {
             clipChildren = false
             clipToPadding = false
             isClickable = true
@@ -295,6 +295,7 @@ class TabSwitcherController(
         val selectedIds = LinkedHashSet<Long>()
         var onCardToggle: (TabManager.Tab) -> Unit = {}
         var onSelectRequested: () -> Unit = {}
+        var onSelectAllRequested: () -> Unit = {}
         var onMoreClicked: () -> Unit = {}
         var morphAddButton: (Boolean) -> Unit = {}
         lateinit var blurSync: GlassSystem.BlurSync
@@ -390,7 +391,8 @@ class TabSwitcherController(
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(6), dp(4), dp(6), dp(6))
         }
-        // Thay chữ "Tab đang mở" bằng viên kính tìm kiếm (kính lúp → kéo dài thành thanh nhập từ khóa).
+        // Thay chữ "Tab đang mở" bằng nút ba chấm (cùng kiểu Lịch sử / Dấu trang): chạm thì nở thành viên
+        // kính lúp + chọn; kính lúp kéo dài thành thanh nhập từ khóa.
         // Khung chồng để viên kính tìm kiếm bung đè lên viên "Nhóm thẻ" bên phải (viên này mờ dần khi bung).
         var tabQuery = ""
         var onQueryChanged: () -> Unit = {}
@@ -414,12 +416,26 @@ class TabSwitcherController(
             activity, blurTarget, activity.resources.displayMetrics.density, isNight()
         )
         groupPill.addView(groupText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40), Gravity.CENTER))
+        // Chế độ chọn: viên này đổi thành ô hiện số tab đã chọn (không bấm được); thoát chế độ chọn thì về như cũ.
+        var groupShowsSelect = false
         fun updateGroupPill() {
             val priv = tabManager.isPrivateMode
             val name = tabManager.currentGroup().name
-            groupText.text = if (priv) "Riêng tư" else "$name ▾"
-            groupPill.isClickable = !priv
-            groupPill.contentDescription = if (priv) "Riêng tư" else "Nhóm thẻ: $name"
+            if (groupShowsSelect != selectMode) {
+                groupShowsSelect = selectMode
+                groupText.alpha = 0f
+                AnimationSystem.fade(groupText, 1f)
+            }
+            if (selectMode) {
+                val n = selectedIds.size
+                groupText.text = "Đã chọn $n"
+                groupPill.isClickable = false
+                groupPill.contentDescription = "Đã chọn $n tab"
+            } else {
+                groupText.text = if (priv) "Riêng tư" else "$name ▾"
+                groupPill.isClickable = !priv
+                groupPill.contentDescription = if (priv) "Riêng tư" else "Nhóm thẻ: $name"
+            }
         }
         updateGroupPill()
         val searchPill = GlassSearchPill(
@@ -433,6 +449,7 @@ class TabSwitcherController(
                 onQueryChanged()
             },
             onSelect = { onSelectRequested() },
+            onSelectAll = { onSelectAllRequested() },
             onSearchProgress = { p -> groupPill.alpha = 1f - (p * 3f).coerceIn(0f, 1f) },
             syncBlur = { ms -> blurSync.hold(ms) }
         )
@@ -447,47 +464,8 @@ class TabSwitcherController(
             searchPill.view,
             FrameLayout.LayoutParams(searchPill.restWidthPx, dp(40), Gravity.START or Gravity.CENTER_VERTICAL)
         )
-        // Chế độ chọn: "Đã chọn N" thay hai icon bên trái, viên "Chọn tất cả" thay viên Nhóm thẻ bên phải.
-        val selectTitle = TextView(activity).apply {
-            textSize = 17f
-            setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD))
-            setTextColor(GlassSystem.pagePrimaryText())
-            maxLines = 1
-            alpha = 0f
-            visibility = View.GONE
-        }
-        val selectAllText = TextView(activity).apply {
-            textSize = 15f
-            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-            setTextColor(GlassSystem.pagePrimaryText())
-            maxLines = 1
-            gravity = Gravity.CENTER
-            setPadding(dp(16), 0, dp(16), 0)
-        }
-        val selectAllPill = GlassSystem.createGlassPill(
-            activity, blurTarget, activity.resources.displayMetrics.density, isNight()
-        ).apply {
-            alpha = 0f
-            visibility = View.GONE
-        }
-        selectAllPill.addView(
-            selectAllText,
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40), Gravity.CENTER)
-        )
-        headWrap.addView(
-            selectTitle,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.START or Gravity.CENTER_VERTICAL
-            ).apply { marginStart = dp(8) }
-        )
-        headWrap.addView(
-            selectAllPill,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40),
-                Gravity.END or Gravity.CENTER_VERTICAL
-            )
-        )
+        // Chạm ra ngoài viên thuốc (kính lúp + chọn) thì thu về ba chấm.
+        container.onTouchDown = { ev -> searchPill.collapseActionsIfOutside(ev.rawX, ev.rawY) }
         headWrap.addOnLayoutChangeListener { _, l, _, r, _, oldL, _, oldR, _ ->
             if (r - l != oldR - oldL) searchPill.setMaxWidth(headWrap.width)
         }
@@ -1091,14 +1069,15 @@ class TabSwitcherController(
 
         groupPill.setOnClickListener {
             searchPill.hideKeyboard()
+            searchPill.collapseActions()
             showGroupMenu()
         }
         AnimationSystem.press(groupPill, Constants.PRESS_SCALE_PILL)
 
 
         // ---------------- Chế độ chọn + menu ⋯ ----------------
-        // Chạm icon chọn: thẻ hiện vòng tròn thay dấu ×, "+" thành "⋯" (giữ lâu bị ẩn), header đổi thành
-        // "Đã chọn N" + "Chọn tất cả". Menu ⋯ mọc từ chính nút ⋯ lên trên, phủ lên viên chuyển chế độ tab.
+        // Chạm nút chọn: thẻ hiện vòng tròn thay dấu ×, "+" thành "⋯" (giữ lâu bị ẩn), ba chấm thành nút chọn tất cả
+        // và viên Nhóm thẻ thành ô "Đã chọn N". Menu ⋯ mọc từ chính nút ⋯ lên trên, phủ lên viên chuyển chế độ tab.
         var popupLayer: FrameLayout? = null
         var popupCard: MenuCardLayout? = null
         var popupAnchor: View? = null
@@ -1279,10 +1258,11 @@ class TabSwitcherController(
             card.postDelayed({ startAnimation() }, 200L)
         }
 
+        // Header chế độ chọn: viên Nhóm thẻ hiện "Đã chọn N"; nút chọn tất cả (chỗ ba chấm) đặc khi đã chọn hết.
         fun updateSelectHeader() {
             val n = selectedIds.size
-            selectTitle.text = if (n == 0) "Chọn tab" else "Đã chọn $n"
-            selectAllText.text = if (n > 0 && n >= tabManager.count()) "Bỏ chọn tất cả" else "Chọn tất cả"
+            updateGroupPill()
+            searchPill.setAllSelected(n > 0 && n >= tabManager.getCurrentTabs().size)
         }
 
         // Đồng bộ ×/vòng chọn và viền của mọi thẻ theo chế độ hiện tại.
@@ -1320,31 +1300,12 @@ class TabSwitcherController(
             updateSelectHeader()
         }
 
-        // Header: bật chế độ chọn thì ẩn kính lúp/chọn + viên Nhóm thẻ, hiện "Đã chọn N" + "Chọn tất cả"; tắt thì ngược lại.
-        fun setHeaderForSelect(on: Boolean, animate: Boolean) {
-            val hide = if (on) listOf<View>(searchPill.view, groupPill) else listOf<View>(selectTitle, selectAllPill)
-            val show = if (on) listOf<View>(selectTitle, selectAllPill) else listOf<View>(searchPill.view, groupPill)
-            hide.forEach { v ->
-                val hiddenState = if (on) View.INVISIBLE else View.GONE
-                if (animate) {
-                    AnimationSystem.fade(v, 0f) { if (selectMode == on) v.visibility = hiddenState }
-                } else {
-                    v.alpha = 0f
-                    v.visibility = hiddenState
-                }
-            }
-            show.forEach { v ->
-                v.visibility = View.VISIBLE
-                if (animate) AnimationSystem.fade(v, 1f) else v.alpha = 1f
-            }
-        }
-
         fun exitSelectMode(animate: Boolean = true) {
             if (!selectMode) return
             selectMode = false
             selectedIds.clear()
             dismissPopup(false)
-            setHeaderForSelect(false, animate)
+            searchPill.exitSelectMode(animate)
             morphAddButton(false)
             applySelectUi()
         }
@@ -1355,7 +1316,7 @@ class TabSwitcherController(
                 dismissGroupMenu(false)
                 selectMode = true
                 selectedIds.clear()
-                setHeaderForSelect(true, true)
+                searchPill.enterSelectMode()
                 morphAddButton(true)
                 applySelectUi()
             }
@@ -1368,7 +1329,7 @@ class TabSwitcherController(
             updateSelectHeader()
         }
 
-        selectAllPill.setOnClickListener {
+        onSelectAllRequested = {
             val current = tabManager.getCurrentTabs()
             if (selectedIds.size >= current.size) {
                 selectedIds.clear()
@@ -1380,7 +1341,6 @@ class TabSwitcherController(
             refreshCards()
             updateSelectHeader()
         }
-        AnimationSystem.press(selectAllPill, Constants.PRESS_SCALE_PILL)
 
         // Xóa các tab đã chọn: xóa hết tab của nhóm thì thay bằng một tab trống mới (như đóng tab cuối); còn lại
         // thì các thẻ co lại rồi lưới trượt lấp chỗ. Toast "Hoàn tác" chung do Activity hiện.
@@ -1526,6 +1486,7 @@ class TabSwitcherController(
                 popupCard != null -> dismissPopup()
                 groupCard != null -> dismissGroupMenu()
                 selectMode -> exitSelectMode()
+                searchPill.isOpen -> searchPill.collapse()
                 else -> dismissAnimated()
             }
         }
@@ -1640,8 +1601,6 @@ class TabSwitcherController(
             )
             val primary = GlassSystem.pagePrimaryText(if (dark) Color.BLACK else Color.WHITE)
             groupText.setTextColor(primary)
-            selectTitle.setTextColor(primary)
-            selectAllText.setTextColor(primary)
             searchPill.applyIconColor(primary)
             modeControl?.applyPageTone(dark)
             val addFill = GlassSystem.tabAddButtonFillColor(if (dark) Color.BLACK else Color.WHITE)
@@ -1883,3 +1842,13 @@ private class PopupItem(
     val instantDismiss: Boolean = false,
     val onClick: () -> Unit
 )
+
+/** FrameLayout báo lại mọi lần chạm xuống (ACTION_DOWN) trước khi con xử lý, để bảng tab biết có chạm ra ngoài một viên đang nở. */
+private class TouchWatchFrameLayout(context: android.content.Context) : FrameLayout(context) {
+    var onTouchDown: ((android.view.MotionEvent) -> Unit)? = null
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) onTouchDown?.invoke(ev)
+        return super.dispatchTouchEvent(ev)
+    }
+}
