@@ -112,11 +112,45 @@ class GlassSearchPill(
         }
         selectGlyph?.setOnClickListener { if (!searching) onSelect?.invoke() }
         closeGlyph.setOnClickListener { collapse() }
-        AnimationSystem.press(searchGlyph, Constants.PRESS_SCALE_CELL)
-        selectGlyph?.let { AnimationSystem.press(it, Constants.PRESS_SCALE_CELL) }
-        AnimationSystem.press(closeGlyph, Constants.PRESS_SCALE_CELL)
+        // Giống các nút kính khác (nút Thẻ, Nhóm thẻ...): cả viên kính phồng lên khi nhấn rồi nảy về,
+        // không chỉ riêng icon co lại. Cảm ứng gắn ở vỏ; các icon con không tự co nữa.
+        glassPress()
 
         render(if (searching) searchWidth else restWidth.toFloat())
+    }
+
+    /**
+     * Cả viên kính phồng lên khi nhấn (cùng [AnimationSystem.attachGlassPress] với các nút kính khác).
+     * Chỉ chạy khi đang là viên thuốc; thanh tìm kiếm đã bung thì đứng yên để gõ chữ. Cảm ứng được
+     * theo dõi từ vỏ qua [View.OnTouchListener] của các icon nên chạm đâu trên viên thuốc cũng phồng.
+     */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun glassPress() {
+        val listener = View.OnTouchListener { _, ev ->
+            if (!searching && curWidth <= restWidth + 1f) {
+                when (ev.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        AnimationSystem.unclipParents(view)
+                        AnimationSystem.pressDown(view, AnimationSystem.GLASS_PRESS_SCALE)
+                    }
+                    android.view.MotionEvent.ACTION_UP -> {
+                        val mid = 1f + (AnimationSystem.GLASS_PRESS_SCALE - 1f) * 0.7f
+                        if (view.scaleX < mid) {
+                            view.scaleX = mid
+                            view.scaleY = mid
+                        }
+                        AnimationSystem.pressUp(view)
+                        view.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+                    }
+                    android.view.MotionEvent.ACTION_CANCEL -> AnimationSystem.pressUp(view)
+                }
+            }
+            false
+        }
+        searchGlyph.setOnTouchListener(listener)
+        selectGlyph?.setOnTouchListener(listener)
+        // X: nút kính nhỏ nằm trong thanh, phồng riêng như nút đóng ở các nơi khác.
+        AnimationSystem.attachGlassPress(closeGlyph)
     }
 
     private fun glyph(drawable: Drawable, description: String, clickable: Boolean) =
@@ -186,13 +220,29 @@ class GlassSearchPill(
         val generation = ++morphGeneration
         syncBlur(900)
         AnimationSystem.unclipParents(view)
-        // Đo bề mặt ở kích thước đích trước; controller sẽ lấy khung kính lúp làm điểm neo.
+        // Khung viên thuốc lúc nghỉ (toạ độ màn hình), chụp TRƯỚC khi đổi rộng: đây là điểm neo của morph.
+        // Không dùng searchGlyph làm nút gốc vì nó nằm ngay trong vỏ đang morph: bị ẩn mất và neo sai chỗ.
+        val rest = OriginTransitionController.boundsOnScreen(view)?.let {
+            android.graphics.RectF(it.left, it.top, it.left + restWidth, it.bottom)
+        }
+        // Nội dung phải VISIBLE (alpha 0) thì morph mới làm chúng hiện dần được; alpha một mình không đủ
+        // vì setGlyph đã đặt INVISIBLE lúc đứng yên.
+        input.alpha = 0f
+        input.visibility = View.VISIBLE
+        closeGlyph.alpha = 0f
+        closeGlyph.visibility = View.VISIBLE
+        setGlyph(searchGlyph, 1f)
         setWidth(searchWidth.toInt())
-        view.post {
-            if (generation != morphGeneration || !searching || !view.isAttachedToWindow) return@post
-            val opened = OriginTransitionController.open(
+
+        var done = false
+        fun start() {
+            if (done) return
+            done = true
+            if (generation != morphGeneration || !searching || !view.isAttachedToWindow) return
+            val opened = rest != null && OriginTransitionController.open(
                 view = view,
-                origin = searchGlyph,
+                origin = null,
+                originRect = rest,
                 endCornerRadiusPx = dp(20).toFloat(),
                 fadeIn = false,
                 springSpec = AnimationSystem.MENU_MORPH,
@@ -201,14 +251,34 @@ class GlassSearchPill(
                 contentStart = 0.22f,
                 contentSpan = 0.48f
             )
-            if (!opened) {
-                setWidth(searchWidth.toInt())
-                setGlyph(searchGlyph, 1f)
-                setGlyph(input, 1f)
-                setGlyph(closeGlyph, 1f)
-                onSearchProgress(1f)
-            }
+            if (!opened) showSearchContent()
         }
+        // Đợi lần layout kế tiếp để vỏ đã có bề rộng đích (post có thể chạy trước layout).
+        if (view.width >= searchWidth.toInt() - 1) {
+            view.post { start() }
+        } else {
+            view.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+                override fun onLayoutChange(
+                    v: View, l: Int, t: Int, r: Int, b: Int, ol: Int, ot: Int, or: Int, ob: Int
+                ) {
+                    if (r - l < searchWidth.toInt() - 1) return
+                    v.removeOnLayoutChangeListener(this)
+                    start()
+                }
+            })
+            view.postDelayed({ start() }, 120) // lưới an toàn nếu không có layout mới
+        }
+    }
+
+    /** Trạng thái bung đầy đủ, không animation. */
+    private fun showSearchContent() {
+        setWidth(searchWidth.toInt())
+        setGlyph(searchGlyph, 1f)
+        input.alpha = 1f
+        input.visibility = View.VISIBLE
+        closeGlyph.alpha = 1f
+        closeGlyph.visibility = View.VISIBLE
+        onSearchProgress(1f)
     }
 
     private fun collapseMorph() {
