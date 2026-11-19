@@ -34,6 +34,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsAnimationCompat
 import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 import java.util.Locale
@@ -856,12 +857,31 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             insetBottom = bars.bottom
             insetLeft = bars.left
             insetRight = bars.right
-            imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+                        imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
             applyInsets()
             insets
-        }
-
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            }
+            ViewCompat.setWindowInsetsAnimationCallback(root, object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_STOP) {
+                private var imeAnimating = false
+                override fun onStart(animation: WindowInsetsAnimationCompat, bounds: WindowInsetsAnimationCompat.BoundsCompat): WindowInsetsAnimationCompat.BoundsCompat {
+                    imeAnimating = (animation.typeMask and WindowInsetsCompat.Type.ime()) != 0
+                    return bounds
+                }
+                override fun onProgress(insets: WindowInsetsCompat, runningAnimations: MutableList<WindowInsetsAnimationCompat>): WindowInsetsCompat {
+                    if (!imeAnimating) return insets
+                    val current = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+                    if (current != imeBottom) applyImeOnly(current)
+                    return insets
+                }
+                override fun onEnd(animation: WindowInsetsAnimationCompat) {
+                    if ((animation.typeMask and WindowInsetsCompat.Type.ime()) == 0) return
+                    imeAnimating = false
+                    val fresh = ViewCompat.getRootWindowInsets(root)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom
+                    if (fresh != null && fresh != imeBottom) imeBottom = fresh
+                    applyInsets()
+                }
+            })
+            onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             // Cử chỉ Back của hệ thống (vuốt từ cạnh trái/phải): trang trượt theo ngón tay như Safari.
             override fun handleOnBackStarted(backEvent: BackEventCompat) {
                 if (readerModeController?.isActive == true) return
@@ -990,6 +1010,24 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     // OrbMenu có trạng thái riêng, không suy diễn từ alpha của nút quay lại:
     // nút quay lại có thể mờ vì không còn lịch sử nhưng OrbMenu vẫn cần dùng được.
+        /** Đẩy thanh dưới / thanh tìm / gợi ý trượt theo từng khung hình của animation bàn phím. */
+    private fun applyImeOnly(currentIme: Int) {
+        val bottom = maxOf(insetBottom, currentIme) + dp(10)
+        (bar.layoutParams as FrameLayout.LayoutParams).bottomMargin = bottom
+        bar.requestLayout()
+        if (findBarController.hasContainer) {
+            (findBarController.container.layoutParams as FrameLayout.LayoutParams).bottomMargin = bottom
+            findBarController.container.requestLayout()
+        }
+        if (::suggestBox.isInitialized) {
+            val sug = bottom + dp(BOTTOM_BAR_HEIGHT_DP) + dp(8)
+            (suggestBox.layoutParams as FrameLayout.LayoutParams).bottomMargin = sug
+            suggestBox.requestLayout()
+            (suggestBlurView.layoutParams as FrameLayout.LayoutParams).bottomMargin = sug
+            suggestBlurView.requestLayout()
+        }
+    }
+
     private fun syncOrbMenuVisibility() {
         if (readerModeController?.isActive == true) {
             orbController?.setToolbarAvailable(false)
@@ -1421,6 +1459,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             return
         }
         if (findBarController.isShown) closeFind()
+                if (urlBar.hasFocus()) leaveEdit()
+        WindowCompat.getInsetsController(window, root).hide(WindowInsetsCompat.Type.ime())
         suggestionController.hide()
         val sourceWeb = web
         val sourceUrl = sourceWeb.url ?: currentUrl

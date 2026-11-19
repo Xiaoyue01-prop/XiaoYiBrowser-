@@ -270,21 +270,36 @@ internal class ToolbarController(
             tabVisibilityBeforeSearch = tabBtn.visibility
             pageMenuVisibilityBeforeSearch = pageMenuBtn.visibility
         }
-        backBtn.visibility = if (active) View.GONE else backVisibilityBeforeSearch
-        menuBtn.visibility = if (active) View.GONE else menuVisibilityBeforeSearch
-        tabBtn.visibility = if (active) View.GONE else tabVisibilityBeforeSearch
-        pageMenuBtn.visibility = if (active) View.GONE else pageMenuVisibilityBeforeSearch
-        searchIcon.visibility = if (active) View.VISIBLE else View.GONE
-        cancelSearchBtn.visibility = if (active) View.VISIBLE else View.GONE
-        if (!active) clearQueryBtn.visibility = View.GONE
-        else updateClearQueryVisibility()
+                backBtn.visibility = if (active) View.GONE else backVisibilityBeforeSearch
+        if (active) {
+            swapView(menuBtn, false); swapView(tabBtn, false); swapView(pageMenuBtn, false)
+            swapView(searchIcon, true); swapView(cancelSearchBtn, true)
+        } else {
+            swapView(menuBtn, true); swapView(tabBtn, true); swapView(pageMenuBtn, true)
+            swapView(searchIcon, false); swapView(cancelSearchBtn, false)
+        }
+        updateClearQueryVisibility()
         host.syncOrbMenuVisibility()
         host.pushBottomReserve()
     }
 
+        private fun swapView(view: View, show: Boolean) {
+        AnimationSystem.cancel(view)
+        if (show) {
+            view.visibility = View.VISIBLE
+            view.alpha = 0f
+            AnimationSystem.fade(view, 1f, AnimationSystem.QUICK)
+        } else {
+            AnimationSystem.fade(view, 0f, AnimationSystem.QUICK) {
+                if (view.alpha < 0.05f) view.visibility = View.GONE
+            }
+        }
+    }
     private fun updateClearQueryVisibility() {
         if (!::clearQueryBtn.isInitialized) return
-        clearQueryBtn.visibility = if (searchMode && urlBar.text.isNotEmpty()) View.VISIBLE else View.GONE
+        val show = searchMode && urlBar.text.isNotEmpty()
+        val on = clearQueryBtn.visibility == View.VISIBLE && clearQueryBtn.alpha > 0.5f
+        if (show != on) swapView(clearQueryBtn, show)
     }
 
     /** Nút tròn của thanh dưới: khung bo góc trong suốt + icon; lớp kính gắn sau bằng [addGlassLayer]. */
