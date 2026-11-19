@@ -427,7 +427,7 @@ class TabSwitcherController(
             setPadding(dp(16), 0, dp(16), 0)
         }
         val groupPill = GlassSystem.createGlassPill(
-            activity, blurTarget, activity.resources.displayMetrics.density, isNight()
+            activity, blurTarget, activity.resources.displayMetrics.density, isNight(), rimOnShell = true
         )
         groupPill.addView(groupText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40), Gravity.CENTER))
         // Chế độ chọn: viên này đổi thành ô hiện số tab đã chọn (không bấm được); thoát chế độ chọn thì về như cũ.
@@ -446,7 +446,8 @@ class TabSwitcherController(
                 groupPill.isClickable = false
                 groupPill.contentDescription = "Đã chọn $n tab"
             } else {
-                groupText.text = if (priv) "Riêng tư" else "$name ▾"
+                // Mặc định chỉ hiện "Nhóm thẻ"; muốn biết đang ở nhóm nào thì chạm mở menu (nhóm đang xem có dấu ✓).
+                groupText.text = if (priv) "Riêng tư" else "Nhóm thẻ ▾"
                 groupPill.isClickable = !priv
                 groupPill.contentDescription = if (priv) "Riêng tư" else "Nhóm thẻ: $name"
             }

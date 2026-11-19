@@ -860,7 +860,10 @@ half4 main(float2 coord) {
         context: Context,
         target: BlurTarget,
         density: Float,
-        isNight: Boolean
+        isNight: Boolean,
+        // true: viền kính vẽ ở chính vỏ viên (foreground, nằm trên cả chữ) thay vì ở lớp BlurView bên trong. Dùng cho viên
+        // phải đứng yên dưới thẻ morph (viên "Nhóm thẻ") để viền luôn hiện rõ cả khi viên bị phóng to/mờ dần.
+        rimOnShell: Boolean = false
     ): FrameLayout {
         val preset = Preset.TOOLBAR_BUTTON
         val pill = FrameLayout(context).apply {
@@ -869,9 +872,10 @@ half4 main(float2 coord) {
             clipToOutline = true
             isClickable = true
             isFocusable = true
+            if (rimOnShell) foreground = createBorder(preset.radiusDp, density, isNight)
         }
         pill.addView(
-            createBlurView(context, target, preset, density, isNight).apply {
+            createBlurView(context, target, preset, density, isNight, rim = !rimOnShell).apply {
                 isClickable = false
                 isFocusable = false
             },
