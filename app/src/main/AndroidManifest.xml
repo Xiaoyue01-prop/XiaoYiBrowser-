@@ -19,6 +19,10 @@
         <intent>
             <action android:name="android.service.autofill.AutofillService" />
         </intent>
+        <!-- Nhà cung cấp Credential Manager (Google...): để đọc được tên dịch vụ ưu tiên. -->
+        <intent>
+            <action android:name="android.service.credentials.CredentialProviderService" />
+        </intent>
     </queries>
 
     <application

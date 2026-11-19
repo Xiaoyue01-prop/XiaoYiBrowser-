@@ -288,15 +288,36 @@ class MenuController(
 
     private fun onOff(b: Boolean): String = if (b) "Bật" else "Tắt"
 
-    /** Tên dịch vụ tự điền đang chọn (Google, Bitwarden...); null nếu chưa bật hoặc không đọc được. */
-    private fun autofillServiceLabel(): String? = runCatching {
-        val manager = activity.getSystemService(AutofillManager::class.java) ?: return null
-        if (!manager.isAutofillSupported || !manager.hasEnabledAutofillServices()) return null
-        val component = Settings.Secure.getString(activity.contentResolver, "autofill_service")
-            ?.substringBefore('/')?.takeIf { it.isNotBlank() } ?: return "Đã bật"
-        val pm = activity.packageManager
-        pm.getApplicationLabel(pm.getApplicationInfo(component, 0)).toString()
-    }.getOrDefault("Đã bật")
+    /**
+     * Tên dịch vụ mật khẩu/tự điền hệ thống đang chọn (Google, Bitwarden...); null nếu chưa chọn dịch vụ nào.
+     * KHÔNG dùng AutofillManager.hasEnabledAutofillServices(): hàm đó chỉ báo dịch vụ do CHÍNH app gọi cung cấp
+     * có đang bật không, nên với Summit luôn false. Phải đọc cài đặt hệ thống:
+     * - autofill_service: dịch vụ tự điền cũ (Bitwarden...); giá trị "credential-provider" nghĩa là dùng
+     *   nhà cung cấp Credential Manager (Android 14+).
+     * - credential_service_primary: "Dịch vụ ưu tiên" ở Cài đặt > Mật khẩu và khóa truy cập (Google...).
+     */
+    private fun autofillServiceLabel(): String? {
+        val resolver = activity.contentResolver
+        fun secure(key: String): String? =
+            runCatching { Settings.Secure.getString(resolver, key) }.getOrNull()?.takeIf { it.isNotBlank() }
+
+        val autofill = secure("autofill_service")
+        val primary = secure("credential_service_primary")
+        val credentialMode = autofill == "credential-provider"
+        val chosen = (if (credentialMode) null else autofill) ?: primary?.substringBefore(',')
+        if (chosen == null) {
+            // Không có tên cụ thể: vẫn coi là bật nếu hệ thống báo đã chọn dịch vụ.
+            val enabled = credentialMode || runCatching {
+                activity.getSystemService(AutofillManager::class.java)?.isEnabled == true
+            }.getOrDefault(false)
+            return if (enabled) "Đã bật" else null
+        }
+        val pkg = chosen.substringBefore('/')
+        return runCatching {
+            val pm = activity.packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+        }.getOrDefault("Đã bật")
+    }
 
     /** Mở trang cài đặt chọn dịch vụ mật khẩu/tự điền của hệ thống. */
     private fun openAutofillSettings() {
