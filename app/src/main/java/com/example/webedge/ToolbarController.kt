@@ -47,6 +47,8 @@ internal interface ToolbarHost {
     fun scheduleSuggest(query: String)
     fun hideSuggestions()
     fun syncOrbMenuVisibility()
+    /** Ép kính mờ chụp lại nền mỗi khung hình trong [durationMs] (lúc thanh đang chuyển động). */
+    fun syncBlur(durationMs: Long)
     fun pushBottomReserve()
 }
 
@@ -210,11 +212,6 @@ internal class ToolbarController(
             GlassSystem.Preset.TOOLBAR_BUTTON, Icons.CLOSE, 10, "Thoát tìm kiếm"
         ).apply {
             visibility = View.GONE
-            background = roundedDrawable(
-                GlassSystem.Preset.TOOLBAR_BUTTON.radiusDp * host.density,
-                Color.argb(if (host.isNight) 42 else 24, host.foreground shr 16 and 0xff,
-                    host.foreground shr 8 and 0xff, host.foreground and 0xff)
-            )
             setOnClickListener {
                 setUrlText("")
                 host.hideSuggestions()
@@ -259,6 +256,72 @@ internal class ToolbarController(
         bar.addView(cancelSearchBtn, LinearLayout.LayoutParams(dp(bottomBarHeightDp), dp(bottomBarHeightDp)))
     }
 
+    private var searchProgress = 0f
+    private var searchAnim: AnimationSystem.FloatSpringHandle? = null
+
+    private fun sat(x: Float) = x.coerceIn(0f, 1f)
+
+    private fun setWidth(v: View, px: Int) {
+        val lp = v.layoutParams ?: return
+        val w = px.coerceAtLeast(0)
+        if (lp.width != w) {
+            lp.width = w
+            v.layoutParams = lp
+        }
+    }
+
+    /**
+     * Vẽ thanh dưới ở tiến độ [p] (0 = thường, 1 = tìm kiếm). Mọi thay đổi bố cục (Back / ba chấm / Hủy,
+     * tab / menu trang / kính lúp trong viên thuốc) chạy theo MỘT giá trị spring nên viên thuốc giãn mượt,
+     * không còn nhảy vị trí theo kiểu GONE/VISIBLE tức thì.
+     */
+    private fun applySearchProgress(p0: Float) {
+        searchProgress = p0
+        val p = sat(p0)
+        val h = dp(bottomBarHeightDp)
+        val fadeOut = 1f - sat(p * 2.5f)
+        val fadeIn = sat((p - 0.3f) / 0.7f)
+
+        setWidth(backBtn, (h * (1f - p)).toInt())
+        if (backVisibilityBeforeSearch == View.VISIBLE) backBtn.alpha = backAlpha() * fadeOut
+        setWidth(menuBtn, (h * (1f - p)).toInt())
+        menuBtn.alpha = fadeOut
+        setWidth(cancelSearchBtn, (h * p).toInt())
+        cancelSearchBtn.alpha = fadeIn
+
+        setWidth(tabBtn, (dp(32) * (1f - p)).toInt())
+        tabBtn.alpha = fadeOut
+        setWidth(pageMenuBtn, (dp(32) * (1f - p)).toInt())
+        pageMenuBtn.alpha = fadeOut
+        setWidth(searchIcon, (dp(30) * p).toInt())
+        searchIcon.alpha = fadeIn
+        setWidth(clearQueryBtn, (dp(30) * p).toInt())
+    }
+
+    /** Trạng thái cuối của chuyển động: đặt visibility/kích thước thật, giống hệt bố cục trước đây. */
+    private fun finishSearchMode(active: Boolean) {
+        val h = dp(bottomBarHeightDp)
+        setWidth(backBtn, h); setWidth(menuBtn, h); setWidth(cancelSearchBtn, h)
+        setWidth(tabBtn, dp(32)); setWidth(pageMenuBtn, dp(32))
+        setWidth(searchIcon, dp(30)); setWidth(clearQueryBtn, dp(30))
+        if (active) {
+            backBtn.visibility = View.GONE
+            menuBtn.visibility = View.GONE; menuBtn.alpha = 0f
+            tabBtn.visibility = View.GONE; tabBtn.alpha = 0f
+            pageMenuBtn.visibility = View.GONE; pageMenuBtn.alpha = 0f
+            searchIcon.visibility = View.VISIBLE; searchIcon.alpha = 1f
+            cancelSearchBtn.visibility = View.VISIBLE; cancelSearchBtn.alpha = 1f
+        } else {
+            backBtn.visibility = backVisibilityBeforeSearch
+            backBtn.alpha = backAlpha()
+            menuBtn.visibility = View.VISIBLE; menuBtn.alpha = 1f
+            tabBtn.visibility = View.VISIBLE; tabBtn.alpha = 1f
+            pageMenuBtn.visibility = View.VISIBLE; pageMenuBtn.alpha = 1f
+            searchIcon.visibility = View.GONE
+            cancelSearchBtn.visibility = View.GONE
+        }
+    }
+
     /** Chuyển toolbar sang bố cục nhập liệu riêng, không thay đổi các controller tìm kiếm hiện có. */
     private fun setSearchMode(active: Boolean) {
         if (!::cancelSearchBtn.isInitialized || searchMode == active) return
@@ -270,20 +333,37 @@ internal class ToolbarController(
             tabVisibilityBeforeSearch = tabBtn.visibility
             pageMenuVisibilityBeforeSearch = pageMenuBtn.visibility
         }
-                backBtn.visibility = if (active) View.GONE else backVisibilityBeforeSearch
-        if (active) {
-            swapView(menuBtn, false); swapView(tabBtn, false); swapView(pageMenuBtn, false)
-            swapView(searchIcon, true); swapView(cancelSearchBtn, true)
-        } else {
-            swapView(menuBtn, true); swapView(tabBtn, true); swapView(pageMenuBtn, true)
-            swapView(searchIcon, false); swapView(cancelSearchBtn, false)
-        }
+        host.syncBlur(900)
+        searchAnim?.cancel()
+        searchAnim = null
+        listOf(backBtn, menuBtn, cancelSearchBtn, tabBtn, pageMenuBtn, searchIcon).forEach { AnimationSystem.cancel(it) }
+
+        // Mọi nút cần thấy trong lúc chuyển động đều VISIBLE (chiếm chỗ theo chiều rộng đang chạy).
+        if (backVisibilityBeforeSearch != View.GONE) backBtn.visibility = backVisibilityBeforeSearch
+        listOf(menuBtn, cancelSearchBtn, tabBtn, pageMenuBtn, searchIcon).forEach { it.visibility = View.VISIBLE }
+        applySearchProgress(searchProgress)
+
         updateClearQueryVisibility()
         host.syncOrbMenuVisibility()
         host.pushBottomReserve()
+
+        searchAnim = AnimationSystem.springFloat(
+            from = searchProgress,
+            to = if (active) 1f else 0f,
+            spec = if (active) AnimationSystem.MENU_MORPH else AnimationSystem.MENU_MORPH_CLOSE,
+            minimumVisibleChange = 0.002f,
+            onUpdate = { applySearchProgress(it) },
+            onEnd = { canceled, _, _ ->
+                if (!canceled) {
+                    searchProgress = if (active) 1f else 0f
+                    finishSearchMode(active)
+                    host.pushBottomReserve()
+                }
+            }
+        )
     }
 
-        private fun swapView(view: View, show: Boolean) {
+    private fun swapView(view: View, show: Boolean) {
         AnimationSystem.cancel(view)
         if (show) {
             view.visibility = View.VISIBLE
@@ -326,6 +406,9 @@ internal class ToolbarController(
             FrameLayout.LayoutParams(-1, -1)
         )
     }
+
+    /** Nút Hủy của chế độ tìm kiếm dùng cùng lớp kính blur như Back / ba chấm. */
+    fun addSearchGlassLayers() = addGlassLayer(cancelSearchBtn, GlassSystem.Preset.TOOLBAR_BUTTON)
 
     /** Đặt lớp kính mờ (BlurView) xuống dưới cùng của một nút; chỉ gọi được sau khi blurTarget đã tạo. */
     fun addGlassLayer(button: FrameLayout, preset: GlassSystem.Preset) {

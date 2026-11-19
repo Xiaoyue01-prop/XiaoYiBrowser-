@@ -418,6 +418,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         bottomBarHeightDp = BOTTOM_BAR_HEIGHT_DP
     )
 
+    private val toolbarBlurSync by lazy { GlassSystem.BlurSync(blurTarget, urlPillBlur) }
+
     private val toolbarHost: ToolbarHost = object : ToolbarHost {
         override val web: WebView get() = this@MainActivity.web
         override val store: Store get() = this@MainActivity.store
@@ -441,6 +443,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun hideSuggestions() = this@MainActivity.hideSuggestions()
         override fun syncOrbMenuVisibility() = this@MainActivity.syncOrbMenuVisibility()
         override fun pushBottomReserve() = pageEdge.pushBottomReserve()
+        override fun syncBlur(durationMs: Long) = toolbarBlurSync.hold(durationMs)
     }
 
     private val toolbar: ToolbarController = ToolbarController(
@@ -678,6 +681,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         // Nền kính của hai nút tròn lấy blur từ cùng BlurTarget như thanh địa chỉ/Orb.
         toolbar.addGlassLayer(menuBtn, GlassSystem.Preset.ORB_BUTTON)
         toolbar.addGlassLayer(backBtn, GlassSystem.Preset.TOOLBAR_BUTTON)
+        toolbar.addSearchGlassLayers()
 
         urlPillBlur = GlassSystem.createBlurView(
             this, blurTarget, GlassSystem.Preset.ADDRESS_BAR, d, isNight
