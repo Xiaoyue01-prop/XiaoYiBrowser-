@@ -239,12 +239,56 @@
     } catch (e) {}
   }
 
+  var GREETINGS = {
+    late: [
+      'Khuya rồi, nghỉ sớm nhé',
+      'Đêm đã sâu, đừng thức quá muộn nhé',
+      'Thế giới đang ngủ, bạn cũng nên nghỉ thôi',
+      'Mai còn dài, ngủ một chút đi nhé',
+      'Đêm yên tĩnh quá, vẫn còn thức à?'
+    ],
+    morning: [
+      'Chào buổi sáng',
+      'Sáng nay thế nào, sẵn sàng chưa?',
+      'Một ngày mới, nhẹ nhàng bắt đầu thôi',
+      'Chào ngày mới, chúc bạn nhiều niềm vui',
+      'Nắng lên rồi, ra khơi thôi nào',
+      'Buổi sáng tốt lành nhé'
+    ],
+    noon: [
+      'Chào buổi trưa',
+      'Trưa rồi, nhớ ăn uống đầy đủ nhé',
+      'Nghỉ tay một chút, nạp lại năng lượng nào',
+      'Giữa ngày rồi, thong thả thôi nhé',
+      'Bạn đã ăn trưa chưa?'
+    ],
+    afternoon: [
+      'Chào buổi chiều',
+      'Chiều rồi, uống ngụm nước nhé',
+      'Chiều nay nhẹ nhàng thôi nhé',
+      'Nắng đã dịu, cố thêm chút nữa nhé',
+      'Một buổi chiều dễ chịu nhé',
+      'Gần hết ngày rồi, bạn làm tốt lắm'
+    ],
+    evening: [
+      'Chào buổi tối',
+      'Tối rồi, thư giãn thôi nào',
+      'Một ngày dài rồi, nghỉ ngơi nhé',
+      'Tối nay bạn muốn khám phá gì nào?',
+      'Buổi tối êm đềm nhé',
+      'Hoàng hôn đã tắt, đèn đã lên'
+    ]
+  };
+  var greetSlot = null, greetText = '';
+
   function greeting(h) {
-    if (h < 5) return 'Khuya rồi, nghỉ sớm nhé';
-    if (h < 11) return 'Chào buổi sáng';
-    if (h < 13) return 'Chào buổi trưa';
-    if (h < 18) return 'Chào buổi chiều';
-    return 'Chào buổi tối';
+    var slot = h < 5 ? 'late' : h < 11 ? 'morning' : h < 13 ? 'noon' : h < 18 ? 'afternoon' : 'evening';
+    if (slot !== greetSlot) {
+      var list = GREETINGS[slot];
+      greetSlot = slot;
+      greetText = list[Math.floor(Math.random() * list.length)];
+    }
+    return greetText;
   }
 
   // Cập nhật đúng lúc sang phút mới, không polling mỗi giây.
