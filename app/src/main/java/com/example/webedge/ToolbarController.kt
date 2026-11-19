@@ -1,5 +1,8 @@
 package com.example.webedge
 
+import android.content.ClipDescription
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -9,6 +12,7 @@ import android.text.InputType
 import android.text.TextUtils
 import android.text.TextWatcher
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
@@ -49,6 +53,10 @@ internal interface ToolbarHost {
     fun syncOrbMenuVisibility()
     /** Ép kính mờ chụp lại nền mỗi khung hình trong [durationMs] (lúc thanh đang chuyển động). */
     fun syncBlur(durationMs: Long)
+    /** Sao chép [value] vào clipboard (kèm thông báo). */
+    fun copyText(value: String)
+    /** Hiện menu kính ngay phía trên [anchor], căn theo điểm chạm [rawX]. */
+    fun showAddressMenu(anchor: View, rawX: Float, actions: List<ContextMenuController.Action>)
     fun pushBottomReserve()
 }
 
@@ -167,6 +175,25 @@ internal class ToolbarController(
                 showDomain()
                 updateBarVisibility()
             }
+        }
+        // Giống Safari: lần chạm đầu vào ô nhập chỉ bôi xanh địa chỉ; chạm lại vào địa chỉ đang bôi xanh
+        // thì hiện menu Sao chép / Dán / Dán và đi. (EditText chưa có focus thì chạm đầu chỉ lấy focus, không gọi onClick.)
+        var tapRawX = 0f
+        urlBar.setOnTouchListener { _, e ->
+            if (e.actionMasked == MotionEvent.ACTION_DOWN) tapRawX = e.rawX
+            false
+        }
+        urlBar.setOnClickListener { showAddressMenu(tapRawX) }
+        // Giữ lâu: cùng menu kính (thay menu chọn chữ mặc định). Chưa ở chế độ nhập thì vào chế độ nhập trước,
+        // đợi viên thuốc và bàn phím yên vị rồi mới bung menu để menu đứng đúng chỗ.
+        urlBar.setOnLongClickListener {
+            if (urlBar.hasFocus()) {
+                showAddressMenu(tapRawX)
+            } else {
+                urlBar.requestFocus()
+                urlBar.postDelayed({ if (urlBar.hasFocus()) showAddressMenu(tapRawX) }, 380L)
+            }
+            true
         }
         urlBar.setOnEditorActionListener { v, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO) {
@@ -533,6 +560,41 @@ internal class ToolbarController(
             null
         }
         setUrlText(domain?.removePrefix("www.") ?: "")
+    }
+
+    private fun showAddressMenu(rawX: Float) {
+        if (!urlBar.hasFocus()) return
+        val text = urlBar.text.toString()
+        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        // Chỉ hỏi loại dữ liệu (không đọc nội dung) để Android không báo "đã dán từ clipboard" lúc mở menu.
+        val hasClipText = clipboard.hasPrimaryClip() &&
+            clipboard.primaryClipDescription?.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) == true
+        fun clipText(): String =
+            clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(activity)?.toString().orEmpty()
+
+        val actions = buildList {
+            if (text.isNotBlank()) add(ContextMenuController.Action("Sao chép", Icons.COPY) { host.copyText(text) })
+            if (hasClipText) {
+                add(ContextMenuController.Action("Dán", Icons.PASTE) {
+                    val pasted = clipText()
+                    if (pasted.isNotEmpty()) {
+                        urlBar.setText(pasted)
+                        urlBar.setSelection(pasted.length)
+                    }
+                })
+                add(ContextMenuController.Action("Dán và đi", Icons.SEARCH) {
+                    val pasted = clipText().trim()
+                    if (pasted.isNotEmpty()) {
+                        host.load(pasted)
+                        leaveEdit()
+                    }
+                })
+            }
+        }
+        if (actions.isEmpty()) return
+        host.showAddressMenu(urlPillFrame, rawX, actions)
+        // Giữ địa chỉ bôi xanh (lần chạm thứ hai mặc định đặt con trỏ và bỏ bôi xanh).
+        urlBar.post { if (urlBar.hasFocus() && text == urlBar.text.toString()) urlBar.selectAll() }
     }
 
     fun leaveEdit() {

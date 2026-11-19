@@ -221,7 +221,7 @@ class ContextMenuController(
         }
     }
 
-    private data class Action(val title: String, val icon: String, val run: () -> Unit)
+    data class Action(val title: String, val icon: String, val run: () -> Unit)
 
     private fun isWebUrl(value: String): Boolean =
         value.startsWith("http://", ignoreCase = true) ||
@@ -327,7 +327,20 @@ class ContextMenuController(
         }
     }
 
-    private fun show(actions: List<Action>) {
+    /**
+     * Menu kính bung ngay phía trên [anchor] (viên thuốc địa chỉ), căn giữa theo điểm chạm [rawX] (toạ độ màn hình),
+     * cùng kiểu và cùng animation morph với menu giữ lâu.
+     */
+    fun showAboveView(anchor: View, rawX: Float, actions: List<Action>) {
+        if (actions.isEmpty()) return
+        val rootLoc = IntArray(2).also { root.getLocationOnScreen(it) }
+        val anchorLoc = IntArray(2).also { anchor.getLocationOnScreen(it) }
+        touchX = rawX - rootLoc[0]
+        touchY = (anchorLoc[1] - rootLoc[1]).toFloat()
+        show(actions, placeAbove = true)
+    }
+
+    private fun show(actions: List<Action>, placeAbove: Boolean = false) {
         lastShownAt = android.os.SystemClock.uptimeMillis()
         dismiss(false)
         val layerView = FrameLayout(activity).apply {
@@ -403,10 +416,13 @@ class ContextMenuController(
         panel.post {
             if (card !== panel) return@post
             val height = minOf(panel.height, maxHeight)
-            val x = (touchX - dp(24)).toInt().coerceIn(dp(12), (root.width - width - dp(12)).coerceAtLeast(dp(12)))
+            val rawLeft = if (placeAbove) touchX - width / 2f else (touchX - dp(24))
+            val x = rawLeft.toInt().coerceIn(dp(12), (root.width - width - dp(12)).coerceAtLeast(dp(12)))
             val gap = dp(10)
             val below = touchY.toInt() + gap
-            val y = if (below + height > root.height - dp(12)) {
+            val y = if (placeAbove) {
+                (touchY.toInt() - height - gap).coerceAtLeast(dp(12))
+            } else if (below + height > root.height - dp(12)) {
                 (touchY.toInt() - height - gap).coerceAtLeast(dp(12))
             } else below
             // Đặt vị trí bằng margin (layout), KHÔNG dùng panel.x/panel.y:

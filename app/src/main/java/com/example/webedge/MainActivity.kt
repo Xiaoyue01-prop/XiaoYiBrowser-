@@ -444,6 +444,14 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun syncOrbMenuVisibility() = this@MainActivity.syncOrbMenuVisibility()
         override fun pushBottomReserve() = pageEdge.pushBottomReserve()
         override fun syncBlur(durationMs: Long) = toolbarBlurSync.hold(durationMs)
+        override fun copyText(value: String) {
+            val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Summit", value))
+            this@MainActivity.toast("Đã sao chép")
+        }
+        override fun showAddressMenu(anchor: View, rawX: Float, actions: List<ContextMenuController.Action>) {
+            contextMenuController?.showAboveView(anchor, rawX, actions)
+        }
     }
 
     private val toolbar: ToolbarController = ToolbarController(
