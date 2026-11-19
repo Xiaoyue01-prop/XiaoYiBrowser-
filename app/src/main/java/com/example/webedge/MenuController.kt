@@ -1331,23 +1331,6 @@ class MenuController(
         }
 
         addRow("Công cụ tìm kiếm", engines[store.searchEngine], fg) { chooseEngine() }
-        addRow("Trang chủ", if (HomePage.isHome(store.homeUrl)) "Summit" else UrlUtils.shortUrl(store.homeUrl), fg) { editHome() }
-        addRow("Tràn viền nội dung (thử nghiệm)", onOff(store.edgeMode), fg) {
-            store.edgeMode = !store.edgeMode
-            host.applyInsets()
-            host.web.reload()
-            showSettings()
-        }
-        addRow("Chặn quảng cáo", onOff(store.adBlockEnabled), fg) {
-            store.adBlockEnabled = !store.adBlockEnabled
-            host.web.reload()
-            showSettings()
-        }
-        addRow("Thu gọn thanh địa chỉ khi cuộn", onOff(store.autoHideBar), fg) {
-            store.autoHideBar = !store.autoHideBar
-            if (!store.autoHideBar) host.setBarHidden(false)
-            showSettings()
-        }
 
         val autofillLabel = autofillServiceLabel()
         addRow("Mật khẩu & tự điền", autofillLabel ?: "Chưa bật", fg) { openAutofillSettings() }
