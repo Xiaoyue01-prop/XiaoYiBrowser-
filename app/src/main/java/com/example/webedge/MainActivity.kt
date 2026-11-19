@@ -457,6 +457,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             }
             contextMenuController?.showAboveView(anchor, rawX, actions, under)
         }
+        override fun dismissAddressMenu() { contextMenuController?.dismiss() }
     }
 
     private val toolbar: ToolbarController = ToolbarController(
@@ -1058,8 +1059,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         // Auto-hide là trạng thái compact, không phải toolbar bị gỡ khỏi giao diện.
         val toolbarAvailable = barPresent && !inFullscreen
         val menuOpen = ::menu.isInitialized && menu.isOpen
-        val temporarilyHidden = findOn || pageTyping || inFullscreen || menuOpen || urlBar.hasFocus()
-        val compact = barHidden && toolbarAvailable && !temporarilyHidden
+        // Chỉ menu ba chấm hút orb vào viên thuốc nên chỉ nó làm orb ẩn; menu trang bung từ nút trong viên thuốc
+        // và không đè lên orb, orb vẫn ở nguyên chỗ.
+        val mainMenuOpen = menuOpen && !menu.isPageMenu
+        val temporarilyHidden = findOn || pageTyping || inFullscreen || mainMenuOpen || urlBar.hasFocus()
+        // Không thu orb vào viên thuốc (compact) lúc bất kỳ menu nào đang mở, như trước đây.
+        val compact = barHidden && toolbarAvailable && !temporarilyHidden && !menuOpen
 
         orbController?.setToolbarAvailable(toolbarAvailable)
         orbController?.setTemporarilyHidden(temporarilyHidden)

@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
@@ -98,6 +99,33 @@ class OrbMenuController(
 
     private val subBtns = mutableListOf<FrameLayout>()
     private val SUB_ANGLES = listOf(-90.0, -45.0, 0.0)
+
+    /**
+     * Tấm chắn trong suốt phủ toàn màn hình CHỈ khi các nút con đang bung: chặn mọi tương tác với trang / thanh dưới
+     * (không cuộn, không bấm link, không vuốt thu nhỏ viên thuốc) và thu orb về ngay khi chạm ra ngoài. Nằm ngay dưới
+     * orb nên orb và các nút con vẫn bấm được.
+     */
+    private val scrim = View(rootLayout.context).apply {
+        isClickable = true
+        isFocusable = false
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        elevation = dp(2).toFloat() // trên mọi thứ có elevation thấp, vẫn dưới orb (3dp)
+        setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) collapse()
+            true
+        }
+    }
+
+    private fun showScrim() {
+        if (scrim.parent != null) return
+        val index = rootLayout.indexOfChild(mainBtn).coerceAtLeast(0)
+        rootLayout.addView(scrim, index, FrameLayout.LayoutParams(-1, -1))
+    }
+
+    private fun hideScrim() {
+        // Gỡ sau một nhịp: collapse() có thể được gọi ngay trong lúc scrim đang xử lý chính cú chạm của nó.
+        rootLayout.post { if (!isExpanded && scrim.parent === rootLayout) rootLayout.removeView(scrim) }
+    }
 
     init {
         rootLayout.addView(
@@ -315,6 +343,9 @@ class OrbMenuController(
         if (compact == isCompacted) return
         if (temporarilyHidden || !toolbarAvailable) return
         if (compact) {
+            // Phòng hờ (scrim đã chặn vuốt thu nhỏ viên thuốc): đang bung thì thu các nút con về trước,
+            // không để chúng kẹt lại ngoài viên thuốc rồi nằm yên khi viên thuốc mở rộng lại.
+            if (isExpanded) collapse()
             isCompacted = true
             restoringFromCompact = false
             // Nếu Orb vừa được thu gọn bởi thao tác người dùng, không giữ các nút con
@@ -477,6 +508,7 @@ class OrbMenuController(
     private fun expand() {
         if (!isAvailable()) return
         isExpanded = true
+        showScrim()
         AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 45f, AnimationSystem.SETTLE)
 
         val radius = dp(60).toFloat()
@@ -505,6 +537,7 @@ class OrbMenuController(
     private fun collapse() {
         if (!isExpanded) return
         isExpanded = false
+        hideScrim()
         AnimationSystem.spring(mainBtn, DynamicAnimation.ROTATION, 0f, AnimationSystem.DISMISS)
         subBtns.forEach { btn ->
             btn.isClickable = false
@@ -521,6 +554,7 @@ class OrbMenuController(
 
     private fun collapseImmediately() {
         isExpanded = false
+        hideScrim()
         isCompacted = false
         restoringFromCompact = false
         compactBase.clear()
@@ -551,6 +585,7 @@ class OrbMenuController(
         preDrawListener = null
         anchorView = null
         isExpanded = false
+        if (scrim.parent === rootLayout) rootLayout.removeView(scrim)
         AnimationSystem.cancel(mainBtn)
         mainBtn.setOnClickListener(null)
         subBtns.forEach {

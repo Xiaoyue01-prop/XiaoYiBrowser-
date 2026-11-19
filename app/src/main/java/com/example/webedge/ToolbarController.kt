@@ -57,6 +57,8 @@ internal interface ToolbarHost {
     fun copyText(value: String)
     /** Hiện menu kính ngay phía trên [anchor], căn theo điểm chạm [rawX]. */
     fun showAddressMenu(anchor: View, rawX: Float, actions: List<ContextMenuController.Action>)
+    /** Đóng menu Sao chép / Dán / Dán và đi nếu đang mở (nội dung ô nhập đã đổi hoặc rời chế độ nhập). */
+    fun dismissAddressMenu()
     fun pushBottomReserve()
 }
 
@@ -169,6 +171,7 @@ internal class ToolbarController(
                 urlBar.post { urlBar.selectAll() }
                 updateBarVisibility()
             } else {
+                host.dismissAddressMenu()
                 setSearchMode(false)
                 urlBar.gravity = Gravity.CENTER
                 host.hideSuggestions()
@@ -207,6 +210,8 @@ internal class ToolbarController(
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 if (programmatic) return
+                // Nội dung đổi (xoá, gõ, dán): menu đang mở thành lỗi thời (nhãn / bản sao chép cũ) nên đóng ngay.
+                host.dismissAddressMenu()
                 updateClearQueryVisibility()
                 if (!urlBar.hasFocus()) return
                 host.scheduleSuggest(s?.toString() ?: "")
@@ -228,6 +233,7 @@ internal class ToolbarController(
             isFocusable = true
             visibility = View.GONE
             setOnClickListener {
+                host.dismissAddressMenu()
                 setUrlText("")
                 updateClearQueryVisibility()
                 host.hideSuggestions()
@@ -598,6 +604,7 @@ internal class ToolbarController(
     }
 
     fun leaveEdit() {
+        host.dismissAddressMenu()
         host.rootView.requestFocus()
         WindowCompat.getInsetsController(activity.window, urlBar).hide(WindowInsetsCompat.Type.ime())
     }
