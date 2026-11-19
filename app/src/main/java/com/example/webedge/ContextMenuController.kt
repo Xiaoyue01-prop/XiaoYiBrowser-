@@ -369,7 +369,7 @@ class ContextMenuController(
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(14), 0, dp(14), 0)
-                minimumHeight = dp(44)
+                minimumHeight = dp(40)
                 isClickable = true
                 background = activity.roundedPressBackground(GlassSystem.isDarkPage(), insetHDp = 0f, insetVDp = 0f)
                 setOnClickListener {
@@ -384,10 +384,10 @@ class ContextMenuController(
             row.addView(icon, LinearLayout.LayoutParams(dp(20), dp(20)))
             val label = TextView(activity).apply {
                 text = action.title
-                textSize = 15f
+                textSize = 14.5f
                 setTextColor(this@ContextMenuController.foreground)
                 typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-                setPadding(dp(14), dp(6), 0, dp(6))
+                setPadding(dp(12), dp(4), 0, dp(4))
             }
             row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
@@ -406,7 +406,15 @@ class ContextMenuController(
         }
         panel.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         val maxHeight = (activity.resources.displayMetrics.heightPixels * 0.62f).toInt()
-        val width = minOf(dp(250), activity.resources.displayMetrics.widthPixels - dp(36))
+        // Rộng vừa nhãn dài nhất (trước đây cố định 250dp nên menu ngắn như Sao chép / Dán bị thừa chỗ trống).
+        val measurePaint = TextView(activity).apply {
+            textSize = 14.5f
+            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        }.paint
+        val longest = actions.maxOf { measurePaint.measureText(it.title) }
+        // 2×6 đệm danh sách + 2×14 đệm hàng + 20 icon + 12 đệm nhãn + chút dư cho khỏi xuống dòng
+        val wanted = (longest + dp(6 * 2 + 14 * 2 + 20 + 12 + 10)).toInt()
+        val width = wanted.coerceIn(dp(150), minOf(dp(250), activity.resources.displayMetrics.widthPixels - dp(36)))
         val panelLp = FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT)
         panelLp.gravity = Gravity.TOP or Gravity.START
         // Ẩn cho tới khi đã đặt đúng vị trí, tránh nháy ở góc trên trái.
