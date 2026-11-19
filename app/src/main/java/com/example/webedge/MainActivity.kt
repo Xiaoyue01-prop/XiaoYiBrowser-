@@ -652,7 +652,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         web = tabWebViewLifecycle.obtain(initialTab)
 
         root = FrameLayout(this)
-        root.setBackgroundColor(pageBg)
+        // Khi bàn phím mở, WebView thu nhỏ (bottomMargin = imeBottom) và để lộ nền gốc này; nền tối để khỏi nháy sáng.
+        root.setBackgroundColor(if (store.webDarkMode) 0xFF141416.toInt() else pageBg)
         root.isFocusable = true
         root.isFocusableInTouchMode = true
 
@@ -1211,6 +1212,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private fun rebuildWebViewsForDarkMode() {
         if (!::web.isInitialized) return
         val active = tabManager.getActive() ?: return
+        val darkBg = if (store.webDarkMode) 0xFF141416.toInt() else Color.WHITE
+        root.setBackgroundColor(darkBg)
+        window.setBackgroundDrawable(ColorDrawable(darkBg))
         captureActiveTab()
         val old = tabManager.getAll().mapNotNull { tab ->
             val view = tab.webView ?: return@mapNotNull null
