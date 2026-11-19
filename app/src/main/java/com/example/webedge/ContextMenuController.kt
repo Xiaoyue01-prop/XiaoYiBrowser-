@@ -331,13 +331,70 @@ class ContextMenuController(
      * Menu kính bung ngay phía trên [anchor] (viên thuốc địa chỉ), căn giữa theo điểm chạm [rawX] (toạ độ màn hình),
      * cùng kiểu và cùng animation morph với menu giữ lâu.
      */
-    fun showAboveView(anchor: View, rawX: Float, actions: List<Action>) {
+    fun showAboveView(anchor: View, rawX: Float, actions: List<Action>, underlay: List<View> = emptyList()) {
         if (actions.isEmpty()) return
         val rootLoc = IntArray(2).also { root.getLocationOnScreen(it) }
         val anchorLoc = IntArray(2).also { anchor.getLocationOnScreen(it) }
         touchX = rawX - rootLoc[0]
         touchY = (anchorLoc[1] - rootLoc[1]).toFloat()
         show(actions, placeAbove = true)
+        // show() đã dọn lớp cũ; blur các bề mặt kính nằm dưới menu SAU khi dựng xong.
+        blurUnderlay(underlay)
+    }
+
+    // ---------------- Kính đè lên kính ----------------
+    // BlurView chỉ chụp được nội dung trong BlurTarget (trang web). Một bề mặt kính khác nằm dưới menu
+    // (vd. danh sách gợi ý tìm kiếm) không nằm trong BlurTarget nên không bị làm mờ, chữ của nó xuyên thẳng qua menu.
+    // Cách chữa: lúc menu mở, tự làm mờ chính các view nằm dưới bằng RenderEffect (spring cùng nhịp menu),
+    // kính của menu khi đó đè lên một nền đã mờ nên trông như đã blur thật.
+    private var underlay: List<View> = emptyList()
+    private var underlayAnim: AnimationSystem.FloatSpringHandle? = null
+    private var underlayRadius = 0f
+
+    private fun applyUnderlay(radius: Float) {
+        underlayRadius = radius
+        val effect = if (radius < 0.5f) null else
+            android.graphics.RenderEffect.createBlurEffect(radius, radius, android.graphics.Shader.TileMode.CLAMP)
+        underlay.forEach { it.setRenderEffect(effect) }
+    }
+
+    private fun blurUnderlay(views: List<View>) {
+        if (views.isEmpty()) return
+        underlayAnim?.cancel()
+        underlay.forEach { it.setRenderEffect(null) }
+        underlay = views
+        underlayRadius = 0f
+        underlayAnim = AnimationSystem.springFloat(
+            from = 0f,
+            to = dp(16).toFloat(),
+            spec = AnimationSystem.MENU_MORPH,
+            minimumVisibleChange = 0.1f,
+            onUpdate = { applyUnderlay(it) }
+        )
+    }
+
+    private fun releaseUnderlay(animate: Boolean) {
+        if (underlay.isEmpty()) return
+        underlayAnim?.cancel()
+        val views = underlay
+        if (!animate) {
+            views.forEach { it.setRenderEffect(null) }
+            underlay = emptyList()
+            return
+        }
+        underlayAnim = AnimationSystem.springFloat(
+            from = underlayRadius,
+            to = 0f,
+            spec = AnimationSystem.MENU_MORPH_CLOSE,
+            minimumVisibleChange = 0.1f,
+            onUpdate = { applyUnderlay(it) },
+            onEnd = { canceled, _, _ ->
+                if (!canceled) {
+                    views.forEach { it.setRenderEffect(null) }
+                    if (underlay === views) underlay = emptyList()
+                }
+            }
+        )
     }
 
     private fun show(actions: List<Action>, placeAbove: Boolean = false) {
@@ -474,6 +531,7 @@ class ContextMenuController(
 
     fun dismiss(animate: Boolean = true) {
         hitResolutionToken++
+        releaseUnderlay(animate)
         val old = card ?: run { layer?.let(root::removeView); layer = null; return }
         val oldLayer = layer
         card = null

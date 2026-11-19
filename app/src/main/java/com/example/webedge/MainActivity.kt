@@ -450,7 +450,12 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             this@MainActivity.toast("Đã sao chép")
         }
         override fun showAddressMenu(anchor: View, rawX: Float, actions: List<ContextMenuController.Action>) {
-            contextMenuController?.showAboveView(anchor, rawX, actions)
+            // Danh sách gợi ý (kính nằm ngoài BlurTarget) bị làm mờ trực tiếp khi menu mở trên nó.
+            val under = buildList<View> {
+                if (::suggestBox.isInitialized) add(suggestBox)
+                if (::suggestBlurView.isInitialized) add(suggestBlurView)
+            }
+            contextMenuController?.showAboveView(anchor, rawX, actions, under)
         }
     }
 
