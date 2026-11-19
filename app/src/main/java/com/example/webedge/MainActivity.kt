@@ -1468,8 +1468,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             suggestBox.visibility = View.GONE
             topFadeController.view.visibility = View.VISIBLE
             bottomFade.visibility = View.VISIBLE
-            setBarHidden(readerBarWasHidden)
-            bar.visibility = if (toolbar.barPresent && !readerBarWasHidden) View.VISIBLE else View.INVISIBLE
+                        setBarHidden(readerBarWasHidden)
+            bar.visibility = if (toolbar.barPresent) View.VISIBLE else View.INVISIBLE
             if (toolbar.barPresent) {
                 bar.alpha = 0f
                 bar.translationY = dp(12).toFloat()
@@ -1517,8 +1517,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     override fun onDestroy() {
-        isActivityDestroyed = true
+                isActivityDestroyed = true
         GlassSystem.setPageBackground(null, window.decorView)
+        if (::menu.isInitialized) menu.destroy()
+        contextMenuController?.dismiss(false)
+        if (::tabSwitcherController.isInitialized) tabSwitcherController.destroy()
         if (::pageTransition.isInitialized) pageTransition.cancelNow()
         if (::tabSwipe.isInitialized) tabSwipe.cancelNow()
         pullRefresh?.destroy()

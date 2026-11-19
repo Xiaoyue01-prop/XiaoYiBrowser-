@@ -71,7 +71,20 @@ object OriginTransitionController {
         var clipSaved: List<ViewGroup>? = null
     }
 
-    private val morphs = WeakHashMap<View, Morph>()
+        private val morphs = WeakHashMap<View, Morph>()
+    private val detachGuarded = WeakHashMap<View, Unit>()
+    private fun guardDetach(view: View) {
+        if (detachGuarded.containsKey(view)) return
+        detachGuarded[view] = Unit
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {}
+            override fun onViewDetachedFromWindow(v: View) {
+                detachGuarded.remove(v)
+                v.removeOnAttachStateChangeListener(this)
+                cancel(v)
+            }
+        })
+    }
 
     /**
      * Độ mờ gốc của nút trước khi bị ẩn. Lưu theo nút (không theo bề mặt) để mở/đóng liên tiếp rất nhanh
@@ -137,7 +150,8 @@ object OriginTransitionController {
             contentSpan = contentSpan
         )
         m.roundStart = origin == null && originRect != null
-        morphs[view] = m
+                morphs[view] = m
+        guardDetach(view)
         place(m, target)
         val spec = springSpec ?: AnimationSystem.SETTLE
         val pops = originBounds != null && (popScale != 1f || popTowardTarget != 0f)

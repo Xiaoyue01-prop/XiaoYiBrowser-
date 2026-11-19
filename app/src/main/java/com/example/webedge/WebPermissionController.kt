@@ -43,7 +43,7 @@ class WebPermissionController(
         }.toTypedArray()
         if (supported.isEmpty()) { request.deny(); return }
 
-        pendingRequest?.let { previous -> if (previous !== request) previous.deny() }
+                if (pendingRequest != null) { request.deny(); return }
         pendingRequest = request
         pendingResources = supported
         pendingMediaIsPrivate = isPrivate
@@ -110,33 +110,34 @@ class WebPermissionController(
         runCatching { request.deny() }
     }
 
-    fun requestGeolocation(origin: String, callback: GeolocationPermissions.Callback, isPrivate: Boolean = false) {
-        if (isActivityDestroyed()) { callback.invoke(origin, false, false); return }
-        if (isPopupShowing()) { callback.invoke(origin, false, false); return }
+        fun requestGeolocation(origin: String, callback: GeolocationPermissions.Callback, isPrivate: Boolean = false) {
+        if (isActivityDestroyed() || isPopupShowing()) { callback.invoke(origin, false, false); return }
+        if (pendingGeoCallback != null) { callback.invoke(origin, false, false); return }
+        pendingGeoOrigin = origin; pendingGeoCallback = callback
         val host = runCatching { Uri.parse(origin).host }.getOrNull() ?: origin
-
         val savedPermission = if (isPrivate) PermissionState.ASK else store.getGeoPermission(origin)
         when (savedPermission) {
-            PermissionState.ALLOW -> {
-                pendingGeoOrigin = origin; pendingGeoCallback = callback; ensureRuntimeAndGrantGeo()
+            PermissionState.ALLOW -> ensureRuntimeAndGrantGeo()
+            PermissionState.DENY -> {
+                pendingGeoOrigin = null; pendingGeoCallback = null
+                callback.invoke(origin, false, false)
             }
-            PermissionState.DENY -> callback.invoke(origin, false, false)
             PermissionState.ASK -> {
                 dialog().show(
                     title = "Vị trí của bạn",
                     message = "$host muốn truy cập vị trí của bạn.",
                     positive = "Cho phép", negative = "Từ chối",
                     neutral = "Chỉ lần này",
-                    onNeutral = {
-                        pendingGeoOrigin = origin; pendingGeoCallback = callback; ensureRuntimeAndGrantGeo()
-                    }
+                    onNeutral = { ensureRuntimeAndGrantGeo() }
                 ) { allowed, _ ->
-                    if (!allowed) {
-                        if (!isPrivate) store.setGeoPermission(origin, PermissionState.DENY)
-                        callback.invoke(origin, false, false)
+                    if (!isPrivate) {
+                        store.setGeoPermission(origin, if (allowed) PermissionState.ALLOW else PermissionState.DENY)
+                    }
+                    if (allowed) {
+                        ensureRuntimeAndGrantGeo()
                     } else {
-                        if (!isPrivate) store.setGeoPermission(origin, PermissionState.ALLOW)
-                        pendingGeoOrigin = origin; pendingGeoCallback = callback; ensureRuntimeAndGrantGeo()
+                        pendingGeoOrigin = null; pendingGeoCallback = null
+                        callback.invoke(origin, false, false)
                     }
                 }
             }

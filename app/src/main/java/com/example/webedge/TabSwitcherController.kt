@@ -68,6 +68,22 @@ class TabSwitcherController(
 
     val isShowing: Boolean get() = activeContainer?.isAttachedToWindow == true
 
+        fun destroy() {
+        closedTabsSheet.dismiss(immediate = true)
+        activeClose = null
+        modeControl = null
+        previousLightStatusBars?.let { wasLight ->
+            WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+                .isAppearanceLightStatusBars = wasLight
+        }
+        previousLightStatusBars = null
+        val container = activeContainer ?: return
+        activeContainer = null
+        OriginTransitionController.cancel(container)
+        GlassSystem.removePageToneObserver(container)
+        if (container.parent === hostRoot) hostRoot.removeView(container)
+    }
+
     fun close() { activeClose?.invoke() }
 
     /** Nút ✓ kiểu Safari: tròn đặc màu nhấn, dấu tick trắng đậm, to hơn các nút khác. */

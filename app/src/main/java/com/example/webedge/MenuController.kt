@@ -515,6 +515,26 @@ class MenuController(
         compactFallback = null
     }
 
+        fun destroy() {
+        val layer = menuLayer
+        val card = menuCard
+        menuLayer = null
+        menuCard = null
+        menuBackAction = null
+        pageWidthPx = 0
+        menuAnimationStarted = false
+        menuWasOpenBeforeCompact = false
+        compactFallback = null
+        if (card != null) {
+            OriginTransitionController.cancel(card)
+            AnimationSystem.cancel(card)
+        }
+        restorePillNow()
+        if (layer != null) root.removeView(layer)
+        browserTools.dismiss()
+        footballSheet.dismiss()
+    }
+
     fun close() {
         val layer = menuLayer ?: return
         val card = menuCard

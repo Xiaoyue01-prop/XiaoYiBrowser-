@@ -81,6 +81,11 @@ class BrowserToolsController(
     private val downloadRows = mutableMapOf<Long, DownloadRowViews>()
     private var downloadEmptyView: View? = null
 
+        fun dismiss() {
+        handler.removeCallbacksAndMessages(null)
+        sheet.dismiss(immediate = true)
+    }
+
     fun showDownloads() {
         // Dọn sheet cũ TRƯỚC khi dựng nội dung mới: onDismiss cũ đụng các field dùng chung.
         sheet.dismiss(immediate = true)

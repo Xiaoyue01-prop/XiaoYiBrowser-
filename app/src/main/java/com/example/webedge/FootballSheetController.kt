@@ -50,6 +50,12 @@ class FootballSheetController(
     private var errorText: String? = null
     private val triedLogos = HashSet<String>()
 
+        fun dismiss() {
+        scope?.cancel()
+        scope = null
+        sheet.dismiss(immediate = true)
+    }
+
     fun show() {
         val s = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         scope = s
