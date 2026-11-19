@@ -76,6 +76,9 @@ internal class ToolbarController(
         private set
     lateinit var tabBtn: ImageView
         private set
+    private lateinit var searchIcon: ImageView
+    private lateinit var clearQueryBtn: ImageView
+    private lateinit var cancelSearchBtn: FrameLayout
     lateinit var pillProgress: PillProgress
         private set
 
@@ -83,6 +86,11 @@ internal class ToolbarController(
     val isCreated: Boolean get() = ::bar.isInitialized
 
     private var programmatic = false
+    private var searchMode = false
+    private var backVisibilityBeforeSearch = View.VISIBLE
+    private var menuVisibilityBeforeSearch = View.VISIBLE
+    private var tabVisibilityBeforeSearch = View.VISIBLE
+    private var pageMenuVisibilityBeforeSearch = View.VISIBLE
 
     /** "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi. */
     var barHidden = false
@@ -144,11 +152,14 @@ internal class ToolbarController(
         urlBar.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 setBarHidden(false)
+                setSearchMode(true)
                 urlBar.gravity = Gravity.START or Gravity.CENTER_VERTICAL
                 setUrlText(host.currentUrl)
+                updateClearQueryVisibility()
                 urlBar.post { urlBar.selectAll() }
                 updateBarVisibility()
             } else {
+                setSearchMode(false)
                 urlBar.gravity = Gravity.CENTER
                 host.hideSuggestions()
                 showDomain()
@@ -166,10 +177,51 @@ internal class ToolbarController(
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
-                if (programmatic || !urlBar.hasFocus()) return
+                if (programmatic) return
+                updateClearQueryVisibility()
+                if (!urlBar.hasFocus()) return
                 host.scheduleSuggest(s?.toString() ?: "")
             }
         })
+
+        searchIcon = ImageView(activity).apply {
+            setImageDrawable(PathIcon(Icons.SEARCH, host.foreground))
+            setPadding(dp(5), dp(5), dp(5), dp(5))
+            contentDescription = "Tìm kiếm"
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            visibility = View.GONE
+        }
+        clearQueryBtn = ImageView(activity).apply {
+            setImageDrawable(PathIcon(Icons.CLOSE, host.foreground))
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            contentDescription = "Xóa nội dung tìm kiếm"
+            isClickable = true
+            isFocusable = true
+            visibility = View.GONE
+            setOnClickListener {
+                setUrlText("")
+                updateClearQueryVisibility()
+                host.hideSuggestions()
+                urlBar.requestFocus()
+            }
+        }
+
+        cancelSearchBtn = glassToolbarButton(
+            GlassSystem.Preset.TOOLBAR_BUTTON, Icons.CLOSE, 10, "Thoát tìm kiếm"
+        ).apply {
+            visibility = View.GONE
+            background = roundedDrawable(
+                GlassSystem.Preset.TOOLBAR_BUTTON.radiusDp * host.density,
+                Color.argb(if (host.isNight) 42 else 24, host.foreground shr 16 and 0xff,
+                    host.foreground shr 8 and 0xff, host.foreground and 0xff)
+            )
+            setOnClickListener {
+                setUrlText("")
+                host.hideSuggestions()
+                leaveEdit()
+            }
+            AnimationSystem.press(this, Constants.PRESS_SCALE_BTN)
+        }
 
         // The content stays in a LinearLayout; a BlurView sits behind it in a wrapper.
         // This is the first migrated surface. Other glass surfaces remain on the old
@@ -188,10 +240,12 @@ internal class ToolbarController(
         }
         urlPill.setOnClickListener { setBarHidden(false) }
         urlPill.addView(tabBtn, LinearLayout.LayoutParams(dp(32), dp(32)))
+        urlPill.addView(searchIcon, LinearLayout.LayoutParams(dp(30), dp(30)))
         urlPill.addView(urlBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        urlPill.addView(clearQueryBtn, LinearLayout.LayoutParams(dp(30), dp(30)))
         urlPill.addView(pageMenuBtn, LinearLayout.LayoutParams(dp(32), dp(32)))
 
-        // Thanh dưới gồm 3 phần rời nhau: nút quay lại tròn, ô địa chỉ, nút ba chấm tròn
+        // Thanh dưới: chế độ thường có Back / Pill / Menu; Search Mode chuyển thành Pill / Cancel.
         bar = LinearLayout(activity)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
@@ -202,6 +256,35 @@ internal class ToolbarController(
         urlPillFrame.addView(urlPill, FrameLayout.LayoutParams(-1, -1))
         bar.addView(urlPillFrame, pillLp)
         bar.addView(menuBtn, LinearLayout.LayoutParams(dp(bottomBarHeightDp), dp(bottomBarHeightDp)))
+        bar.addView(cancelSearchBtn, LinearLayout.LayoutParams(dp(bottomBarHeightDp), dp(bottomBarHeightDp)))
+    }
+
+    /** Chuyển toolbar sang bố cục nhập liệu riêng, không thay đổi các controller tìm kiếm hiện có. */
+    private fun setSearchMode(active: Boolean) {
+        if (!::cancelSearchBtn.isInitialized || searchMode == active) return
+        searchMode = active
+        if (active) {
+            // Ghi nhớ visibility thực tế (OrbMenu có thể đã thay nút Back từ trước).
+            backVisibilityBeforeSearch = backBtn.visibility
+            menuVisibilityBeforeSearch = menuBtn.visibility
+            tabVisibilityBeforeSearch = tabBtn.visibility
+            pageMenuVisibilityBeforeSearch = pageMenuBtn.visibility
+        }
+        backBtn.visibility = if (active) View.GONE else backVisibilityBeforeSearch
+        menuBtn.visibility = if (active) View.GONE else menuVisibilityBeforeSearch
+        tabBtn.visibility = if (active) View.GONE else tabVisibilityBeforeSearch
+        pageMenuBtn.visibility = if (active) View.GONE else pageMenuVisibilityBeforeSearch
+        searchIcon.visibility = if (active) View.VISIBLE else View.GONE
+        cancelSearchBtn.visibility = if (active) View.VISIBLE else View.GONE
+        if (!active) clearQueryBtn.visibility = View.GONE
+        else updateClearQueryVisibility()
+        host.syncOrbMenuVisibility()
+        host.pushBottomReserve()
+    }
+
+    private fun updateClearQueryVisibility() {
+        if (!::clearQueryBtn.isInitialized) return
+        clearQueryBtn.visibility = if (searchMode && urlBar.text.isNotEmpty()) View.VISIBLE else View.GONE
     }
 
     /** Nút tròn của thanh dưới: khung bo góc trong suốt + icon; lớp kính gắn sau bằng [addGlassLayer]. */
@@ -243,6 +326,7 @@ internal class ToolbarController(
 
     // "Ẩn" nghĩa là thu gọn: ô địa chỉ co nhỏ, hai nút tròn mờ đi; chạm hoặc vuốt lên để mở lại
     fun setBarHidden(hide: Boolean) {
+        if (hide && searchMode) return
         if (hide && !host.store.autoHideBar) return
         if (hide == barHidden) return
         barHidden = hide
@@ -336,6 +420,7 @@ internal class ToolbarController(
         programmatic = true
         urlBar.setText(text)
         programmatic = false
+        updateClearQueryVisibility()
     }
 
     fun showDomain() {
