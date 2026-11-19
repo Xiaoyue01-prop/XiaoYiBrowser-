@@ -311,7 +311,8 @@ class TabSwitcherController(
         var onSelectRequested: () -> Unit = {}
         var onSelectAllRequested: () -> Unit = {}
         var onMoreClicked: () -> Unit = {}
-        var morphAddButton: (Boolean) -> Unit = {}
+        /** (toMore, animate): + ⇄ ⋯ khi vào/thoát chế độ chọn. */
+        var morphAddButton: (Boolean, Boolean) -> Unit = { _, _ -> }
         lateinit var blurSync: GlassSystem.BlurSync
 
         fun finishDismiss() {
@@ -436,26 +437,81 @@ class TabSwitcherController(
             activity, blurTarget, activity.resources.displayMetrics.density, isNight(), rimOnShell = true
         )
         groupPill.addView(groupText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40), Gravity.CENTER))
+        // Nút đổi dạng (viên Nhóm thẻ → "Đã chọn N", nút + → ⋯) dùng cùng chuỗi với nút Tab / menu trang
+        // (OriginTransitionController): nút nảy phóng to và dời một đoạn về phía trung tâm bảng (MENU_POP_SCALE,
+        // MENU_POP_TOWARD, MENU_POP), chờ MENU_POP_DELAY_MS, rồi mới đổi nội dung và spring về chỗ cũ.
+        fun popMorph(
+            view: View,
+            back: AnimationSystem.SpringSpec = AnimationSystem.MENU_MORPH,
+            swap: () -> Unit
+        ) {
+            val vb = OriginTransitionController.boundsOnScreen(view)
+            val cb = OriginTransitionController.boundsOnScreen(container)
+            if (!view.isAttachedToWindow || vb == null || cb == null) {
+                swap()
+                return
+            }
+            var dx = (cb.centerX() - vb.centerX()) * Constants.MENU_POP_TOWARD
+            var dy = (cb.centerY() - vb.centerY()) * Constants.MENU_POP_TOWARD
+            val maxDist = dp(Constants.TAB_POP_MAX_DP).toFloat()
+            val dist = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+            if (dist > maxDist && dist > 0f) {
+                dx *= maxDist / dist
+                dy *= maxDist / dist
+            }
+            AnimationSystem.unclipParents(view)
+            blurSync.hold(900)
+            AnimationSystem.spring(view, DynamicAnimation.TRANSLATION_X, dx, AnimationSystem.MENU_POP)
+            AnimationSystem.spring(view, DynamicAnimation.TRANSLATION_Y, dy, AnimationSystem.MENU_POP)
+            AnimationSystem.scaleTo(view, Constants.MENU_POP_SCALE, Constants.MENU_POP_SCALE, AnimationSystem.MENU_POP)
+            view.postDelayed({
+                // Luôn hạ về chỗ cũ, kể cả khi bảng đã đóng hoặc chế độ bị đổi lại trong lúc chờ, để nút không kẹt ở khung nảy.
+                if (view.isAttachedToWindow) swap()
+                AnimationSystem.spring(view, DynamicAnimation.TRANSLATION_X, 0f, back)
+                AnimationSystem.spring(view, DynamicAnimation.TRANSLATION_Y, 0f, back)
+                AnimationSystem.scaleTo(view, 1f, 1f, back)
+            }, Constants.MENU_POP_DELAY_MS)
+        }
+
         // Chế độ chọn: viên này đổi thành ô hiện số tab đã chọn (không bấm được); thoát chế độ chọn thì về như cũ.
         var groupShowsSelect = false
+        var groupMorphAnimated = true
+        fun applyGroupText() {
+            groupText.text = if (selectMode) {
+                "Đã chọn ${selectedIds.size}"
+            } else {
+                // Mặc định chỉ hiện "Nhóm thẻ"; muốn biết đang ở nhóm nào thì chạm mở menu (nhóm đang xem có dấu ✓).
+                if (tabManager.isPrivateMode) "Riêng tư" else "Nhóm thẻ ▾"
+            }
+        }
         fun updateGroupPill() {
             val priv = tabManager.isPrivateMode
             val name = tabManager.currentGroup().name
-            if (groupShowsSelect != selectMode) {
-                groupShowsSelect = selectMode
-                groupText.alpha = 0f
-                AnimationSystem.fade(groupText, 1f)
-            }
+            val flipped = groupShowsSelect != selectMode
+            groupShowsSelect = selectMode
             if (selectMode) {
-                val n = selectedIds.size
-                groupText.text = "Đã chọn $n"
                 groupPill.isClickable = false
-                groupPill.contentDescription = "Đã chọn $n tab"
+                groupPill.contentDescription = "Đã chọn ${selectedIds.size} tab"
             } else {
-                // Mặc định chỉ hiện "Nhóm thẻ"; muốn biết đang ở nhóm nào thì chạm mở menu (nhóm đang xem có dấu ✓).
-                groupText.text = if (priv) "Riêng tư" else "Nhóm thẻ ▾"
                 groupPill.isClickable = !priv
                 groupPill.contentDescription = if (priv) "Riêng tư" else "Nhóm thẻ: $name"
+            }
+            if (flipped && groupMorphAnimated && groupPill.isAttachedToWindow) {
+                // Chữ cũ mờ đi trong lúc nút nảy; chữ mới hiện khi nút bắt đầu hạ về.
+                AnimationSystem.fade(groupText, 0f)
+                popMorph(
+                    groupPill,
+                    if (selectMode) AnimationSystem.MENU_MORPH else AnimationSystem.MENU_POP_BACK
+                ) {
+                    applyGroupText()
+                    AnimationSystem.fade(groupText, 1f)
+                }
+            } else {
+                applyGroupText()
+                if (flipped) {
+                    AnimationSystem.cancel(groupText)
+                    groupText.alpha = 1f
+                }
             }
         }
         updateGroupPill()
@@ -1330,8 +1386,10 @@ class TabSwitcherController(
             selectedIds.clear()
             dismissPopup(false)
             searchPill.exitSelectMode(animate)
-            morphAddButton(false)
+            morphAddButton(false, animate)
+            groupMorphAnimated = animate
             applySelectUi()
+            groupMorphAnimated = true
         }
 
         onSelectRequested = {
@@ -1341,7 +1399,7 @@ class TabSwitcherController(
                 selectMode = true
                 selectedIds.clear()
                 searchPill.enterSelectMode()
-                morphAddButton(true)
+                morphAddButton(true, true)
                 applySelectUi()
             }
         }
@@ -1571,15 +1629,34 @@ class TabSwitcherController(
         addButton.addView(moreGlyph, FrameLayout.LayoutParams(-1, -1))
         val plusGlyph = addButton.getChildAt(1)
         selectMenuAnchor = addButton
-        morphAddButton = { toMore ->
+        morphAddButton = { toMore, animate ->
             val shown = if (toMore) moreGlyph else plusGlyph
             val hidden = if (toMore) plusGlyph else moreGlyph
-            AnimationSystem.fade(hidden, 0f) { if (selectMode == toMore) hidden.visibility = View.INVISIBLE }
-            AnimationSystem.scaleTo(hidden, 0.6f, 0.6f)
-            shown.visibility = View.VISIBLE
-            AnimationSystem.fade(shown, 1f)
-            AnimationSystem.scaleTo(shown, 1f, 1f)
             addButton.contentDescription = if (toMore) "Thao tác với tab đã chọn" else "Tab mới"
+            if (animate && addButton.isAttachedToWindow) {
+                // Cả nút nảy về phía trung tâm trước, đến lúc hạ về mới đổi + ⇄ ⋯ (như nút Tab / menu trang).
+                popMorph(
+                    addButton,
+                    if (toMore) AnimationSystem.MENU_MORPH else AnimationSystem.MENU_POP_BACK
+                ) {
+                    AnimationSystem.fade(hidden, 0f) { if (selectMode == toMore) hidden.visibility = View.INVISIBLE }
+                    AnimationSystem.scaleTo(hidden, 0.6f, 0.6f)
+                    shown.visibility = View.VISIBLE
+                    AnimationSystem.fade(shown, 1f)
+                    AnimationSystem.scaleTo(shown, 1f, 1f)
+                }
+            } else {
+                AnimationSystem.cancel(hidden)
+                AnimationSystem.cancel(shown)
+                hidden.alpha = 0f
+                hidden.scaleX = 0.6f
+                hidden.scaleY = 0.6f
+                hidden.visibility = View.INVISIBLE
+                shown.visibility = View.VISIBLE
+                shown.alpha = 1f
+                shown.scaleX = 1f
+                shown.scaleY = 1f
+            }
         }
 
         // Đổi chế độ sẽ chuyển WebView sang nhóm tương ứng rồi dựng lại lưới từ danh sách độc lập.
