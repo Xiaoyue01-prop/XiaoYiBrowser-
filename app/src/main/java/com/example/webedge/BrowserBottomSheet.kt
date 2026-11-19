@@ -155,9 +155,7 @@ class BrowserBottomSheet(
                 content.setPadding(content.paddingLeft, 0, content.paddingRight, content.paddingBottom)
             }
             scroll.clipToPadding = false
-            GlassSystem.installEdgeBlur(
-                scroll, headerPx + dp(EDGE_EXTRA_DP), 0, dp(EDGE_BLUR_RADIUS_DP).toFloat(), if (night) 0f else EDGE_VEIL, 0f
-            )
+            GlassSystem.installTopFade(scroll, headerPx, 0, density, night)
         }
 
         // Nội dung phải tràn tới sát đáy màn hình (xuyên qua thanh điều hướng) như popup website:
@@ -289,8 +287,5 @@ class BrowserBottomSheet(
     }
 
     private companion object {
-        const val EDGE_EXTRA_DP = 24         // vùng mờ kéo dài xuống dưới tiêu đề, như menu Tab
-        const val EDGE_BLUR_RADIUS_DP = 14   // độ mờ tối đa ở sát mép tiêu đề, cùng giá trị với menu Tab
-        const val EDGE_VEIL = 0.30f          // phủ trắng nhẹ ở sát mép, cùng giá trị với menu Tab
     }
 }

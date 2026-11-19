@@ -34,8 +34,6 @@ private const val TAB_BG_TINT = 0
 
 // Mờ dần ở mép trên và mép dưới của lưới thẻ (kiểu Safari): thẻ trôi tới sát mép thì càng mờ,
 // không bị cắt cứng. Đơn vị dp / hệ số 0–1.
-private const val EDGE_BLUR_RADIUS_DP = 14   // độ mờ tối đa ở sát mép (lớn hơn = mờ hơn)
-private const val EDGE_BLUR_VEIL = 0.30f     // độ phủ trắng nhẹ ở sát mép (0 = không phủ)
 class TabSwitcherController(
     private val activity: ComponentActivity,
     private val tabManager: TabManager,
@@ -1659,12 +1657,12 @@ class TabSwitcherController(
             val key = "${cardsTarget.width}x${cardsTarget.height}:$edgeTopPx:$edgeBottomPx"
             if (key == edgeKey) return
             edgeKey = key
-            GlassSystem.applyEdgeBlur(cardsTarget, edgeTopPx, edgeBottomPx, dp(EDGE_BLUR_RADIUS_DP).toFloat(), EDGE_BLUR_VEIL)
+            GlassSystem.applyEdgeBlur(cardsTarget, edgeTopPx, edgeBottomPx, dp(GlassSystem.TOP_FADE_RADIUS_DP).toFloat(), GlassSystem.TOP_FADE_VEIL)
         }
         cardsTarget.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> refreshEdgeBlur() }
 
         header.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, _ ->
-            edgeTopPx = bottom + dp(24)
+            edgeTopPx = bottom + dp(GlassSystem.TOP_FADE_EXTRA_DP)
             refreshEdgeBlur()
             scroll.post {
                 val top = bottom + dp(2)

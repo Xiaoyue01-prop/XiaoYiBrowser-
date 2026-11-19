@@ -169,7 +169,7 @@ class PopupWindowController(
         pageHost.addView(popup, FrameLayout.LayoutParams(-1, -1))
         pageHost.addView(dragZone, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
         sheetView.addView(pageHost, LinearLayout.LayoutParams(-1, -1))
-        GlassSystem.installEdgeBlur(popup, headerPx + dp(24), 0, dp(14).toFloat(), if (night) 0f else 0.30f, 0f)
+        GlassSystem.installTopFade(popup, headerPx, 0, activity.resources.displayMetrics.density, night)
 
         // Đẩy nội dung trang xuống dưới tiêu đề lúc nghỉ (WebView không có padding nội dung):
         // thêm padding-top cho <html>, quy đổi dp -> px CSS theo tỉ lệ viewport hiện tại.

@@ -663,6 +663,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
         // Lớp chuyển trang nằm trong blurTarget, ngay trên/dưới WebView, để kính mờ lấy đúng nền khi trang đang trượt.
         pageTransition = PageTransitionController(blurTarget) { pageBg }
+        // Trang chủ ở chế độ tối: nền dự phòng (khi chưa có ảnh chụp) là màu tối, không phải trắng.
+        pageTransition.baseColorForUrl = { url ->
+            if (store.webDarkMode && HomePage.isHome(url)) 0xFF141416.toInt() else null
+        }
         // Vuốt ngang viên thuốc để đổi tab (tab cuối vuốt tiếp thì mở tab mới), như Safari.
         tabSwipe = TabSwipeController(
             host = blurTarget,

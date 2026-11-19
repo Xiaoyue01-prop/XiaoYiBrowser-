@@ -859,6 +859,7 @@ class MenuController(
         widthDp: Int,
         backIcon: String = Icons.ARROW_BACK,
         backDescription: String = "Quay lại",
+        headerFade: Boolean = false,
         onBack: (() -> Unit)?
     ): Panel {
         val page = LinearLayout(activity)
@@ -902,7 +903,8 @@ class MenuController(
         // Chừa một dải đệm ở trên và dưới: lúc chưa cuộn, mục đầu và mục cuối không bị mờ; cuộn tới sát mép thì mờ dần.
         scroll.clipToPadding = false
         scroll.setPadding(0, dp(EDGE_ZONE_DP), 0, dp(EDGE_ZONE_DP))
-        GlassSystem.installEdgeBlur(scroll, dp(EDGE_ZONE_DP), dp(EDGE_ZONE_DP), dp(7).toFloat(), 0f, 0.9f)
+        // headerFade: showList tự áp gradient top fade kiểu Privacy Dashboard (applyHeaderFade).
+        if (!headerFade) GlassSystem.installEdgeBlur(scroll, dp(EDGE_ZONE_DP), dp(EDGE_ZONE_DP), dp(7).toFloat(), 0f, 0.9f)
         scroll.addView(body)
         page.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -949,9 +951,9 @@ class MenuController(
         }
 
         val p = if (selecting) {
-            makePanel("Chưa chọn", null, 340, Icons.CLOSE, "Thoát chế độ chọn") { exitSelect() }
+            makePanel("Chưa chọn", null, 340, Icons.CLOSE, "Thoát chế độ chọn", headerFade = true) { exitSelect() }
         } else {
-            makePanel(title, "Chạm để mở, giữ lâu để xóa", 340) { showMainPage() }
+            makePanel(title, "Chạm để mở, giữ lâu để xóa", 340, headerFade = true) { showMainPage() }
         }
         val iconColor = GlassSystem.pagePrimaryText()
         p.head.setPadding(p.head.paddingLeft, p.head.paddingTop, dp(14), p.head.paddingBottom)
@@ -1234,8 +1236,45 @@ class MenuController(
             } else null
             addButtons(p, left, panelButton("Xong", accent) { close() })
         }
+        applyHeaderFade(p)
         menuBackAction = p.onBack
         setMenuPage(content, p.widthDp, true)
+    }
+
+    /**
+     * Header (tiêu đề + gợi ý) trong suốt đè lên danh sách, giống Privacy Dashboard: mục cuộn lên chui xuống dưới
+     * header và mờ dần theo gradient (blur + veil) ở mép trên. Lúc nghỉ, danh sách nằm đúng chỗ cũ vì phần đệm trên
+     * của ScrollView bù đúng chiều cao header (kéo lề trên âm tương ứng), nên kích thước thẻ không đổi.
+     */
+    private fun applyHeaderFade(p: Panel) {
+        val scroll = p.body.parent as? ScrollView ?: return
+        val page = p.page
+        val basePadTop = scroll.paddingTop
+        val lp = scroll.layoutParams as? LinearLayout.LayoutParams ?: return
+        // Header vẽ và nhận chạm phía trên danh sách (không có nền nên không đổ bóng).
+        for (i in 0 until page.indexOfChild(scroll)) page.getChildAt(i).translationZ = dp(1).toFloat()
+
+        var headerPx = 0
+        var lastKey = ""
+        scroll.addOnLayoutChangeListener { v, left, top, right, bottom, _, _, _, _ ->
+            val w = right - left
+            val h = bottom - top
+            if (w <= 0 || h <= 0) return@addOnLayoutChangeListener
+            v.clipBounds = android.graphics.Rect(0, 0, w, h)
+            var headerH = 0
+            for (i in 0 until page.indexOfChild(scroll)) headerH += page.getChildAt(i).height
+            if (headerH > 0 && headerH != headerPx) {
+                headerPx = headerH
+                lp.topMargin = -headerH
+                v.setPadding(0, headerH + basePadTop, 0, v.paddingBottom)
+                v.layoutParams = lp // đo lại; lần layout kế tiếp sẽ áp hiệu ứng
+                return@addOnLayoutChangeListener
+            }
+            val key = "$w x $h x $headerPx"
+            if (key == lastKey) return@addOnLayoutChangeListener
+            lastKey = key
+            GlassSystem.applyTopFade(v, headerPx, dp(EDGE_ZONE_DP), d, isNight())
+        }
     }
 
     private fun showSettings() {

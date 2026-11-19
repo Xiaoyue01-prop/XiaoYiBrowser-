@@ -29,6 +29,10 @@ class PageTransitionController(
 ) {
     private val handler = Handler(Looper.getMainLooper())
 
+    /** Màu nền dự phòng theo URL của trang liền kề (vd. trang chủ ở chế độ tối); null = dùng [pageBg]. */
+    var baseColorForUrl: (String?) -> Int? = { null }
+    private fun baseColor(url: String?): Int = baseColorForUrl(url) ?: pageBg()
+
     private class Snap(val url: String, val bitmap: Bitmap, val time: Long)
 
     /** LRU theo thứ tự truy cập; khoá = "<id WebView>:<vị trí trong lịch sử>". */
@@ -71,13 +75,13 @@ class PageTransitionController(
     private fun capture(web: WebView) {
         val w = web.width
         val h = web.height
-        val shownUrl = web.url
-        if (w <= 0 || h <= 0 || shownUrl.isNullOrBlank()) return
+        if (w <= 0 || h <= 0) return
         try {
             val list = web.copyBackForwardList()
             val index = list.currentIndex
+            // Dùng mục ĐÃ commit của lịch sử (trang còn đang hiển thị), không so với web.url: khi điều hướng từ
+            // thanh địa chỉ (loadUrl), web.url đã là URL đang chờ nên không khớp và ảnh chụp bị bỏ.
             val itemUrl = list.currentItem?.url ?: return
-            if (itemUrl != shownUrl) return
             val k = key(web, index)
             val now = SystemClock.uptimeMillis()
             val old = cache[k]
@@ -86,7 +90,7 @@ class PageTransitionController(
             // RGB_565 như thumbnail tab: một ảnh toàn màn hình chỉ ~5MB.
             val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
             val canvas = Canvas(bitmap)
-            canvas.drawColor(pageBg())
+            canvas.drawColor(baseColor(itemUrl))
             web.draw(canvas)
             cache[k] = Snap(itemUrl, bitmap, now)
         } catch (e: Exception) {
@@ -102,6 +106,12 @@ class PageTransitionController(
         if (index < 0 || index >= list.size) return null
         val snap = cache[key(web, index)] ?: return null
         return if (list.getItemAtIndex(index).url == snap.url) snap.bitmap else null
+    }
+
+    private fun neighbourUrl(web: WebView, dir: Int): String? {
+        val list = web.copyBackForwardList()
+        val index = list.currentIndex + if (dir == BACK) -1 else 1
+        return if (index in 0 until list.size) list.getItemAtIndex(index).url else null
     }
 
     /** Tab bị đóng/huỷ WebView: bỏ ảnh của nó. */
@@ -122,7 +132,7 @@ class PageTransitionController(
         val bitmap = neighbour(web, dir)
         val layer = ImageView(web.context).apply {
             scaleType = ImageView.ScaleType.FIT_XY
-            if (bitmap != null) setImageBitmap(bitmap) else setBackgroundColor(pageBg())
+            if (bitmap != null) setImageBitmap(bitmap) else setBackgroundColor(baseColor(neighbourUrl(web, dir)))
         }
         val scrim = View(web.context).apply {
             setBackgroundColor(Color.BLACK)

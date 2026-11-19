@@ -181,7 +181,8 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         if (view !== host.web) return
         host.dismissReaderHint()
         // Chụp trang cũ trước khi mờ đi và trước khi nội dung đổi, để lần sau vuốt quay lại có ảnh xem trước.
-        if (view.url != url) host.pageTransition.remember(view)
+        // So với mục đã commit, không phải view.url (có thể đã là URL đang chờ khi gõ địa chỉ rồi Enter).
+        if (view.copyBackForwardList().currentItem?.url != url) host.pageTransition.remember(view)
         host.webMedia.reset()
         host.currentUrl = url
         // Mờ đi bằng spring (trước đây đặt thẳng 0.6 nên bị giật); đang chuyển trang thì lớp phủ đã che, không mờ.

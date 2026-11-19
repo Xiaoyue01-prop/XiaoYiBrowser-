@@ -678,6 +678,31 @@ half4 main(float2 coord) {
         }
     }
 
+    // ===== Gradient top fade dùng chung (blur + veil) cho header trong suốt =====
+    // Chỉnh ở đây là đổi đồng loạt: bottom sheet, popup website, bảng tab, Lịch sử/Dấu trang.
+    // (Lớp fade màu trên status bar là loại khác, giữ riêng.)
+    const val TOP_FADE_EXTRA_DP = 24   // vùng mờ kéo dài xuống dưới header
+    const val TOP_FADE_RADIUS_DP = 14  // độ mờ tối đa ở sát mép
+    const val TOP_FADE_VEIL = 0.30f    // phủ trắng nhẹ ở sát mép (nền sáng)
+
+    fun topFadeVeil(night: Boolean): Float = if (night) 0f else TOP_FADE_VEIL
+
+    /** Áp top fade cho [target] (cần đã có kích thước). [headerPx] là chiều cao header; [bottomPx] là vùng mờ mép dưới (0 = không). */
+    fun applyTopFade(target: View, headerPx: Int, bottomPx: Int, density: Float, night: Boolean) {
+        applyEdgeBlur(
+            target, headerPx + (TOP_FADE_EXTRA_DP * density).toInt(), bottomPx,
+            TOP_FADE_RADIUS_DP * density, topFadeVeil(night), 0f
+        )
+    }
+
+    /** Như [applyTopFade] nhưng tự áp lại mỗi khi [target] đổi kích thước. */
+    fun installTopFade(target: View, headerPx: Int, bottomPx: Int, density: Float, night: Boolean) {
+        installEdgeBlur(
+            target, headerPx + (TOP_FADE_EXTRA_DP * density).toInt(), bottomPx,
+            TOP_FADE_RADIUS_DP * density, topFadeVeil(night), 0f
+        )
+    }
+
     /**
      * Nút chữ nằm trên một viên kính mờ riêng (bo tròn theo [preset]).
      * Người gọi tự gắn sự kiện bấm và hiệu ứng nhấn.
