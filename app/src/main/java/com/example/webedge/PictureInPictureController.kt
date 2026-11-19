@@ -37,13 +37,34 @@ class PictureInPictureController(
     private val traceLines = ArrayList<String>()
     private var traceStart = 0L
 
+    init {
+        // Lúc khởi động chưa có video toàn màn hình thì tuyệt đối không cho hệ thống tự vào PiP. Nếu không, tham số PiP
+        // đầu tiên được áp (ví dụ khi trang báo tỉ lệ video của video nhúng trong Instagram/Google) có thể mang theo
+        // cờ tự vào PiP, và vuốt về home lần đầu sẽ thu cả giao diện trình duyệt vào cửa sổ PiP.
+        disableAutoEnter()
+    }
+
+    private fun disableAutoEnter() {
+        runCatching {
+            pip.setEnabled(false)
+            pip.commit()
+        }
+        runCatching {
+            activity.setPictureInPictureParams(
+                PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()
+            )
+        }
+    }
+
     fun setVideoActive(active: Boolean, view: View? = null) {
         videoActive = active
         videoView = if (active) view else null
         try {
             pip.setPlayerView(if (active) view else null)
             pip.setEnabled(active)
+            if (active) pip.setAspectRatio(Rational((aspect * RATIO_BASE).toInt(), RATIO_BASE))
             pip.commit()
+            if (!active) disableAutoEnter()
         } catch (e: Exception) {
             Log.w(TAG, "Cập nhật trạng thái PiP thất bại", e)
         }
@@ -58,6 +79,8 @@ class PictureInPictureController(
         val ratio = if (width > 0 && height > 0) width.toFloat() / height else DEFAULT_ASPECT
         val clamped = ratio.coerceIn(MIN_ASPECT, MAX_ASPECT)
         aspect = clamped
+        // Chỉ đẩy xuống thư viện khi đang có video toàn màn hình: commit() lúc không có video là đường làm cờ tự vào PiP bật nhầm.
+        if (!videoActive) return
         try {
             pip.setAspectRatio(Rational((clamped * RATIO_BASE).toInt(), RATIO_BASE))
             pip.commit()
