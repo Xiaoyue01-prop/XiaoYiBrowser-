@@ -1003,7 +1003,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         // Auto-hide là trạng thái compact, không phải toolbar bị gỡ khỏi giao diện.
         val toolbarAvailable = barPresent && !inFullscreen
         val menuOpen = ::menu.isInitialized && menu.isOpen
-        val temporarilyHidden = findOn || pageTyping || inFullscreen || menuOpen
+        val temporarilyHidden = findOn || pageTyping || inFullscreen || menuOpen || urlBar.hasFocus()
         val compact = barHidden && toolbarAvailable && !temporarilyHidden
 
         orbController?.setToolbarAvailable(toolbarAvailable)
