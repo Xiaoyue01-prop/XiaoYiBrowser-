@@ -15,26 +15,70 @@
   <p id="greeting"></p>
 
   <section id="weather" hidden>
-    <button id="wHead" type="button" aria-expanded="false">
-      <span id="wIcon" aria-hidden="true">📍</span>
-      <span id="wTemp"></span>
-      <span id="wText">
-        <span id="wDesc"></span>
-        <span id="wSub"></span>
-      </span>
+    <h2 id="wTitle">Thời tiết</h2>
+    <button id="wCity" type="button" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3 3 10.5h2.5V20h5v-5.5h3V20h5v-9.5H21Z" fill="currentColor"/></svg>
+      <span id="wCityName">Chọn thành phố</span>
       <span id="wChevron" aria-hidden="true">▾</span>
     </button>
-    <div id="wDetail" hidden>
-     <div id="wInner">
-      <div id="wHours"></div>
-      <div id="wDays"></div>
-      <button id="wChange" type="button">📍 Đổi thành phố</button>
-      <div id="wPicker" hidden>
+    <div id="wPickWrap" hidden>
+      <div id="wPickInner">
         <input id="wQuery" type="search" placeholder="Tìm thành phố…" autocomplete="off" autocapitalize="words" enterkeyhint="search">
         <div id="wResults"></div>
       </div>
-     </div>
     </div>
+    <div id="wBanner" hidden><span id="wBannerIcon" aria-hidden="true"></span><span id="wBannerText"></span></div>
+    <div id="wCard" hidden>
+      <div id="wNow">
+        <div id="wNowL">
+          <div id="wLabel">Lúc này</div>
+          <div id="wBig"><span id="wTemp"></span><span id="wIcon" aria-hidden="true"></span></div>
+        </div>
+        <div id="wNowR"><div id="wDesc"></div><div id="wSub"></div></div>
+      </div>
+      <div id="wHours"></div>
+      <div id="scene" class="day clear" aria-hidden="true">
+        <img class="ly bg" src="scene_bg.webp" alt="" draggable="false">
+        <svg class="star s1" viewBox="-10 -10 20 20"><path d="M0-9 2.5-2.5 9 0 2.5 2.5 0 9-2.5 2.5-9 0-2.5-2.5Z"/></svg>
+        <svg class="star s2" viewBox="-10 -10 20 20"><path d="M0-9 2.5-2.5 9 0 2.5 2.5 0 9-2.5 2.5-9 0-2.5-2.5Z"/></svg>
+        <svg class="star s3" viewBox="-10 -10 20 20"><path d="M0-9 2.5-2.5 9 0 2.5 2.5 0 9-2.5 2.5-9 0-2.5-2.5Z"/></svg>
+        <svg class="star s4" viewBox="-10 -10 20 20"><path d="M0-9 2.5-2.5 9 0 2.5 2.5 0 9-2.5 2.5-9 0-2.5-2.5Z"/></svg>
+        <svg class="star s5" viewBox="-10 -10 20 20"><path d="M0-9 2.5-2.5 9 0 2.5 2.5 0 9-2.5 2.5-9 0-2.5-2.5Z"/></svg>
+        <svg class="star s6" viewBox="-10 -10 20 20"><path d="M0-9 2.5-2.5 9 0 2.5 2.5 0 9-2.5 2.5-9 0-2.5-2.5Z"/></svg>
+        <svg class="orb" id="sun" viewBox="-100 -100 200 200">
+          <g class="rays">
+            <g stroke="#1b1b1b" stroke-width="24" stroke-linecap="round"><path d="M0-66V-88M47-47 62-62M66 0H88M47 47 62 62M0 66V88M-47 47-62 62M-66 0H-88M-47-47-62-62"/></g>
+            <g stroke="#FFD43B" stroke-width="10" stroke-linecap="round"><path d="M0-66V-88M47-47 62-62M66 0H88M47 47 62 62M0 66V88M-47 47-62 62M-66 0H-88M-47-47-62-62"/></g>
+          </g>
+          <circle r="50" fill="#FFD43B" stroke="#1b1b1b" stroke-width="12"/>
+          <circle cx="-16" cy="-4" r="5" fill="#1b1b1b"/><circle cx="16" cy="-4" r="5" fill="#1b1b1b"/>
+          <path d="M-10 12Q0 22 10 12" fill="none" stroke="#1b1b1b" stroke-width="6" stroke-linecap="round"/>
+        </svg>
+        <svg class="orb" id="moon" viewBox="-100 -100 200 200">
+          <path d="M18-52A55 55 0 1 0 50 23A46 46 0 0 1 18-52Z" fill="#F4E9B8" stroke="#1b1b1b" stroke-width="12" stroke-linejoin="round"/>
+        </svg>
+        <img class="ly cl c1" src="scene_cloud1.webp" alt="" draggable="false">
+        <img class="ly cl c2" src="scene_cloud2.webp" alt="" draggable="false">
+        <img class="ly props" src="scene_props.webp" alt="" draggable="false">
+        <svg class="ly" id="umb" viewBox="0 0 2048 1129" preserveAspectRatio="none">
+          <g id="umbG" transform="translate(1115 528)">
+            <path d="M0 0V95" fill="none" stroke="#1b1b1b" stroke-width="26" stroke-linecap="round"/>
+            <path d="M0 0V95" fill="none" stroke="#9b6b3f" stroke-width="10" stroke-linecap="round"/>
+            <path d="M-185 0C-185-120-100-175 0-175S185-120 185 0Q140-34 92 0Q46-34 0 0Q-46-34-92 0Q-140-34-185 0Z" fill="#FF6F91" stroke="#1b1b1b" stroke-width="12" stroke-linejoin="round"/>
+            <path d="M0-175Q-40-90-46 0M0-175Q40-90 46 0" fill="none" stroke="#1b1b1b" stroke-width="7" stroke-linecap="round"/>
+          </g>
+        </svg>
+        <img class="ly cat" src="scene_cat.webp" alt="" draggable="false">
+        <div class="ly tint dusk"></div>
+        <div class="ly tint night"></div>
+        <div class="win w1"></div><div class="win w2"></div><div class="win w3"></div>
+        <div class="win w4"></div><div class="win w5"></div><div class="win w6"></div>
+        <div class="ly fog"></div>
+        <div class="ly fx" id="fx"></div>
+        <div class="ly flash"></div>
+      </div>
+    </div>
+    <div id="wDays"></div>
   </section>
 </main>
 <script src="home.js"></script>

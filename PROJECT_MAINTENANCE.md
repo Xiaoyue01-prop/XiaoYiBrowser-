@@ -192,3 +192,12 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 
 - Nút Tab và menu trang nảy qua `OriginTransitionController` (`Constants.MENU_POP_SCALE`, `MENU_POP_DELAY_MS`, spring `MENU_POP` / `MENU_POP_BACK` / `MENU_MORPH` / `MENU_MORPH_CLOSE`). Viên kính ba chấm trong `MenuController.showList` không đi qua controller đó (nó nở tại chỗ bằng một giá trị chiều rộng) nên phải lặp đúng chuỗi ấy bằng tay trong `setMode()`: nảy to → chờ → nở; đóng thì thu vào khung nảy to → hạ về. Đổi thông số nảy thì đổi ở `Constants`, không nhập số riêng.
 - Pivot của viên kính đặt ở tâm (`curWidth / 2`), không neo mép phải, để hiệu ứng nhấn kính phồng đều quanh tâm như mọi nút khác.
+
+## Home weather widget redesign (2026-11-19)
+
+- `assets/home` weather card now mirrors Google's weather card: "Lúc này" hero, 5-slot hourly row, rain banner, illustrated scene, and a scrollable 7-day chip row (tapping a day switches hero, hourly slots and scene).
+- The scene is built from five layers cut out of one flat illustration (no layered original exists): `scene_bg.webp` (inpainted background), `scene_cloud1/2.webp`, `scene_props.webp`, `scene_cat.webp`. All layers are the same size so they stack with `inset: 0`. Sun, moon, stars, umbrella, rain/snow, window glow and fog are drawn in CSS/SVG.
+- Scene state comes from Open-Meteo `is_day`, `sunrise`/`sunset` (day, dusk within 40 min of sunrise/sunset, night) and the WMO weather code (clear, partly, cloudy, fog, rain, snow, storm). Filters on each layer are set from `applyScene()` in `home.js`.
+- Cache key is now `summit.w3` (7 days of hourly data plus sunrise/sunset); `summit.w2` is removed on load.
+- CSP is unchanged: no inline styles in markup, images only from `'self'`. Style changes from JS use CSSOM.
+- Not tested on-device: only Chromium with mocked API responses.

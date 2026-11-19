@@ -257,24 +257,97 @@
 
   // ---- Thời tiết (Open-Meteo, không cần API key) ----
   var card = $('weather');
-  var head = $('wHead');
-  var detail = $('wDetail');
-  var picker = $('wPicker');
+  var cityBtn = $('wCity');
+  var cityNameEl = $('wCityName');
+  var pickWrap = $('wPickWrap');
+  var pickInner = $('wPickInner');
   var query = $('wQuery');
   var results = $('wResults');
+  var banner = $('wBanner');
+  var mainCard = $('wCard');
+  var daysBox = $('wDays');
+  var scene = $('scene');
 
-  function describe(code) {
-    if (code === 0) return ['☀️', 'Trời quang'];
-    if (code === 1 || code === 2) return ['🌤️', 'Ít mây'];
-    if (code === 3) return ['☁️', 'Nhiều mây'];
-    if (code === 45 || code === 48) return ['🌫️', 'Sương mù'];
-    if (code >= 51 && code <= 57) return ['🌦️', 'Mưa phùn'];
-    if (code >= 61 && code <= 67) return ['🌧️', 'Mưa'];
-    if (code >= 71 && code <= 77) return ['🌨️', 'Tuyết'];
-    if (code >= 80 && code <= 82) return ['🌦️', 'Mưa rào'];
-    if (code >= 95 && code <= 99) return ['⛈️', 'Dông'];
-    return ['☁️', 'Thời tiết'];
+  function svg(tag, attrs, parent) {
+    var e = document.createElementNS(SVGNS, tag);
+    for (var k in attrs) if (Object.prototype.hasOwnProperty.call(attrs, k)) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
   }
+
+  // Mã thời tiết WMO -> {k: kiểu icon, w: loại cảnh, t: mô tả}
+  function describe(code, isDay) {
+    if (code === 0) return isDay ? { k: 'sun', w: 'clear', t: 'Trời nắng' } : { k: 'moon', w: 'clear', t: 'Trời quang' };
+    if (code === 1 || code === 2) return { k: isDay ? 'partly' : 'partlyN', w: 'partly', t: 'Ít mây' };
+    if (code === 3) return { k: 'cloud', w: 'cloudy', t: 'Có mây' };
+    if (code === 45 || code === 48) return { k: 'fog', w: 'fog', t: 'Sương mù' };
+    if (code >= 51 && code <= 57) return { k: 'drizzle', w: 'rain', t: 'Mưa phùn' };
+    if (code >= 61 && code <= 67) return { k: 'rain', w: 'rain', t: 'Mưa' };
+    if ((code >= 71 && code <= 77) || code === 85 || code === 86) return { k: 'snow', w: 'snow', t: 'Tuyết' };
+    if (code >= 80 && code <= 82) return { k: 'rain', w: 'rain', t: 'Mưa rào' };
+    if (code >= 95 && code <= 99) return { k: 'storm', w: 'storm', t: 'Dông' };
+    return { k: 'cloud', w: 'cloudy', t: 'Thời tiết' };
+  }
+
+  // ---- Icon thời tiết vẽ bằng SVG (phong cách Google) ----
+  var C_SUN = '#FFC933', C_MOON = '#CBD3E8', C_CLOUD = '#D3D8E0', C_RAINY = '#8F98A8', C_DROP = '#6EA8FF', C_BOLT = '#FFD84A';
+
+  function cloudShape(parent, fill, dx, dy) {
+    var g = svg('g', { fill: fill, transform: 'translate(' + dx + ' ' + dy + ')' }, parent);
+    svg('circle', { cx: 16, cy: 27, r: 8 }, g);
+    svg('circle', { cx: 25, cy: 21, r: 10 }, g);
+    svg('circle', { cx: 35, cy: 27, r: 7 }, g);
+    svg('rect', { x: 10, y: 27, width: 31, height: 8, rx: 4 }, g);
+  }
+  function sunShape(parent, cx, cy, r) {
+    var g = svg('g', {}, parent);
+    for (var a = 0; a < 8; a++) {
+      var rad = a * Math.PI / 4;
+      svg('line', {
+        x1: (cx + Math.cos(rad) * (r + 3)).toFixed(1), y1: (cy + Math.sin(rad) * (r + 3)).toFixed(1),
+        x2: (cx + Math.cos(rad) * (r + 6.5)).toFixed(1), y2: (cy + Math.sin(rad) * (r + 6.5)).toFixed(1),
+        stroke: C_SUN, 'stroke-width': 2.4, 'stroke-linecap': 'round'
+      }, g);
+    }
+    svg('circle', { cx: cx, cy: cy, r: r, fill: C_SUN }, g);
+  }
+  function moonShape(parent, cx, cy, s) {
+    svg('path', {
+      d: 'M0-10A10 10 0 1 0 10 3A8 8 0 0 1 0-10Z', fill: C_MOON,
+      transform: 'translate(' + cx + ' ' + cy + ') scale(' + s + ')'
+    }, parent);
+  }
+  function drop(parent, x, y) {
+    svg('path', { d: 'M0-3.5C2.4 0 3.4 1.6 0 4C-3.4 1.6-2.4 0 0-3.5Z', fill: C_DROP, transform: 'translate(' + x + ' ' + y + ')' }, parent);
+  }
+  function icon(kind, size) {
+    var s = svg('svg', { viewBox: '0 0 48 48', width: size, height: size, 'aria-hidden': 'true' });
+    switch (kind) {
+      case 'sun': sunShape(s, 24, 24, 9); break;
+      case 'moon': moonShape(s, 24, 24, 1.9); break;
+      case 'partly': sunShape(s, 17, 16, 7.5); cloudShape(s, C_CLOUD, 4, 7); break;
+      case 'partlyN': moonShape(s, 17, 16, 1.4); cloudShape(s, C_CLOUD, 4, 7); break;
+      case 'fog':
+        cloudShape(s, C_CLOUD, 0, -2);
+        [38, 42.5].forEach(function (y, i) {
+          svg('line', { x1: 10 + i * 4, y1: y, x2: 38 - i * 2, y2: y, stroke: C_CLOUD, 'stroke-width': 2.4, 'stroke-linecap': 'round' }, s);
+        });
+        break;
+      case 'drizzle': cloudShape(s, C_RAINY, 0, -4); drop(s, 19, 40); drop(s, 31, 41); break;
+      case 'rain': cloudShape(s, C_RAINY, 0, -4); drop(s, 15, 41); drop(s, 25, 43); drop(s, 35, 41); break;
+      case 'snow':
+        cloudShape(s, C_CLOUD, 0, -4);
+        [15, 25, 35].forEach(function (x, i) { svg('circle', { cx: x, cy: i === 1 ? 43 : 40.5, r: 2.3, fill: '#EAF2FF' }, s); });
+        break;
+      case 'storm':
+        cloudShape(s, C_RAINY, 0, -5);
+        svg('path', { d: 'M26 30 19 40H25L22 47 31 36H25.5Z', fill: C_BOLT }, s);
+        break;
+      default: cloudShape(s, C_CLOUD, 0, 3);
+    }
+    return s;
+  }
+  function putIcon(node, kind, size) { clear(node); node.appendChild(icon(kind, size)); }
 
   // Thành phố do người dùng chọn: {name, lat, lon}. Chưa chọn thì KHÔNG đoán, chỉ mời chọn.
   function loadCity() {
@@ -289,147 +362,235 @@
 
   function cityKey(c) { return c.name + '|' + c.lat + '|' + c.lon; }
 
-  var inner = $('wInner');
-  var chev = $('wChevron');
-  var isOpen = false;
-
-  // Mở/đóng thẻ: spring tiến độ (pS: 0 đóng .. 1 mở) nhân với spring chiều cao nội dung (sS).
-  // Chiều cao, độ mờ nội dung và mũi tên xoay đều chạy theo cùng một spring nên luôn khớp nhau.
-  function render() {
-    detail.style.height = Math.max(0, pS.x * sS.x) + 'px';
-    inner.style.opacity = clamp(pS.x * 1.5, 0, 1);
-    chev.style.transform = 'rotate(' + (180 * pS.x).toFixed(1) + 'deg)';
-  }
-  function settled() {
-    if (pS.live || sS.live) return;
-    detail.style.height = '';
-    inner.style.opacity = '';
-    if (isOpen) {
-      chev.style.transform = 'rotate(180deg)';
-    } else {
-      detail.hidden = true;
-      chev.style.transform = '';
-    }
-  }
-  var pS = new Spring(SETTLE, 0.002, render, settled);
-  var sS = new Spring(SETTLE, 0.4, render, settled);
-
-  function setOpen(open) {
-    isOpen = open;
-    card.classList.toggle('open', open);
-    head.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (reduced) {
-      detail.hidden = !open;
-      chev.style.transform = open ? 'rotate(180deg)' : '';
-      return;
-    }
-    if (open) {
-      if (detail.hidden) {
-        detail.hidden = false;
-        detail.style.height = '0px';
-        inner.style.opacity = '0';
-        pS.jump(0);
-        sS.jump(inner.offsetHeight);
-      } else {
-        sS.go(inner.offsetHeight);
-      }
-      pS.setSpec(SETTLE);
-      pS.go(1);
-    } else {
-      pS.setSpec(DISMISS);
-      pS.go(0);
-    }
-  }
-
-  // Đổi nội dung trong thẻ đang mở (ô tìm thành phố, danh sách kết quả): chiều cao đổi bằng spring.
-  function resizeOpen(mutate) {
-    if (!isOpen || detail.hidden || reduced) { mutate(); return; }
-    if (pS.live) {                      // đang mở dở: chỉ đổi đích chiều cao
-      mutate();
-      sS.go(inner.offsetHeight);
-      return;
-    }
-    var old = inner.offsetHeight;
-    pS.jump(1);
-    sS.jump(old);
-    detail.style.height = old + 'px';
-    mutate();
-    sS.go(inner.offsetHeight);
-  }
+  // ---- Ô tìm thành phố: chiều cao chạy bằng spring ----
+  var pickOpen = false;
+  var pk = new Spring(SETTLE, 0.4, function (h) {
+    pickWrap.style.height = Math.max(0, h) + 'px';
+    pickInner.style.opacity = clamp(h / 36, 0, 1);
+  }, function () {
+    pickWrap.style.height = '';
+    pickInner.style.opacity = '';
+    if (!pickOpen) pickWrap.hidden = true;
+  });
 
   function setPicker(open) {
-    resizeOpen(function () {
-      picker.hidden = !open;
-      if (open) {
-        query.value = '';
-        clear(results);
-      }
-    });
-    if (open) setTimeout(function () { query.focus(); }, 50);
+    pickOpen = open;
+    cityBtn.classList.toggle('open', open);
+    cityBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) { query.value = ''; clear(results); }
+    if (reduced) { pickWrap.hidden = !open; if (open) query.focus(); return; }
+    if (open) {
+      pickWrap.hidden = false;
+      pickWrap.style.height = '0px';
+      pickInner.style.opacity = '0';
+      pk.jump(0);
+      pk.setSpec(SETTLE);
+      pk.go(pickInner.offsetHeight);
+      setTimeout(function () { query.focus(); }, 50);
+    } else {
+      pk.setSpec(DISMISS);
+      pk.go(0);
+    }
   }
 
-  function showEmpty() {
-    $('wIcon').textContent = '📍';
-    $('wTemp').textContent = '';
-    $('wDesc').textContent = 'Chọn thành phố';
-    $('wSub').textContent = 'Để xem thời tiết ở nơi bạn ở';
-    clear($('wHours'));
-    clear($('wDays'));
-    $('wChange').hidden = true;
+  // Danh sách kết quả đổi kích thước: chiều cao đổi bằng spring.
+  function resizePicker(mutate) {
+    if (!pickOpen || pickWrap.hidden || reduced) { mutate(); return; }
+    if (pk.live) { mutate(); pk.go(pickInner.offsetHeight); return; }
+    var old = pickWrap.offsetHeight;
+    pk.jump(old);
+    pickWrap.style.height = old + 'px';
+    mutate();
+    pk.go(pickInner.offsetHeight);
+  }
+
+  // ---- Cảnh minh họa theo giờ + thời tiết ----
+  var imgBg = scene.querySelector('.bg');
+  var imgProps = scene.querySelector('.props');
+  var imgCat = scene.querySelector('.cat');
+  var imgC1 = scene.querySelector('.c1');
+  var imgC2 = scene.querySelector('.c2');
+  var sunEl = $('sun');
+  var moonEl = $('moon');
+  var umbEl = $('umb');
+  var fx = $('fx');
+  for (var di = 0; di < 24; di++) {
+    var dEl = document.createElement('i');
+    dEl.style.left = (Math.random() * 98).toFixed(1) + '%';
+    dEl.style.setProperty('--r', Math.random().toFixed(3));
+    fx.appendChild(dEl);
+  }
+
+  function filt(dim, sat) {
+    return 'brightness(' + (1 - dim).toFixed(2) + ') saturate(' + (1 - sat).toFixed(2) + ')';
+  }
+
+  // st: 'day' | 'dusk' | 'night'; wx: clear | partly | cloudy | fog | rain | snow | storm; frac: 0..1 vị trí mặt trời
+  function applyScene(st, wx, frac) {
+    var night = st === 'night', dusk = st === 'dusk';
+    var rainy = wx === 'rain' || wx === 'storm';
+    var dim = night ? 0.5 : (dusk ? 0.12 : 0);
+    var sat = 0;
+    if (wx === 'cloudy') { dim += 0.1; sat += 0.2; }
+    else if (rainy) { dim += wx === 'storm' ? 0.34 : 0.22; sat += 0.4; }
+    else if (wx === 'snow') { dim += 0.08; sat += 0.25; }
+    else if (wx === 'fog') { dim += 0.06; sat += 0.35; }
+    dim = Math.min(dim, 0.66);
+    var cd = dim + (rainy ? 0.28 : (wx === 'cloudy' ? 0.1 : 0));
+    var cs = Math.min(0.9, sat + (rainy ? 0.45 : (wx === 'cloudy' ? 0.2 : 0)));
+    imgBg.style.filter = filt(dim, sat);
+    imgProps.style.filter = filt(dim * 0.8, sat * 0.7);
+    imgCat.style.filter = filt(dim * 0.55, sat * 0.4);
+    imgC1.style.filter = imgC2.style.filter = filt(cd, cs);
+    var big = rainy ? 1.45 : (wx === 'cloudy' || wx === 'snow' || wx === 'fog' ? 1.25 : (wx === 'partly' ? 1.08 : 1));
+    imgC1.style.scale = imgC2.style.scale = String(big);
+
+    var sunOn = !night && (wx === 'clear' || wx === 'partly');
+    sunEl.classList.toggle('on', sunOn);
+    sunEl.style.left = (10 + 80 * frac).toFixed(1) + '%';
+    sunEl.style.top = (30 - 21 * Math.sin(Math.PI * frac)).toFixed(1) + '%';
+    var moonOn = night && (wx === 'clear' || wx === 'partly');
+    moonEl.classList.toggle('on', moonOn);
+    moonEl.style.left = '84%';
+    moonEl.style.top = '17%';
+    umbEl.classList.toggle('on', rainy);
+
+    scene.className = st + ' ' + wx;
+  }
+
+  // ---- Dữ liệu và hiển thị ----
+  var D = null;        // dữ liệu thời tiết hiện tại
+  var selDay = 0;      // ngày đang chọn (0 = hôm nay)
+  var dayChips = [];
+
+  function toMin(s) { s = String(s); return parseInt(s.slice(11, 13), 10) * 60 + parseInt(s.slice(14, 16), 10); }
+  function nowIdx(data) {
+    var hr = data.hourly;
+    var now = String(data.current.time).slice(0, 13) + ':00';
+    var i = 0;
+    while (i < hr.time.length && hr.time[i] < now) i++;
+    return Math.min(i, hr.time.length - 1);
+  }
+  function hourDay(hr, i) { return hr.is_day ? hr.is_day[i] === 1 : true; }
+  function dayName(dl, i) { return DAYS[new Date(dl.time[i] + 'T00:00:00').getDay()]; }
+
+  function dayState(data) {
+    var cur = data.current, dl = data.daily;
+    var now = toMin(cur.time), sr = toMin(dl.sunrise[0]), ss = toMin(dl.sunset[0]);
+    var st = cur.is_day === 1 ? 'day' : 'night';
+    if (Math.abs(now - sr) <= 40 || Math.abs(now - ss) <= 40) st = 'dusk';
+    return { st: st, frac: clamp((now - sr) / Math.max(1, ss - sr), 0, 1) };
+  }
+
+  function renderBanner(data) {
+    var hr = data.hourly, cur = data.current, i0 = nowIdx(data);
+    var w = describe(cur.weather_code, cur.is_day === 1).w;
+    var text = '', kind = 'rain';
+    if (w === 'rain' || w === 'storm') text = 'Đang có mưa';
+    else if (w === 'snow') { text = 'Đang có tuyết'; kind = 'snow'; }
+    else if (hr.precipitation_probability) {
+      for (var j = i0 + 1; j <= Math.min(i0 + 12, hr.time.length - 1); j++) {
+        if (hr.precipitation_probability[j] >= 40) { text = 'Có thể có mưa vào khoảng ' + hr.time[j].slice(11, 16); break; }
+      }
+    }
+    if (!text) { banner.hidden = true; return; }
+    putIcon($('wBannerIcon'), kind, 28);
+    $('wBannerText').textContent = text;
+    banner.hidden = false;
+  }
+
+  function hourCol(label, temp, kind, p) {
+    var col = el('div', 'h');
+    col.appendChild(el('span', 'd', Math.round(temp) + '°'));
+    col.appendChild(el('span', 'p', p != null && p >= 10 ? p + '%' : ''));
+    var ic = el('span', 'i'); putIcon(ic, kind, 38); col.appendChild(ic);
+    col.appendChild(el('span', 't', label));
+    return col;
+  }
+
+  function renderSelected() {
+    var data = D, cur = data.current, hr = data.hourly, dl = data.daily;
+    var box = $('wHours');
+    clear(box);
+    var info, sc;
+    if (selDay === 0) {
+      var isDay = cur.is_day === 1;
+      info = describe(cur.weather_code, isDay);
+      $('wLabel').textContent = 'Lúc này';
+      $('wTemp').textContent = Math.round(cur.temperature_2m) + '°';
+      $('wSub').textContent = 'Cảm giác như ' + Math.round(cur.apparent_temperature) + '°';
+      var i0 = nowIdx(data);
+      box.appendChild(hourCol('Hiện tại', cur.temperature_2m, info.k, null));
+      for (var i = i0 + 1; i <= i0 + 4 && i < hr.time.length; i++) {
+        box.appendChild(hourCol(hr.time[i].slice(11, 16), hr.temperature_2m[i],
+          describe(hr.weather_code[i], hourDay(hr, i)).k, hr.precipitation_probability ? hr.precipitation_probability[i] : null));
+      }
+      sc = dayState(data);
+    } else {
+      info = describe(dl.weather_code[selDay], true);
+      $('wLabel').textContent = dayName(dl, selDay);
+      $('wTemp').textContent = Math.round(dl.temperature_2m_max[selDay]) + '°';
+      $('wSub').textContent = 'Thấp nhất ' + Math.round(dl.temperature_2m_min[selDay]) + '°';
+      [6, 9, 12, 15, 18].forEach(function (h) {
+        var k = hr.time.indexOf(dl.time[selDay] + 'T' + pad(h) + ':00');
+        if (k < 0) return;
+        box.appendChild(hourCol(pad(h) + ':00', hr.temperature_2m[k],
+          describe(hr.weather_code[k], true).k, hr.precipitation_probability ? hr.precipitation_probability[k] : null));
+      });
+      sc = { st: 'day', frac: 0.5 };
+    }
+    $('wDesc').textContent = info.t;
+    putIcon($('wIcon'), info.k, 52);
+    applyScene(sc.st, info.w, sc.frac);
+    for (var c = 0; c < dayChips.length; c++) {
+      dayChips[c].classList.toggle('sel', c === selDay);
+      dayChips[c].setAttribute('aria-pressed', c === selDay ? 'true' : 'false');
+    }
+  }
+
+  function buildDays(data) {
+    var dl = data.daily;
+    var keep = daysBox.scrollLeft;
+    clear(daysBox);
+    dayChips = [];
+    for (var i = 0; i < dl.time.length; i++) {
+      (function (idx) {
+        var b = el('button', 'chip');
+        b.type = 'button';
+        b.appendChild(el('span', 'n', dayName(dl, idx)));
+        var ic = el('span', 'i'); putIcon(ic, describe(dl.weather_code[idx], true).k, 30); b.appendChild(ic);
+        b.appendChild(el('span', 'm', Math.round(dl.temperature_2m_max[idx]) + '°/' + Math.round(dl.temperature_2m_min[idx]) + '°'));
+        b.addEventListener('click', function () { selDay = idx; renderSelected(); });
+        daysBox.appendChild(b);
+        dayChips.push(b);
+      })(i);
+    }
+    daysBox.scrollLeft = keep;
+  }
+
+  function showEmpty(status) {
+    cityNameEl.textContent = city ? city.name + (status ? ' · ' + status : '') : 'Chọn thành phố';
+    banner.hidden = true;
+    mainCard.hidden = true;
+    daysBox.hidden = true;
+    D = null;
     card.hidden = false;
   }
 
   function showWeather(data) {
     try {
-      var cur = data.current;
-      var info = describe(cur.weather_code);
-      $('wIcon').textContent = info[0];
-      $('wTemp').textContent = Math.round(cur.temperature_2m) + '°';
-      $('wDesc').textContent = info[1];
-      $('wSub').textContent = city.name + ' · Cảm giác như ' + Math.round(cur.apparent_temperature) + '°';
-      $('wChange').hidden = false;
-      renderHours(data);
-      renderDays(data);
+      if (!data.daily.sunrise) throw new Error('old');
+      D = data;
+      if (selDay >= data.daily.time.length) selDay = 0;
+      cityNameEl.textContent = city.name;
+      renderBanner(data);
+      buildDays(data);
+      renderSelected();
+      mainCard.hidden = false;
+      daysBox.hidden = false;
       card.hidden = false;
     } catch (e) {
       showEmpty();
-    }
-  }
-
-  // 6 giờ tới, bắt đầu từ giờ hiện tại (giờ địa phương của thành phố, do timezone=auto).
-  function renderHours(data) {
-    var box = $('wHours');
-    clear(box);
-    var hr = data.hourly;
-    if (!hr || !hr.time) return;
-    var now = String(data.current.time).slice(0, 13) + ':00';
-    var start = 0;
-    while (start < hr.time.length && hr.time[start] < now) start++;
-    for (var i = start; i < Math.min(start + 6, hr.time.length); i++) {
-      var col = el('div', 'h');
-      col.appendChild(el('span', 't', i === start ? 'Bây giờ' : hr.time[i].slice(11, 16)));
-      col.appendChild(el('span', 'i', describe(hr.weather_code[i])[0]));
-      col.appendChild(el('span', 'd', Math.round(hr.temperature_2m[i]) + '°'));
-      var p = hr.precipitation_probability ? hr.precipitation_probability[i] : null;
-      col.appendChild(el('span', 'p', p != null ? p + '%' : ''));
-      box.appendChild(col);
-    }
-  }
-
-  function renderDays(data) {
-    var box = $('wDays');
-    clear(box);
-    var dl = data.daily;
-    if (!dl || !dl.time) return;
-    for (var i = 0; i < Math.min(5, dl.time.length); i++) {
-      var row = el('div', 'day');
-      var name = i === 0 ? 'Hôm nay' : DAYS[new Date(dl.time[i] + 'T00:00:00').getDay()];
-      row.appendChild(el('span', 'n', name));
-      row.appendChild(el('span', 'i', describe(dl.weather_code[i])[0]));
-      var m = el('span', 'm', Math.round(dl.temperature_2m_max[i]) + '° ');
-      m.appendChild(el('span', null, Math.round(dl.temperature_2m_min[i]) + '°'));
-      row.appendChild(m);
-      box.appendChild(row);
     }
   }
 
@@ -443,45 +604,41 @@
     if (store.get('summit.weather') === '0') { card.hidden = true; return; }
     if (!city) { showEmpty(); return; }
     var cached = null;
-    try { cached = JSON.parse(store.get('summit.w2') || 'null'); } catch (e) {}
-    if (cached && cached.key === cityKey(city) && cached.data && cached.data.hourly) {
+    try { cached = JSON.parse(store.get('summit.w3') || 'null'); } catch (e) {}
+    if (cached && cached.key === cityKey(city) && cached.data && cached.data.hourly && cached.data.daily && cached.data.daily.sunrise) {
       showWeather(cached.data);
       if (!force && Date.now() - cached.t < CACHE_MS) return;
     } else {
-      showEmpty();
-      $('wDesc').textContent = 'Thời tiết';
-      $('wSub').textContent = city.name + ' · đang tải…';
-      $('wChange').hidden = false;
+      showEmpty('đang tải…');
     }
     // Làm tròn 2 chữ số: chỉ gửi vị trí cỡ thành phố, không gửi tọa độ chính xác.
     var url = 'https://api.open-meteo.com/v1/forecast' +
       '?latitude=' + city.lat.toFixed(2) + '&longitude=' + city.lon.toFixed(2) +
-      '&current=temperature_2m,apparent_temperature,weather_code' +
-      '&hourly=temperature_2m,precipitation_probability,weather_code' +
-      '&daily=weather_code,temperature_2m_max,temperature_2m_min' +
-      '&forecast_days=5&timezone=auto';
+      '&current=temperature_2m,apparent_temperature,weather_code,is_day' +
+      '&hourly=temperature_2m,precipitation_probability,weather_code,is_day' +
+      '&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset' +
+      '&forecast_days=7&timezone=auto';
     var key = cityKey(city);
     fetch(url, { credentials: 'omit', referrerPolicy: 'no-referrer' })
       .then(function (r) { if (!r.ok) throw new Error('http'); return r.json(); })
       .then(function (j) {
         if (!j || !j.current || !j.hourly || !j.daily) throw new Error('bad');
         if (!city || cityKey(city) !== key) return; // người dùng vừa đổi thành phố
-        var data = { current: j.current, hourly: trim(j.hourly, 48), daily: j.daily };
-        store.set('summit.w2', JSON.stringify({ t: Date.now(), key: key, data: data }));
+        var data = { current: j.current, hourly: trim(j.hourly, 168), daily: j.daily };
+        store.set('summit.w3', JSON.stringify({ t: Date.now(), key: key, data: data }));
         showWeather(data);
       })
       .catch(function () {
         // Mất mạng: giữ giá trị cũ nếu có; chưa có gì thì báo nhẹ.
-        if (city && $('wSub').textContent.indexOf('đang tải') >= 0) {
-          $('wSub').textContent = city.name + ' · không tải được';
-        }
+        if (city && !D) cityNameEl.textContent = city.name + ' · không tải được';
       });
   }
 
   function chooseCity(c) {
     city = { name: c.name, lat: Math.round(c.lat * 100) / 100, lon: Math.round(c.lon * 100) / 100 };
     store.set('summit.city', JSON.stringify(city));
-    store.del('summit.w2');
+    store.del('summit.w3');
+    selDay = 0;
     setPicker(false);
     loadWeather(true);
   }
@@ -499,7 +656,7 @@
       .then(function (j) {
         if (seq !== searchSeq) return;
         var list = (j && j.results) || [];
-        resizeOpen(function () {
+        resizePicker(function () {
           clear(results);
           if (!list.length) { results.appendChild(el('div', 'none', 'Không tìm thấy thành phố này')); return; }
           list.forEach(function (r) {
@@ -516,7 +673,7 @@
       })
       .catch(function () {
         if (seq !== searchSeq) return;
-        resizeOpen(function () {
+        resizePicker(function () {
           clear(results);
           results.appendChild(el('div', 'none', 'Không tìm được, kiểm tra mạng rồi thử lại'));
         });
@@ -526,26 +683,18 @@
   query.addEventListener('input', function () {
     clearTimeout(searchTimer);
     var q = query.value.trim();
-    if (q.length < 2) { searchSeq++; resizeOpen(function () { clear(results); }); return; }
+    if (q.length < 2) { searchSeq++; resizePicker(function () { clear(results); }); return; }
     searchTimer = setTimeout(function () { searchCity(q); }, 350);
   });
 
   // ---- Tương tác ----
-  head.addEventListener('click', function () {
-    var open = !isOpen;
-    setOpen(open);
-    // Chưa chọn thành phố: mở thẳng ô tìm.
-    if (open && !city) setPicker(true);
-  });
-
-  $('wChange').addEventListener('click', function () {
-    setPicker(picker.hidden);
-  });
+  cityBtn.addEventListener('click', function () { setPicker(!pickOpen); });
 
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) { renderClock(false); loadWeather(false); }
   });
 
+  store.del('summit.w2');
   renderClock(false);
   scheduleTick();
   loadWeather(false);
