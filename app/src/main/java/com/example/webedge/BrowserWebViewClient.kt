@@ -25,6 +25,7 @@ internal interface BrowserWebViewHost {
     val pullRefresh: PullToRefreshController?
     var currentUrl: String
     val isUrlBarFocused: Boolean
+    val webDarkMode: Boolean
     fun handleSpecialUrl(url: String, view: WebView): Boolean
     fun toast(msg: String)
     /** Áp cỡ chữ đã lưu của website sắp tải cho [view] (cỡ chữ theo tên miền). */
@@ -166,6 +167,10 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         mainUrls[view] = url
+        // Trang chủ: nền tối ngay khi bắt đầu tải (hết nháy trắng); trang khác: về nền mặc định.
+        view.setBackgroundColor(
+            if (host.webDarkMode && HomePage.isHome(url)) 0xFF141416.toInt() else android.graphics.Color.WHITE
+        )
         YouTubeAdBlocker.onMainFrameNavigation(view, url)
         AdBlocker.onMainFrameNavigation(view, url)
         host.tabManager.updateForWebView(view, url, view.title ?: url)

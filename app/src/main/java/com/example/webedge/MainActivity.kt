@@ -208,6 +208,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             this@MainActivity.handleSpecialUrl(url, view)
         override fun toast(msg: String) = this@MainActivity.toast(msg)
         override fun applyTextZoom(view: WebView, url: String) = textZoom.apply(view, url)
+        override val webDarkMode: Boolean get() = store.webDarkMode
         override fun forgetPageBackground(view: WebView) { pageBackgrounds.remove(view) }
         override fun clearWindowPageBackground() { GlassSystem.setPageBackground(null, window.decorView) }
         override fun confirmHttpFallback(view: WebView, httpUrl: String) {
@@ -543,6 +544,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         WebMediaHub.jsRunner = { js -> runOnUiThread { if (::web.isInitialized) web.evaluateJavascript(js, null) } }
 
         store = Store(this)
+        // Nền khởi động theo "Chế độ tối" của app, tránh nháy trắng trước khi trang chủ vẽ xong.
+        window.setBackgroundDrawable(ColorDrawable(if (store.webDarkMode) 0xFF141416.toInt() else Color.WHITE))
         firstRunPermissions = FirstRunPermissions(this, store)
         privateProfileManager = PrivateProfileManager()
         // Dọn các profile riêng tư bị bỏ lại nếu Android kill process trước khi onDestroy chạy.
@@ -565,6 +568,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         tabWebViewLifecycle = TabWebViewLifecycleController(
             createWebView = { tab ->
                 SummitWebView(webViewContext(store.webDarkMode)).also { view ->
+                    if (store.webDarkMode && HomePage.isHome(tab.url.ifBlank { store.homeUrl })) {
+                        view.setBackgroundColor(0xFF141416.toInt())
+                    }
                     view.onTopOverscroll = {
                         if (::web.isInitialized && view === web) pullRefresh?.onWebTopOverscroll()
                     }
