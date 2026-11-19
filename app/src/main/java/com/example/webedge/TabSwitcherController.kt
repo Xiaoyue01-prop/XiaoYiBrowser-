@@ -426,6 +426,12 @@ class TabSwitcherController(
             maxWidth = dp(150)
             setPadding(dp(16), 0, dp(16), 0)
         }
+        // Cố định chiều rộng viên theo chuỗi dài nhất, để đổi sang "Đã chọn N" không bị giật kích thước.
+        val groupPillWidth = run {
+            val p = groupText.paint
+            val w = listOf("Nhóm thẻ ▾", "Đã chọn 999", "Riêng tư").maxOf { p.measureText(it) }
+            (w + dp(32)).toInt() // 32dp = padding trái/phải 16dp của groupText
+        }
         val groupPill = GlassSystem.createGlassPill(
             activity, blurTarget, activity.resources.displayMetrics.density, isNight(), rimOnShell = true
         )
@@ -471,7 +477,7 @@ class TabSwitcherController(
         headWrap.addView(
             groupPill,
             FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40),
+                groupPillWidth, dp(40),
                 Gravity.END or Gravity.CENTER_VERTICAL
             )
         )
@@ -866,6 +872,8 @@ class TabSwitcherController(
 
         fun showGroupMenu() {
             if (groupCard != null || tabManager.isPrivateMode) return
+            // TODO(thử nghiệm): ẩn viên thật ngay khi mở menu để xem lớp lệch có đến từ viên không. Xóa sau khi thử xong.
+            groupPill.alpha = 0f
             val d = activity.resources.displayMetrics.density
             val night = GlassSystem.isDarkPage()
             val fg = GlassSystem.pagePrimaryText()
