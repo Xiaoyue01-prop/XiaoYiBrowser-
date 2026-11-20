@@ -38,7 +38,8 @@ internal interface BrowserWebViewHost {
     /** Máy chủ yêu cầu HTTP Auth: hỏi tên người dùng và mật khẩu, rồi trả lời [handler] đúng một lần. */
     fun requestHttpAuth(view: WebView, handler: HttpAuthHandler, host: String?, realm: String?)
     /** Bỏ nền trang đang áp lên cửa sổ (khi điều hướng hoặc renderer chết). */
-    fun clearWindowPageBackground()
+    /** [url] là trang sắp tải: trang chủ ở chế độ tối giữ tông tối thay vì rơi về tông sáng. */
+    fun clearWindowPageBackground(url: String?)
     fun showDomain()
     fun setBarHidden(hide: Boolean)
     fun updateNav()
@@ -177,7 +178,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         host.applyTextZoom(view, url)
         // A navigation must not reuse the previous document's background tone.
         host.forgetPageBackground(view)
-        if (view === host.web) host.clearWindowPageBackground()
+        if (view === host.web) host.clearWindowPageBackground(url)
         if (view !== host.web) return
         host.dismissReaderHint()
         // Chụp trang cũ trước khi mờ đi và trước khi nội dung đổi, để lần sau vuốt quay lại có ảnh xem trước.
@@ -255,7 +256,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         YouTubeAdBlocker.forget(view)
         AdBlocker.forget(view)
         host.forgetPageBackground(view)
-        if (view === host.web) host.clearWindowPageBackground()
+        if (view === host.web) host.clearWindowPageBackground(null)
         val tab = host.tabManager.getForWebView(view)
         val lastUrl = view.url
         if (tab != null) {

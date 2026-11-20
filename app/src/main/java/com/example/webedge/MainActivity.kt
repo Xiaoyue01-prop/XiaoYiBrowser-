@@ -210,7 +210,9 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun applyTextZoom(view: WebView, url: String) = textZoom.apply(view, url)
         override val webDarkMode: Boolean get() = store.webDarkMode
         override fun forgetPageBackground(view: WebView) { pageBackgrounds.remove(view) }
-        override fun clearWindowPageBackground() { GlassSystem.setPageBackground(null, window.decorView) }
+        override fun clearWindowPageBackground(url: String?) {
+            GlassSystem.setPageBackground(initialPageTone(url), window.decorView)
+        }
         override fun confirmHttpFallback(view: WebView, httpUrl: String) {
             val hostName = runCatching { Uri.parse(httpUrl).host }.getOrNull() ?: httpUrl
             this@MainActivity.glassDialog.show(
@@ -325,6 +327,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun applyInsets() = this@MainActivity.applyInsets()
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
         override fun setWebDarkMode(enabled: Boolean) = this@MainActivity.rebuildWebViewsForDarkMode()
+        override fun openInNewTab(url: String) = this@MainActivity.openLinkInNewTab(url)
         override fun textZoomPercent(): Int = textZoom.percentFor(web, currentUrl.ifBlank { web.url })
         override fun stepTextZoom(delta: Int): Int = textZoom.step(web, currentUrl.ifBlank { web.url }, delta)
         override fun resetTextZoom(): Int = textZoom.reset(web, currentUrl.ifBlank { web.url })
@@ -1148,6 +1151,14 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
 
 
+    /**
+     * Tông kính tạm thời cho trang CHƯA báo màu nền. Trang chủ ở chế độ tối có nền cố định #141416,
+     * nên dùng luôn màu đó; nếu trả null thì app rơi về tông sáng rồi mới đảo lại tối khi trang báo màu
+     * (bảng Tab/menu bị nháy sáng khi mở tab mới).
+     */
+    private fun initialPageTone(url: String?): Int? =
+        if (store.webDarkMode && HomePage.isHome(url)) 0xFF141416.toInt() else null
+
     private fun captureActiveTab(withThumbnail: Boolean = true) {
         if (::web.isInitialized) tabPersistence.captureActiveTab(web, withThumbnail)
     }
@@ -1184,7 +1195,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             }
         }
         // Apply the selected tab's page material independently from its status-bar/header color.
-        GlassSystem.setPageBackground(pageBackgrounds[target]?.color, window.decorView)
+        GlassSystem.setPageBackground(
+            pageBackgrounds[target]?.color ?: initialPageTone(target.url ?: tab.url.ifBlank { store.homeUrl }),
+            window.decorView
+        )
         topFadeController.refreshPalette()
         // Dải thanh trạng thái theo tab mới ngay lúc đổi, rồi nhờ script báo lại để chắc chắn (script
         // chỉ báo khi giá trị đổi, còn báo cáo lúc tab chạy nền đã bị bỏ qua).

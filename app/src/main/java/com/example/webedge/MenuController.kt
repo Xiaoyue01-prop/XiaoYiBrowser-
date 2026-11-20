@@ -57,6 +57,8 @@ interface MenuHost {
     fun resetTextZoom(): Int
     /** Dựng lại WebView theo [Store.webDarkMode] (WebView chỉ đọc theme lúc tạo). */
     fun setWebDarkMode(enabled: Boolean)
+    /** Mở [url] trong một tab mới (dùng cho menu ba chấm của Lịch sử / Dấu trang). */
+    fun openInNewTab(url: String)
 }
 
 /**
@@ -123,6 +125,21 @@ class MenuController(
             foreground = fg,
             accent = accent,
             toast = host::toast
+        )
+    }
+
+    /** Lịch sử / Dấu trang dạng bottom sheet nền đặc (vuốt dòng sang trái để xóa / xem tùy chọn). */
+    private val entrySheet by lazy(LazyThreadSafetyMode.NONE) {
+        EntryListSheet(
+            activity = activity,
+            store = store,
+            density = d,
+            isNight = isNight,
+            fgColor = fg,
+            accent = accent,
+            toast = host::toast,
+            openUrl = host::load,
+            openInNewTab = host::openInNewTab
         )
     }
 
@@ -553,6 +570,7 @@ class MenuController(
         restorePillNow()
         if (layer != null) root.removeView(layer)
         browserTools.dismiss()
+        entrySheet.dismiss()
         footballSheet.dismiss()
     }
 
@@ -778,8 +796,8 @@ class MenuController(
                 // Chờ thẻ menu thu về xong rồi mới đưa Reader Module lên trên Browser Module.
                 root.postDelayed({ onOpenReader() }, 360L)
             }
-            item("Dấu trang", Icons.BOOKMARK_OUTLINE, false) { showList("Dấu trang", "bookmarks") }
-            item("Lịch sử", Icons.HISTORY, false) { showList("Lịch sử", "history") }
+            item("Dấu trang", Icons.BOOKMARK_OUTLINE, true) { entrySheet.show("Dấu trang", "bookmarks") }
+            item("Lịch sử", Icons.HISTORY, true) { entrySheet.show("Lịch sử", "history") }
             item("Tải xuống", Icons.DOWNLOAD, true) { browserTools.showDownloads() }
             item("Privacy Dashboard", Icons.SHIELD, true) { browserTools.showPrivacy() }
             item("Tỉ số bóng đá", Icons.FOOTBALL, true) { footballSheet.show() }
@@ -1035,14 +1053,14 @@ class MenuController(
             val col = LinearLayout(activity)
             col.orientation = LinearLayout.VERTICAL
             val t = TextView(activity)
-            t.text = if (entry.title.isBlank() || entry.title == entry.url) UrlUtils.shortUrl(entry.url) else entry.title
+            t.text = if (UrlUtils.isUrlLike(entry.title, entry.url)) UrlUtils.domain(entry.url) else entry.title
             t.textSize = 15f
             stylePrimary(t)
             t.setSingleLine()
             t.ellipsize = TextUtils.TruncateAt.END
             col.addView(t)
             val u = TextView(activity)
-            u.text = UrlUtils.shortUrl(entry.url)
+            u.text = UrlUtils.domain(entry.url)
             u.textSize = 12f
             styleSecondary(u)
             u.setSingleLine()

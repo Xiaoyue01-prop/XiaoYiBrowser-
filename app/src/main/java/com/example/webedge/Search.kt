@@ -30,6 +30,16 @@ object UrlUtils {
         }
     }
 
+    /** Chỉ tên miền (bỏ www.), như dòng phụ trong Lịch sử của Chrome. Không phân tích được thì trả nguyên URL. */
+    fun domain(url: String): String =
+        runCatching { Uri.parse(url).host?.removePrefix("www.") }.getOrNull()?.takeIf { it.isNotBlank() } ?: url
+
+    /** Tiêu đề rỗng hoặc thực chất chỉ là một URL (trang chưa kịp có <title>) thì không đáng hiện làm tiêu đề. */
+    fun isUrlLike(title: String, url: String): Boolean {
+        val t = title.trim()
+        return t.isEmpty() || t == url || t.startsWith("http://") || t.startsWith("https://")
+    }
+
     /** Rút gọn link: chỉ hiện tên miền + đường dẫn, bỏ phần tham số dài. */
     fun shortUrl(url: String): String {
         return try {
