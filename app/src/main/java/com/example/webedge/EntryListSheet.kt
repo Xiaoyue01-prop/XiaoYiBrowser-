@@ -19,12 +19,12 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.dynamicanimation.animation.DynamicAnimation
+import eightbitlab.com.blurview.BlurTarget
 import kotlin.math.abs
 
 /**
@@ -63,7 +63,12 @@ class EntryListSheet(
     private var visible: List<Entry> = emptyList()
     private var openRow: SwipeRow? = null
     private var expandedRow: SwipeRow? = null
-    private var popup: PopupWindow? = null
+    // Menu ba chấm của dòng: thẻ kính bung ra từ chính nút ba chấm (giống nút menu trang), nằm trong cửa sổ của sheet.
+    private var menuLayer: FrameLayout? = null
+    private var menuCard: FrameLayout? = null
+    private var menuRow: SwipeRow? = null
+    private var chromeSheet: FrameLayout? = null
+    private var glassTarget: BlurTarget? = null
     private var moreButton: TextView? = null
     private val checks = HashMap<String, FrameLayout>()
 
@@ -81,7 +86,7 @@ class EntryListSheet(
     private val pillStroke: Int get() = if (isNight()) Color.rgb(82, 82, 88) else Color.rgb(218, 218, 224)
 
     fun dismiss() {
-        popup?.dismiss()
+        closeRowMenu(animated = false)
         sheet.dismiss(immediate = true)
     }
 
@@ -135,8 +140,9 @@ class EntryListSheet(
             title,
             page,
             onDismiss = {
-                popup?.dismiss()
-                popup = null
+                closeRowMenu(animated = false)
+                chromeSheet = null
+                glassTarget = null
                 openRow = null
                 expandedRow = null
                 shown = false
@@ -164,6 +170,8 @@ class EntryListSheet(
 
     private fun buildChrome(chrome: BrowserBottomSheet.Chrome) {
         titleView = chrome.titleView
+        chromeSheet = chrome.sheet
+        glassTarget = chrome.blurTarget
         val sync = GlassSystem.BlurSync(chrome.blurTarget)
         blurSync = sync
         val night = GlassSystem.isDarkPage()
@@ -234,6 +242,10 @@ class EntryListSheet(
     private fun handleCloseRequest(): Boolean {
         val p = pill
         return when {
+            menuLayer != null -> {
+                closeRowMenu()
+                true
+            }
             selecting -> {
                 exitSelect()
                 true
@@ -544,16 +556,41 @@ class EntryListSheet(
 
     // ---------------- Menu ba chấm của từng dòng ----------------
 
+    /**
+     * Thẻ kính bung ra từ nút ba chấm đúng như menu trang: nút nảy phóng to và dời về phía thẻ, rồi thẻ nở ra từ đó
+     * ([OriginTransitionController.open] cùng tham số MENU_POP_*), đóng thì thu ngược về nút. Thẻ là anh em của vùng
+     * nội dung trong sheet (không nằm trong BlurTarget mà nó làm mờ).
+     */
     private fun showRowMenu(entry: Entry, anchor: View, row: SwipeRow) {
-        popup?.dismiss()
-        val surface = if (isNight()) Color.rgb(46, 48, 55) else Color.WHITE // nổi lên trên thẻ, có đổ bóng
+        closeRowMenu(animated = false)
+        val host = chromeSheet ?: return
+        val target = glassTarget ?: return
+        val d = activity.resources.displayMetrics.density
+        val night = GlassSystem.isDarkPage()
         val textColor = GlassSystem.pagePrimaryText()
-        val card = LinearLayout(activity).apply {
+        val preset = GlassSystem.Preset.MENU_CARD
+
+        val layer = FrameLayout(activity)
+        layer.setOnClickListener { closeRowMenu() }
+        val card = FrameLayout(activity).apply {
+            background = GlassSystem.create(preset, d, night)
+            clipToOutline = true
+            clipChildren = true
+            isClickable = true
+            foreground = GlassSystem.createBorder(preset.radiusDp, d, night)
+        }
+        val glass = GlassSystem.createBlurView(activity, target, preset, d, night, rim = false).apply {
+            isClickable = false
+            isFocusable = false
+        }
+        card.addView(glass, FrameLayout.LayoutParams(-1, -1))
+        val col = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(6), 0, dp(6))
         }
-        val pw = PopupWindow(card, dp(240), ViewGroup.LayoutParams.WRAP_CONTENT, true)
+        card.addView(col, FrameLayout.LayoutParams(-1, -2))
 
+        var count = 0
         fun item(label: String, path: String, action: () -> Unit) {
             val r = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -561,7 +598,7 @@ class EntryListSheet(
                 setPadding(dp(18), 0, dp(18), 0)
                 foreground = activity.roundedPressBackground(isNight())
                 setOnClickListener {
-                    pw.dismiss()
+                    closeRowMenu()
                     action()
                 }
             }
@@ -574,7 +611,8 @@ class EntryListSheet(
             r.addView(ImageView(activity).apply {
                 setImageDrawable(PathIcon(path, textColor))
             }, LinearLayout.LayoutParams(dp(20), dp(20)))
-            card.addView(r, LinearLayout.LayoutParams(-1, dp(48)))
+            col.addView(r, LinearLayout.LayoutParams(-1, dp(48)))
+            count++
         }
 
         item("Mở trong tab mới", Icons.TABS) {
@@ -591,26 +629,94 @@ class EntryListSheet(
             }
         }
 
-        pw.setBackgroundDrawable(roundedDrawable(dp(18).toFloat(), surface))
-        pw.elevation = dp(14).toFloat()
-        pw.isOutsideTouchable = true
-        pw.setOnDismissListener {
-            row.close()
-            if (popup === pw) popup = null
-        }
-
-        card.measure(
-            View.MeasureSpec.makeMeasureSpec(dp(240), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-        )
-        val menuHeight = card.measuredHeight
+        // Đặt thẻ sát nút: mép phải thẳng hàng với nút, nằm dưới nút; hết chỗ phía dưới thì lật lên trên.
+        val anchorBounds = OriginTransitionController.boundsOnScreen(anchor) ?: return
         val loc = IntArray(2)
-        anchor.getLocationOnScreen(loc)
-        val screenH = activity.resources.displayMetrics.heightPixels
-        val fitsBelow = loc[1] + anchor.height + menuHeight + dp(24) <= screenH
-        val yOff = if (fitsBelow) dp(4) else -(anchor.height + menuHeight + dp(4))
-        popup = pw
-        pw.showAsDropDown(anchor, 0, yOff, Gravity.END)
+        host.getLocationOnScreen(loc)
+        val cardW = dp(240)
+        val cardH = dp(48 * count + 12)
+        val left = (anchorBounds.right - loc[0] - cardW).toInt().coerceIn(dp(12), (host.width - cardW - dp(12)).coerceAtLeast(dp(12)))
+        var top = (anchorBounds.bottom - loc[1]).toInt() + dp(6)
+        if (top + cardH > host.height - dp(24)) top = (anchorBounds.top - loc[1]).toInt() - cardH - dp(6)
+        layer.addView(
+            card,
+            FrameLayout.LayoutParams(cardW, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
+                leftMargin = left
+                topMargin = top.coerceAtLeast(dp(8))
+            }
+        )
+        // Giữ thẻ gần như vô hình tới khi lớp blur vẽ xong khung đầu, để không lộ nền kính trong.
+        card.alpha = 0.01f
+        card.scaleX = 0.8f
+        card.scaleY = 0.8f
+        host.addView(layer, FrameLayout.LayoutParams(-1, -1))
+        menuLayer = layer
+        menuCard = card
+        menuRow = row
+        blurSync?.hold(1000)
+
+        var started = false
+        fun start() {
+            if (started || menuCard !== card) return
+            started = true
+            val opened = OriginTransitionController.open(
+                card,
+                anchor,
+                endCornerRadiusPx = preset.radiusDp * d,
+                springSpec = AnimationSystem.MENU_MORPH,
+                fadeIn = false,
+                counterTransformView = glass,
+                contentViews = { (0 until card.childCount).map { card.getChildAt(it) }.filter { it !== glass } },
+                contentStart = 0f,
+                contentSpan = 0.25f,
+                popScale = Constants.MENU_POP_SCALE,
+                popTowardTarget = Constants.MENU_POP_TOWARD,
+                popDelayMs = Constants.MENU_POP_DELAY_MS
+            )
+            if (!opened) {
+                card.pivotX = card.width.toFloat()
+                card.pivotY = 0f
+                AnimationSystem.enter(card, spec = AnimationSystem.MENU_MORPH)
+            }
+            blurSync?.hold(850)
+        }
+        val observer = glass.viewTreeObserver
+        if (observer.isAlive) {
+            observer.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    if (glass.viewTreeObserver.isAlive) glass.viewTreeObserver.removeOnPreDrawListener(this)
+                    val c = android.view.Choreographer.getInstance()
+                    c.postFrameCallback { c.postFrameCallback { start() } }
+                    return true
+                }
+            })
+        }
+        card.postDelayed({ start() }, 200L)
+    }
+
+    /** Thu thẻ về nút ba chấm (hoặc gỡ ngay khi [animated] = false), rồi đóng dòng đang lộ nút. */
+    private fun closeRowMenu(animated: Boolean = true) {
+        val layer = menuLayer ?: return
+        val card = menuCard
+        val row = menuRow
+        menuLayer = null
+        menuCard = null
+        menuRow = null
+        fun remove() {
+            (layer.parent as? ViewGroup)?.removeView(layer)
+        }
+        if (!animated || card == null || !layer.isAttachedToWindow) {
+            card?.let { OriginTransitionController.cancel(it) }
+            remove()
+            return
+        }
+        layer.setOnClickListener(null)
+        layer.isClickable = false
+        blurSync?.hold(600)
+        OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
+            remove()
+            row?.close()
+        }
     }
 
     private fun share(url: String) {
