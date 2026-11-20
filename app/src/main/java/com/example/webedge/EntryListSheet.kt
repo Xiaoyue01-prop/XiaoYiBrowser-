@@ -73,8 +73,10 @@ class EntryListSheet(
     private var listHolder: LinearLayout? = null
 
     private val muted: Int get() = if (isNight()) Color.rgb(190, 192, 200) else Color.rgb(105, 105, 112)
-    private val chipColor: Int get() = if (isNight()) Color.rgb(43, 45, 52) else Color.rgb(240, 240, 244)
-    private val circleColor: Int get() = if (isNight()) Color.rgb(62, 64, 72) else Color.rgb(226, 226, 232)
+    // Cùng bảng màu với Privacy Dashboard / Tải xuống (BrowserToolsController.card() và actionButton()).
+    private val cardColor: Int get() = if (isNight()) Color.rgb(43, 45, 52) else Color.rgb(247, 247, 249)
+    private val pillFill: Int get() = if (isNight()) Color.rgb(58, 58, 64) else Color.rgb(238, 238, 242)
+    private val pillStroke: Int get() = if (isNight()) Color.rgb(82, 82, 88) else Color.rgb(218, 218, 224)
 
     fun dismiss() {
         popup?.dismiss()
@@ -95,7 +97,7 @@ class EntryListSheet(
 
         val page = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(10), 0, dp(18))
+            setPadding(dp(16), dp(10), dp(16), dp(22))
         }
         val scroll = ScrollView(activity).apply {
             clipToPadding = false
@@ -105,16 +107,13 @@ class EntryListSheet(
 
         val searchBox = buildSearch()
         search = searchBox
-        body.addView(searchBox, LinearLayout.LayoutParams(-1, dp(44)).apply {
-            setMargins(dp(16), dp(4), dp(16), dp(4))
-        })
+        body.addView(searchBox, LinearLayout.LayoutParams(-1, dp(44)).apply { bottomMargin = dp(10) })
         val toolbar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), 0, dp(10), 0)
         }
         toolbarHolder = toolbar
-        body.addView(toolbar, LinearLayout.LayoutParams(-1, dp(44)))
+        body.addView(toolbar, LinearLayout.LayoutParams(-1, dp(36)).apply { bottomMargin = dp(10) })
         val list = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         listHolder = list
         body.addView(list, LinearLayout.LayoutParams(-1, -2))
@@ -153,8 +152,8 @@ class EntryListSheet(
         imeOptions = EditorInfo.IME_ACTION_SEARCH
         gravity = Gravity.CENTER_VERTICAL
         includeFontPadding = false
-        setPadding(dp(18), 0, dp(18), 0)
-        background = roundedDrawable(dp(22).toFloat(), chipColor)
+        setPadding(dp(16), 0, dp(16), 0)
+        background = roundedDrawable(dp(18).toFloat(), cardColor)
         setTextColor(fgColor)
         setHintTextColor(muted)
         addTextChangedListener(object : TextWatcher {
@@ -175,39 +174,55 @@ class EntryListSheet(
 
     private fun applySearchStyle() {
         search?.apply {
-            background = roundedDrawable(dp(22).toFloat(), chipColor)
+            background = roundedDrawable(dp(18).toFloat(), cardColor)
             setTextColor(fgColor)
             setHintTextColor(muted)
         }
     }
 
-    private fun textButton(label: String, color: Int, onClick: () -> Unit): TextView = TextView(activity).apply {
+    /** Nút viên thuốc giống actionButton của Privacy Dashboard; [color] null = nút trung tính. */
+    private fun pillButton(label: String, color: Int?, onClick: () -> Unit): TextView = TextView(activity).apply {
         text = label
-        textSize = 15f
-        setTextColor(color)
+        textSize = 12f
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         gravity = Gravity.CENTER
         setPadding(dp(12), 0, dp(12), 0)
+        setTextColor(color ?: fgColor)
+        background = GradientDrawable().apply {
+            cornerRadius = pillRadiusPx()
+            setColor(pillFill)
+            setStroke(dp(1), color ?: pillStroke)
+        }
         setOnClickListener { onClick() }
-        AnimationSystem.press(this, Constants.PRESS_SCALE_CELL)
+        AnimationSystem.press(this, Constants.PRESS_SCALE_PILL)
+    }
+
+    private fun cardBox(): LinearLayout = LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(14), dp(13), dp(14), dp(13))
+        background = roundedDrawable(dp(18).toFloat(), cardColor)
     }
 
     private fun renderToolbar() {
         val bar = toolbarHolder ?: return
         bar.removeAllViews()
-        fun add(v: View) = bar.addView(v, LinearLayout.LayoutParams(-2, -1))
+        var first = true
+        fun add(v: View) {
+            bar.addView(v, LinearLayout.LayoutParams(-2, -1).apply { if (!first) marginStart = dp(8) })
+            first = false
+        }
         fun spacer() = bar.addView(View(activity), LinearLayout.LayoutParams(0, 1, 1f))
         if (selecting) {
-            add(textButton("Hủy", accent) { exitSelect() })
+            add(pillButton("Hủy", null) { exitSelect() })
             spacer()
             val everything = visible.isNotEmpty() && visible.all { it.url in selected }
-            add(textButton(if (everything) "Bỏ chọn tất cả" else "Chọn tất cả", accent) {
+            add(pillButton(if (everything) "Bỏ chọn tất cả" else "Chọn tất cả", null) {
                 if (everything) selected.removeAll(visible.map { it.url }.toSet())
                 else selected.addAll(visible.map { it.url })
                 checks.forEach { (url, frame) -> styleCheck(frame, url in selected) }
                 renderToolbar()
             })
-            add(textButton(if (selected.isEmpty()) "Xóa" else "Xóa (${selected.size})", Theme.DANGER_RED) {
+            add(pillButton(if (selected.isEmpty()) "Xóa" else "Xóa (${selected.size})", Theme.DANGER_RED) {
                 if (selected.isEmpty()) {
                     toast("Chưa chọn mục nào")
                 } else {
@@ -218,7 +233,7 @@ class EntryListSheet(
                 }
             })
         } else {
-            add(textButton("Chọn", accent) {
+            add(pillButton("Chọn", null) {
                 if (store.list(key).isEmpty()) {
                     toast("Chưa có gì để chọn")
                 } else {
@@ -231,7 +246,7 @@ class EntryListSheet(
             })
             spacer()
             if (key == "history") {
-                add(textButton("Xóa tất cả", accent) {
+                add(pillButton("Xóa tất cả", Theme.DANGER_RED) {
                     sheet.confirm(
                         "Xóa lịch sử",
                         "Xóa toàn bộ lịch sử duyệt web? Hành động này không thể hoàn tác.",
@@ -269,12 +284,13 @@ class EntryListSheet(
         }
         shownCount = 0
         if (visible.isEmpty()) {
-            holder.addView(TextView(activity).apply {
+            val empty = cardBox()
+            empty.addView(TextView(activity).apply {
                 text = if (q.isEmpty()) "Chưa có gì" else "Không tìm thấy"
-                textSize = 15f
+                textSize = 13f
                 setTextColor(muted)
-                setPadding(dp(22), dp(16), dp(22), dp(16))
             })
+            holder.addView(empty, LinearLayout.LayoutParams(-1, -2))
             return
         }
         appendRows()
@@ -290,10 +306,12 @@ class EntryListSheet(
         }
         shownCount = end
         if (shownCount < visible.size) {
-            val more = textButton("Xem thêm ${visible.size - shownCount} mục...", accent) { appendRows() }
-            more.setPadding(dp(22), dp(12), dp(22), dp(12))
+            val more = pillButton("Xem thêm ${visible.size - shownCount} mục", null) { appendRows() }
             moreButton = more
-            holder.addView(more, LinearLayout.LayoutParams(-1, -2))
+            holder.addView(more, LinearLayout.LayoutParams(-2, dp(36)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(2)
+            })
         }
     }
 
@@ -301,10 +319,10 @@ class EntryListSheet(
         val front = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(22), dp(11), dp(22), dp(11))
-            // Nền đặc cùng màu sheet để che hai nút nằm phía sau khi chưa vuốt.
-            setBackgroundColor(GlassSystem.pageSurfaceColor())
-            foreground = activity.roundedPressBackground(isNight())
+            setPadding(dp(14), dp(13), dp(14), dp(13))
+            // Thẻ đặc (cùng màu card của Privacy Dashboard) che hai nút nằm phía sau khi chưa vuốt.
+            background = roundedDrawable(dp(18).toFloat(), cardColor)
+            foreground = activity.roundedPressBackground(isNight(), 18f, 0f, 0f)
         }
         if (selecting) {
             val frame = checkView(entry.url in selected)
@@ -314,7 +332,7 @@ class EntryListSheet(
         val col = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         col.addView(TextView(activity).apply {
             text = if (UrlUtils.isUrlLike(entry.title, entry.url)) UrlUtils.domain(entry.url) else entry.title
-            textSize = 15f
+            textSize = 14f
             setTextColor(fgColor)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setSingleLine()
@@ -323,6 +341,7 @@ class EntryListSheet(
         col.addView(TextView(activity).apply {
             text = UrlUtils.domain(entry.url)
             textSize = 12f
+            setPadding(0, dp(3), 0, 0)
             setTextColor(muted)
             setSingleLine()
             ellipsize = TextUtils.TruncateAt.END
@@ -382,10 +401,11 @@ class EntryListSheet(
     private fun buildActions(entry: Entry, row: SwipeRow): View {
         val box = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
+            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            setPadding(dp(12), 0, 0, 0)
         }
         // Ba chấm hàng dọc: xoay icon ba chấm ngang 90 độ.
-        val more = circleButton(Icons.MORE_HORIZ, circleColor, GlassSystem.pagePrimaryText(), "Tùy chọn")
+        val more = circleButton(Icons.MORE_HORIZ, pillFill, GlassSystem.pagePrimaryText(), "Tùy chọn")
         more.rotation = 90f
         more.setOnClickListener { showRowMenu(entry, more, row) }
         val delete = circleButton(TRASH, Theme.DANGER_RED, Color.WHITE, "Xóa")
@@ -432,7 +452,7 @@ class EntryListSheet(
 
     private fun showRowMenu(entry: Entry, anchor: View, row: SwipeRow) {
         popup?.dismiss()
-        val surface = if (isNight()) Color.rgb(46, 48, 55) else Color.WHITE
+        val surface = if (isNight()) Color.rgb(46, 48, 55) else Color.WHITE // nổi lên trên thẻ, có đổ bóng
         val textColor = GlassSystem.pagePrimaryText()
         val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -533,6 +553,8 @@ class EntryListSheet(
         private var dragging = false
 
         init {
+            // Khoảng cách 10dp giữa các thẻ nằm trong dòng để lúc xóa co lại không bị giật.
+            setPadding(0, 0, 0, dp(10))
             addView(front, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
 
@@ -598,7 +620,7 @@ class EntryListSheet(
 
     private companion object {
         const val CHUNK = 30
-        const val ACTIONS_WIDTH_DP = 128
+        const val ACTIONS_WIDTH_DP = 120
         const val TRASH = "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
     }
 }
