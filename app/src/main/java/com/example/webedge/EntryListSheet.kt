@@ -7,7 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -494,6 +496,31 @@ class EntryListSheet(
             AnimationSystem.press(this, Constants.PRESS_SCALE_BTN)
         }
 
+    /**
+     * Nền kính của nút/thẻ trong sheet: chất kính chung của app (lớp tint theo tông trang) cộng một lớp xám đục
+     * ([SHEET_FROST_ALPHA]) để trên nền trắng vẫn ra "kính mờ" thay vì kính trong. Với thẻ có BlurView thì
+     * BlurView vẽ đè lên, lớp này chỉ là lưới an toàn khi blur không chạy.
+     */
+    private fun frostedBackground(radiusDp: Int): Drawable {
+        val d = activity.resources.displayMetrics.density
+        val night = GlassSystem.isDarkPage()
+        val frost = GradientDrawable().apply {
+            cornerRadius = radiusDp * d
+            setColor(androidx.core.graphics.ColorUtils.setAlphaComponent(pillFill, SHEET_FROST_ALPHA))
+        }
+        return LayerDrawable(arrayOf(GlassSystem.create(radiusDp, d, night), frost))
+    }
+
+    /** Biến nút tròn thành viên kính mờ giả (nền frosted + viền liquid glass) dùng cho nút sau khi vuốt dòng. */
+    private fun applySheetGlass(button: View) {
+        val d = activity.resources.displayMetrics.density
+        val preset = GlassSystem.Preset.TOOLBAR_BUTTON
+        button.background = frostedBackground(preset.radiusDp)
+        button.foreground = GlassSystem.createBorder(preset.radiusDp, d, GlassSystem.isDarkPage())
+        button.outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+        button.clipToOutline = true
+    }
+
     private fun buildActions(entry: Entry, row: SwipeRow): View {
         val box = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -501,19 +528,17 @@ class EntryListSheet(
             setPadding(dp(12), 0, 0, 0)
         }
         // Ba chấm hàng dọc: xoay icon ba chấm ngang 90 độ.
-        val more = circleButton(Icons.MORE_HORIZ, pillFill, GlassSystem.pagePrimaryText(), "Tùy chọn")
+        // Hai nút dùng chung một chất kính (cùng màu, cùng viền) với thẻ menu bung ra từ nút ba chấm, để lúc bung
+        // thành thẻ không bị đổi màu đột ngột. Dòng nằm trong BlurTarget của sheet nên không dùng BlurView được
+        // (sẽ tự đệ quy); phía sau vốn là nền đặc nên kính giả nhìn không khác kính thật.
+        val more = circleButton(Icons.MORE_HORIZ, Color.TRANSPARENT, GlassSystem.pagePrimaryText(), "Tùy chọn")
         more.rotation = 90f
+        applySheetGlass(more)
         more.setOnClickListener { showRowMenu(entry, more, row) }
-        // Nút xóa bằng kính: dòng nằm trong BlurTarget của sheet nên không dùng BlurView được (sẽ tự đệ quy);
-        // dùng chất liệu kính của app (nền kính + viền liquid glass) vẽ bằng drawable, phía sau vốn là nền đặc.
         val delete = circleButton(TRASH, Color.TRANSPARENT, Color.WHITE, "Xóa").apply {
-            val d = activity.resources.displayMetrics.density
             setImageDrawable(TrashIcon(GlassSystem.pagePrimaryText()))
-            background = GlassSystem.create(GlassSystem.Preset.TOOLBAR_BUTTON, d, GlassSystem.isDarkPage())
-            foreground = GlassSystem.createBorder(GlassSystem.Preset.TOOLBAR_BUTTON.radiusDp, d, GlassSystem.isDarkPage())
-            outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
-            clipToOutline = true
         }
+        applySheetGlass(delete)
         delete.setOnClickListener { deleteRow(entry, row) }
         box.addView(more, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(10) })
         box.addView(delete, LinearLayout.LayoutParams(dp(44), dp(44)))
@@ -573,7 +598,7 @@ class EntryListSheet(
         val layer = FrameLayout(activity)
         layer.setOnClickListener { closeRowMenu() }
         val card = FrameLayout(activity).apply {
-            background = GlassSystem.create(preset, d, night)
+            background = frostedBackground(preset.radiusDp)
             clipToOutline = true
             clipChildren = true
             isClickable = true
@@ -653,6 +678,9 @@ class EntryListSheet(
         menuLayer = layer
         menuCard = card
         menuRow = row
+        // Nút ba chấm là con của dòng này và bay ra khỏi dòng khi bung thẻ: nâng dòng lên trên các dòng khác
+        // (Android vẽ anh em có Z cao hơn sau cùng) để các dòng phía dưới không đè lên nút.
+        row.translationZ = dp(RAISED_ROW_Z_DP).toFloat()
         blurSync?.hold(1000)
 
         var started = false
@@ -704,6 +732,7 @@ class EntryListSheet(
         menuRow = null
         fun remove() {
             (layer.parent as? ViewGroup)?.removeView(layer)
+            row?.translationZ = 0f
         }
         if (!animated || card == null || !layer.isAttachedToWindow) {
             card?.let { OriginTransitionController.cancel(it) }
@@ -961,6 +990,11 @@ class EntryListSheet(
         const val CHUNK = 30
         const val ACTIONS_WIDTH_DP = 120
         const val ROW_HEIGHT_DP = 52
+        // Độ đục (0..255) của lớp xám phủ lên kính giả trong sheet: nền sheet trắng phẳng nên chỉ lớp tint chung 27%
+        // sẽ nhìn như kính trong; lớp này làm nút/thẻ ra vẻ kính mờ kể cả khi không có BlurView.
+        const val SHEET_FROST_ALPHA = 150
+        // Nâng dòng đang mở menu lên trên các dòng khác để nút ba chấm bay ra khỏi dòng không bị dòng dưới đè.
+        const val RAISED_ROW_Z_DP = 4
         const val EXPAND_SCALE = 1.03f
         const val FLING_VELOCITY = 900f
         const val DELETE_COLLAPSE_DELAY_MS = 130L
