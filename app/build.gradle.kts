@@ -52,7 +52,7 @@ dependencies {
     // Coroutines: xử lý mạng không tạo Thread thô
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     // lifecycleScope: tự hủy tác vụ khi đóng app
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.1")
     // Media3 (bản ổn định mới nhất): MediaSessionService + MediaSession cho media của trang web
     implementation("androidx.media3:media3-session:1.11.1")
     // WebViewCompat.addDocumentStartJavaScript: chạy script ở mọi khung của trang
