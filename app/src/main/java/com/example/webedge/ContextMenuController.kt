@@ -10,6 +10,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewConfiguration
 import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -20,6 +21,7 @@ import androidx.core.view.doOnLayout
 import eightbitlab.com.blurview.BlurTarget
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.util.WeakHashMap
 
 
 /**
@@ -40,14 +42,14 @@ try {
 document.addEventListener('contextmenu', function(e){
   try {
     var t = e.target;
-    if (!t || !t.closest || !window.EdgeBridge || !EdgeBridge.longPress) return;
+    if (!e.isTrusted || !t || !t.closest || !window.EdgeBridge || !EdgeBridge.longPress) return;
     var img = t.closest('img');
     var a = t.closest('a[href]');
     var imgUrl = img ? (img.currentSrc || img.src || '') : '';
     var linkUrl = a ? (a.href || '') : '';
     if (!imgUrl && !linkUrl) return;
     e.preventDefault();
-    EdgeBridge.longPress(linkUrl, imgUrl);
+    EdgeBridge.longPress(linkUrl, imgUrl, e);
   } catch (err) {}
 }, true);
 })();
@@ -79,6 +81,15 @@ class ContextMenuController(
     private var domTargetSequence = -1
     private var domTarget: DomTarget? = null
     private var lastShownAt = 0L
+    private data class BridgeGesture(
+        var downAt: Long,
+        val downX: Float,
+        val downY: Float,
+        var valid: Boolean = true,
+        var consumed: Boolean = false
+    )
+    private val bridgeGestures = WeakHashMap<WebView, BridgeGesture>()
+    private val bridgeTouchSlop = ViewConfiguration.get(activity).scaledTouchSlop * 1.5f
     val isShowing: Boolean get() = layer != null
 
     private data class DomTarget(
@@ -94,6 +105,11 @@ class ContextMenuController(
         webView.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    bridgeGestures[webView] = BridgeGesture(
+                        downAt = android.os.SystemClock.uptimeMillis(),
+                        downX = event.x,
+                        downY = event.y
+                    )
                     val sequence = ++touchSequence
                     domTargetSequence = sequence
                     domTarget = null
@@ -147,6 +163,19 @@ class ContextMenuController(
                             }
                         }
                     }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val gesture = bridgeGestures[webView]
+                    if (gesture != null && gesture.valid) {
+                        val dx = event.x - gesture.downX
+                        val dy = event.y - gesture.downY
+                        if (dx * dx + dy * dy > bridgeTouchSlop * bridgeTouchSlop) {
+                            gesture.valid = false
+                        }
+                    }
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    bridgeGestures[webView]?.valid = false
                 }
             }
             false
@@ -210,14 +239,34 @@ class ContextMenuController(
         }
     }
 
+    /**
+     * Chỉ chấp nhận context-menu message nếu WebView vừa nhận một ACTION_DOWN thật, ngón tay không kéo
+     * thành thao tác cuộn và gesture chưa được dùng. Message giả mạo không gắn với một cử chỉ chạm gần đây sẽ bị loại.
+     */
+    fun consumeRecentBridgeGesture(
+        webView: WebView,
+        maxAgeMs: Long = 5_000L,
+        minAgeMs: Long = 0L
+    ): Boolean {
+        val gesture = bridgeGestures[webView] ?: return false
+        val age = android.os.SystemClock.uptimeMillis() - gesture.downAt
+        if (!gesture.valid || gesture.consumed || age !in minAgeMs..maxAgeMs) return false
+        gesture.consumed = true
+        return true
+    }
+
     /** Long press do script trong trang báo về (link/ảnh dưới ngón tay). Gọi trên luồng UI. */
-    fun showFromDom(linkUrl: String, imageUrl: String) {
-        if (android.os.SystemClock.uptimeMillis() - lastShownAt < 600L) return
+    fun showFromDom(webView: WebView, linkUrl: String, imageUrl: String): Boolean {
+        if (android.os.SystemClock.uptimeMillis() - lastShownAt < 600L) return false
+        // Phải giữ ngón tay đủ lâu cho một long-press thật; một lần chạm ngắn không thể bật menu bằng JS.
+        val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
+        if (!consumeRecentBridgeGesture(webView, minAgeMs = longPressTimeout)) return false
         val image = imageUrl.takeIf { isWebUrl(it) }
         val link = linkUrl.takeIf { isWebUrl(it) }
-        when {
-            image != null -> show(imageActions(image))
-            link != null -> show(linkActions(link))
+        return when {
+            image != null -> { show(imageActions(image)); true }
+            link != null -> { show(linkActions(link)); true }
+            else -> false
         }
     }
 

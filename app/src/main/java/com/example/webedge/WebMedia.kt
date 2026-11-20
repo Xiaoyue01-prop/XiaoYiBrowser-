@@ -288,11 +288,14 @@ try {
         try { p = v.requestFullscreen ? v.requestFullscreen() : (v.webkitRequestFullscreen && v.webkitRequestFullscreen()); } catch (e) {}
         Promise.resolve(p).then(function(){ resolve({ width: v.videoWidth, height: v.videoHeight }); }, reject);
       }
-      // Đường WebMessageListener nhận callback xác nhận; đường addJavascriptInterface cũ gọi đồng bộ nên không cần đợi.
+      // Chỉ tiếp tục fullscreen sau khi native xác nhận user gesture; không còn đường fallback vô điều kiện.
       try {
-        if (window.__summitNative) EdgeBridge.requestPip(goFs);
-        else { EdgeBridge.requestPip(); goFs(); }
-      } catch (e) { goFs(); }
+        var sent = EdgeBridge.requestPip(function(accepted){
+          if (accepted) goFs();
+          else reject(new DOMException('Picture-in-Picture requires a user gesture', 'NotAllowedError'));
+        });
+        if (!sent) reject(new DOMException('Picture-in-Picture requires a user gesture', 'NotAllowedError'));
+      } catch (e) { reject(e); }
     });
   };
   document.exitPictureInPicture = function(){ return Promise.resolve(); };

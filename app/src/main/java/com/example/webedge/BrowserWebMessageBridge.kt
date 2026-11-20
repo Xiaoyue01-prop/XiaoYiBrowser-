@@ -10,52 +10,67 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import org.json.JSONArray
 
-/** Tên đối tượng mà WebMessageListener gắn vào trang; chỉ [EDGE_BRIDGE_SHIM_JS] dùng tới nó. */
+/** Tên đối tượng WebMessageListener được tiêm vào từng frame có origin được phép. */
 internal const val EDGE_BRIDGE_OBJECT = "__summitNative"
 
 /**
- * Giữ nguyên giao diện `window.EdgeBridge.xxx(...)` cho các script hiện có (edge_script.js, MEDIA_JS, LONG_PRESS_JS),
- * nhưng bên dưới gửi một tin nhắn JSON `[mã, ...tham số]` qua WebMessageListener thay vì gọi thẳng vào đối tượng Java.
- * Mã: tc/ctc = màu thanh trên, pb/cpb = màu nền trang, pg = pullGuard, pip = yêu cầu PiP, lp = nhấn giữ, ms = trạng thái media.
- * Phải đăng ký TRƯỚC các script khác ở đầu tài liệu; hàm tra [EDGE_BRIDGE_OBJECT] lúc gọi nên không phụ thuộc thứ tự nạp đối tượng.
+ * Giữ API window.EdgeBridge cho các script nội bộ của Summit. WebMessageListener chỉ truyền dữ liệu;
+ * không đưa đối tượng Java/Kotlin hay hàm native trực tiếp vào JavaScript của trang.
  */
 internal const val EDGE_BRIDGE_SHIM_JS = """
 (function(){
 if (window.EdgeBridge) return;
 function s(op, a){
-  try { window.__summitNative.postMessage(JSON.stringify([op].concat(a))); } catch (e) {}
+  try {
+    var n = window.__summitNative;
+    if (!n || typeof n.postMessage !== 'function') return false;
+    n.postMessage(JSON.stringify([op].concat(a)));
+    return true;
+  } catch (e) { return false; }
 }
 window.EdgeBridge = {
   setTopColor: function(r, g, b){ s('tc', [r, g, b]); },
   clearTopColor: function(){ s('ctc', []); },
   setPageBackground: function(r, g, b){ s('pb', [r, g, b]); },
   clearPageBackground: function(){ s('cpb', []); },
-  pullGuard: function(b){ s('pg', [b]); },
-  // cb (tuỳ chọn) được gọi khi app đã ghi nhận yêu cầu PiP. Nếu không có tin trả lời (đường cũ / lỗi) thì vẫn gọi sau 400ms.
+  pullGuard: function(b){ s('pg', [!!b]); },
+  // PiP chỉ được gửi khi Chromium báo frame hiện tại đang có transient user activation.
+  // Native còn đối chiếu với thao tác chạm thực tế trước khi arm PiP.
   requestPip: function(cb){
+    var n = window.__summitNative;
+    var ua = navigator.userActivation;
+    if (!n || typeof n.postMessage !== 'function' || !ua || !ua.isActive) return false;
     var done = false;
-    function fin(){ if (done) return; done = true; try { cb && cb(); } catch (e) {} }
+    function fin(ok){
+      if (done) return;
+      done = true;
+      try { cb && cb(!!ok); } catch (e) {}
+    }
     try {
-      var n = window.__summitNative;
-      if (!cb || !n) { s('pip', []); fin(); return; }
-      n.onmessage = function(ev){ if (ev && ev.data === 'pip-ok') fin(); };
-      s('pip', []);
-      setTimeout(fin, 400);
-    } catch (e) { fin(); }
+      n.onmessage = function(ev){
+        if (!ev) return;
+        if (ev.data === 'pip-ok') fin(true);
+        else if (ev.data === 'pip-denied') fin(false);
+      };
+      n.postMessage(JSON.stringify(['pip']));
+      setTimeout(function(){ fin(false); }, 1200);
+      return true;
+    } catch (e) { fin(false); return false; }
   },
-  longPress: function(l, i){ s('lp', [l, i]); },
+  // Chỉ LONG_PRESS_JS được gọi với contextmenu Event do trình duyệt tạo (isTrusted=true).
+  longPress: function(l, i, e){
+    if (!e || e.isTrusted !== true || e.type !== 'contextmenu') return false;
+    return s('lp', [l, i]);
+  },
   mediaState: function(a, p, t, ar, art, pos, dur, rate, w, h){ s('ms', [a, p, t, ar, art, pos, dur, rate, w, h]); }
 };
 })();
 """
 
 /**
- * Nhận tin nhắn từ trang qua WebMessageListener (kênh bất đồng bộ, chỉ truyền dữ liệu, không lộ đối tượng Java ra trang)
- * rồi chuyển cho [BrowserJavascriptBridge] xử lý như trước (kẹp giá trị, chuyển về UI thread).
- *
- * Phân quyền theo khung: các script MEDIA_JS và LONG_PRESS_JS chạy ở mọi khung (kể cả iframe chứa trình phát) nên
- * media/PiP/nhấn giữ được nhận từ mọi khung; còn màu thanh trên, màu nền và pullGuard chỉ do edge_script.js ở khung
- * chính gửi nên tin từ iframe bị bỏ (iframe quảng cáo không thể làm đổi màu thanh trạng thái của app).
+ * Nhận dữ liệu từ các trang. Vì Summit là trình duyệt nên không thể whitelist trước domain của website;
+ * listener vẫn cần wildcard để hỗ trợ mọi website và iframe, nhưng opaque/file/content origins bị loại ngay
+ * tại callback. Mỗi message còn được kiểm tra schema và quyền theo loại thao tác.
  */
 internal class BrowserWebMessageBridge(
     private val bridge: BrowserJavascriptBridge
@@ -70,67 +85,184 @@ internal class BrowserWebMessageBridge(
     ) {
         if (message.type != WebMessageCompat.TYPE_STRING) return
         val text = message.data ?: return
-        if (text.length > MAX_MESSAGE_CHARS) return
-        val a = try { JSONArray(text) } catch (_: Exception) { return }
-        when (a.optString(0)) {
-            "tc" -> if (isMainFrame) bridge.setTopColor(a.optInt(1), a.optInt(2), a.optInt(3))
-            "ctc" -> if (isMainFrame) bridge.clearTopColor()
-            "pb" -> if (isMainFrame) bridge.setPageBackground(a.optInt(1), a.optInt(2), a.optInt(3))
-            "cpb" -> if (isMainFrame) bridge.clearPageBackground()
-            "pg" -> if (isMainFrame) bridge.pullGuard(a.optInt(1))
-            // Trả lời "đã nhận" sau khi cờ PiP được đặt; trang đợi tin này rồi mới xin toàn màn hình (tránh chạy đua).
-            // Bị spam thì vẫn trả lời để trang không phải đợi, nhưng không chuyển tiếp cho app.
-            "pip" -> if (allow(Op.PIP)) {
-                bridge.requestPip { runCatching { replyProxy.postMessage("pip-ok") } }
-            } else {
-                runCatching { replyProxy.postMessage("pip-ok") }
+        if (text.length > MAX_MESSAGE_CHARS || !isWebOrigin(sourceOrigin)) return
+        val args = runCatching { JSONArray(text) }.getOrNull() ?: return
+        val op = args.stringAt(0, 4) ?: return
+
+        when (op) {
+            "tc" -> {
+                if (!isMainFrame || args.length() != 4) return
+                val color = args.rgbAt() ?: return
+                bridge.setTopColor(color[0], color[1], color[2])
             }
-            "lp" -> if (allow(Op.LONG_PRESS)) bridge.longPress(a.text(1), a.text(2))
-            "ms" -> bridge.mediaState(
-                a.optInt(1),
-                a.optBoolean(2, false),
-                a.text(3),
-                a.text(4),
-                a.text(5),
-                a.optDouble(6, Double.NaN),
-                a.optDouble(7, Double.NaN),
-                a.optDouble(8, Double.NaN),
-                a.optInt(9),
-                a.optInt(10)
-            )
+            "ctc" -> {
+                if (!isMainFrame || args.length() != 1) return
+                bridge.clearTopColor()
+            }
+            "pb" -> {
+                if (!isMainFrame || args.length() != 4) return
+                val color = args.rgbAt() ?: return
+                bridge.setPageBackground(color[0], color[1], color[2])
+            }
+            "cpb" -> {
+                if (!isMainFrame || args.length() != 1) return
+                bridge.clearPageBackground()
+            }
+            "pg" -> {
+                if (!isMainFrame || args.length() != 2) return
+                val blocked = args.booleanAt(1) ?: return
+                bridge.pullGuard(blocked)
+            }
+            "pip" -> {
+                if (args.length() != 1 || pipRequestPending || !canAccept(Op.PIP)) return
+                pipRequestPending = true
+                bridge.requestPip { accepted ->
+                    pipRequestPending = false
+                    if (accepted) recordAccepted(Op.PIP)
+                    runCatching { replyProxy.postMessage(if (accepted) "pip-ok" else "pip-denied") }
+                }
+            }
+            "lp" -> {
+                if (args.length() != 3 || longPressPending || !canAccept(Op.LONG_PRESS)) return
+                val link = args.stringAt(1, MAX_URL_CHARS).orEmpty().takeIf(::isHttpUrl).orEmpty()
+                val image = args.stringAt(2, MAX_URL_CHARS).orEmpty().takeIf(::isHttpUrl).orEmpty()
+                if (link.isEmpty() && image.isEmpty()) return
+                longPressPending = true
+                bridge.longPress(link, image) { accepted ->
+                    longPressPending = false
+                    if (accepted) recordAccepted(Op.LONG_PRESS)
+                }
+            }
+            "ms" -> {
+                if (args.length() != 11) return
+                val active = args.intAt(1)?.takeIf { it == 0 || it == 1 } ?: return
+                val playing = args.booleanAt(2) ?: return
+                val title = args.stringAt(3, MAX_MEDIA_TEXT) ?: return
+                val artist = args.stringAt(4, MAX_MEDIA_TEXT) ?: return
+                val artwork = args.stringAt(5, MAX_URL_CHARS) ?: return
+                val position = args.numberOrDefaultAt(6, 0.0)?.takeIf { it in 0.0..MAX_MEDIA_TIME_MS } ?: return
+                val duration = args.numberOrDefaultAt(7, 0.0)?.takeIf { it in 0.0..MAX_MEDIA_TIME_MS } ?: return
+                val rate = args.numberOrDefaultAt(8, 1.0)?.takeIf { it in MIN_PLAYBACK_RATE..MAX_PLAYBACK_RATE } ?: return
+                val width = args.intOrDefaultAt(9, 0)?.takeIf { it in 0..MAX_VIDEO_DIMENSION } ?: return
+                val height = args.intOrDefaultAt(10, 0)?.takeIf { it in 0..MAX_VIDEO_DIMENSION } ?: return
+                if (!allowMedia(sourceOrigin)) return
+                bridge.mediaState(
+                    active = active,
+                    playing = playing,
+                    title = title,
+                    artist = artist,
+                    artwork = artwork,
+                    posMs = position,
+                    durMs = duration,
+                    rate = rate,
+                    videoWidth = width,
+                    videoHeight = height
+                )
+            }
         }
     }
 
-    /**
-     * Chỉ giới hạn hai thao tác một cú chạm của người dùng mới tạo ra (xin PiP, nhấn giữ): một trang/iframe độc hại
-     * không thể bắn chúng hàng chục lần mỗi giây. Cố ý KHÔNG giới hạn tc/pb/pg/ms vì edge_script.js và MEDIA_JS
-     * bắn dồn khi cuộn, chuyển trang hoặc đang phát media. Bộ nhớ này theo từng WebView (mỗi tab một listener).
-     */
-    private enum class Op(val minGapMs: Long) { PIP(250L), LONG_PRESS(250L) }
-
+    /** PiP và long-press là thao tác UI nhạy cảm: giới hạn tần suất, sau đó còn qua native gesture gate. */
+    private enum class Op(val minGapMs: Long) { PIP(500L), LONG_PRESS(500L) }
     private val lastAcceptedAt = LongArray(Op.values().size)
+    private var pipRequestPending = false
+    private var longPressPending = false
 
-    private fun allow(op: Op): Boolean {
-        val now = SystemClock.elapsedRealtime()
+    private fun canAccept(op: Op): Boolean {
         val last = lastAcceptedAt[op.ordinal]
-        if (last != 0L && now - last < op.minGapMs) return false
-        lastAcceptedAt[op.ordinal] = now
+        return last == 0L || SystemClock.elapsedRealtime() - last >= op.minGapMs
+    }
+
+    private fun recordAccepted(op: Op) {
+        lastAcceptedAt[op.ordinal] = SystemClock.elapsedRealtime()
+    }
+
+    /** Một frame không thể gây spam MediaSession; global cap cũng giới hạn nhiều iframe khác origin. */
+    private val lastMediaAtByOrigin = LinkedHashMap<String, Long>()
+    private var lastAnyMediaAt = 0L
+
+    private fun allowMedia(origin: Uri): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        val key = origin.toString()
+        val lastOrigin = lastMediaAtByOrigin[key] ?: 0L
+        if ((lastOrigin != 0L && now - lastOrigin < MEDIA_ORIGIN_GAP_MS) ||
+            (lastAnyMediaAt != 0L && now - lastAnyMediaAt < MEDIA_GLOBAL_GAP_MS)
+        ) return false
+
+        lastMediaAtByOrigin[key] = now
+        lastAnyMediaAt = now
+        while (lastMediaAtByOrigin.size > MAX_TRACKED_MEDIA_ORIGINS) {
+            val eldest = lastMediaAtByOrigin.entries.iterator()
+            if (eldest.hasNext()) {
+                eldest.next()
+                eldest.remove()
+            } else break
+        }
         return true
     }
 
-    // JSON null/thiếu -> null (optString trả về chữ "null" cho JSON null nên không dùng trực tiếp).
-    private fun JSONArray.text(i: Int): String? = if (isNull(i)) null else optString(i)
+    private fun isWebOrigin(origin: Uri): Boolean {
+        val scheme = origin.scheme?.lowercase(java.util.Locale.ROOT)
+        if (scheme != "http" && scheme != "https") return false
+        if (origin.host.isNullOrBlank() || origin.userInfo != null) return false
+        val port = origin.port
+        return port == -1 || port in 1..65535
+    }
+
+    private fun isHttpUrl(raw: String): Boolean {
+        if (raw.isBlank() || raw.length > MAX_URL_CHARS) return false
+        val uri = runCatching { Uri.parse(raw) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase(java.util.Locale.ROOT)
+        val port = uri.port
+        return (scheme == "http" || scheme == "https") && !uri.host.isNullOrBlank() &&
+            uri.userInfo == null && (port == -1 || port in 1..65535)
+    }
+
+    private fun JSONArray.stringAt(index: Int, maxLength: Int): String? =
+        (opt(index) as? String)?.takeIf { it.length <= maxLength }
+
+    private fun JSONArray.booleanAt(index: Int): Boolean? = opt(index) as? Boolean
+
+    private fun JSONArray.numberAt(index: Int): Double? =
+        (opt(index) as? Number)?.toDouble()?.takeIf { it.isFinite() }
+
+    private fun JSONArray.numberOrDefaultAt(index: Int, default: Double): Double? =
+        if (isNull(index)) default else numberAt(index)
+
+    private fun JSONArray.intAt(index: Int): Int? {
+        val number = numberAt(index) ?: return null
+        if (number % 1.0 != 0.0 || number < Int.MIN_VALUE.toDouble() || number > Int.MAX_VALUE.toDouble()) return null
+        return number.toInt()
+    }
+
+    private fun JSONArray.intOrDefaultAt(index: Int, default: Int): Int? =
+        if (isNull(index)) default else intAt(index)
+
+    private fun JSONArray.rgbAt(): IntArray? {
+        val r = intAt(1)?.takeIf { it in 0..255 } ?: return null
+        val g = intAt(2)?.takeIf { it in 0..255 } ?: return null
+        val b = intAt(3)?.takeIf { it in 0..255 } ?: return null
+        return intArrayOf(r, g, b)
+    }
 
     private companion object {
         const val MAX_MESSAGE_CHARS = 32_768
+        const val MAX_URL_CHARS = 2_000
+        const val MAX_MEDIA_TEXT = 200
+        const val MAX_VIDEO_DIMENSION = 16_384
+        const val MAX_MEDIA_TIME_MS = 604_800_000.0 // 7 ngày
+        const val MIN_PLAYBACK_RATE = 0.0625
+        const val MAX_PLAYBACK_RATE = 16.0
+        const val MEDIA_ORIGIN_GAP_MS = 150L
+        const val MEDIA_GLOBAL_GAP_MS = 40L
+        const val MAX_TRACKED_MEDIA_ORIGINS = 32
     }
 }
 
 /**
- * Gắn cầu nối vào WebView bằng WebMessageListener + script shim. KHÔNG còn đường dự phòng addJavascriptInterface:
- * đường đó lộ đối tượng Java cho mọi khung (kể cả iframe quảng cáo) và không biết khung nào gọi. Nếu WebView không
- * hỗ trợ (hoặc gắn lỗi) thì cầu nối tắt hẳn: các tính năng cần nó (màu thanh trên, media/PiP, menu nhấn giữ) ngừng
- * hoạt động chứ không mở lỗ hổng.
+ * Gắn bằng WebMessageListener + DocumentStartScript. Wildcard cần thiết để browser hỗ trợ mọi website;
+ * isWebOrigin() phía trên loại opaque/file/content origins, và mỗi opcode có quyền riêng.
+ * Không có fallback addJavascriptInterface.
  */
 internal fun installEdgeBridge(view: WebView, bridge: BrowserJavascriptBridge) {
     val modern = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) &&
@@ -148,9 +280,8 @@ internal fun installEdgeBridge(view: WebView, bridge: BrowserJavascriptBridge) {
     }
 }
 
-/** Gỡ cầu nối khỏi WebView (cả hai đường); gọi trước khi hủy WebView. */
+/** Gỡ WebMessageListener trước khi hủy WebView. */
 internal fun removeEdgeBridge(view: WebView) {
-    runCatching { view.removeJavascriptInterface("EdgeBridge") }
     if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
         runCatching { WebViewCompat.removeWebMessageListener(view, EDGE_BRIDGE_OBJECT) }
     }

@@ -104,6 +104,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private var orbController: OrbMenuController? = null
     private lateinit var suggestionController: SuggestionController
     private var isActivityDestroyed = false
+    private var lastUserInteractionAt = 0L
     private val handler = Handler(Looper.getMainLooper())
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
     private var downloadPromptController: DownloadPromptController? = null
@@ -142,6 +143,16 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
     }
 
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        lastUserInteractionAt = SystemClock.elapsedRealtime()
+    }
+
+    private fun hasRecentUserInteraction(maxAgeMs: Long = 2_500L): Boolean {
+        val age = SystemClock.elapsedRealtime() - lastUserInteractionAt
+        return age in 0..maxAgeMs
+    }
+
     override fun isBridgeHostDestroyed(): Boolean = isActivityDestroyed
 
     override fun onBridgeTopColor(owner: WebView, color: Int?) {
@@ -161,14 +172,21 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (owner === web && !isActivityDestroyed) onWebMediaState(info)
     }
 
-    override fun onBridgePipRequest(owner: WebView) {
-        if (owner === web && !isActivityDestroyed) fullscreenVideoController?.armPendingPip()
+    override fun onBridgePipRequest(owner: WebView): Boolean {
+        if (owner !== web || isActivityDestroyed) return false
+        val gestureFromWeb = contextMenuController?.consumeRecentBridgeGesture(owner) == true
+        // Khi video đã tách thành custom fullscreen view, ACTION_DOWN không còn đi qua WebView;
+        // Activity vẫn ghi nhận input vật lý, còn shim yêu cầu transient user activation trong frame.
+        val gestureFromFullscreen = fullscreenVideoController?.isShowing == true && hasRecentUserInteraction()
+        if (!gestureFromWeb && !gestureFromFullscreen) return false
+        val controller = fullscreenVideoController ?: return false
+        controller.armPendingPip()
+        return true
     }
 
-    override fun onBridgeLongPress(owner: WebView, linkUrl: String, imageUrl: String) {
-        if (owner === web && !isActivityDestroyed) {
-            contextMenuController?.showFromDom(linkUrl, imageUrl)
-        }
+    override fun onBridgeLongPress(owner: WebView, linkUrl: String, imageUrl: String): Boolean {
+        if (owner !== web || isActivityDestroyed) return false
+        return contextMenuController?.showFromDom(owner, linkUrl, imageUrl) == true
     }
 
     override fun onBridgePullGuard(owner: WebView, blocked: Boolean) {
