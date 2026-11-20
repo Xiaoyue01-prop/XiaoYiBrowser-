@@ -797,6 +797,26 @@ class TabSwitcherController(
             v.scaleY = 1f
         }
 
+        // Thẻ nhóm thẻ / thẻ ⋯ nhỏ hơn menu trang nhiều, nên dời cố định 30% về tâm thẻ (MENU_POP_TOWARD) làm khung nảy
+        // (nút phóng MENU_POP_SCALE lần) thò ra ngoài thẻ: viên Nhóm thẻ lòi bên phải, nút ⋯ lòi bên dưới. Tính phần
+        // quãng dời đủ để khung nảy nằm gọn trong thẻ (không dưới mức mặc định) để nút nảy lên đủ cao.
+        fun popFraction(anchor: View, card: View): Float {
+            val a = OriginTransitionController.boundsOnScreen(anchor) ?: return Constants.MENU_POP_TOWARD
+            val t = OriginTransitionController.boundsOnScreen(card) ?: return Constants.MENU_POP_TOWARD
+            val scale = Constants.MENU_POP_SCALE
+            fun axis(ac: Float, tc: Float, tMin: Float, tMax: Float, half: Float): Float {
+                val d = tc - ac
+                if (Math.abs(d) < 1f) return 0f
+                val lo = tMin + half
+                val hi = tMax - half
+                val want = if (lo > hi) tc else ac.coerceIn(lo, hi)
+                return ((want - ac) / d).coerceIn(0f, 1f)
+            }
+            val fx = axis(a.centerX(), t.centerX(), t.left, t.right, a.width() * scale / 2f)
+            val fy = axis(a.centerY(), t.centerY(), t.top, t.bottom, a.height() * scale / 2f)
+            return maxOf(Constants.MENU_POP_TOWARD, fx, fy)
+        }
+
         fun dismissGroupMenu(animate: Boolean = true) {
             val card = groupCard ?: return
             val layer = groupLayer
@@ -1075,7 +1095,7 @@ class TabSwitcherController(
                     contentStart = 0f,
                     contentSpan = 0.25f,
                     popScale = Constants.MENU_POP_SCALE,
-                    popTowardTarget = Constants.MENU_POP_TOWARD,
+                    popTowardTarget = popFraction(groupPill, card),
                     popDelayMs = Constants.MENU_POP_DELAY_MS
                 )
                 if (!morphing) {
@@ -1268,7 +1288,7 @@ class TabSwitcherController(
                     contentStart = 0f,
                     contentSpan = 0.25f,
                     popScale = Constants.MENU_POP_SCALE,
-                    popTowardTarget = Constants.MENU_POP_TOWARD,
+                    popTowardTarget = popFraction(anchor, card),
                     popDelayMs = Constants.MENU_POP_DELAY_MS
                 )
                 if (!morphing) {
