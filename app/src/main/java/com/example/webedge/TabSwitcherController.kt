@@ -1209,54 +1209,85 @@ class TabSwitcherController(
             }
             card.addView(glass, FrameLayout.LayoutParams(-1, -1))
 
-            val content = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(0, dp(6), 0, dp(6))
-            }
-            items.forEach { item ->
-                if (item.dividerBefore) {
-                    content.addView(
-                        View(activity).apply { setBackgroundColor(GlassSystem.pageDividerColor()) },
-                        LinearLayout.LayoutParams(-1, 1).apply { setMargins(dp(16), dp(3), dp(16), dp(3)) }
-                    )
+            // Trang hiện tại của thẻ; chạm mục có submenu thì đổi sang trang mới trong cùng thẻ (xem swapPage).
+            var swapPage: (List<PopupItem>) -> Unit = {}
+            fun buildPage(list: List<PopupItem>): LinearLayout {
+                val page = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, dp(6), 0, dp(6))
                 }
-                val row = LinearLayout(activity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(16), 0, dp(18), 0)
-                    minimumHeight = dp(46)
-                    isClickable = true
-                    background = activity.roundedPressBackground(night)
-                    setOnClickListener {
-                        if (item.instantDismiss) {
-                            dismissPopup(false)
-                            item.onClick()
-                        } else {
-                            dismissPopup()
-                            container.post { item.onClick() }
+                list.forEach { item ->
+                    if (item.dividerBefore) {
+                        page.addView(
+                            View(activity).apply { setBackgroundColor(GlassSystem.pageDividerColor()) },
+                            LinearLayout.LayoutParams(-1, 1).apply { setMargins(dp(16), dp(3), dp(16), dp(3)) }
+                        )
+                    }
+                    val row = LinearLayout(activity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(dp(16), 0, dp(18), 0)
+                        minimumHeight = dp(46)
+                        isClickable = true
+                        background = activity.roundedPressBackground(night)
+                        setOnClickListener {
+                            val sub = item.submenu
+                            if (sub != null) {
+                                swapPage(sub())
+                            } else if (item.instantDismiss) {
+                                dismissPopup(false)
+                                item.onClick()
+                            } else {
+                                dismissPopup()
+                                container.post { item.onClick() }
+                            }
                         }
                     }
+                    row.addView(
+                        ImageView(activity).apply { if (item.icon != null) setImageDrawable(item.icon) },
+                        LinearLayout.LayoutParams(dp(18), dp(18))
+                    )
+                    row.addView(
+                        TextView(activity).apply {
+                            text = item.label
+                            textSize = 15f
+                            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                            setTextColor(item.color ?: fg)
+                            setSingleLine(true)
+                            ellipsize = TextUtils.TruncateAt.END
+                            setPadding(dp(12), dp(4), 0, dp(4))
+                        },
+                        LinearLayout.LayoutParams(0, -2, 1f)
+                    )
+                    AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
+                    page.addView(row, LinearLayout.LayoutParams(-1, -2))
                 }
-                row.addView(
-                    ImageView(activity).apply { if (item.icon != null) setImageDrawable(item.icon) },
-                    LinearLayout.LayoutParams(dp(18), dp(18))
-                )
-                row.addView(
-                    TextView(activity).apply {
-                        text = item.label
-                        textSize = 15f
-                        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                        setTextColor(item.color ?: fg)
-                        setSingleLine(true)
-                        ellipsize = TextUtils.TruncateAt.END
-                        setPadding(dp(12), dp(4), 0, dp(4))
-                    },
-                    LinearLayout.LayoutParams(0, -2, 1f)
-                )
-                AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
-                content.addView(row, LinearLayout.LayoutParams(-1, -2))
+                return page
             }
+            var content = buildPage(items)
             card.addView(content, FrameLayout.LayoutParams(-1, -2))
+            // Giống chuyển trang Lịch sử trong menu ba chấm (MenuController.setMenuPage): trang cũ mờ đi (QUICK),
+            // trang mới hiện sau 40ms (SETTLE), thẻ đổi kích thước bằng spring (animateSizeFrom), góc neo đứng yên.
+            swapPage = { list ->
+                val old = content
+                val oldW = card.width
+                val oldH = card.height
+                val page = buildPage(list)
+                content = page
+                card.dropLeavingPages()
+                if (oldW > 0 && oldH > 0 && old.parent === card) {
+                    card.holdLeaving(listOf(old))
+                    AnimationSystem.fade(old, 0f, AnimationSystem.QUICK) { card.removeLeaving(old) }
+                    card.addView(page, FrameLayout.LayoutParams(-1, -2))
+                    page.alpha = 0f
+                    page.postDelayed({ AnimationSystem.fade(page, 1f, AnimationSystem.SETTLE) }, 40L)
+                    card.animateSizeFrom(oldW, oldH)
+                    blurSync.hold(900)
+                } else {
+                    if (card.childCount > 1) card.removeViews(1, card.childCount - 1)
+                    card.addView(page, FrameLayout.LayoutParams(-1, -2))
+                }
+            }
             layer.addView(
                 card,
                 FrameLayout.LayoutParams(panelWidth, -2, Gravity.BOTTOM or Gravity.START).apply {
@@ -1485,8 +1516,8 @@ class TabSwitcherController(
             }
         }
 
-        // "Chuyển nhóm thẻ": liệt kê các nhóm khác nhóm đang xem + "Nhóm thẻ mới", mọc từ cùng nút ⋯.
-        fun showMovePicker(anchor: View) {
+        // "Chuyển nhóm thẻ": trang con liệt kê các nhóm khác nhóm đang xem + "Nhóm thẻ mới"; hiện ngay trong cùng thẻ ⋯.
+        fun moveGroupItems(): List<PopupItem> {
             val fg = GlassSystem.pagePrimaryText()
             val others = tabManager.getGroups().filter { it.id != tabManager.currentGroupId }
             val items = mutableListOf<PopupItem>()
@@ -1499,7 +1530,7 @@ class TabSwitcherController(
                     onClick = { askNewGroupAndMove() }
                 )
             )
-            showPopup(anchor, items)
+            return items
         }
 
         onMoreClicked = {
@@ -1524,8 +1555,7 @@ class TabSwitcherController(
                             PopupItem(
                                 label = "Chuyển nhóm thẻ",
                                 icon = PathIcon(Icons.TABS, fg),
-                                instantDismiss = true,
-                                onClick = { showMovePicker(anchor) }
+                                submenu = { moveGroupItems() }
                             )
                         )
                     }
@@ -1895,7 +1925,9 @@ private class PopupItem(
     val dividerBefore: Boolean = false,
     /** true: đóng menu ngay không animation rồi chạy [onClick] (để mở menu kế tiếp từ cùng nút gốc). */
     val instantDismiss: Boolean = false,
-    val onClick: () -> Unit
+    /** Khác null: chạm thì đổi trang ngay trong cùng thẻ sang danh sách này (như mục Lịch sử của menu ba chấm), không đóng menu. */
+    val submenu: (() -> List<PopupItem>)? = null,
+    val onClick: () -> Unit = {}
 )
 
 /** FrameLayout báo lại mọi lần chạm xuống (ACTION_DOWN) trước khi con xử lý, để bảng tab biết có chạm ra ngoài một viên đang nở. */
