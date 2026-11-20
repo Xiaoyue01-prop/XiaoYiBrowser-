@@ -1,8 +1,5 @@
 package com.example.webedge
 
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
-import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -11,34 +8,35 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.text.Editable
 import android.text.TextUtils
-import android.text.TextWatcher
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
-import android.view.animation.AccelerateInterpolator
-import android.view.animation.DecelerateInterpolator
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.dynamicanimation.animation.DynamicAnimation
 import kotlin.math.abs
 
 /**
  * Lịch sử / Dấu trang dạng bottom sheet (nền đặc, cùng khung với Tải xuống / Privacy Dashboard).
  *
- *  - Chạm một dòng: mở trang. Vuốt dòng sang trái: lộ 2 nút (ba chấm dọc, xóa).
- *  - Ba chấm: menu nhỏ nền đặc (mở tab mới / chia sẻ / sao chép liên kết / thêm vào dấu trang - chỉ Lịch sử).
- *  - Xóa: dòng trượt tiếp sang trái rồi co lại.
- *  - "Chọn": chọn nhiều mục để xóa; "Xóa tất cả" chỉ có ở Lịch sử.
+ *  - Tiêu đề: nút X bên trái, viên kính ba chấm bên phải ([GlassSearchPill] bản đảo, nở sang trái):
+ *    ba chấm -> [chọn][kính lúp]; chạm kính lúp thì viên spring ra che luôn tiêu đề thành thanh tìm kiếm.
+ *  - Mỗi dòng là một viên thuốc chỉ có tên trang. Giữ lâu: dòng phình ra, hiện cả URL (giữ lâu lần nữa để thu lại).
+ *  - Chạm một dòng: mở trang. Vuốt dòng sang trái: lộ 2 nút (ba chấm dọc, xóa); chuyển động dùng chung spring của
+ *    [AnimationSystem] (có vận tốc ngón tay), không còn animator riêng.
+ *  - Chọn: chọn nhiều mục; nút kính thùng rác nổi ở góc dưới bên phải để xóa các mục đã chọn.
+ *    Nút X (hoặc Back) lúc đang chọn / đang tìm kiếm chỉ thoát chế độ đó, không đóng sheet.
  *
  * Menu con là PopupWindow nền đặc nên không còn cảnh hai lớp kính mờ chồng lên nhau.
  */
@@ -64,12 +62,16 @@ class EntryListSheet(
     private var shownCount = 0
     private var visible: List<Entry> = emptyList()
     private var openRow: SwipeRow? = null
+    private var expandedRow: SwipeRow? = null
     private var popup: PopupWindow? = null
     private var moreButton: TextView? = null
     private val checks = HashMap<String, FrameLayout>()
 
-    private var search: EditText? = null
-    private var toolbarHolder: LinearLayout? = null
+    private var pill: GlassSearchPill? = null
+    private var trashButton: FrameLayout? = null
+    private var titleView: TextView? = null
+    private var blurSync: GlassSystem.BlurSync? = null
+    private var bodyView: LinearLayout? = null
     private var listHolder: LinearLayout? = null
 
     private val muted: Int get() = if (isNight()) Color.rgb(190, 192, 200) else Color.rgb(105, 105, 112)
@@ -93,34 +95,40 @@ class EntryListSheet(
         checks.clear()
         shown = false
         openRow = null
+        expandedRow = null
         moreButton = null
+        pill = null
+        trashButton = null
+        titleView = null
+        blurSync = null
 
         val page = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(10), dp(16), dp(22))
+            setPadding(0, dp(10), 0, dp(22))
         }
-        val scroll = ScrollView(activity).apply {
+        // Lề trái/phải 16dp nằm trong ScrollView (không phải trong page) để dòng phình ra / phóng to khi giữ
+        // có chỗ tràn mà không bị cắt ở mép khung cuộn.
+        val scroll = TouchScrollView(activity).apply {
             clipToPadding = false
+            clipChildren = false
             isVerticalScrollBarEnabled = false
+            setPadding(dp(16), 0, dp(16), 0)
+            onDown = { ev -> pill?.collapseActionsIfOutside(ev.rawX, ev.rawY) }
         }
-        val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-
-        val searchBox = buildSearch()
-        search = searchBox
-        body.addView(searchBox, LinearLayout.LayoutParams(-1, dp(44)).apply { bottomMargin = dp(10) })
-        val toolbar = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        val body = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
         }
-        toolbarHolder = toolbar
-        body.addView(toolbar, LinearLayout.LayoutParams(-1, dp(36)).apply { bottomMargin = dp(10) })
-        val list = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        bodyView = body
+        val list = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+        }
         listHolder = list
         body.addView(list, LinearLayout.LayoutParams(-1, -2))
         scroll.addView(body)
         page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        renderToolbar()
         renderList()
 
         sheet.show(
@@ -130,55 +138,180 @@ class EntryListSheet(
                 popup?.dismiss()
                 popup = null
                 openRow = null
+                expandedRow = null
                 shown = false
+                pill?.hideKeyboard()
+                pill = null
+                trashButton = null
+                titleView = null
+                blurSync = null
             },
-            onPageToneChanged = {
+            onPageToneChanged = { color ->
                 if (shown) {
-                    applySearchStyle()
-                    renderToolbar()
+                    val primary = GlassSystem.pagePrimaryText(color)
+                    pill?.applyIconColor(primary)
+                    (trashButton?.getChildAt(1) as? ImageView)?.setImageDrawable(TrashIcon(primary))
                     renderList()
                 }
-            }
+            },
+            onChromeReady = { chrome -> buildChrome(chrome) },
+            onCloseRequest = { handleCloseRequest() }
         )
         shown = true
     }
 
-    // ---------------- Ô tìm kiếm + thanh công cụ ----------------
+    // ---------------- Tiêu đề: viên ba chấm + nút xóa kính ----------------
 
-    private fun buildSearch(): EditText = EditText(activity).apply {
-        hint = "Tìm trong ${title.lowercase()}"
-        textSize = 15f
-        setSingleLine()
-        imeOptions = EditorInfo.IME_ACTION_SEARCH
-        gravity = Gravity.CENTER_VERTICAL
-        includeFontPadding = false
-        setPadding(dp(16), 0, dp(16), 0)
-        background = roundedDrawable(dp(18).toFloat(), cardColor)
-        setTextColor(fgColor)
-        setHintTextColor(muted)
-        addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                query = s?.toString().orEmpty()
-                if (shown || listHolder != null) renderList()
+    private fun buildChrome(chrome: BrowserBottomSheet.Chrome) {
+        titleView = chrome.titleView
+        val sync = GlassSystem.BlurSync(chrome.blurTarget)
+        blurSync = sync
+        val night = GlassSystem.isDarkPage()
+        val primary = GlassSystem.pagePrimaryText()
+        val d = activity.resources.displayMetrics.density
+
+        val p = GlassSearchPill(
+            activity = activity,
+            blurTarget = chrome.blurTarget,
+            isNight = night,
+            iconColor = primary,
+            hintText = "Tìm trong ${title.lowercase()}",
+            onQueryChange = { q ->
+                query = q
+                if (listHolder != null) renderList()
+            },
+            onSelect = { enterSelect() },
+            onSelectAll = { toggleSelectAll() },
+            // Viên nở sang trái, che luôn tiêu đề: tiêu đề mờ đi theo tiến độ.
+            onSearchProgress = { prog -> chrome.titleView.alpha = 1f - (prog * 3f).coerceIn(0f, 1f) },
+            syncBlur = { ms -> sync.hold(ms) },
+            mirrored = true
+        )
+        pill = p
+        chrome.header.addView(
+            p.view,
+            FrameLayout.LayoutParams(p.restWidthPx, dp(40), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                marginEnd = dp(16)
             }
-        })
-        setOnEditorActionListener { v, _, _ ->
-            val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.hideSoftInputFromWindow(v.windowToken, 0)
-            v.clearFocus()
-            true
+        )
+        // Thanh tìm kiếm rộng tối đa tới sát nút X: lề phải 16 + nút X 16 + 40 + khoảng hở 10.
+        chrome.header.addOnLayoutChangeListener { v, l, _, r, _, oldL, _, oldR, _ ->
+            if (r - l != oldR - oldL) p.setMaxWidth(v.width - dp(16 + 40 + 10 + 16))
+        }
+
+        // Nút xóa kính (icon thùng rác) ở góc dưới bên phải; chỉ hiện khi đang chọn.
+        val trash = GlassSystem.createGlassIconButton(
+            activity, chrome.blurTarget, TrashIcon(primary), d, night, "Xóa các mục đã chọn"
+        )
+        trash.visibility = View.GONE
+        trash.setOnClickListener { deleteSelected() }
+        AnimationSystem.press(trash, Constants.PRESS_SCALE_BTN)
+        trashButton = trash
+        chrome.sheet.addView(
+            trash,
+            FrameLayout.LayoutParams(dp(60), dp(60), Gravity.BOTTOM or Gravity.END).apply {
+                marginEnd = dp(20)
+                bottomMargin = dp(24)
+            }
+        )
+        // Sheet tràn xuống sát đáy nên nút phải tự nhường thanh điều hướng.
+        ViewCompat.setOnApplyWindowInsetsListener(trash) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+                val bottom = dp(24) + if (ime.bottom > 0) 0 else bars.bottom
+                if (lp.bottomMargin != bottom) {
+                    lp.bottomMargin = bottom
+                    v.layoutParams = lp
+                }
+            }
+            insets
+        }
+        trash.post { ViewCompat.requestApplyInsets(trash) }
+    }
+
+    /** Nút X / Back: đang chọn thì thoát chọn, đang mở viên tìm kiếm thì thu viên; ngoài ra để sheet đóng bình thường. */
+    private fun handleCloseRequest(): Boolean {
+        val p = pill
+        return when {
+            selecting -> {
+                exitSelect()
+                true
+            }
+            p != null && p.isOpen -> {
+                p.collapse()
+                true
+            }
+            else -> false
         }
     }
 
-    private fun applySearchStyle() {
-        search?.apply {
-            background = roundedDrawable(dp(18).toFloat(), cardColor)
-            setTextColor(fgColor)
-            setHintTextColor(muted)
+    // ---------------- Chế độ chọn ----------------
+
+    private fun enterSelect() {
+        if (store.list(key).isEmpty()) {
+            toast("Chưa có gì để chọn")
+            return
+        }
+        openRow?.close()
+        expandedRow?.setExpanded(false)
+        selecting = true
+        selected.clear()
+        pill?.enterSelectMode()
+        bodyView?.setPadding(0, 0, 0, dp(88)) // chừa chỗ cho nút xóa kính nổi ở góc dưới
+        refreshSelectionUi()
+        showTrash(true)
+        renderList()
+    }
+
+    private fun exitSelect() {
+        selecting = false
+        selected.clear()
+        pill?.exitSelectMode()
+        titleView?.text = title
+        showTrash(false)
+        bodyView?.setPadding(0, 0, 0, 0)
+        renderList()
+    }
+
+    private fun toggleSelectAll() {
+        if (!selecting) return
+        val everything = visible.isNotEmpty() && visible.all { it.url in selected }
+        if (everything) selected.removeAll(visible.map { it.url }.toSet())
+        else selected.addAll(visible.map { it.url })
+        checks.forEach { (url, frame) -> styleCheck(frame, url in selected) }
+        refreshSelectionUi()
+    }
+
+    /** Tiêu đề hiện số mục đã chọn; icon "chọn tất cả" đặc khi đã chọn hết. */
+    private fun refreshSelectionUi() {
+        if (!selecting) return
+        titleView?.text = "Đã chọn ${selected.size}"
+        pill?.setAllSelected(visible.isNotEmpty() && visible.all { it.url in selected })
+    }
+
+    private fun deleteSelected() {
+        if (selected.isEmpty()) {
+            toast("Chưa chọn mục nào")
+            return
+        }
+        val n = selected.size
+        selected.toList().forEach { store.remove(key, it) }
+        toast("Đã xóa $n mục")
+        exitSelect()
+    }
+
+    private fun showTrash(on: Boolean) {
+        val t = trashButton ?: return
+        if (on) {
+            blurSync?.hold(700)
+            AnimationSystem.appear(t, offsetY = dp(28).toFloat(), fromScale = 0.5f)
+        } else {
+            AnimationSystem.disappear(t, offsetY = dp(28).toFloat(), toScale = 0.5f)
         }
     }
+
+    // ---------------- Thành phần nhỏ ----------------
 
     /** Nút viên thuốc giống actionButton của Privacy Dashboard; [color] null = nút trung tính. */
     private fun pillButton(label: String, color: Int?, onClick: () -> Unit): TextView = TextView(activity).apply {
@@ -199,74 +332,8 @@ class EntryListSheet(
 
     private fun cardBox(): LinearLayout = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(14), dp(13), dp(14), dp(13))
-        background = roundedDrawable(dp(18).toFloat(), cardColor)
-    }
-
-    private fun renderToolbar() {
-        val bar = toolbarHolder ?: return
-        bar.removeAllViews()
-        var first = true
-        fun add(v: View) {
-            bar.addView(v, LinearLayout.LayoutParams(-2, -1).apply { if (!first) marginStart = dp(8) })
-            first = false
-        }
-        fun spacer() = bar.addView(View(activity), LinearLayout.LayoutParams(0, 1, 1f))
-        if (selecting) {
-            add(pillButton("Hủy", null) { exitSelect() })
-            spacer()
-            val everything = visible.isNotEmpty() && visible.all { it.url in selected }
-            add(pillButton(if (everything) "Bỏ chọn tất cả" else "Chọn tất cả", null) {
-                if (everything) selected.removeAll(visible.map { it.url }.toSet())
-                else selected.addAll(visible.map { it.url })
-                checks.forEach { (url, frame) -> styleCheck(frame, url in selected) }
-                renderToolbar()
-            })
-            add(pillButton(if (selected.isEmpty()) "Xóa" else "Xóa (${selected.size})", Theme.DANGER_RED) {
-                if (selected.isEmpty()) {
-                    toast("Chưa chọn mục nào")
-                } else {
-                    val n = selected.size
-                    selected.toList().forEach { store.remove(key, it) }
-                    toast("Đã xóa $n mục")
-                    exitSelect()
-                }
-            })
-        } else {
-            add(pillButton("Chọn", null) {
-                if (store.list(key).isEmpty()) {
-                    toast("Chưa có gì để chọn")
-                } else {
-                    openRow?.close()
-                    selecting = true
-                    selected.clear()
-                    renderToolbar()
-                    renderList()
-                }
-            })
-            spacer()
-            if (key == "history") {
-                add(pillButton("Xóa tất cả", Theme.DANGER_RED) {
-                    sheet.confirm(
-                        "Xóa lịch sử",
-                        "Xóa toàn bộ lịch sử duyệt web? Hành động này không thể hoàn tác.",
-                        "Xóa"
-                    ) {
-                        store.clearHistory()
-                        search?.setText("")
-                        query = ""
-                        renderList()
-                    }
-                })
-            }
-        }
-    }
-
-    private fun exitSelect() {
-        selecting = false
-        selected.clear()
-        renderToolbar()
-        renderList()
+        setPadding(dp(20), dp(16), dp(20), dp(16))
+        background = pillDrawable(cardColor)
     }
 
     // ---------------- Danh sách ----------------
@@ -274,6 +341,7 @@ class EntryListSheet(
     private fun renderList() {
         val holder = listHolder ?: return
         openRow = null
+        expandedRow = null
         holder.removeAllViews()
         checks.clear()
         moreButton = null
@@ -291,9 +359,11 @@ class EntryListSheet(
                 setTextColor(muted)
             })
             holder.addView(empty, LinearLayout.LayoutParams(-1, -2))
+            refreshSelectionUi()
             return
         }
         appendRows()
+        refreshSelectionUi()
     }
 
     private fun appendRows() {
@@ -316,13 +386,15 @@ class EntryListSheet(
     }
 
     private fun buildRow(entry: Entry): View {
-        val front = LinearLayout(activity).apply {
+        // Viên thuốc bo tròn hết cỡ, chỉ có tên trang; giữ lâu thì phình ra hiện thêm URL (xem SwipeRow.setExpanded).
+        val front = SlidingFront().apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(13), dp(14), dp(13))
+            minimumHeight = dp(ROW_HEIGHT_DP)
+            setPadding(dp(20), dp(12), dp(20), dp(12))
             // Thẻ đặc (cùng màu card của Privacy Dashboard) che hai nút nằm phía sau khi chưa vuốt.
-            background = roundedDrawable(dp(18).toFloat(), cardColor)
-            foreground = activity.roundedPressBackground(isNight(), 18f, 0f, 0f)
+            background = pillDrawable(cardColor)
+            foreground = activity.roundedPressBackground(isNight(), PILL_RADIUS_DP.toFloat(), 0f, 0f)
         }
         if (selecting) {
             val frame = checkView(entry.url in selected)
@@ -332,23 +404,26 @@ class EntryListSheet(
         val col = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         col.addView(TextView(activity).apply {
             text = if (UrlUtils.isUrlLike(entry.title, entry.url)) UrlUtils.domain(entry.url) else entry.title
-            textSize = 14f
+            textSize = 15f
             setTextColor(fgColor)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setSingleLine()
             ellipsize = TextUtils.TruncateAt.END
         })
-        col.addView(TextView(activity).apply {
-            text = UrlUtils.domain(entry.url)
+        val urlView = TextView(activity).apply {
+            text = entry.url
             textSize = 12f
             setPadding(0, dp(3), 0, 0)
             setTextColor(muted)
-            setSingleLine()
+            maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
-        })
+            alpha = 0f
+            visibility = View.GONE
+        }
+        col.addView(urlView)
         front.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        val row = SwipeRow(front, dp(ACTIONS_WIDTH_DP))
+        val row = SwipeRow(front, urlView, dp(ACTIONS_WIDTH_DP))
         row.swipeEnabled = !selecting
         if (!selecting) row.attachActions(buildActions(entry, row))
         front.setOnClickListener {
@@ -356,13 +431,22 @@ class EntryListSheet(
                 selecting -> {
                     if (!selected.add(entry.url)) selected.remove(entry.url)
                     checks[entry.url]?.let { styleCheck(it, entry.url in selected) }
-                    renderToolbar()
+                    refreshSelectionUi()
                 }
                 row.isOpen -> row.close()
                 else -> {
                     sheet.dismiss()
                     openUrl(entry.url)
                 }
+            }
+        }
+        front.setOnLongClickListener {
+            if (selecting || row.isOpen || row.deleting) {
+                false
+            } else {
+                front.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                row.setExpanded(!row.expanded)
+                true
             }
         }
         return row
@@ -415,37 +499,38 @@ class EntryListSheet(
         return box
     }
 
+    /**
+     * Xóa một dòng bằng spring chung: dòng trượt hẳn sang trái + mờ đi (DISMISS), ngay sau đó chiều cao co về 0
+     * (cũng DISMISS) để các dòng dưới dồn lên liền mạch, không còn ValueAnimator / interpolator riêng.
+     */
     private fun deleteRow(entry: Entry, row: SwipeRow) {
         if (row.deleting) return
         row.deleting = true
         if (openRow === row) openRow = null
+        if (expandedRow === row) expandedRow = null
         store.remove(key, entry.url)
         visible = visible.filter { it.url != entry.url }
         shownCount = (shownCount - 1).coerceAtLeast(0)
         val width = row.width.toFloat().coerceAtLeast(dp(200).toFloat())
-        // Trượt tiếp sang trái (cả dòng lẫn hai nút), rồi co chiều cao để các dòng dưới dồn lên.
-        row.animate()
-            .translationX(-width)
-            .setDuration(230)
-            .setInterpolator(AccelerateInterpolator())
-            .withEndAction {
-                val h = row.height
-                ValueAnimator.ofInt(h, 0).apply {
-                    duration = 180
-                    addUpdateListener { va ->
-                        val lp = row.layoutParams
-                        lp.height = va.animatedValue as Int
-                        row.layoutParams = lp
-                    }
-                    addListener(object : AnimatorListenerAdapter() {
-                        override fun onAnimationEnd(animation: Animator) {
-                            listHolder?.removeView(row)
-                            if (visible.isEmpty()) renderList()
-                        }
-                    })
-                }.start()
-            }
-            .start()
+        AnimationSystem.spring(row, DynamicAnimation.TRANSLATION_X, -width, AnimationSystem.DISMISS)
+        AnimationSystem.fade(row, 0f, AnimationSystem.DISMISS)
+        row.postDelayed({
+            val lp = row.layoutParams ?: return@postDelayed
+            row.clipChildren = true // co chiều cao thì nội dung phải bị cắt theo, không đè lên dòng dưới
+            AnimationSystem.springFloat(
+                from = row.height.toFloat(),
+                to = 0f,
+                spec = AnimationSystem.DISMISS,
+                onUpdate = { v ->
+                    lp.height = v.toInt().coerceAtLeast(0)
+                    row.layoutParams = lp
+                },
+                onEnd = { _, _, _ ->
+                    listHolder?.removeView(row)
+                    if (visible.isEmpty()) renderList()
+                }
+            )
+        }, DELETE_COLLAPSE_DELAY_MS)
     }
 
     // ---------------- Menu ba chấm của từng dòng ----------------
@@ -536,14 +621,37 @@ class EntryListSheet(
 
     // ---------------- Dòng vuốt ----------------
 
-    /** Dòng có lớp nút nằm sau; lớp trước (front) trượt sang trái theo ngón tay. */
+    /** Thẻ phía trước của dòng; báo vị trí trượt để nút phía sau hiện dần theo mọi chuyển động (kéo tay lẫn spring). */
+    private inner class SlidingFront : LinearLayout(activity) {
+        var onSlide: ((Float) -> Unit)? = null
+
+        override fun setTranslationX(translationX: Float) {
+            super.setTranslationX(translationX)
+            onSlide?.invoke(translationX)
+        }
+    }
+
+    /** ScrollView báo mọi lần chạm xuống (kể cả chạm vào dòng) để viên ba chấm thu về khi chạm ra ngoài. */
+    private class TouchScrollView(context: Context) : ScrollView(context) {
+        var onDown: ((MotionEvent) -> Unit)? = null
+
+        override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+            if (ev.actionMasked == MotionEvent.ACTION_DOWN) onDown?.invoke(ev)
+            return super.onInterceptTouchEvent(ev)
+        }
+    }
+
+    /** Dòng có lớp nút nằm sau; lớp trước (front) trượt sang trái theo ngón tay rồi nảy về bằng spring chung. */
     private inner class SwipeRow(
-        private val front: View,
+        private val front: SlidingFront,
+        private val urlView: TextView,
         private val actionsWidth: Int
     ) : FrameLayout(activity) {
         var deleting = false
         var swipeEnabled = true
         var isOpen = false
+            private set
+        var expanded = false
             private set
 
         private val slop = ViewConfiguration.get(activity).scaledTouchSlop
@@ -551,30 +659,119 @@ class EntryListSheet(
         private var downY = 0f
         private var startTx = 0f
         private var dragging = false
+        private var tracker: VelocityTracker? = null
+        private var actions: View? = null
+        private var heightAnim: AnimationSystem.FloatSpringHandle? = null
 
         init {
             // Khoảng cách 10dp giữa các thẻ nằm trong dòng để lúc xóa co lại không bị giật.
             setPadding(0, 0, 0, dp(10))
+            // Dòng phóng to khi giữ lâu tràn ra ngoài khung một chút nên không được cắt con.
+            clipChildren = false
+            clipToPadding = false
             addView(front, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            front.onSlide = { tx -> applyProgress(tx) }
         }
 
         fun attachActions(view: View) {
+            actions = view
             addView(view, 0, FrameLayout.LayoutParams(actionsWidth, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
+            applyProgress(front.translationX)
         }
 
-        fun setOpen(open: Boolean, animate: Boolean) {
+        /** Hai nút phía sau hiện dần và phồng lên theo độ kéo; lúc nghỉ ẩn hẳn nên mép viên thuốc không lộ nút. */
+        private fun applyProgress(tx: Float) {
+            val a = actions ?: return
+            val p = (-tx / actionsWidth).coerceIn(0f, 1.15f)
+            a.alpha = (p * 1.8f).coerceIn(0f, 1f)
+            val s = 0.65f + 0.35f * p
+            a.scaleX = s
+            a.scaleY = s
+        }
+
+        fun setOpen(open: Boolean, animate: Boolean, velocity: Float = 0f) {
             isOpen = open
             val target = if (open) -actionsWidth.toFloat() else 0f
-            if (open) openRow = this else if (openRow === this) openRow = null
+            if (open) {
+                openRow = this
+                if (expanded) setExpanded(false)
+            } else if (openRow === this) {
+                openRow = null
+            }
             if (animate) {
-                front.animate().translationX(target).setDuration(220)
-                    .setInterpolator(DecelerateInterpolator()).start()
+                AnimationSystem.spring(
+                    front, DynamicAnimation.TRANSLATION_X, target,
+                    if (open) AnimationSystem.SETTLE else AnimationSystem.DISMISS, velocity
+                )
             } else {
+                AnimationSystem.cancel(front, DynamicAnimation.TRANSLATION_X)
                 front.translationX = target
             }
         }
 
         fun close() = setOpen(false, true)
+
+        /**
+         * Giữ lâu: viên thuốc phình ra (cao thêm + phóng nhẹ) và hiện URL đầy đủ; giữ lâu lần nữa thì thu lại.
+         * Chiều cao chạy bằng spring SETTLE (nảy nhẹ rồi đứng yên), các dòng dưới đi theo vì cùng một bố cục.
+         */
+        fun setExpanded(on: Boolean, animate: Boolean = true) {
+            if (expanded == on) return
+            expanded = on
+            if (on) {
+                if (expandedRow !== this) expandedRow?.setExpanded(false)
+                expandedRow = this
+            } else if (expandedRow === this) {
+                expandedRow = null
+            }
+            val lp = front.layoutParams ?: return
+            val minH = dp(ROW_HEIGHT_DP)
+            val from = front.height
+            var target = minH
+            if (on) {
+                urlView.visibility = View.VISIBLE
+                if (front.width > 0) {
+                    front.measure(
+                        View.MeasureSpec.makeMeasureSpec(front.width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                    )
+                    target = maxOf(front.measuredHeight, minH)
+                }
+            }
+            val scale = if (on) EXPAND_SCALE else 1f
+            heightAnim?.cancel()
+            heightAnim = null
+            if (!animate || from <= 0) {
+                urlView.alpha = if (on) 1f else 0f
+                urlView.visibility = if (on) View.VISIBLE else View.GONE
+                front.scaleX = scale
+                front.scaleY = scale
+                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                front.layoutParams = lp
+                return
+            }
+            AnimationSystem.fade(urlView, if (on) 1f else 0f) {
+                if (!expanded) urlView.visibility = View.GONE
+            }
+            AnimationSystem.scaleTo(front, scale, scale, AnimationSystem.SETTLE)
+            lp.height = from
+            front.layoutParams = lp
+            heightAnim = AnimationSystem.springFloat(
+                from = from.toFloat(),
+                to = target.toFloat(),
+                spec = AnimationSystem.SETTLE,
+                onUpdate = { h ->
+                    lp.height = h.toInt().coerceAtLeast(dp(40))
+                    front.layoutParams = lp
+                },
+                onEnd = { canceled, _, _ ->
+                    if (!canceled) {
+                        lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                        front.layoutParams = lp
+                    }
+                }
+            )
+        }
 
         override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
             if (!swipeEnabled || deleting) return false
@@ -584,33 +781,60 @@ class EntryListSheet(
                     downY = ev.y
                     startTx = front.translationX
                     dragging = false
+                    tracker?.recycle()
+                    tracker = VelocityTracker.obtain().also { it.addMovement(ev) }
                     val other = openRow
                     if (other != null && other !== this) other.close()
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    tracker?.addMovement(ev)
                     val dx = ev.x - downX
                     val dy = ev.y - downY
                     if (!dragging && abs(dx) > slop && abs(dx) > abs(dy) * 1.3f) {
                         dragging = true
-                        front.animate().cancel()
+                        AnimationSystem.cancel(front, DynamicAnimation.TRANSLATION_X)
+                        startTx = front.translationX
+                        if (expanded) setExpanded(false)
                         parent?.requestDisallowInterceptTouchEvent(true)
                     }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (!dragging) {
+                    tracker?.recycle()
+                    tracker = null
                 }
             }
             return dragging
         }
 
         override fun onTouchEvent(ev: MotionEvent): Boolean {
+            if (dragging) tracker?.addMovement(ev)
             when (ev.actionMasked) {
                 MotionEvent.ACTION_MOVE -> if (dragging) {
-                    front.translationX = (startTx + ev.x - downX).coerceIn(-actionsWidth * 1.1f, 0f)
+                    val raw = startTx + ev.x - downX
+                    // Kéo quá hai nút thì có lực cản (như cuộn quá đà), kéo ngược quá mép phải thì dừng.
+                    front.translationX = when {
+                        raw > 0f -> 0f
+                        raw < -actionsWidth -> -actionsWidth + (raw + actionsWidth) * 0.35f
+                        else -> raw
+                    }
                     return true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (dragging) {
                     dragging = false
+                    val t = tracker
+                    t?.computeCurrentVelocity(1000)
+                    val vx = t?.xVelocity ?: 0f
+                    t?.recycle()
+                    tracker = null
                     val tx = front.translationX
-                    val open = if (startTx < 0f) tx < -actionsWidth * 0.7f else tx < -actionsWidth * 0.3f
-                    setOpen(open, true)
+                    val open = when {
+                        vx < -FLING_VELOCITY -> true
+                        vx > FLING_VELOCITY -> false
+                        startTx < 0f -> tx < -actionsWidth * 0.7f
+                        else -> tx < -actionsWidth * 0.3f
+                    }
+                    // Nhả tay: spring chung nhận luôn vận tốc ngón tay nên chuyển động liền mạch với lúc kéo.
+                    setOpen(open, true, vx)
                     return true
                 }
             }
@@ -621,6 +845,10 @@ class EntryListSheet(
     private companion object {
         const val CHUNK = 30
         const val ACTIONS_WIDTH_DP = 120
+        const val ROW_HEIGHT_DP = 52
+        const val EXPAND_SCALE = 1.03f
+        const val FLING_VELOCITY = 900f
+        const val DELETE_COLLAPSE_DELAY_MS = 130L
         const val TRASH = "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
     }
 }

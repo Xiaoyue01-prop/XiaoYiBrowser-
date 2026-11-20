@@ -34,6 +34,15 @@ class BrowserBottomSheet(
 
     val isShowing: Boolean get() = dialog?.isShowing == true
 
+    /** Các phần của sheet mà bên ngoài được phép gắn thêm view vào. */
+    class Chrome(
+        val sheet: FrameLayout,
+        val header: FrameLayout,
+        val titleView: TextView,
+        val closeButton: View,
+        val blurTarget: BlurTarget
+    )
+
 
     /**
      * Hộp thoại xác nhận bằng kính mờ của Summit, nằm ngay trong cửa sổ của sheet
@@ -54,7 +63,11 @@ class BrowserBottomSheet(
         title: String,
         content: View,
         onDismiss: () -> Unit = {},
-        onPageToneChanged: ((Int?) -> Unit)? = null
+        onPageToneChanged: ((Int?) -> Unit)? = null,
+        /** Cho phép thêm nút vào tiêu đề / nổi trên sheet (vd. viên ba chấm bên phải, nút xóa kính ở góc dưới). */
+        onChromeReady: ((Chrome) -> Unit)? = null,
+        /** Chạm nút X hoặc bấm Back: trả true nếu đã tự xử lý (vd. thoát chế độ chọn) thì sheet không đóng. */
+        onCloseRequest: (() -> Boolean)? = null
     ) {
         if (activity.isFinishing || activity.isDestroyed) return
         dismiss(immediate = true)
@@ -111,7 +124,7 @@ class BrowserBottomSheet(
             setPadding(dp(10), dp(10), dp(10), dp(10))
             background = ovalDrawable(buttonColor)
             contentDescription = "Đóng"
-            setOnClickListener { animateClose() }
+            setOnClickListener { if (onCloseRequest?.invoke() != true) animateClose() }
         }
         AnimationSystem.press(closeButton, Constants.PRESS_SCALE_BTN)
         header.addView(
@@ -143,6 +156,7 @@ class BrowserBottomSheet(
         (content.parent as? ViewGroup)?.removeView(content)
         sheet.addView(content, FrameLayout.LayoutParams(-1, -1))
         sheet.addView(dragZone, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        onChromeReady?.invoke(Chrome(sheet, header, titleView, closeButton, blurTarget))
 
         // Giống menu Tab: vùng mờ = chiều cao tiêu đề + 24dp; mép dưới (thanh điều hướng) để nguyên nội dung.
         val headerPx = dp(BrowserSheetMotion.HEADER_HEIGHT_DP)
@@ -199,7 +213,8 @@ class BrowserBottomSheet(
             @Deprecated("Deprecated in Java")
             override fun onBackPressed() {
                 val gd = glassDialog
-                if (gd != null && gd.isShowing) gd.cancelCurrent() else animateClose()
+                if (gd != null && gd.isShowing) gd.cancelCurrent()
+                else if (onCloseRequest?.invoke() != true) animateClose()
             }
         }
         dlg.setContentView(windowRoot)

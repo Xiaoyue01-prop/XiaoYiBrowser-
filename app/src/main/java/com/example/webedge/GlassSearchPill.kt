@@ -15,8 +15,10 @@ import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import eightbitlab.com.blurview.BlurTarget
 
 /**
@@ -51,7 +53,12 @@ class GlassSearchPill(
     /** Giữ kính mờ chụp lại nền mỗi khung hình trong lúc chuyển động. */
     private val syncBlur: (Long) -> Unit = {},
     /** Chế độ viên đổi: [pillOpen] = đang là viên thuốc (kính lúp + chọn), [searchOpen] = đang là thanh tìm kiếm. */
-    private val onModeChange: (pillOpen: Boolean, searchOpen: Boolean) -> Unit = { _, _ -> }
+    private val onModeChange: (pillOpen: Boolean, searchOpen: Boolean) -> Unit = { _, _ -> },
+    /**
+     * Viên đặt sát mép PHẢI (vd. tiêu đề sheet Lịch sử / Dấu trang): viên nở sang trái, nên kính lúp ở lại đúng chỗ ba chấm
+     * (mép phải), nút chọn / dấu X nằm ở mép trái đang di chuyển. Mặc định (false) là bản đặt ở mép trái của bảng tab.
+     */
+    private val mirrored: Boolean = false
 ) {
     private val modeCircle = 0
     private val modePill = 1
@@ -108,7 +115,7 @@ class GlassSearchPill(
     init {
         input.setOnEditorActionListener { v, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                WindowCompat.getInsetsController(activity.window, v).hide(WindowInsetsCompat.Type.ime())
+                imeController()?.hide(WindowInsetsCompat.Type.ime())
                 true
             } else false
         }
@@ -122,10 +129,13 @@ class GlassSearchPill(
         })
 
         val side = Gravity.CENTER_VERTICAL
+        // Bản thường: kính lúp bên trái, chọn + X bên phải. Bản đảo (mép phải): đổi chỗ kính lúp với chọn / X.
+        val searchSide = if (mirrored) Gravity.END else Gravity.START
+        val otherSide = if (mirrored) Gravity.START else Gravity.END
         view.addView(dots, FrameLayout.LayoutParams(wCircle, wCircle, Gravity.END or side))
-        view.addView(searchGlyph, FrameLayout.LayoutParams(wCircle, wCircle, Gravity.START or side))
-        view.addView(selectGlyph, FrameLayout.LayoutParams(wCircle, wCircle, Gravity.END or side))
-        view.addView(closeGlyph, FrameLayout.LayoutParams(wCircle, wCircle, Gravity.END or side))
+        view.addView(searchGlyph, FrameLayout.LayoutParams(wCircle, wCircle, searchSide or side))
+        view.addView(selectGlyph, FrameLayout.LayoutParams(wCircle, wCircle, otherSide or side))
+        view.addView(closeGlyph, FrameLayout.LayoutParams(wCircle, wCircle, otherSide or side))
         view.addView(
             input,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, wCircle, side).apply {
@@ -364,14 +374,21 @@ class GlassSearchPill(
     fun showKeyboard() {
         input.post {
             input.requestFocus()
-            WindowCompat.getInsetsController(activity.window, input).show(WindowInsetsCompat.Type.ime())
+            imeController()?.show(WindowInsetsCompat.Type.ime())
         }
     }
 
     fun hideKeyboard() {
         input.clearFocus()
-        WindowCompat.getInsetsController(activity.window, input).hide(WindowInsetsCompat.Type.ime())
+        imeController()?.hide(WindowInsetsCompat.Type.ime())
     }
+
+    /**
+     * Điều khiển bàn phím của ĐÚNG cửa sổ đang chứa ô nhập: bảng tab nằm trong cửa sổ của activity, còn viên đặt trong
+     * sheet (Dialog) có cửa sổ riêng nên không được dùng activity.window.
+     */
+    private fun imeController(): WindowInsetsControllerCompat? =
+        ViewCompat.getWindowInsetsController(input)
 
     /**
      * Xóa từ khóa, ẩn bàn phím và thu về ba chấm. [animate] = false khi cần đổi ngay (đổi chế độ tab).

@@ -314,6 +314,59 @@ class SelectGridIcon(color: Int, filled: Boolean = false) : Drawable(), Adaptive
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
+/**
+ * Icon thùng rác nét viền bo tròn (nắp có quai, thân thang, hai vạch dọc) như nút xóa kính của Honor Gallery.
+ * Vẽ bằng nét nên giữ được độ dày ở mọi kích thước, không dùng đường dẫn tô đặc như [PathIcon].
+ */
+class TrashIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
+    override val adaptiveBaseColor: Int = color
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val path = Path()
+
+    override fun draw(canvas: Canvas) {
+        val b = bounds
+        if (b.width() <= 0 || b.height() <= 0) return
+        val u = b.width() / 24f
+        paint.strokeWidth = 1.9f * u
+        fun x(v: Float) = b.left + v * u
+        fun y(v: Float) = b.top + v * u
+        path.reset()
+        // Nắp.
+        path.moveTo(x(4.2f), y(6.6f)); path.lineTo(x(19.8f), y(6.6f))
+        // Quai trên nắp.
+        path.moveTo(x(9.4f), y(6.6f)); path.lineTo(x(9.4f), y(5.3f))
+        path.quadTo(x(9.4f), y(4f), x(10.7f), y(4f))
+        path.lineTo(x(13.3f), y(4f))
+        path.quadTo(x(14.6f), y(4f), x(14.6f), y(5.3f))
+        path.lineTo(x(14.6f), y(6.6f))
+        // Thân thùng (hơi thu hẹp xuống đáy).
+        path.moveTo(x(6.2f), y(6.6f)); path.lineTo(x(6.9f), y(18.4f))
+        path.quadTo(x(7f), y(20.4f), x(9f), y(20.4f))
+        path.lineTo(x(15f), y(20.4f))
+        path.quadTo(x(17f), y(20.4f), x(17.1f), y(18.4f))
+        path.lineTo(x(17.8f), y(6.6f))
+        // Hai vạch dọc.
+        path.moveTo(x(10f), y(10.4f)); path.lineTo(x(10f), y(16.4f))
+        path.moveTo(x(14f), y(10.4f)); path.lineTo(x(14f), y(16.4f))
+        canvas.drawPath(path, paint)
+    }
+    override fun setAdaptiveForegroundColor(color: Int) {
+        if (paint.color != color) {
+            paint.color = color
+            invalidateSelf()
+        }
+    }
+    override fun setAlpha(alpha: Int) { paint.alpha = alpha; invalidateSelf() }
+    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
 /** Chấm tròn hiển thị số tab đang mở (hiện trên nút Tab khi có từ 2 tab trở lên). */
 class BadgeDrawable(
     private val count: Int,
