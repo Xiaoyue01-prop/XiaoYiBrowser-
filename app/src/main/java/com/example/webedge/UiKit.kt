@@ -332,7 +332,7 @@ class TrashIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
         val b = bounds
         if (b.width() <= 0 || b.height() <= 0) return
         val u = b.width() / 24f
-        paint.strokeWidth = 1.9f * u
+        paint.strokeWidth = 1.4f * u
         fun x(v: Float) = b.left + v * u
         fun y(v: Float) = b.top + v * u
         path.reset()

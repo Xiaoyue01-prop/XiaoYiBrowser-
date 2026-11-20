@@ -492,7 +492,16 @@ class EntryListSheet(
         val more = circleButton(Icons.MORE_HORIZ, pillFill, GlassSystem.pagePrimaryText(), "Tùy chọn")
         more.rotation = 90f
         more.setOnClickListener { showRowMenu(entry, more, row) }
-        val delete = circleButton(TRASH, Theme.DANGER_RED, Color.WHITE, "Xóa")
+        // Nút xóa bằng kính: dòng nằm trong BlurTarget của sheet nên không dùng BlurView được (sẽ tự đệ quy);
+        // dùng chất liệu kính của app (nền kính + viền liquid glass) vẽ bằng drawable, phía sau vốn là nền đặc.
+        val delete = circleButton(TRASH, Color.TRANSPARENT, Color.WHITE, "Xóa").apply {
+            val d = activity.resources.displayMetrics.density
+            setImageDrawable(TrashIcon(GlassSystem.pagePrimaryText()))
+            background = GlassSystem.create(GlassSystem.Preset.TOOLBAR_BUTTON, d, GlassSystem.isDarkPage())
+            foreground = GlassSystem.createBorder(GlassSystem.Preset.TOOLBAR_BUTTON.radiusDp, d, GlassSystem.isDarkPage())
+            outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+            clipToOutline = true
+        }
         delete.setOnClickListener { deleteRow(entry, row) }
         box.addView(more, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(10) })
         box.addView(delete, LinearLayout.LayoutParams(dp(44), dp(44)))
