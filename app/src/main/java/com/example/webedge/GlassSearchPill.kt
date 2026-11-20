@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
+import androidx.dynamicanimation.animation.DynamicAnimation
 import android.widget.ImageView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -66,6 +67,12 @@ class GlassSearchPill(
 
     private val wCircle = dp(40)
     private val wPill = dp(88)
+
+    /**
+     * Bản đặt ở mép phải: lúc nảy, khung nút dời về phía viên sẽ nở ra (sang trái) như nút menu trang dời về phía tâm thẻ
+     * (MENU_POP_TOWARD), rồi viên mới nở từ đó. Bản mép trái (bảng tab) giữ nguyên, không dời.
+     */
+    private val popShiftPx: Float get() = if (mirrored) -((wPill - wCircle) / 2f) * POP_TOWARD_MIRRORED else 0f
 
     /** Bề rộng lúc nghỉ (px): bên ngoài dùng để đặt LayoutParams ban đầu cho vỏ kính. */
     val restWidthPx: Int get() = wCircle
@@ -258,6 +265,7 @@ class GlassSearchPill(
         widthAnim = null
         if (!animate || !view.isAttachedToWindow) {
             AnimationSystem.cancel(view)
+            view.translationX = 0f
             view.scaleX = 1f
             view.scaleY = 1f
             render(target)
@@ -275,6 +283,7 @@ class GlassSearchPill(
         AnimationSystem.unclipParents(view)
         if (popFirst) {
             AnimationSystem.scaleTo(view, Constants.MENU_POP_SCALE, Constants.MENU_POP_SCALE, AnimationSystem.MENU_POP)
+            if (mirrored) AnimationSystem.spring(view, DynamicAnimation.TRANSLATION_X, popShiftPx, AnimationSystem.MENU_POP)
         }
 
         fun run() {
@@ -283,17 +292,24 @@ class GlassSearchPill(
                 // thì nút kẹt ở cỡ nảy to và trông bị phình/lệch.
                 if (popFirst) {
                     AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_POP_BACK)
+                    if (mirrored) AnimationSystem.spring(view, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_POP_BACK)
                 }
                 return
             }
             widthAnim?.cancel()
             // Mở: cỡ nảy thu dần về 1 theo cùng spring với lúc viên thuốc nở nên hai chuyển động khớp nhau.
-            if (popFirst) AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_MORPH)
+            if (popFirst) {
+                AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_MORPH)
+                if (mirrored) AnimationSystem.spring(view, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
+            }
             // Đóng: viên thuốc thu vào khung nảy to (như thẻ menu thu vào nút Tab / menu trang).
             if (collapsingToCircle) {
                 AnimationSystem.scaleTo(
                     view, Constants.MENU_POP_SCALE, Constants.MENU_POP_SCALE, AnimationSystem.MENU_MORPH_CLOSE
                 )
+                if (mirrored) {
+                    AnimationSystem.spring(view, DynamicAnimation.TRANSLATION_X, popShiftPx, AnimationSystem.MENU_MORPH_CLOSE)
+                }
             }
             widthAnim = AnimationSystem.springFloat(
                 from = curWidth,
@@ -306,6 +322,9 @@ class GlassSearchPill(
                         if (collapsingToCircle) {
                             // Thu về xong: nút hạ từ khung nảy về cỡ thật (MENU_POP_BACK), giống nút Tab / menu trang.
                             AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_POP_BACK)
+                            if (mirrored) {
+                                AnimationSystem.spring(view, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_POP_BACK)
+                            }
                         }
                         onEnd?.invoke()
                     }
@@ -401,3 +420,5 @@ class GlassSearchPill(
         if (mode != modeCircle) setMode(modeCircle, animate)
     }
 }
+
+private const val POP_TOWARD_MIRRORED = 0.55f
