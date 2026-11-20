@@ -660,9 +660,11 @@ class EntryListSheet(
         host.getLocationOnScreen(loc)
         val cardW = dp(240)
         val cardH = dp(48 * count + 12)
-        val left = (anchorBounds.right - loc[0] - cardW).toInt().coerceIn(dp(12), (host.width - cardW - dp(12)).coerceAtLeast(dp(12)))
-        var top = (anchorBounds.bottom - loc[1]).toInt() + dp(6)
-        if (top + cardH > host.height - dp(24)) top = (anchorBounds.top - loc[1]).toInt() - cardH - dp(6)
+        // Thẻ ôm nút ba chấm rồi nở ra từ đó, thay vì xuất hiện tách rời bên dưới nút.
+        val hug = dp(6)
+        val left = (anchorBounds.right - loc[0] + hug - cardW).toInt().coerceIn(dp(12), (host.width - cardW - dp(12)).coerceAtLeast(dp(12)))
+        var top = (anchorBounds.top - loc[1]).toInt() - hug
+        if (top + cardH > host.height - dp(24)) top = (anchorBounds.bottom - loc[1]).toInt() + hug - cardH
         layer.addView(
             card,
             FrameLayout.LayoutParams(cardW, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
@@ -681,6 +683,7 @@ class EntryListSheet(
         // Nút ba chấm là con của dòng này và bay ra khỏi dòng khi bung thẻ: nâng dòng lên trên các dòng khác
         // (Android vẽ anh em có Z cao hơn sau cùng) để các dòng phía dưới không đè lên nút.
         row.translationZ = dp(RAISED_ROW_Z_DP).toFloat()
+        row.raiseActions(true)
         blurSync?.hold(1000)
 
         var started = false
@@ -733,6 +736,7 @@ class EntryListSheet(
         fun remove() {
             (layer.parent as? ViewGroup)?.removeView(layer)
             row?.translationZ = 0f
+            row?.raiseActions(false)
         }
         if (!animated || card == null || !layer.isAttachedToWindow) {
             card?.let { OriginTransitionController.cancel(it) }
@@ -854,6 +858,11 @@ class EntryListSheet(
         }
 
         fun close() = setOpen(false, true)
+
+        /** Nâng lớp nút phía sau lên trên lớp trượt khi menu bung, rồi hạ xuống khi đóng. */
+        fun raiseActions(on: Boolean) {
+            actions?.translationZ = if (on) dp(RAISED_ROW_Z_DP / 2).toFloat() else 0f
+        }
 
         /**
          * Giữ lâu: viên thuốc phình ra (cao thêm + phóng nhẹ) và hiện URL đầy đủ; giữ lâu lần nữa thì thu lại.
@@ -992,7 +1001,7 @@ class EntryListSheet(
         const val ROW_HEIGHT_DP = 52
         // Độ đục (0..255) của lớp xám phủ lên kính giả trong sheet: nền sheet trắng phẳng nên chỉ lớp tint chung 27%
         // sẽ nhìn như kính trong; lớp này làm nút/thẻ ra vẻ kính mờ kể cả khi không có BlurView.
-        const val SHEET_FROST_ALPHA = 150
+        const val SHEET_FROST_ALPHA = 195
         // Nâng dòng đang mở menu lên trên các dòng khác để nút ba chấm bay ra khỏi dòng không bị dòng dưới đè.
         const val RAISED_ROW_Z_DP = 4
         const val EXPAND_SCALE = 1.03f

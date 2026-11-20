@@ -77,7 +77,6 @@ class BrowserBottomSheet(
         val sheetColor = GlassSystem.pageSurfaceColor()
         val textColor = GlassSystem.pagePrimaryText()
         val grabberColor = GlassSystem.pageSheetGrabberColor()
-        val buttonColor = GlassSystem.pageSheetButtonColor()
 
         // Cửa sổ của sheet: BlurTarget chứa lớp tối + sheet; hộp thoại kính nằm cạnh nó để blur lấy đúng nền.
         val windowRoot = FrameLayout(activity)
@@ -119,11 +118,11 @@ class BrowserBottomSheet(
         )
 
         val header = FrameLayout(activity)
-        val closeButton = ImageView(activity).apply {
-            setImageDrawable(PathIcon(Icons.CLOSE, textColor))
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            background = ovalDrawable(buttonColor)
-            contentDescription = "Đóng"
+        // BlurTarget chỉ chứa nội dung cuộn; nút kính là view anh em nên không tự làm mờ chính nó.
+        val contentTarget = BlurTarget(activity)
+        val closeButton = GlassSystem.createGlassIconButton(
+            activity, contentTarget, PathIcon(Icons.CLOSE, textColor), density, night, "Đóng"
+        ).apply {
             setOnClickListener { if (onCloseRequest?.invoke() != true) animateClose() }
         }
         AnimationSystem.press(closeButton, Constants.PRESS_SCALE_BTN)
@@ -154,16 +153,10 @@ class BrowserBottomSheet(
         // Nội dung phủ kín sheet và cuộn xuống DƯỚI tiêu đề (tiêu đề trong suốt nằm đè lên trên),
         // để phần nội dung sát mép tiêu đề bị mờ dần như header menu Tab.
         (content.parent as? ViewGroup)?.removeView(content)
-        // Kính (viên ba chấm, nút xóa) KHÔNG được nằm trong chính BlurTarget mà nó làm mờ, nên khi có onChromeReady
-        // phần nội dung được bọc trong một BlurTarget riêng; tiêu đề và nút kính là anh em của nó, không phải con.
-        val contentTarget = BlurTarget(activity)
-        if (onChromeReady != null) {
-            contentTarget.background = ColorDrawable(sheetColor)
-            contentTarget.addView(content, FrameLayout.LayoutParams(-1, -1))
-            sheet.addView(contentTarget, FrameLayout.LayoutParams(-1, -1))
-        } else {
-            sheet.addView(content, FrameLayout.LayoutParams(-1, -1))
-        }
+        // Mọi sheet đều bọc nội dung trong BlurTarget để nút X kính có nền phía sau để làm mờ.
+        contentTarget.background = ColorDrawable(sheetColor)
+        contentTarget.addView(content, FrameLayout.LayoutParams(-1, -1))
+        sheet.addView(contentTarget, FrameLayout.LayoutParams(-1, -1))
         sheet.addView(dragZone, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
         onChromeReady?.invoke(Chrome(sheet, header, titleView, closeButton, contentTarget))
 
@@ -268,10 +261,10 @@ class BrowserBottomSheet(
             val dark = GlassSystem.isDarkPage(color)
             val foregroundColor = GlassSystem.pagePrimaryText(color)
             sheet.background = ColorDrawable(GlassSystem.pageSurfaceColor(color))
-            if (onChromeReady != null) contentTarget.background = ColorDrawable(GlassSystem.pageSurfaceColor(color))
+            contentTarget.background = ColorDrawable(GlassSystem.pageSurfaceColor(color))
             titleView.setTextColor(foregroundColor)
-            closeButton.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
-            closeButton.background = ovalDrawable(GlassSystem.pageSheetButtonColor(color))
+            // Child [1] là ImageView chứa icon trong GlassSystem.createGlassIconButton().
+            (closeButton.getChildAt(1) as? ImageView)?.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
             (grabber.background as? GradientDrawable)?.setColor(GlassSystem.pageSheetGrabberColor(color))
             dlg.window?.let { BrowserSheetMotion.configureWindow(it, windowRoot, dark) }
             onPageToneChanged?.invoke(color)
