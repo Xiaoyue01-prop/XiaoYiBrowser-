@@ -26,102 +26,22 @@ import java.util.WeakHashMap
 import kotlin.coroutines.resume
 
 /**
- * Nguồn dịch cho tính năng dịch trang. Tách riêng để sau này đổi sang ML Kit (dịch trên máy) hoặc
- * Cloud Translation API chính thức mà không phải sửa phần duyệt DOM / UI.
+ * Nguồn dịch cho tính năng dịch trang (hiện là dịch trên máy bằng ML Kit, xem [OnDeviceBackend]). Tách riêng để
+ * sau này đổi nguồn khác mà không phải sửa phần duyệt DOM / UI.
  */
 internal interface TranslateBackend {
     val maxBatchChars: Int
     val maxBatchItems: Int
     val concurrency: Int
 
+    /**
+     * Gọi một lần trước khi dịch trang: backend có thể nhận diện ngôn ngữ nguồn, tải gói model...
+     * [status] để báo tiến trình cho người dùng. Trả false nếu trang đã ở ngôn ngữ đích (không cần dịch).
+     */
+    suspend fun prepare(sample: String, target: String, status: (String) -> Unit): Boolean = true
+
     /** Dịch [src] sang [target]; PHẢI trả về đúng số phần tử. Lỗi ném [TranslateApiException]. */
     suspend fun translateBatch(src: List<String>, target: String): List<String>
-}
-
-/**
- * Google Dịch qua endpoint web không công khai (`translate_a/single`, client=gtx): miễn phí, không cần khóa,
- * nhưng KHÔNG có hợp đồng dịch vụ: Google có thể giới hạn tốc độ hoặc đổi định dạng bất cứ lúc nào.
- * Chỉ nên dùng cho bản thử; bản phát hành nên đổi sang backend chính thức hoặc ML Kit.
- */
-internal object GoogleTranslateBackend : TranslateBackend {
-    private const val ENDPOINT = "https://translate.googleapis.com/translate_a/single"
-    override val maxBatchChars = 3_500
-    override val maxBatchItems = 40
-    override val concurrency = 1
-
-    /** Google hay trả 403/429 cho User-Agent mặc định của Java/Dalvik; dùng UA Chrome di động như trình duyệt thật. */
-    private const val USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
-    private const val RETRY_DELAY_MS = 1_500L
-    private const val BETWEEN_REQUESTS_MS = 200L
-
-    private val LINE_BREAKS = Regex("[\\r\\n\\u2028\\u2029]+")
-
-    override suspend fun translateBatch(src: List<String>, target: String): List<String> =
-        withContext(Dispatchers.IO) {
-            val flat = src.map { it.replace(LINE_BREAKS, " ") }
-            if (flat.size == 1) return@withContext listOf(requestPaced(flat[0], target))
-            // Gửi cả lô, mỗi đoạn một dòng; Google giữ nguyên dấu xuống dòng nên tách lại theo dòng.
-            val lines = requestPaced(flat.joinToString("\n"), target).split("\n")
-            if (lines.size == flat.size) lines
-            // Lệch số dòng (Google gộp/tách câu): dịch lẻ từng đoạn của lô này cho chắc.
-            else flat.map { requestPaced(it, target) }
-        }
-
-    /** Một lần thử lại sau khi nghỉ ngắn nếu bị 429; giữa các request cũng nghỉ chút để không dồn dập. */
-    private suspend fun requestPaced(text: String, target: String): String {
-        delay(BETWEEN_REQUESTS_MS)
-        return try {
-            request(text, target)
-        } catch (e: TranslateApiException) {
-            if (e.kind != TranslateApiException.Kind.RATE) throw e
-            delay(RETRY_DELAY_MS)
-            request(text, target)
-        }
-    }
-
-    private fun request(text: String, target: String): String {
-        val url = "$ENDPOINT?client=gtx&sl=auto&tl=${URLEncoder.encode(target, "UTF-8")}&dt=t&ie=UTF-8&oe=UTF-8"
-        val conn = URL(url).openConnection() as HttpURLConnection
-        try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 20_000
-            conn.doOutput = true
-            conn.setRequestProperty("User-Agent", USER_AGENT)
-            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
-            // POST để đoạn dài không vượt giới hạn độ dài URL.
-            conn.outputStream.use { it.write(("q=" + URLEncoder.encode(text, "UTF-8")).toByteArray(Charsets.UTF_8)) }
-
-            val code = conn.responseCode
-            if (code == 429) {
-                throw TranslateApiException(TranslateApiException.Kind.RATE, "HTTP 429")
-            }
-            if (code == 403) {
-                // 403 thường là Google từ chối client/IP này chứ không phải "quá nhanh": báo riêng để dễ phân biệt.
-                throw TranslateApiException(TranslateApiException.Kind.BLOCKED, "HTTP 403")
-            }
-            if (code !in 200..299) {
-                throw TranslateApiException(TranslateApiException.Kind.OTHER, "Google Dịch trả về HTTP $code")
-            }
-            val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            // Dạng: [[["bản dịch câu 1","gốc 1",...],["bản dịch câu 2","gốc 2",...]], null, "en", ...]
-            val segments = JSONArray(body).optJSONArray(0)
-                ?: throw TranslateApiException(TranslateApiException.Kind.OTHER, "Định dạng trả về lạ")
-            val sb = StringBuilder()
-            for (i in 0 until segments.length()) {
-                val seg = segments.optJSONArray(i) ?: continue
-                if (!seg.isNull(0)) sb.append(seg.optString(0))
-            }
-            return sb.toString()
-        } catch (e: IOException) {
-            throw TranslateApiException(TranslateApiException.Kind.NETWORK, "Không kết nối được tới Google Dịch")
-        } catch (e: JSONException) {
-            throw TranslateApiException(TranslateApiException.Kind.OTHER, "Dữ liệu trả về không đọc được")
-        } finally {
-            conn.disconnect()
-        }
-    }
 }
 
 /** Chia lô + cache RAM + chạy song song giới hạn cho một [TranslateBackend]. Cache không ghi đĩa (an toàn cho tab riêng tư). */
@@ -194,7 +114,7 @@ internal class PageTranslator(
     private val scope: CoroutineScope,
     private val web: () -> WebView,
     private val toast: (String) -> Unit,
-    private val backend: TranslateBackend = GoogleTranslateBackend,
+    private val backend: TranslateBackend = OnDeviceBackend,
     private val target: String = "vi"
 ) {
     private class State {
@@ -262,6 +182,11 @@ internal class PageTranslator(
                     return@launch
                 }
                 toast("Đang dịch…")
+                if (!backend.prepare(texts.take(60).joinToString(" "), target, toast)) {
+                    resetJs(view)
+                    toast("Trang này đã là tiếng Việt")
+                    return@launch
+                }
                 st.showing = true
                 BatchTranslator.translateAll(backend, target, texts) { indices, results ->
                     if (states[view] !== st) return@translateAll
@@ -279,9 +204,9 @@ internal class PageTranslator(
                 if (!st.applied) resetJs(view)
                 toast(
                     when (e.kind) {
-                        TranslateApiException.Kind.RATE -> "Google Dịch đang giới hạn tốc độ (${e.message}), thử lại sau ít phút"
-                        TranslateApiException.Kind.NETWORK -> "Không kết nối được tới Google Dịch"
-                        TranslateApiException.Kind.BLOCKED -> "Google Dịch từ chối yêu cầu (${e.message})"
+                        TranslateApiException.Kind.RATE -> "Dịch đang bị giới hạn (${e.message}), thử lại sau ít phút"
+                        TranslateApiException.Kind.NETWORK -> e.message.orEmpty()
+                        TranslateApiException.Kind.BLOCKED -> "Yêu cầu dịch bị từ chối (${e.message})"
                         else -> "Dịch lỗi: ${e.message}"
                     }
                 )

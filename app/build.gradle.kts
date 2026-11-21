@@ -57,4 +57,8 @@ dependencies {
     implementation("androidx.media3:media3-session:1.11.1")
     // WebViewCompat.addDocumentStartJavaScript: chạy script ở mọi khung của trang
     implementation("androidx.webkit:webkit:1.18.0")
+    // Dịch trang trên máy (miễn phí, không giới hạn tốc độ) + nhận diện ngôn ngữ trên máy. Nếu Gradle báo
+    // không tìm thấy bản này thì nâng lên bản mới nhất trên Maven Google.
+    implementation("com.google.mlkit:translate:17.0.3")
+    implementation("com.google.mlkit:language-id:17.0.6")
 }
