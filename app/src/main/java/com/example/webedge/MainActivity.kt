@@ -264,7 +264,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             val isPrivate = tabManager.getForWebView(view)?.isPrivate == true
             readerSuggestion.check(view, url, isPrivate) { view === web && !isActivityDestroyed }
         }
-        override fun dismissReaderHint() = readerSuggestion.onNavigation()
+        override fun dismissReaderHint() {
+            readerSuggestion.onNavigation()
+            // Trang mới = document mới: bản dịch cũ (và job đang chạy) không còn áp dụng.
+            pageTranslator.onNavigation(web)
+        }
     }
 
     private val chromeHost: BrowserChromeHost = object : BrowserChromeHost {
@@ -310,6 +314,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private var contextMenuController: ContextMenuController? = null
     private lateinit var glassDialog: GlassDialogController
 
+    private val pageTranslator: PageTranslator by lazy {
+        PageTranslator(scope = lifecycleScope, web = { web }, toast = ::toast)
+    }
+
     // Cầu nối cho MenuController: đọc giá trị mới nhất của Activity mỗi lần cần.
     private val menuHost = object : MenuHost {
         override val web: WebView get() = this@MainActivity.web
@@ -342,6 +350,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun openFind() = this@MainActivity.openFind()
         override fun isDesktopMode() = this@MainActivity.isDesktopMode()
         override fun toggleDesktopMode() = this@MainActivity.toggleDesktopMode()
+        override fun pageTranslateLabel() = pageTranslator.menuLabel()
+        override fun togglePageTranslation() = pageTranslator.toggle()
         override fun applyInsets() = this@MainActivity.applyInsets()
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
         override fun setWebDarkMode(enabled: Boolean) = this@MainActivity.rebuildWebViewsForDarkMode()

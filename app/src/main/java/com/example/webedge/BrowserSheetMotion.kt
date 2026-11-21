@@ -27,7 +27,7 @@ internal object BrowserSheetMotion {
      * padding đáy bù lại, nên nội dung vẫn cuộn tới sát đáy màn hình.
      */
     private val DETENT_FRACTIONS = floatArrayOf(0.5f, 0.75f, 1f)
-    private const val DEFAULT_DETENT = 1 // 0.75: mở thấp hơn một chút so với cao hết cỡ
+    private const val DEFAULT_DETENT = 0 // nấc thấp nhất (0.5): mở mặc định ở đây, kéo lên để bung thêm
     private const val FULL_DETENT = 2
     private const val FLING_PROJECTION_S = 0.2f
     private const val RUBBER_BAND = 0.15f
