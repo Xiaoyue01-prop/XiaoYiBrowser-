@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -46,20 +47,38 @@ internal object GoogleTranslateBackend : TranslateBackend {
     private const val ENDPOINT = "https://translate.googleapis.com/translate_a/single"
     override val maxBatchChars = 3_500
     override val maxBatchItems = 40
-    override val concurrency = 3
+    override val concurrency = 1
+
+    /** Google hay trả 403/429 cho User-Agent mặc định của Java/Dalvik; dùng UA Chrome di động như trình duyệt thật. */
+    private const val USER_AGENT =
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
+    private const val RETRY_DELAY_MS = 1_500L
+    private const val BETWEEN_REQUESTS_MS = 200L
 
     private val LINE_BREAKS = Regex("[\\r\\n\\u2028\\u2029]+")
 
     override suspend fun translateBatch(src: List<String>, target: String): List<String> =
         withContext(Dispatchers.IO) {
             val flat = src.map { it.replace(LINE_BREAKS, " ") }
-            if (flat.size == 1) return@withContext listOf(request(flat[0], target))
+            if (flat.size == 1) return@withContext listOf(requestPaced(flat[0], target))
             // Gửi cả lô, mỗi đoạn một dòng; Google giữ nguyên dấu xuống dòng nên tách lại theo dòng.
-            val lines = request(flat.joinToString("\n"), target).split("\n")
+            val lines = requestPaced(flat.joinToString("\n"), target).split("\n")
             if (lines.size == flat.size) lines
             // Lệch số dòng (Google gộp/tách câu): dịch lẻ từng đoạn của lô này cho chắc.
-            else flat.map { request(it, target) }
+            else flat.map { requestPaced(it, target) }
         }
+
+    /** Một lần thử lại sau khi nghỉ ngắn nếu bị 429; giữa các request cũng nghỉ chút để không dồn dập. */
+    private suspend fun requestPaced(text: String, target: String): String {
+        delay(BETWEEN_REQUESTS_MS)
+        return try {
+            request(text, target)
+        } catch (e: TranslateApiException) {
+            if (e.kind != TranslateApiException.Kind.RATE) throw e
+            delay(RETRY_DELAY_MS)
+            request(text, target)
+        }
+    }
 
     private fun request(text: String, target: String): String {
         val url = "$ENDPOINT?client=gtx&sl=auto&tl=${URLEncoder.encode(target, "UTF-8")}&dt=t&ie=UTF-8&oe=UTF-8"
@@ -69,13 +88,18 @@ internal object GoogleTranslateBackend : TranslateBackend {
             conn.connectTimeout = 10_000
             conn.readTimeout = 20_000
             conn.doOutput = true
+            conn.setRequestProperty("User-Agent", USER_AGENT)
             conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
             // POST để đoạn dài không vượt giới hạn độ dài URL.
             conn.outputStream.use { it.write(("q=" + URLEncoder.encode(text, "UTF-8")).toByteArray(Charsets.UTF_8)) }
 
             val code = conn.responseCode
-            if (code == 429 || code == 403) {
-                throw TranslateApiException(TranslateApiException.Kind.RATE, "Google Dịch giới hạn yêu cầu (HTTP $code)")
+            if (code == 429) {
+                throw TranslateApiException(TranslateApiException.Kind.RATE, "HTTP 429")
+            }
+            if (code == 403) {
+                // 403 thường là Google từ chối client/IP này chứ không phải "quá nhanh": báo riêng để dễ phân biệt.
+                throw TranslateApiException(TranslateApiException.Kind.BLOCKED, "HTTP 403")
             }
             if (code !in 200..299) {
                 throw TranslateApiException(TranslateApiException.Kind.OTHER, "Google Dịch trả về HTTP $code")
@@ -255,9 +279,9 @@ internal class PageTranslator(
                 if (!st.applied) resetJs(view)
                 toast(
                     when (e.kind) {
-                        TranslateApiException.Kind.RATE -> "Google Dịch đang giới hạn tốc độ, thử lại sau ít phút"
+                        TranslateApiException.Kind.RATE -> "Google Dịch đang giới hạn tốc độ (${e.message}), thử lại sau ít phút"
                         TranslateApiException.Kind.NETWORK -> "Không kết nối được tới Google Dịch"
-                        TranslateApiException.Kind.BLOCKED -> "Google Dịch từ chối yêu cầu"
+                        TranslateApiException.Kind.BLOCKED -> "Google Dịch từ chối yêu cầu (${e.message})"
                         else -> "Dịch lỗi: ${e.message}"
                     }
                 )
