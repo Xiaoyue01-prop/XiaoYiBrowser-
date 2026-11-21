@@ -358,7 +358,8 @@ class OverlayBrowserActivity : ComponentActivity() {
         view.setDownloadListener { url, _, _, _, _ -> openInSummit(url) }
 
         // --- Kéo xuống để đóng ---
-        BrowserSheetMotion.bindDragZone(dragZone, sheetView, scrimView, ::dp, ::animateClose)
+        val detents = BrowserSheetMotion.SheetDetents(sheetView, scrimView, ::dp)
+        BrowserSheetMotion.bindDragZone(dragZone, sheetView, scrimView, detents, ::animateClose)
 
         // --- Cửa sổ trong suốt, tự lo vùng thanh hệ thống và bàn phím ---
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
@@ -366,7 +367,7 @@ class OverlayBrowserActivity : ComponentActivity() {
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             sheetLp.topMargin = bars.top + dp(BrowserSheetMotion.TOP_MARGIN_DP)
             sheetView.layoutParams = sheetLp
-            sheetView.setPadding(0, 0, 0, ime.bottom)
+            detents.onInsets(ime.bottom)
             insets
         }
         setContentView(root)
@@ -380,7 +381,7 @@ class OverlayBrowserActivity : ComponentActivity() {
         root.post {
             if (closing) return@post
             ViewCompat.requestApplyInsets(root)
-            BrowserSheetMotion.show(sheetView, scrimView)
+            detents.show()
         }
         view.loadUrl(HttpsFirst.upgrade(view, startUrl) ?: startUrl)
     }

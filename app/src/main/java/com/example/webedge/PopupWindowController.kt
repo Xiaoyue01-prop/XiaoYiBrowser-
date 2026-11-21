@@ -219,7 +219,8 @@ class PopupWindowController(
         }
 
         // --- Kéo xuống để đóng ---
-        BrowserSheetMotion.bindDragZone(dragZone, sheetView, scrimView, ::dp, ::animateClose)
+        val detents = BrowserSheetMotion.SheetDetents(sheetView, scrimView, ::dp)
+        BrowserSheetMotion.bindDragZone(dragZone, sheetView, scrimView, detents, ::animateClose)
 
         // --- Cửa sổ: trong suốt, toàn màn hình, tự lo vùng thanh hệ thống và bàn phím ---
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
@@ -228,7 +229,7 @@ class PopupWindowController(
             sheetLp.topMargin = bars.top + dp(BrowserSheetMotion.TOP_MARGIN_DP)
             sheetView.layoutParams = sheetLp
             // Edge-to-edge: trang tràn xuống sát đáy, chỉ nhường chỗ khi bàn phím hiện (ime.bottom đã gồm cả thanh điều hướng).
-            sheetView.setPadding(0, 0, 0, ime.bottom)
+            detents.onInsets(ime.bottom)
             insets
         }
         val dlg = object : Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar) {
@@ -270,7 +271,7 @@ class PopupWindowController(
         root.post {
             if (closing) return@post
             ViewCompat.requestApplyInsets(root)
-            BrowserSheetMotion.show(sheetView, scrimView)
+            detents.show()
         }
         transport.webView = popup
         resultMsg?.sendToTarget()

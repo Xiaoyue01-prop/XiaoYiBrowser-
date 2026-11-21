@@ -200,7 +200,8 @@ class BrowserBottomSheet(
             (lastChild as? ViewGroup)?.clipToPadding = false
         }
 
-        BrowserSheetMotion.bindDragZone(dragZone, sheet, scrim, ::dp, ::animateClose)
+        val detents = BrowserSheetMotion.SheetDetents(sheet, scrim, ::dp)
+        BrowserSheetMotion.bindDragZone(dragZone, sheet, scrim, detents, ::animateClose)
 
         ViewCompat.setOnApplyWindowInsetsListener(windowRoot) { _, insets ->
             val bars = insets.getInsets(
@@ -215,7 +216,7 @@ class BrowserBottomSheet(
             sheetLp.bottomMargin = 0
             sheet.layoutParams = sheetLp
             // Chỉ nhường vùng bàn phím; không đẩy nội dung lên khỏi navigation bar.
-            sheet.setPadding(0, 0, 0, ime.bottom)
+            detents.onInsets(ime.bottom)
             // ime.bottom đã gồm thanh điều hướng khi bàn phím mở; khi đóng thì dùng bars.bottom.
             lastChild?.let {
                 it.setPadding(
@@ -296,7 +297,7 @@ class BrowserBottomSheet(
         root.post {
             if (closing || dialog !== dlg) return@post
             ViewCompat.requestApplyInsets(windowRoot)
-            BrowserSheetMotion.show(sheet, scrim)
+            detents.show()
         }
     }
 
