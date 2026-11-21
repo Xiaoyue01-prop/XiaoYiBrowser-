@@ -483,10 +483,10 @@ class TabSwipeController(
     private companion object {
         const val GAP_DP = 12f
         const val CORNER_DP = 36f
-        const val FLING_DP_PER_SEC = 900f
+        const val FLING_DP_PER_SEC = GlassSystem.Drag.FLING_DP_PER_SEC
         /** Thả quá 35% quãng trượt thì chuyển tab. */
-        const val COMMIT_PROGRESS = 0.35f
-        const val RUBBER = 0.18f
+        const val COMMIT_PROGRESS = GlassSystem.Drag.COMMIT_PROGRESS
+        const val RUBBER = GlassSystem.Drag.RUBBER
         /** Chữ trên viên thuốc trượt tối đa nửa chiều rộng viên thuốc. */
         const val PILL_SHIFT = 0.5f
         const val READY_REVEAL_MS = 90L

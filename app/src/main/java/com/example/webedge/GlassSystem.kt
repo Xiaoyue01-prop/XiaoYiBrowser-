@@ -1087,12 +1087,14 @@ half4 main(float2 coord) {
         /** 0 = tắt (viên gạt bên trái), 1 = bật (bên phải); có thể vượt nhẹ khi spring nảy. */
         private var progress = if (checked) 1f else 0f
         private var progressAnim: AnimationSystem.FloatSpringHandle? = null
-        private var lifted = false
-        private var liftStart = 0L
-        private var pendingDrop: Runnable? = null
         private var downX = 0f
         private var startProgress = 0f
         private var dragging = false
+        // Viên gạt nổi lên khi chạm giữ: dùng chung với viên chọn phân đoạn qua [GlassLift].
+        private val lifter = GlassLift(
+            host = thumb, solid = solid, glass = glass, solidLiftedAlpha = 0.22f,
+            liftScaleX = LIFT_SCALE_X, liftScaleY = { LIFT_SCALE_Y }, minLiftMs = MIN_LIFT_MS
+        )
 
         init {
             // Cha mặc định cắt phần con tràn ra ngoài; viên gạt phình lên cần được vẽ tràn nhẹ khỏi track.
@@ -1194,31 +1196,6 @@ half4 main(float2 coord) {
             }
         }
 
-        /** Chạm giữ: viên gạt phình ra, đặc nhạt đi và hiện lớp kính trong. Thả tay thì co lại, đặc trở lại. */
-        private fun lift(on: Boolean) {
-            if (lifted == on) return
-            lifted = on
-            if (on) {
-                liftStart = SystemClock.uptimeMillis()
-                AnimationSystem.fade(solid, 0.22f, AnimationSystem.QUICK)
-                AnimationSystem.fade(glass, 1f, AnimationSystem.QUICK)
-                AnimationSystem.scaleTo(thumb, LIFT_SCALE_X, LIFT_SCALE_Y, AnimationSystem.MENU_POP)
-            } else {
-                AnimationSystem.fade(glass, 0f, AnimationSystem.SETTLE)
-                AnimationSystem.fade(solid, 1f, AnimationSystem.SETTLE)
-                AnimationSystem.scaleTo(thumb, 1f, 1f, AnimationSystem.MENU_POP_BACK)
-            }
-        }
-
-        /** Giữ viên gạt phình ít nhất [MIN_LIFT_MS] để cú chạm nhanh vẫn thấy hiệu ứng kính. */
-        private fun dropLater() {
-            pendingDrop?.let { removeCallbacks(it) }
-            val wait = (MIN_LIFT_MS - (SystemClock.uptimeMillis() - liftStart)).coerceAtLeast(0L)
-            val r = Runnable { pendingDrop = null; lift(false) }
-            pendingDrop = r
-            postDelayed(r, wait)
-        }
-
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
             // Vùng chạm 68x40dp: lớn hơn track để dễ bấm và chừa chỗ cho viên gạt phình ra.
             super.onMeasure(
@@ -1234,12 +1211,11 @@ half4 main(float2 coord) {
                 MotionEvent.ACTION_DOWN -> {
                     parent?.requestDisallowInterceptTouchEvent(true)
                     AnimationSystem.unclipParents(this)
-                    pendingDrop?.let { removeCallbacks(it) }
-                    pendingDrop = null
+                    lifter.cancelPendingDrop()
                     downX = e.x
                     startProgress = progress
                     dragging = false
-                    lift(true)
+                    lifter.lift(true)
                     performHapticFeedback(HapticFeedbackConstants.GESTURE_START)
                     return true
                 }
@@ -1253,7 +1229,7 @@ half4 main(float2 coord) {
                     return true
                 }
                 MotionEvent.ACTION_UP -> {
-                    dropLater()
+                    lifter.dropLater()
                     if (dragging) {
                         dragging = false
                         commit(progress > 0.5f)
@@ -1263,7 +1239,7 @@ half4 main(float2 coord) {
                     return true
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    dropLater()
+                    lifter.dropLater()
                     dragging = false
                     animateTo(if (isChecked) 1f else 0f)
                     return true
@@ -1289,8 +1265,7 @@ half4 main(float2 coord) {
 
         override fun onDetachedFromWindow() {
             progressAnim?.cancel()
-            pendingDrop?.let { removeCallbacks(it) }
-            pendingDrop = null
+            lifter.cancelPendingDrop()
             super.onDetachedFromWindow()
         }
 
@@ -1314,6 +1289,71 @@ half4 main(float2 coord) {
     }
 
     /**
+     * Hằng số cử chỉ kéo dùng chung cho mọi thứ kéo theo ngón tay trong app (vuốt đổi tab, sheet, pager thẻ).
+     * Đổi cảm giác kéo của cả app ở đây, không sửa từng controller.
+     */
+    object Drag {
+        /** Vận tốc vuốt (dp/giây) tính là "vuốt nhanh" và chốt theo hướng vuốt dù chưa kéo đủ xa. */
+        const val FLING_DP_PER_SEC = 900f
+
+        /** Thả quá 35% quãng kéo thì chốt sang đích mới. */
+        const val COMMIT_PROGRESS = 0.35f
+
+        /** Hệ số níu khi kéo vượt mép (rubber-band): kéo thêm 1 chỉ đi 0,18. */
+        const val RUBBER = 0.18f
+    }
+
+    /**
+     * Hiệu ứng "nổi lên" khi chạm giữ của một viên kéo: viên đặc nhạt đi, lớp kính trong hiện ra, viên phình
+     * theo [liftScaleX]/[liftScaleY]. Thả tay thì co lại, nhưng giữ nổi ít nhất [minLiftMs] để cú chạm nhanh
+     * vẫn thấy được hiệu ứng. Dùng chung cho [GlassSwitch] và [SegmentedGlassThumb] (và pager thẻ sau này).
+     * [host] là view được phóng to và cũng là nơi đặt callback hạ xuống.
+     */
+    class GlassLift(
+        private val host: View,
+        private val solid: View,
+        private val glass: View,
+        private val solidLiftedAlpha: Float,
+        private val liftScaleX: Float,
+        private val liftScaleY: () -> Float,
+        private val minLiftMs: Long
+    ) {
+        private var lifted = false
+        private var liftStart = 0L
+        private var pendingDrop: Runnable? = null
+
+        fun lift(on: Boolean) {
+            if (lifted == on) return
+            lifted = on
+            if (on) {
+                liftStart = SystemClock.uptimeMillis()
+                AnimationSystem.fade(solid, solidLiftedAlpha, AnimationSystem.QUICK)
+                AnimationSystem.fade(glass, 1f, AnimationSystem.QUICK)
+                AnimationSystem.scaleTo(host, liftScaleX, liftScaleY(), AnimationSystem.MENU_POP)
+            } else {
+                AnimationSystem.fade(glass, 0f, AnimationSystem.SETTLE)
+                AnimationSystem.fade(solid, 1f, AnimationSystem.SETTLE)
+                AnimationSystem.scaleTo(host, 1f, 1f, AnimationSystem.MENU_POP_BACK)
+            }
+        }
+
+        /** Hạ xuống sau khi thả tay, nhưng chờ đủ [minLiftMs] tính từ lúc nổi lên. */
+        fun dropLater() {
+            cancelPendingDrop()
+            val wait = (minLiftMs - (SystemClock.uptimeMillis() - liftStart)).coerceAtLeast(0L)
+            val r = Runnable { pendingDrop = null; lift(false) }
+            pendingDrop = r
+            host.postDelayed(r, wait)
+        }
+
+        /** Huỷ lần hạ đang chờ (chạm lại trước khi kịp hạ, hoặc view bị gỡ khỏi cửa sổ). */
+        fun cancelPendingDrop() {
+            pendingDrop?.let { host.removeCallbacks(it) }
+            pendingDrop = null
+        }
+    }
+
+    /**
      * Viên chọn của thanh chọn phân đoạn kiểu iOS 26 (tab bar trong video tham chiếu).
      * Lúc nghỉ là viên đặc nằm dưới nhãn; khi chạm giữ, viên đặc nhạt đi, hiện lớp kính trong,
      * phình to hơn thanh một chút và trượt theo ngón tay. Thả tay thì co lại và lăn về ô gần nhất.
@@ -1323,9 +1363,10 @@ half4 main(float2 coord) {
         val view = FrameLayout(context)
         private val solid = View(context)
         private val glass = View(context)
-        private var lifted = false
-        private var liftStart = 0L
-        private var pendingDrop: Runnable? = null
+        private val lifter = GlassLift(
+            host = view, solid = solid, glass = glass, solidLiftedAlpha = 0f,
+            liftScaleX = LIFT_SCALE_X, liftScaleY = { liftScaleY() }, minLiftMs = MIN_LIFT_MS
+        )
 
         init {
             val radius = PILL_RADIUS_DP * density
@@ -1362,33 +1403,6 @@ half4 main(float2 coord) {
             return if (trackH > 0 && view.height > 0) trackH * LIFT_OVER_TRACK / view.height else FALLBACK_LIFT_SCALE
         }
 
-        private fun lift(on: Boolean) {
-            if (lifted == on) return
-            lifted = on
-            if (on) {
-                liftStart = SystemClock.uptimeMillis()
-                AnimationSystem.fade(solid, 0f, AnimationSystem.QUICK)
-                AnimationSystem.fade(glass, 1f, AnimationSystem.QUICK)
-                AnimationSystem.scaleTo(view, LIFT_SCALE_X, liftScaleY(), AnimationSystem.MENU_POP)
-            } else {
-                AnimationSystem.fade(glass, 0f, AnimationSystem.SETTLE)
-                AnimationSystem.fade(solid, 1f, AnimationSystem.SETTLE)
-                AnimationSystem.scaleTo(view, 1f, 1f, AnimationSystem.MENU_POP_BACK)
-            }
-        }
-
-        /**
-         * Hạ viên kính xuống sau khi thả tay, nhưng giữ nó phình ít nhất [MIN_LIFT_MS] để cú chạm nhanh
-         * sang ô bên cạnh vẫn thấy viên kính nở ra rồi mới co lại khi tới nơi.
-         */
-        private fun dropLater() {
-            pendingDrop?.let { view.removeCallbacks(it) }
-            val wait = (MIN_LIFT_MS - (SystemClock.uptimeMillis() - liftStart)).coerceAtLeast(0L)
-            val r = Runnable { pendingDrop = null; lift(false) }
-            pendingDrop = r
-            view.postDelayed(r, wait)
-        }
-
         /**
          * Gắn cử chỉ cho [track] (có [count] ô bằng nhau, trừ padding của track).
          * [onHover] báo ô đang nằm dưới ngón tay lúc kéo; [onRelease] báo ô được chọn khi thả
@@ -1416,9 +1430,8 @@ half4 main(float2 coord) {
                     android.view.MotionEvent.ACTION_DOWN -> {
                         v.parent?.requestDisallowInterceptTouchEvent(true)
                         AnimationSystem.unclipParents(view)
-                        pendingDrop?.let { view.removeCallbacks(it) }
-                        pendingDrop = null
-                        lift(true)
+                        lifter.cancelPendingDrop()
+                        lifter.lift(true)
                         v.performHapticFeedback(HapticFeedbackConstants.GESTURE_START)
                         hover = indexAt(e.x)
                         onHover(hover)
@@ -1443,13 +1456,13 @@ half4 main(float2 coord) {
                     }
                     android.view.MotionEvent.ACTION_UP -> {
                         v.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
-                        dropLater()
+                        lifter.dropLater()
                         onRelease(if (hover >= 0) hover else currentIndex())
                         hover = -1
                         true
                     }
                     android.view.MotionEvent.ACTION_CANCEL -> {
-                        dropLater()
+                        lifter.dropLater()
                         onRelease(currentIndex())
                         hover = -1
                         true

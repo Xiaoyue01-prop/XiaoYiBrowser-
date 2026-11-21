@@ -30,7 +30,7 @@ internal object BrowserSheetMotion {
     private const val DEFAULT_DETENT = 0 // nấc thấp nhất (0.5): mở mặc định ở đây, kéo lên để bung thêm
     private const val FULL_DETENT = 2
     private const val FLING_PROJECTION_S = 0.2f
-    private const val RUBBER_BAND = 0.15f
+    private const val RUBBER_BAND = GlassSystem.Drag.RUBBER
 
     /** Quản lý các nấc chiều cao + vị trí nghỉ của một sheet (dùng chung cho popup, overlay và sheet công cụ). */
     class SheetDetents(
