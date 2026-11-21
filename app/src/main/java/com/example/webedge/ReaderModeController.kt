@@ -63,7 +63,9 @@ internal class ReaderModeController(
     private val toast: (String) -> Unit,
     /** Hộp thoại nhập chữ (dùng để xin API key dịch). onResult nhận null khi người dùng hủy. */
     private val askText: (title: String, message: String, current: String, onResult: (String?) -> Unit) -> Unit,
-    private val onVisibilityChanged: (Boolean) -> Unit
+    private val onVisibilityChanged: (Boolean) -> Unit,
+    /** Gọi khi thoát Reader (chỉ khi bài còn đang mở): tiến độ đã đọc lúc thoát, để orb hiện lại cho tới khi rời trang. */
+    private val onExited: (snapshot: ReadingSnapshot, articleUrl: String) -> Unit = { _, _ -> }
 ) {
     private enum class ReaderTheme(val label: String) { LIGHT("Sáng"), SEPIA("Sepia"), DARK("Tối") }
     private enum class SurfaceKind { OPTIONS, MENU }
@@ -291,9 +293,13 @@ internal class ReaderModeController(
         OriginTransitionController.cancel(layer)
         AnimationSystem.cancel(layer)
         toolbar?.let(AnimationSystem::cancel)
+        // Chụp tiến độ trước khi gỡ view (sau clearViews thì không tính được nữa).
+        val snapshot = readingSnapshot()
+        val articleUrl = article?.url.orEmpty()
         root.removeView(layer)
         clearViews()
         onVisibilityChanged(false)
+        if (snapshot != null) onExited(snapshot, articleUrl)
     }
 
     private fun clearViews() {

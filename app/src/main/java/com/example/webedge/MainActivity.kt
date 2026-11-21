@@ -266,8 +266,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         override fun dismissReaderHint() {
             readerSuggestion.onNavigation()
-            // Trang mới = document mới: bản dịch cũ (và job đang chạy) không còn áp dụng.
-            pageTranslator.onNavigation(web)
         }
     }
 
@@ -314,10 +312,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     private var contextMenuController: ContextMenuController? = null
     private lateinit var glassDialog: GlassDialogController
 
-    private val pageTranslator: PageTranslator by lazy {
-        PageTranslator(scope = lifecycleScope, web = { web }, toast = ::toast)
-    }
-
     // Cầu nối cho MenuController: đọc giá trị mới nhất của Activity mỗi lần cần.
     private val menuHost = object : MenuHost {
         override val web: WebView get() = this@MainActivity.web
@@ -350,8 +344,6 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun openFind() = this@MainActivity.openFind()
         override fun isDesktopMode() = this@MainActivity.isDesktopMode()
         override fun toggleDesktopMode() = this@MainActivity.toggleDesktopMode()
-        override fun pageTranslateLabel() = pageTranslator.menuLabel()
-        override fun togglePageTranslation() = pageTranslator.toggle()
         override fun applyInsets() = this@MainActivity.applyInsets()
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
         override fun setWebDarkMode(enabled: Boolean) = this@MainActivity.rebuildWebViewsForDarkMode()
@@ -832,7 +824,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 }
             },
             autoHide = { store.autoHideBar },
-            onVisibilityChanged = ::onReaderVisibilityChanged
+            onVisibilityChanged = ::onReaderVisibilityChanged,
+            onExited = ::onReaderExited
         )
         menu = MenuController(
             activity = this,
@@ -1203,6 +1196,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             requestMediaState(target)
         }
         tabManager.switchTo(tab.id)
+        LiveEventHub.setActiveTab(tab.id)
         // Nội dung riêng tư không được nằm lại trên notification/lock screen.
         if (tab.isPrivate) ReaderLiveUpdate.cancel(this)
         // Prevent address/find text from a private session entering Android's saved view hierarchy.
@@ -1558,6 +1552,34 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     /** Browser chrome chỉ tạm ẩn; Reader không thay WebView, tab hay lịch sử điều hướng. */
+    /**
+     * Thoát Reader: tiến độ đọc nằm lại trên orb (icon sách + vòng %) cho tới khi tab này sang trang khác hoặc bị đóng.
+     * Chỉ lưu tạm trong bộ nhớ; chưa cuộn gì thì không có gì để nhớ.
+     */
+    private fun onReaderExited(snapshot: ReadingSnapshot, articleUrl: String) {
+        if (!::web.isInitialized) return
+        val tab = tabManager.getForWebView(web) ?: return
+        val key = "reader:${tab.id}"
+        // Reader đóng vì đã sang trang khác thì bài không còn là trang đang xem.
+        val samePage = articleUrl.isEmpty() ||
+            LiveEventHub.pageKeyOf(articleUrl) == LiveEventHub.pageKeyOf(tab.url)
+        if (snapshot.percent <= 0 || !samePage) {
+            LiveEventHub.remove(key)
+            return
+        }
+        LiveEventHub.post(
+            LiveEvent(
+                key = key,
+                kind = LiveKind.READER,
+                title = snapshot.title,
+                subtitle = "${snapshot.percent}%",
+                progress = snapshot.percent / 100f,
+                tabId = tab.id,
+                pageKey = LiveEventHub.pageKeyOf(tab.url)
+            )
+        )
+    }
+
     private fun onReaderVisibilityChanged(active: Boolean) {
         if (active) readerSuggestion.onReaderOpened() else readerSuggestion.onReaderClosed()
         val controller = WindowCompat.getInsetsController(window, root)

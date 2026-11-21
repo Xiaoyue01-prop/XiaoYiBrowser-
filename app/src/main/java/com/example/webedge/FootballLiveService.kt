@@ -298,6 +298,20 @@ class FootballLiveService : Service() {
             val n = buildLive(m, alert)
             lastNotif[m.id] = n
 
+            // Trận đang đá: hiện luôn trong app (orb đổi sang icon bóng). Chưa đá hoặc đã hết thì không có.
+            if (m.inPlay || m.onBreak) {
+                LiveEventHub.post(
+                    LiveEvent(
+                        key = "fb:${m.id}",
+                        kind = LiveKind.FOOTBALL,
+                        title = scoreLine(m),
+                        subtitle = statusLabel(m)
+                    )
+                )
+            } else {
+                LiveEventHub.remove("fb:${m.id}")
+            }
+
             val sig = "${scoreLine(m)}|${statusLabel(m)}|${chip(m)}|${m.goals.size}|${m.cards.size}"
             val firstPost = lastSig[m.id] == null
             val throttled = now - (lastPostAt[m.id] ?: 0L) < 20_000L
@@ -339,12 +353,14 @@ class FootballLiveService : Service() {
     }
 
     private fun clearState(id: Long) {
+        LiveEventHub.remove("fb:$id")
         lastNotif.remove(id); lastEvents.remove(id); lastStatus.remove(id)
         lastSig.remove(id); lastPostAt.remove(id)
     }
 
     private fun shutDown() {
         loop?.cancel()
+        LiveEventHub.removeWhere { it.kind == LiveKind.FOOTBALL }
         lastNotif.keys.toList().forEach { manager.cancel(liveId(it)) }
         lastNotif.clear(); lastEvents.clear(); lastStatus.clear(); lastSig.clear(); lastPostAt.clear()
         stopForeground(STOP_FOREGROUND_REMOVE)

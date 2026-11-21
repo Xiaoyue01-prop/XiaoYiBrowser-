@@ -59,10 +59,6 @@ interface MenuHost {
     fun setWebDarkMode(enabled: Boolean)
     /** Mở [url] trong một tab mới (dùng cho menu ba chấm của Lịch sử / Dấu trang). */
     fun openInNewTab(url: String)
-    /** Chữ của mục dịch trang theo trạng thái trang đang xem ("Dịch sang tiếng Việt", "Hiện bản gốc"...). */
-    fun pageTranslateLabel(): String
-    /** Dịch trang đang xem / bật tắt bản gốc / dừng dịch, tùy trạng thái. */
-    fun togglePageTranslation()
 }
 
 /**
@@ -792,7 +788,6 @@ class MenuController(
 
             gap()
             item("Tìm trong trang", Icons.SEARCH, true) { host.openFind() }
-            item(host.pageTranslateLabel(), Icons.TRANSLATE, true) { host.togglePageTranslation() }
             item("Trang web máy tính", if (host.isDesktopMode()) Icons.CHECK else null, true) {
                 host.toggleDesktopMode()
             }

@@ -209,6 +209,8 @@ object DownloadLiveUpdate {
                 // Notification permission may have been revoked.
             } finally {
                 activeJobs.remove(downloadId)
+                // Xong, lỗi, bị huỷ hay dòng tải bị xoá: đều không còn "đang chạy".
+                LiveEventHub.remove("dl:$downloadId")
             }
         }
     }
@@ -348,6 +350,18 @@ object DownloadLiveUpdate {
             } else {
                 0
             }
+
+        // Hiện luôn trong app: orb đổi sang icon tải với vòng tiến độ (không biết tổng dung lượng thì không có vòng).
+        LiveEventHub.post(
+            LiveEvent(
+                key = "dl:$id",
+                kind = LiveKind.DOWNLOAD,
+                title = name,
+                subtitle = if (paused) "Đang tạm dừng" else "$percent%",
+                progress = if (total > 0L) percent / 100f else null,
+                paused = paused
+            )
+        )
 
         val accent = if (paused) Color.rgb(255, 159, 10) else progressColor
         val progressStyle = Notification.ProgressStyle()

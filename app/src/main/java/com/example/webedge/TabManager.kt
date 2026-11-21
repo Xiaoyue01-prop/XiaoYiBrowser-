@@ -274,6 +274,7 @@ class TabManager {
         val idx = tabs.indexOf(owner)
         if (idx < 0) return null
         val removed = tabs.removeAt(idx)
+        LiveEventHub.removeForTab(removed.id)
 
         if (removed.isActive && tabs.isNotEmpty()) {
             // Ưu tiên tab liền kề CÙNG NHÓM (sau, rồi trước); hết thì lấy tab bất kỳ gần nhất.

@@ -62,6 +62,13 @@ class OrbMenuController(
 ) {
     private val iconColor = if (isNight) Color.WHITE else Color.rgb(28, 28, 32)
 
+    /** Biểu tượng giữa orb: vòng nhẫn, hoặc icon của sự kiện đang chạy (xem [LiveEventHub]). */
+    private val glyph = OrbGlyphDrawable(iconColor)
+    private val liveListener: () -> Unit = {
+        val top = LiveEventHub.top()
+        glyph.setLive(top?.kind, top?.progress)
+    }
+
     private var toolbarAvailable = true
     private var temporarilyHidden = false
     private var isExpanded = false
@@ -77,7 +84,7 @@ class OrbMenuController(
 
     private fun createIcon(path: String?, ring: Boolean = false): ImageView =
         ImageView(rootLayout.context).apply {
-            setImageDrawable(if (ring) RingIcon(iconColor) else PathIcon(path ?: "", iconColor))
+            setImageDrawable(if (ring) glyph else PathIcon(path ?: "", iconColor))
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(dp(7), dp(7), dp(7), dp(7))
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -138,6 +145,8 @@ class OrbMenuController(
         )
         mainBtn.setOnClickListener { toggle() }
         AnimationSystem.attachGlassPress(mainBtn)
+        LiveEventHub.addListener(liveListener)
+        liveListener()
 
         val icons = listOf(Icons.ARROW_BACK, Icons.ARROW_FORWARD, Icons.HOME)
         val labels = listOf("Quay lại", "Tiến tới", "Trang chủ")
@@ -579,6 +588,8 @@ class OrbMenuController(
     }
 
     fun destroy() {
+        LiveEventHub.removeListener(liveListener)
+        glyph.release()
         anchorView?.viewTreeObserver?.let { observer ->
             preDrawListener?.let { if (observer.isAlive) observer.removeOnPreDrawListener(it) }
         }

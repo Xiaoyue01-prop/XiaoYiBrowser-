@@ -175,6 +175,8 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         YouTubeAdBlocker.onMainFrameNavigation(view, url)
         AdBlocker.onMainFrameNavigation(view, url)
         host.tabManager.updateForWebView(view, url, view.title ?: url)
+        // Sự kiện gắn với trang cũ của tab này (vd. tiến độ Reader) mất khi sang trang khác.
+        host.tabManager.getForWebView(view)?.let { LiveEventHub.onNavigation(it.id, url) }
         host.applyTextZoom(view, url)
         // A navigation must not reuse the previous document's background tone.
         host.forgetPageBackground(view)
