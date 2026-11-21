@@ -1560,13 +1560,17 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (!::web.isInitialized) return
         val tab = tabManager.getForWebView(web) ?: return
         val key = "reader:${tab.id}"
+        // tab.url chỉ cập nhật ở vài thời điểm (onPageFinished, chuyển tab) nên có thể cũ hơn trang đang xem
+        // (SPA đổi URL bằng pushState, chuyển hướng...). Dùng URL sống của WebView, tab.url chỉ là dự phòng.
+        val currentUrl = web.url ?: tab.url
         // Reader đóng vì đã sang trang khác thì bài không còn là trang đang xem.
-        val samePage = articleUrl.isEmpty() ||
-            LiveEventHub.pageKeyOf(articleUrl) == LiveEventHub.pageKeyOf(tab.url)
-        if (snapshot.percent <= 0 || !samePage) {
+        val samePage = articleUrl.isEmpty() || currentUrl.isEmpty() ||
+            LiveEventHub.pageKeyOf(articleUrl) == LiveEventHub.pageKeyOf(currentUrl)
+        if (!samePage) {
             LiveEventHub.remove(key)
             return
         }
+        // Chưa cuộn (0%) vẫn hiện: orb báo "bạn đang đọc bài này" với vòng tiến độ trống.
         LiveEventHub.post(
             LiveEvent(
                 key = key,
@@ -1575,7 +1579,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 subtitle = "${snapshot.percent}%",
                 progress = snapshot.percent / 100f,
                 tabId = tab.id,
-                pageKey = LiveEventHub.pageKeyOf(tab.url)
+                pageKey = LiveEventHub.pageKeyOf(articleUrl.ifEmpty { currentUrl })
             )
         )
     }
