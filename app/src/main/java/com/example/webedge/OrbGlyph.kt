@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PathMeasure
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
@@ -21,9 +22,11 @@ import kotlin.math.sin
 /**
  * Biểu tượng giữa orb: bình thường là vòng nhẫn; có sự kiện đang chạy ([setLive]) thì đổi thành icon của sự kiện đó.
  *
- * Đổi giữa vòng nhẫn và icon không cắt mà đi qua một đoạn (~1,5 giây): vòng nhẫn quay kiểu con quay
- * hồi chuyển (3 vòng lật quanh 3 trục, ~1 giây), khớp lại thành vòng phẳng rồi icon hiện trong vòng (chiều ngược lại chạy ngược, nhanh hơn).
- * Dùng chung cho mọi icon. Sự kiện có tiến độ thì vòng tiến độ chạy quanh icon, mượt theo spring chung của app.
+ * Đổi giữa vòng nhẫn và icon không cắt mà đi qua một đoạn (~1,7 giây):
+ *  1. vòng nhẫn quay kiểu con quay hồi chuyển (3 vòng lật quanh 3 trục, ~1 giây),
+ *  2. khớp lại thành ring phẳng,
+ *  3. chính nét ring đó biến dạng (morph) thành đường viền RỖNG của icon (vd. mũi tên chỉ xuống khi tải file).
+ * Chiều ngược lại chạy ngược, nhanh hơn. Sự kiện có tiến độ thì nét viền sáng dần chạy dọc theo đường viền icon.
  *
  * Đoạn xoay chạy theo thời gian (ValueAnimator) chứ không theo spring: spring kết thúc trong ~0,4s nên vòng
  * xoay chưa kịp nhìn thấy đã thành icon.
@@ -35,10 +38,7 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
         this.color = color
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
-    }
-    private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        this.color = color
-        style = Paint.Style.FILL
+        strokeJoin = Paint.Join.ROUND
     }
     private val arcRect = RectF()
     private var baseAlpha = 255
@@ -48,9 +48,18 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
     private var morphAnimator: ValueAnimator? = null
 
     private var shownKind: LiveKind? = null
-    private var shownPath: Path? = null
-    /** Khung của icon đang hiện, để căn giữa và phóng theo kích thước thật (icon Material có lề rất khác nhau). */
-    private val shownBounds = RectF()
+    /**
+     * Đường viền đích của icon đang hiện, lấy mẫu thành [POINTS] điểm đều theo chiều dài, đi theo chiều kim đồng hồ
+     * từ vị trí 12 giờ (giống thứ tự điểm của vòng tròn) nên nội suy điểm-với-điểm cho ra morph tròn -> icon.
+     * Toạ độ chuẩn hoá: tâm 0, cạnh dài nhất = 1.
+     */
+    private val targetPts = FloatArray(POINTS * 2)
+    private var targetFraction = ICON_FRACTION
+    private var extraPentagon = false
+    private val morphPath = Path()
+    private val progressSeg = Path()
+    private val measure = PathMeasure()
+    private val pos = FloatArray(2)
     private var targetKind: LiveKind? = null
 
     /** Tiến độ đang vẽ (0..1) và tiến độ đích; <0 là không có tiến độ. */
@@ -72,7 +81,7 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
         when {
             wanted == null -> {
                 if (shown != null || morph > 0f) {
-                    morphTo(0f) { shownKind = null; shownPath = null }
+                    morphTo(0f) { shownKind = null }
                 }
             }
             shown == null -> {
@@ -88,7 +97,6 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
                         morphTo(1f)
                     } else {
                         shownKind = null
-                        shownPath = null
                     }
                 }
             }
@@ -98,7 +106,28 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
 
     private fun showIcon(kind: LiveKind) {
         shownKind = kind
-        shownPath = PathParser.createPathFromPathData(iconPathOf(kind)).also { it.computeBounds(shownBounds, true) }
+        extraPentagon = kind == LiveKind.FOOTBALL
+        targetFraction = if (kind == LiveKind.FOOTBALL) BALL_FRACTION else ICON_FRACTION
+        if (kind == LiveKind.FOOTBALL) {
+            // Bóng: viền ngoài vẫn là hình tròn (co nhỏ lại), hình ngũ giác nằm giữa hiện dần.
+            for (i in 0 until POINTS) {
+                val a = -PI.toFloat() / 2f + 2f * PI.toFloat() * i / POINTS
+                targetPts[i * 2] = 0.5f * cos(a)
+                targetPts[i * 2 + 1] = 0.5f * sin(a)
+            }
+            return
+        }
+        val path = PathParser.createPathFromPathData(outlineOf(kind))
+        val bounds = RectF()
+        path.computeBounds(bounds, true)
+        val size = maxOf(bounds.width(), bounds.height()).coerceAtLeast(0.001f)
+        measure.setPath(path, false)
+        val length = measure.length
+        for (i in 0 until POINTS) {
+            measure.getPosTan(length * i / POINTS, pos, null)
+            targetPts[i * 2] = (pos[0] - bounds.centerX()) / size
+            targetPts[i * 2 + 1] = (pos[1] - bounds.centerY()) / size
+        }
     }
 
     private fun morphTo(target: Float, then: (() -> Unit)? = null) {
@@ -188,61 +217,77 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
             return
         }
 
-        // Kiểu con quay hồi chuyển (gyroscope): vòng nhẫn quay trong không gian 3 chiều. Mỗi vòng cùng cỡ vòng nhẫn,
-        // lật quanh một trục riêng nên nhìn nghiêng thành hình elip (rộng = R * |cos(góc lật)|). Cuối đoạn quay mọi
-        // vòng khớp lại thành đúng vòng nhẫn phẳng, rồi icon hiện dần BÊN TRONG vòng (vòng nhẫn ở lại làm viền).
-        //   0 .. 0,12     vòng đứng yên
-        //   0,12 .. 0,70  3 vòng lật quanh 3 trục khác nhau, quay 2 vòng, chậm dần rồi khớp lại
-        //   0,70 .. 1     icon hiện dần trong vòng
-        val u = ((t - 0.12f) / 0.58f).coerceIn(0f, 1f)
-        // spread = 0 ở hai đầu đoạn quay nên các vòng trùng nhau; ở giữa các trục lệch nhau tối đa.
-        val spread = sin(PI.toFloat() * u)
-        val flip = smooth(0f, 1f, u) * 4f * PI.toFloat() // 2 vòng lật đầy; u = 1 là bội của π nên |cos| = 1
-        val drift = smooth(0f, 1f, u) * PI.toFloat()      // cả cụm xoay thêm nửa vòng trong mặt phẳng màn hình
-        val iconAlpha = smooth(0.70f, 1f, t)
-        // Có vòng tiến độ thì vòng nhẫn lui thành nền mờ (cung sáng chạy trên nó), không thì giữ nguyên.
-        val hasProgress = shownProgress >= 0f
-        val leadAlpha = if (hasProgress) 1f - 0.78f * iconAlpha else 1f
-
-        // Vòng chính + 2 vòng phụ mờ hơn (mờ dần khi chúng khớp lại vào vòng chính).
-        for (k in 2 downTo 0) {
-            val axis = drift + k * (PI.toFloat() / 3f) * spread
-            val phase = flip + k * (2f * PI.toFloat() / 3f) * spread
-            val squash = abs(cos(phase))
-            val alphaK = if (k == 0) leadAlpha else 0.5f * smooth(0f, 0.25f, spread)
-            if (alphaK <= 0.01f) continue
-            // Vệt mờ theo chuyển động: 2 bản trễ pha, rất nhạt, chỉ khi đang quay.
-            if (spread > 0.05f) {
-                for (g in 1..2) {
-                    val gs = abs(cos(phase - g * 0.28f * spread))
-                    ringPaint.alpha = (baseAlpha * alphaK * 0.16f).toInt()
-                    drawTiltedRing(canvas, cx, cy, radius, gs, axis)
+        //   0 .. 0,10     vòng đứng yên (cỡ ring đầy đủ)
+        //   0,10 .. 0,58  3 vòng cùng cỡ ring lật 3D quanh 3 trục khác nhau, quay 2 vòng, chậm dần rồi khớp lại thành ring phẳng
+        //   0,58 .. 0,86  chính nét ring biến dạng (nảy nhẹ) thành đường viền rỗng của icon
+        if (t < MORPH_START) {
+            val u = ((t - 0.10f) / (MORPH_START - 0.10f)).coerceIn(0f, 1f)
+            // spread = 0 ở hai đầu đoạn quay nên các vòng trùng nhau; ở giữa các trục lệch nhau tối đa.
+            val spread = sin(PI.toFloat() * u)
+            val flip = smooth(0f, 1f, u) * 4f * PI.toFloat() // 2 vòng lật đầy; u = 1 là bội của π nên |cos| = 1
+            val drift = smooth(0f, 1f, u) * PI.toFloat()      // cả cụm xoay thêm nửa vòng trong mặt phẳng màn hình
+            // Vòng chính + 2 vòng phụ mờ hơn (mờ dần khi chúng khớp lại vào vòng chính).
+            for (k in 2 downTo 0) {
+                val axis = drift + k * (PI.toFloat() / 3f) * spread
+                val phase = flip + k * (2f * PI.toFloat() / 3f) * spread
+                val alphaK = if (k == 0) 1f else 0.5f * smooth(0f, 0.25f, spread)
+                if (alphaK <= 0.01f) continue
+                // Vệt mờ theo chuyển động: 2 bản trễ pha, rất nhạt, chỉ khi đang quay.
+                if (spread > 0.05f) {
+                    for (g in 1..2) {
+                        ringPaint.alpha = (baseAlpha * alphaK * 0.16f).toInt()
+                        drawTiltedRing(canvas, cx, cy, radius, abs(cos(phase - g * 0.28f * spread)), axis)
+                    }
                 }
+                ringPaint.alpha = (baseAlpha * alphaK).toInt()
+                drawTiltedRing(canvas, cx, cy, radius, abs(cos(phase)), axis)
             }
-            ringPaint.alpha = (baseAlpha * alphaK).toInt()
-            drawTiltedRing(canvas, cx, cy, radius, squash, axis)
+            return
         }
 
-        // Icon hiện dần từ nhỏ ra đúng cỡ. Phóng theo khung thật của path (không theo ô 24x24) để mọi icon
-        // to bằng nhau và nằm đúng giữa vòng.
-        val path = shownPath
-        if (iconAlpha > 0.01f && path != null && shownBounds.width() > 0f && shownBounds.height() > 0f) {
-            val target = radius * 2f * ICON_FRACTION * (0.6f + 0.4f * iconAlpha)
-            val scale = target / maxOf(shownBounds.width(), shownBounds.height())
-            iconPaint.alpha = (baseAlpha * iconAlpha).toInt()
-            canvas.save()
-            canvas.translate(cx, cy)
-            canvas.scale(scale, scale)
-            canvas.translate(-shownBounds.centerX(), -shownBounds.centerY())
-            canvas.drawPath(path, iconPaint)
-            canvas.restore()
+        // Morph: mỗi điểm của vòng tròn trượt tới điểm tương ứng của đường viền icon. Nét vẽ vẫn là nét ring mảnh.
+        val shape = easeOutBack(smooth(MORPH_START, 0.86f, t))
+        val size = radius * 2f * targetFraction
+        morphPath.rewind()
+        for (i in 0 until POINTS) {
+            val a = -PI.toFloat() / 2f + 2f * PI.toFloat() * i / POINTS
+            val sx = cx + radius * cos(a)
+            val sy = cy + radius * sin(a)
+            val x = sx + (cx + targetPts[i * 2] * size - sx) * shape
+            val y = sy + (cy + targetPts[i * 2 + 1] * size - sy) * shape
+            if (i == 0) morphPath.moveTo(x, y) else morphPath.lineTo(x, y)
+        }
+        morphPath.close()
+
+        // Có tiến độ: đường viền lui thành nền mờ, nét sáng chạy dọc theo nó từ vị trí 12 giờ theo chiều kim đồng hồ.
+        val hasProgress = shownProgress >= 0f
+        val pa = if (hasProgress) smooth(0.80f, 1f, t) else 0f
+        ringPaint.alpha = (baseAlpha * (1f - 0.78f * pa)).toInt()
+        canvas.drawPath(morphPath, ringPaint)
+        if (pa > 0.01f && shownProgress > 0.001f) {
+            measure.setPath(morphPath, false)
+            progressSeg.rewind()
+            if (measure.getSegment(0f, measure.length * shownProgress.coerceIn(0f, 1f), progressSeg, true)) {
+                ringPaint.alpha = (baseAlpha * pa).toInt()
+                canvas.drawPath(progressSeg, ringPaint)
+            }
         }
 
-        // Cung tiến độ chạy quanh icon, từ 12 giờ theo chiều kim đồng hồ (nền của nó là chính vòng nhẫn ở trên).
-        if (hasProgress && iconAlpha > 0.01f) {
-            arcRect.set(cx - radius, cy - radius, cx + radius, cy + radius)
-            ringPaint.alpha = (baseAlpha * iconAlpha).toInt()
-            canvas.drawArc(arcRect, -90f, 360f * shownProgress.coerceIn(0f, 1f), false, ringPaint)
+        if (extraPentagon) {
+            val fade = smooth(0.80f, 1f, t)
+            if (fade > 0.01f) {
+                val pr = radius * 0.34f
+                progressSeg.rewind()
+                for (k in 0 until 5) {
+                    val a = -PI.toFloat() / 2f + k * 2f * PI.toFloat() / 5f
+                    val x = cx + pr * cos(a)
+                    val y = cy + pr * sin(a)
+                    if (k == 0) progressSeg.moveTo(x, y) else progressSeg.lineTo(x, y)
+                }
+                progressSeg.close()
+                ringPaint.alpha = (baseAlpha * fade).toInt()
+                canvas.drawPath(progressSeg, ringPaint)
+            }
         }
     }
 
@@ -257,6 +302,14 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
         canvas.restore()
     }
 
+    /** Nảy nhẹ qua đích rồi về (đích 1): ring co lại hơi quá cỡ rồi nở về đúng cỡ. */
+    private fun easeOutBack(x: Float): Float {
+        val c1 = 1.4f
+        val c3 = c1 + 1f
+        val p = x - 1f
+        return 1f + c3 * p * p * p + c1 * p * p
+    }
+
     private fun smooth(edge0: Float, edge1: Float, x: Float): Float {
         val v = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
         return v * v * (3f - 2f * v)
@@ -265,7 +318,6 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
     override fun setAdaptiveForegroundColor(color: Int) {
         if (ringPaint.color != color) {
             ringPaint.color = color
-            iconPaint.color = color
             invalidateSelf()
         }
     }
@@ -277,27 +329,38 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
         ringPaint.colorFilter = colorFilter
-        iconPaint.colorFilter = colorFilter
     }
 
     @Suppress("OVERRIDE_DEPRECATION")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
     private companion object {
-        /** Thời gian chạy hết đoạn vòng xoay → icon, và chiều ngược lại. */
-        const val SPIN_IN_MS = 1500L
+        /** Thời gian chạy hết đoạn vòng xoay -> icon, và chiều ngược lại. */
+        const val SPIN_IN_MS = 1700L
         const val SPIN_OUT_MS = 420L
         const val MIN_MORPH_MS = 120L
 
-        /** Cạnh dài nhất của icon so với đường kính vòng nhẫn (trước đây ~0,37 nên icon bé). */
-        const val ICON_FRACTION = 0.64f
+        /** Số điểm lấy mẫu của đường viền khi morph; nhiều hơn thì góc nhọn sắc hơn. */
+        const val POINTS = 120
 
-        /** Icon 24x24 của từng loại sự kiện (cùng bộ với icon thông báo của app). */
-        fun iconPathOf(kind: LiveKind): String = when (kind) {
-            LiveKind.DOWNLOAD -> Icons.DOWNLOAD
-            LiveKind.READER -> Icons.BOOK_OPEN
-            LiveKind.FOOTBALL -> Icons.FOOTBALL
-            LiveKind.MEDIA -> "M8 5v14l11-7z"
+        /** Mốc của morph (0..1) mà ring phẳng bắt đầu biến dạng thành icon. */
+        const val MORPH_START = 0.58f
+
+        /** Cạnh dài nhất của icon viền so với đường kính ring. Tăng lên thì icon to hơn. */
+        const val ICON_FRACTION = 0.66f
+
+        /** Riêng bóng đá: vòng ngoài co về cỡ này so với ring. */
+        const val BALL_FRACTION = 0.82f
+
+        /**
+         * Đường viền ĐƠN (một nét liền, đi theo chiều kim đồng hồ từ điểm trên cùng) của icon, ô 24x24.
+         * Phải là một đường duy nhất để vòng tròn biến dạng thẳng thành nó. Bóng đá xử lý riêng trong showIcon.
+         */
+        fun outlineOf(kind: LiveKind): String = when (kind) {
+            LiveKind.DOWNLOAD -> "M12 3H15V11H19L12 20L5 11H9V3Z"
+            LiveKind.READER -> "M12 6C14 4.5 17 4 21 4.5V19C17 18.5 14 19 12 20.5C10 19 7 18.5 3 19V4.5C7 4 10 4.5 12 6Z"
+            LiveKind.MEDIA -> "M8 5L19 12L8 19Z"
+            LiveKind.FOOTBALL -> "M12 2A10 10 0 1 1 11.99 2Z"
         }
     }
 }
