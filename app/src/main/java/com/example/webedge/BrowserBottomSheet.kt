@@ -282,7 +282,7 @@ class BrowserBottomSheet(
                 closeButton.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
                 closeButton.background = ovalDrawable(GlassSystem.pageSheetButtonColor(color))
             } else {
-                (closeButton.getChildAt(1) as? ImageView)?.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
+                ((closeButton as? ViewGroup)?.getChildAt(1) as? ImageView)?.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
             }
             (grabber.background as? GradientDrawable)?.setColor(GlassSystem.pageSheetGrabberColor(color))
             dlg.window?.let { BrowserSheetMotion.configureWindow(it, windowRoot, dark) }
