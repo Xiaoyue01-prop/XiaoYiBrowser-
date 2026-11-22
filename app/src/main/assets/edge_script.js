@@ -2,6 +2,7 @@
 window.__edgeInset = %INSET%;
 window.__edgeMode = %MODE%;
 window.__edgeBottom = %BOTTOM%;
+window.__edgeScrollBottom = %SCROLL_BOTTOM%;
 window.__edgeCompact = %COMPACT%;
 %PILL_METRICS%
 if (window.__edgeStarted) {
@@ -17,9 +18,59 @@ var pageBgTimer = null;
 var styleCache = new WeakMap();
 var rafId = null;
 
+function viewportScale(){
+  return window.visualViewport && window.visualViewport.scale || 1;
+}
+
+function topReserveCss(){
+  return (window.__edgeInset || 0) / viewportScale();
+}
+
+function viewportZoomed(){
+  var vp = window.visualViewport;
+  return vp && vp.width < document.documentElement.clientWidth * 0.94;
+}
+
+var rootReserveStyle = null, rootReserveDirty = true, rootReserveKey = '';
+function syncRootReserve(){
+  var root = document.documentElement;
+  if (!root || viewportZoomed()) return;
+  var scale = viewportScale();
+  var top = window.__edgeMode ? topReserveCss() : 0;
+  var bottom = (window.__edgeScrollBottom || 0) / scale;
+  var key = top + ',' + bottom;
+  if (!rootReserveDirty && rootReserveKey === key) return;
+  rootReserveDirty = false;
+  rootReserveKey = key;
+
+  // Đo padding của trang khi quy tắc của Summit đã tắt để tránh cộng hai lần safe area.
+  if (rootReserveStyle) rootReserveStyle.disabled = true;
+  var rootStyle = getComputedStyle(root);
+  var bodyStyle = document.body && getComputedStyle(document.body);
+  var bodyInFlow = bodyStyle && /^(static|relative|sticky)$/.test(bodyStyle.position) &&
+    !/^(auto|scroll|hidden)$/.test(bodyStyle.overflowY);
+  var bodyTop = bodyInFlow ? parseFloat(bodyStyle.paddingTop) || 0 : 0;
+  var bodyBottom = bodyInFlow ? parseFloat(bodyStyle.paddingBottom) || 0 : 0;
+  var rule = '';
+  if (top - bodyTop > parseFloat(rootStyle.paddingTop) + 0.5) {
+    rule += 'padding-top:' + (top - bodyTop) + 'px!important;';
+  }
+  if (bottom - bodyBottom > parseFloat(rootStyle.paddingBottom) + 0.5) {
+    rule += 'padding-bottom:' + (bottom - bodyBottom) + 'px!important;';
+  }
+  if (!rule) return;
+  if (!rootReserveStyle || !rootReserveStyle.isConnected) {
+    rootReserveStyle = document.createElement('style');
+    (document.head || root).appendChild(rootReserveStyle);
+  }
+  rule = 'html{' + rule + '}';
+  if (rootReserveStyle.textContent !== rule) rootReserveStyle.textContent = rule;
+  rootReserveStyle.disabled = false;
+}
+
 var cvCtx = null;
 // Màu hiện đại (color(srgb ...), oklab, hsl...) không khớp rgb() -> nhờ canvas đổi sang RGB
-function viaCanvas(c){
+function viaCanvas(c, translucent){
   try {
     if (!cvCtx) {
       var cv = document.createElement('canvas');
@@ -32,20 +83,20 @@ function viaCanvas(c){
     if (cvCtx.fillStyle === '#010203') return null;
     cvCtx.fillRect(0, 0, 1, 1);
     var d = cvCtx.getImageData(0, 0, 1, 1).data;
-    if (d[3] / 255 < 0.85) return null;
+    if (!d[3] || (!translucent && d[3] / 255 < 0.85)) return null;
     return [d[0], d[1], d[2], d[3] / 255];
   } catch (e) { return null; }
 }
 
-function rgbOf(c){
+function rgbOf(c, translucent){
   try {
     if (!c || c === 'transparent') return null;
     var m = c.match(/^rgba?\(([^)]+)\)/);
-    if (!m) return viaCanvas(c);
+    if (!m) return viaCanvas(c, translucent);
     var p = m[1].split(',').map(function(x){ return parseFloat(x); });
-    if (p.length < 3 || isNaN(p[0])) return viaCanvas(c);
+    if (p.length < 3 || isNaN(p[0])) return viaCanvas(c, translucent);
     var a = p.length > 3 ? p[3] : 1;
-    if (a < 0.85) return null;
+    if (a <= 0 || (!translucent && a < 0.85)) return null;
     return p;
   } catch (e) { return null; }
 }
@@ -274,15 +325,31 @@ function runTop(){
   } catch (e) {}
 }
 
-// Màu nền thật của header (nền có thể nằm ở phần tử con): lấy mẫu chỗ thấy được rồi mới leo lên cha
+function headerPaint(el){
+  var cs = getComputedStyle(el);
+  var color = gradientBackgroundColor(cs) || rgbOf(cs.backgroundColor, true);
+  if (!color) return null;
+  return [color[0], color[1], color[2], (color.length > 3 ? color[3] : 1) * parseFloat(cs.opacity)];
+}
+
+function paintOver(front, back){
+  if (!front || !back) return front || back;
+  var underneath = back[3] * (1 - front[3]);
+  var alpha = front[3] + underneath;
+  if (!alpha) return null;
+  return front.slice(0, 3).map(function(value, channel){
+    return (value * front[3] + back[channel] * underneath) / alpha;
+  }).concat(alpha);
+}
+
+// Màu nền của thanh trong suốt lấy cả lớp nền trang ở phía sau điểm lấy mẫu.
 function headerColor(hdEl){
-  try {
-    var hb = window.__edgeHdBg;
-    if (hb && hb.isConnected && headerStyleVisible(getComputedStyle(hb))) {
-      var c0 = bgOf(hb) || gradientBackgroundColor(getComputedStyle(hb));
-      if (c0) return c0;
-    }
-  } catch (e) {}
+  var hb = window.__edgeHdBg;
+  var separate = hb && hb.isConnected && headerStyleVisible(getComputedStyle(hb)) ? headerPaint(hb) : null;
+  var canvas = bgOf(document.body) || bgOf(document.documentElement);
+  var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var base = canvas ? canvas.slice(0, 3).concat(1) : (dark ? [24, 25, 26, 1] : [255, 255, 255, 1]);
+  var sampledBackdrop = null;
   try {
     var r = hdEl.getBoundingClientRect();
     var left = Math.max(0, r.left), right = Math.min(window.innerWidth, r.right);
@@ -298,30 +365,41 @@ function headerColor(hdEl){
           el = inner;
         }
         if (!headerContains(hdEl, el)) continue;
+        var paint = null;
         for (; el; el = headerParent(el)) {
           if (el === hdEl || el.getBoundingClientRect().width >= (right - left) * 0.6) {
-            var c = bgOf(el) || gradientBackgroundColor(getComputedStyle(el));
-            if (c) return c;
+            paint = paintOver(paint, headerPaint(el));
+            if (paint && paint[3] >= 0.99) return paint;
           }
           if (el === hdEl) break;
         }
+        paint = paintOver(paint, separate);
+        var background = base;
+        for (var n = j + 1; n < st.length; n++) {
+          if (st[n] === hb || headerContains(hdEl, st[n]) || !isVisible(st[n])) continue;
+          background = paintOver(headerPaint(st[n]), base);
+          if (background !== base) break;
+        }
+        if (paint) return paintOver(paint, background);
+        if (!sampledBackdrop) sampledBackdrop = background;
       }
     }
     var kids = (hdEl.shadowRoot || hdEl).querySelectorAll('*');
     for (var k = 0; k < kids.length && k < 60; k++) {
-      var b = bgOf(kids[k]);
+      var b = headerPaint(kids[k]);
       if (!b || !headerStyleVisible(getComputedStyle(kids[k]))) continue;
       var kr = kids[k].getBoundingClientRect();
-      if (kr.width > (right - left) * 0.6 && kr.top <= y && kr.bottom > y) return b;
+      if (kr.width > (right - left) * 0.6 && kr.top <= y && kr.bottom > y) {
+        return paintOver(b, paintOver(headerPaint(hdEl), sampledBackdrop || base));
+      }
     }
   } catch (e) {}
+  if (sampledBackdrop) return sampledBackdrop;
   for (var p = hdEl; p; p = headerParent(p)) {
-    var cl = bgOf(p) || gradientBackgroundColor(getComputedStyle(p));
-    if (cl) return cl;
+    var cl = headerPaint(p);
+    if (cl) return paintOver(cl, paintOver(separate, base));
   }
-  var dark = false;
-  try { dark = window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) {}
-  return dark ? [24, 25, 26, 1] : [255, 255, 255, 1];
+  return paintOver(separate, base);
 }
 
 var headerLandmarks = 'header,nav,[role~="banner"],[role~="navigation"],[role~="toolbar"]';
@@ -362,18 +440,32 @@ function transientHeaderUI(el){
   return /(^|[\s_-])(cookie|consent|toast|snackbar|chat[-_]?widget)(?=$|[\s_-])/i.test(headerName(el));
 }
 
+function insetLength(value, basis){
+  if (value.endsWith('px')) return parseFloat(value);
+  if (value.endsWith('%')) return parseFloat(value) * basis / 100;
+  if (value === 'auto' || typeof CSSNumericValue === 'undefined') return NaN;
+  try {
+    return Array.from(CSSNumericValue.parse(value).toSum('px', 'percent').values).reduce(function(total, part){
+      return total + part.value * (part.unit === 'percent' ? basis / 100 : 1);
+    }, 0);
+  } catch (e) { return NaN; }
+}
+
 function stickyAnchor(el, cs, rect, inset){
-  var top = activeHeader && activeHeader.el === el && ownsInline(el, 'top', activeHeader.applied)
-    ? activeHeader.stickyTop : parseFloat(cs.top);
-  if (isNaN(top)) return null;
-  var scrollTop = 0;
+  var authoredTop = activeHeader && activeHeader.el === el && ownsInline(el, 'top', activeHeader.applied)
+    ? activeHeader.stickyTop : cs.top;
+  if (authoredTop === 'auto') return null;
+  var scrollTop = 0, scrollHeight = document.documentElement.clientHeight;
   for (var p = headerParent(el); p && p !== document.body && p !== document.documentElement; p = headerParent(p)) {
     if (!/^(auto|scroll|hidden|overlay)$/.test(getComputedStyle(p).overflowY)) continue;
     var pr = p.getBoundingClientRect();
     scrollTop = pr.top + p.clientTop;
-    if (scrollTop > inset + 1 || scrollTop + p.clientHeight <= Math.max(0, rect.top)) return null;
+    scrollHeight = p.clientHeight;
+    if (scrollTop > inset + 1 || scrollTop + scrollHeight <= Math.max(0, rect.top)) return null;
     break;
   }
+  var top = insetLength(authoredTop, scrollHeight);
+  if (isNaN(top)) return null;
   var offset = scrollTop;
   if (cs.transform !== 'none' && typeof DOMMatrixReadOnly !== 'undefined') {
     offset += new DOMMatrixReadOnly(cs.transform).m42;
@@ -714,11 +806,24 @@ function releaseHeader(){
   window.__edgeHdBg = null;
 }
 
+function headerHasSafePadding(hd, inset, shift){
+  shift = shift || 0;
+  var padding = parseFloat(hd.cs.paddingTop) || 0;
+  if (padding < 1 || hd.rect.top - shift + padding + (parseFloat(hd.cs.borderTopWidth) || 0) < inset - 0.5) return false;
+  var controls = (hd.el.shadowRoot || hd.el).querySelectorAll('a[href],button,input,select,[role~="button"],[tabindex]');
+  for (var i = 0; i < Math.min(controls.length, 40); i++) {
+    var control = controls[i], r = control.getBoundingClientRect();
+    if (r.width > 1 && r.height > 1 && r.bottom - shift > 0 && r.top - shift < inset - 0.5 &&
+        headerStyleVisible(getComputedStyle(control))) return false;
+  }
+  return true;
+}
+
 function alignHeader(hd, I){
   var el = hd.el;
   if (!activeHeader) activeHeader = { el: el, inset: I, sticky: hd.sticky, delta: 0 };
   if (ownsInline(el, 'top', activeHeader.applied)) return;
-  if (hd.rect.top >= I - 0.5) {
+  if (hd.rect.top >= I - 0.5 || headerHasSafePadding(hd, I)) {
     activeHeader.delta = 0;
     return;
   }
@@ -726,7 +831,7 @@ function alignHeader(hd, I){
   var base = isNaN(top) ? (el.offsetTop || 0) - (parseFloat(hd.cs.marginTop) || 0) : top;
   var next = hd.sticky ? I - hd.anchor : base + I - hd.rect.top;
   activeHeader.saved = saveInline(el, 'top');
-  activeHeader.stickyTop = top;
+  activeHeader.stickyTop = hd.cs.top;
   el.style.setProperty('top', next + 'px', 'important');
   activeHeader.applied = el.style.getPropertyValue('top');
   el.setAttribute('data-edge-hd', '1');
@@ -761,7 +866,8 @@ function runTopOverlay(I){
   if (topOverlay && (topOverlay.el !== hit || topOverlay.inset !== I)) releaseTopOverlay();
   if (!hit) { report('none'); return; }
   if (!topOverlay) {
-    var padding = (parseFloat(getComputedStyle(hit).paddingTop) || 0) + I;
+    var pad = parseFloat(getComputedStyle(hit).paddingTop) || 0;
+    var padding = pad < I - hit.getBoundingClientRect().top - 0.5 ? pad + I : pad;
     topOverlay = { el: hit, inset: I, padding: saveInline(hit, 'padding-top'), box: saveInline(hit, 'box-sizing') };
     hit.setAttribute('data-edge-pad', '1');
     hit.style.setProperty('box-sizing', 'border-box', 'important');
@@ -772,7 +878,8 @@ function runTopOverlay(I){
 }
 
 function runEdge(){
-  var I = window.__edgeInset || 0;
+  if (viewportZoomed()) return;
+  var I = topReserveCss();
   if (!I || !document.elementsFromPoint) {
     releaseHeader();
     releaseTopOverlay();
@@ -796,7 +903,9 @@ function runEdge(){
     var fresh = !hd;
     if (fresh) {
       hd = findHeader(I);
-      if (activeHeader && (!hd || hd.el !== activeHeader.el)) {
+      var nowSafe = activeHeader && hd && hd.el === activeHeader.el && activeHeader.delta > 0.5 &&
+        ownsInline(hd.el, 'top', activeHeader.applied) && headerHasSafePadding(hd, I, activeHeader.delta);
+      if (activeHeader && (!hd || hd.el !== activeHeader.el || nowSafe)) {
         releaseHeader();
         hd = findHeader(I);
       }
@@ -820,6 +929,7 @@ function runEdge(){
 
 function run(){
   if (inFs()) return;
+  syncRootReserve();
   if (window.__edgeMode) { runEdge(); }
   else {
     releaseHeader();
@@ -835,9 +945,7 @@ var observer = null;
 var runLastAt = 0, runTimer = null;
 
 // ---- Video toàn màn hình ----
-// Trong lúc phát toàn màn hình, trình phát YouTube biến thành một khối cố định rất lớn và đổi kích thước liên tục:
-// script tạm dừng hẳn (đỡ lag), và khi thoát thì xoá mọi thứ nó đã ghi vào trang (top đã dời, padding thêm cho khối lớn)
-// rồi cho trang tự bố cục lại trước khi tính lại từ đầu.
+// Trả lại bố cục website khi vào fullscreen và dò lại sau khi thoát.
 function inFs(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
 var wasFs = false;
 function edgeResetAll(){
@@ -848,7 +956,15 @@ function edgeResetAll(){
   last = '';
 }
 function fsCheck(){
-  if (inFs()) { wasFs = true; return; }
+  if (inFs()) {
+    if (!wasFs) {
+      edgeResetAll();
+      releaseBottomBars();
+      drainSelf();
+    }
+    wasFs = true;
+    return;
+  }
   if (!wasFs) return;
   wasFs = false;
   edgeResetAll();
@@ -881,15 +997,28 @@ var lifted = [];
 var compactBars = [];
 var liftTimer = null, liftLast = 0;
 
-function fixedOf(el){
-  while (el && el !== document.documentElement && el !== document.body) {
-    try {
-      var s = getComputedStyle(el);
-      if (s.position === 'fixed' && s.display !== 'none' && parseFloat(s.opacity) >= 0.1) return el;
-    } catch (e) { return null; }
-    el = el.parentElement;
+function bottomPosition(el, cs, height){
+  if (cs.position === 'fixed') return true;
+  if (cs.position !== 'sticky' || cs.bottom === 'auto') return false;
+  // Thanh sticky của vùng cuộn cục bộ chỉ liên quan nếu vùng đó chạm mép dưới WebView.
+  for (var p = headerParent(el); p && p !== document.documentElement && p !== document.body; p = headerParent(p)) {
+    if (!/^(auto|scroll|hidden|overlay)$/.test(getComputedStyle(p).overflowY)) continue;
+    return Math.abs(p.getBoundingClientRect().top + p.clientTop + p.clientHeight - height) <= 2;
+  }
+  return true;
+}
+
+function bottomBarOf(el, height){
+  for (; el && el !== document.documentElement && el !== document.body; el = headerParent(el)) {
+    var cs = getComputedStyle(el);
+    if (headerStyleVisible(cs) && bottomPosition(el, cs, height)) return el;
   }
   return null;
+}
+
+function stickyAtBottom(cs, gap, height){
+  if (cs.position === 'fixed') return true;
+  return Math.abs(gap - insetLength(cs.bottom, height)) <= 3;
 }
 
 function findRec(el){
@@ -922,7 +1051,7 @@ function isBottomNav(el, H, W, offset, known){
   try {
     if (!el || !el.isConnected || el === document.body || el === document.documentElement) return false;
     var cs = getComputedStyle(el);
-    if (cs.position !== 'fixed' || cs.display === 'none') return false;
+    if (!bottomPosition(el, cs, H) || cs.display === 'none' || el.matches(headerOverlays) || transientHeaderUI(el)) return false;
     if (!known && (cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.1)) return false;
     var r = el.getBoundingClientRect();
     // Sau khi morph, getBoundingClientRect() co lại theo pill. Dùng kích thước layout
@@ -951,13 +1080,13 @@ function isBottomNav(el, H, W, offset, known){
 var navMemo = new WeakMap(), navRun = 0;
 function wideBottomNavOf(el, H, W){
   var now = Date.now();
-  for (; el && el !== document.documentElement && el !== document.body; el = el.parentElement) {
+  for (; el && el !== document.documentElement && el !== document.body; el = headerParent(el)) {
     var m = navMemo.get(el);
     if (m && m.run === navRun) { if (m.ok) return el; continue; }
     if (m && !m.ok && now - m.t < 700) continue;
     var rec = compactBarRec(el);
     var liftedRec = findRec(el);
-    var offset = liftedRec ? liftedRec.cur : 0;
+    var offset = liftedRec ? currentLift(liftedRec) : 0;
     var ok = isBottomNav(el, H, W, offset, !!rec);
     navMemo.set(el, { t: now, run: navRun, ok: ok });
     if (ok) return el;
@@ -1046,13 +1175,14 @@ function applyCompactState(rec){
 function compactTarget(rec){
   var el = rec.el, r = el.getBoundingClientRect();
   var liftRec = findRec(el), currentLift = liftRec ? liftRec.cur : 0;
-  // runLift sẽ cập nhật translate từ currentLift sang __edgeBottom ngay sau hàm này.
-  var liftDelta = currentLift - (window.__edgeBottom || 0);
+  // Bù phần dịch còn lại khi thanh đang chạy animation dịch lên.
+  var liftDelta = liftRec ? currentLift - liftRec.target : 0;
   var cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2 + liftDelta;
-  var px = isFinite(window.__edgePillX) ? window.__edgePillX : (window.innerWidth || 0) / 2;
-  var py = isFinite(window.__edgePillY) ? window.__edgePillY : (window.innerHeight || 0) - 34;
-  var pw = isFinite(window.__edgePillW) && window.__edgePillW > 0 ? window.__edgePillW : (window.innerWidth || 0) * 0.40;
-  var ph = isFinite(window.__edgePillH) && window.__edgePillH > 0 ? window.__edgePillH : 25;
+  var scale = viewportScale();
+  var px = isFinite(window.__edgePillX) ? window.__edgePillX / scale : (window.innerWidth || 0) / 2;
+  var py = isFinite(window.__edgePillY) ? window.__edgePillY / scale : (window.innerHeight || 0) - 34 / scale;
+  var pw = isFinite(window.__edgePillW) && window.__edgePillW > 0 ? window.__edgePillW / scale : (window.innerWidth || 0) * 0.40;
+  var ph = isFinite(window.__edgePillH) && window.__edgePillH > 0 ? window.__edgePillH / scale : 25 / scale;
   var dx = px - cx, dy = py - cy;
   // Kích thước gốc của chu kỳ tránh sai số khi người dùng đảo hướng giữa lúc đang morph.
   var baseW = rec.baseVisualWidth || el.offsetWidth || r.width;
@@ -1127,6 +1257,7 @@ function springCompactTo(rec, target, hide){
 function setCompactBar(rec, hide){
   if (!rec || !rec.el || !rec.el.isConnected || hide === rec.hidden) return;
   var el = rec.el;
+  if (rec.animationFrame) { cancelAnimationFrame(rec.animationFrame); rec.animationFrame = null; }
   captureCompactBase(rec);
   rec.hidden = hide;
   el.style.setProperty('transform-origin', '50% 50%', 'important');
@@ -1135,13 +1266,18 @@ function setCompactBar(rec, hide){
 
   if (hide) {
     var target = compactTarget(rec);
-    springCompactTo(rec, target, true);
+    if (reducedMotion.matches) {
+      rec.targetState = target;
+      finishCompactAnimation(rec, true);
+    } else springCompactTo(rec, target, true);
   } else {
     // Bật visibility khi thanh đang ở đúng vị trí pill; spring bung ra về kích thước ban đầu.
     el.style.setProperty('visibility', 'visible', 'important');
-    springCompactTo(rec, {
+    var expanded = {
       x: 0, y: 0, sx: 1, sy: 1, opacity: rec.baseOpacity, radius: rec.baseRadius
-    }, false);
+    };
+    if (reducedMotion.matches) finishCompactAnimation(rec, false);
+    else springCompactTo(rec, expanded, false);
   }
 }
 
@@ -1169,93 +1305,125 @@ function syncCompactBars(){
   compactBars = keep;
 }
 
-function liftEl(el){
+var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+var liftProperty = '--summit-edge-lift';
+var animateLift = false;
+try {
+  CSS.registerProperty({name: liftProperty, syntax: '<length>', inherits: false, initialValue: '0px'});
+  animateLift = true;
+} catch (e) {}
+
+function liftEl(el, target, bottomGap){
   var cs = getComputedStyle(el);
-  var base = '';
-  var durs = (cs.transitionDuration || '0s').split(',');
-  for (var i = 0; i < durs.length; i++) { if (parseFloat(durs[i]) > 0) { base = cs.transition + ', '; break; } }
-  lifted.push({
-    el: el,
-    cur: 0,
-    savedTranslate: el.style.getPropertyValue('translate'),
-    savedTransition: el.style.getPropertyValue('transition')
-  });
-  el.style.setProperty('transition', base + 'translate 250ms cubic-bezier(0.2, 0.8, 0.2, 1)', 'important');
+  var translate = cs.translate === 'none' ? [] : cs.translate.match(/(?:[^\s()]|\([^)]*\))+/g) || [];
+  var rec = {el: el, cur: 0, target: target, bottomGap: bottomGap,
+    savedTranslate: saveInline(el, 'translate'),
+    savedTransition: saveInline(el, 'transition'),
+    savedLift: saveInline(el, liftProperty)};
+  // Chỉ nội suy độ dịch của Summit. Giữ nguyên các trục và giá trị translate do website đặt.
+  if (animateLift && !reducedMotion.matches) {
+    var transition = cs.transitionDuration.split(',').some(function(d){ return parseFloat(d) > 0; })
+      ? cs.transition + ', ' : '';
+    el.style.setProperty('transition', transition + liftProperty + ' 250ms cubic-bezier(0.2, 0.8, 0.2, 1)', 'important');
+    rec.appliedTransition = el.style.getPropertyValue('transition');
+  }
+  el.style.setProperty('translate', (translate[0] || '0px') + ' calc(' + (translate[1] || '0px') +
+    ' - var(' + liftProperty + ', 0px))' + (translate[2] ? ' ' + translate[2] : ''), 'important');
+  rec.appliedTranslate = el.style.getPropertyValue('translate');
+  lifted.push(rec);
 }
 
 function release(rec){
   var el = rec.el;
-  try {
-    if (rec.savedTranslate) el.style.setProperty('translate', rec.savedTranslate);
-    else el.style.removeProperty('translate');
-    if (rec.savedTransition) el.style.setProperty('transition', rec.savedTransition);
-    else el.style.removeProperty('transition');
-  } catch (e) {}
+  if (ownsInline(el, 'translate', rec.appliedTranslate)) restoreInline(el, 'translate', rec.savedTranslate);
+  if (ownsInline(el, 'transition', rec.appliedTransition)) restoreInline(el, 'transition', rec.savedTransition);
+  if (ownsInline(el, liftProperty, rec.appliedLift)) restoreInline(el, liftProperty, rec.savedLift);
+}
+
+function currentLift(rec){
+  return parseFloat(getComputedStyle(rec.el).getPropertyValue(liftProperty)) || 0;
 }
 
 function applyLift(){
-  var R = window.__edgeBottom || 0;
-  var want = R > 0 ? ('0px -' + R + 'px') : '';
   for (var i = 0; i < lifted.length; i++) {
     var rec = lifted[i];
-    rec.cur = R;
-    var now = rec.el.style.getPropertyValue('translate');
-    if (R > 0) {
-      if (now !== want) rec.el.style.setProperty('translate', want, 'important');
-    } else if (rec.savedTranslate) {
-      if (now !== rec.savedTranslate) rec.el.style.setProperty('translate', rec.savedTranslate);
-    } else if (now) {
-      rec.el.style.removeProperty('translate');
+    var want = rec.target.toFixed(2) + 'px';
+    if (!ownsInline(rec.el, liftProperty, want) && !ownsInline(rec.el, liftProperty, rec.appliedLift)) {
+      rec.savedLift = saveInline(rec.el, liftProperty);
+    }
+    if (rec.appliedLift !== want || !ownsInline(rec.el, liftProperty, want)) {
+      rec.el.style.setProperty(liftProperty, want, 'important');
+      rec.appliedLift = want;
     }
   }
 }
 
+function releaseBottomBars(){
+  compactBars.forEach(releaseCompactBar);
+  lifted.forEach(release);
+  compactBars = [];
+  lifted = [];
+  navMemo = new WeakMap();
+}
+
 function runLift(){
   if (inFs()) return;
-  var R = window.__edgeBottom || 0;
+  var reserve = (window.__edgeBottom || 0) / viewportScale();
+  if (reserve <= 0) {
+    if (lifted.length || compactBars.length) releaseBottomBars();
+    drainSelf();
+    return;
+  }
+  if (viewportZoomed()) return;
   var H = window.innerHeight, W = window.innerWidth;
-  var zone = 200;
+  var viewport = window.visualViewport;
+  var visibleBottom = viewport ? Math.min(H, viewport.offsetTop + viewport.height) : H;
+  var limit = visibleBottom - reserve;
   var keep = [];
   for (var i = 0; i < lifted.length; i++) {
-    var rec = lifted[i], ok = false;
-    try {
-      if (rec.el.isConnected) {
-        var r0 = rec.el.getBoundingClientRect();
-        var s0 = getComputedStyle(rec.el);
-        if (r0.width > 1 && r0.height > 1 && s0.position === 'fixed' && s0.display !== 'none' &&
-            r0.bottom + rec.cur >= H - zone && r0.height < H * 0.45) ok = true;
-      }
-    } catch (e) {}
-    if (ok) keep.push(rec); else release(rec);
+    var rec = lifted[i], el = rec.el;
+    var cs = getComputedStyle(el), r = el.getBoundingClientRect();
+    var compact = compactBarRec(el);
+    if (el.isConnected && ownsInline(el, 'translate', rec.appliedTranslate) &&
+        (headerStyleVisible(cs) || (compact && compact.cycleStarted && cs.display !== 'none')) &&
+        bottomPosition(el, cs, H) && r.width > 1 && r.height > 1 && r.height < H * 0.45) {
+      rec.cur = currentLift(rec);
+      if (!compact || !compact.cycleStarted) rec.bottomGap = H - (r.bottom + rec.cur);
+      rec.target = H - rec.bottomGap - limit;
+      if (rec.target > 0.5 && stickyAtBottom(cs, rec.bottomGap, H)) { keep.push(rec); continue; }
+    }
+    release(rec);
   }
   lifted = keep;
-  syncCompactBars();
-  if (R > 0 && document.elementsFromPoint) {
+  if (document.elementsFromPoint) {
     navRun++;
-    var ys = [H - 4, H - 60, H - 140];
-    var xs = [0.1, 0.5, 0.9];
+    var ys = Array.from(new Set([H - 3, visibleBottom - 3, visibleBottom - reserve / 2,
+      Math.max(H * 0.5, limit + 2), H - 28, H - 60]));
+    var xs = [0.08, 0.3, 0.5, 0.7, 0.92];
     for (var a = 0; a < ys.length; a++) {
       for (var b = 0; b < xs.length; b++) {
         var stack = document.elementsFromPoint(W * xs[b], ys[a]);
         for (var c = 0; c < stack.length; c++) {
           var nav = wideBottomNavOf(stack[c], H, W);
           if (nav) registerCompactBar(nav);
-          var f = fixedOf(stack[c]);
+          var f = bottomBarOf(stack[c], H);
           if (!f) continue;
           if (findRec(f)) break;
           var covered = false;
           for (var k = 0; k < lifted.length; k++) { if (lifted[k].el.contains(f)) { covered = true; break; } }
           if (covered) break;
-          var r = f.getBoundingClientRect();
-          if (r.height >= H * 0.45 || r.width < 1 || r.top < H * 0.4) break;
-          liftEl(f);
+          var rect = f.getBoundingClientRect();
+          var overlap = rect.bottom - limit;
+          if (rect.height >= H * 0.45 || rect.width < 1 || rect.top < H * 0.4 || overlap <= 0.5 ||
+              !stickyAtBottom(getComputedStyle(f), H - rect.bottom, H)) continue;
+          liftEl(f, overlap, H - rect.bottom);
           break;
         }
       }
     }
   }
-  syncCompactBars();
   applyLift();
+  syncCompactBars();
   drainSelf();
 }
 
@@ -1272,13 +1440,19 @@ function invalidateHeader(){
 
 function schedAll(){ invalidateHeader(); sched(); schedLift(); schedPageBackground(); }
 
-window.__edgeRun = function(){ invalidateHeader(); run(); runLift(); schedPageBackground(); };
+function viewportChanged(){
+  rootReserveDirty = true;
+  schedAll();
+}
+
+window.__edgeRun = function(){ rootReserveDirty = true; invalidateHeader(); run(); runLift(); schedPageBackground(); };
 window.__edgePageBgRun = function(){ runPageBackground(); };
 // Đổi tab: native đã bỏ qua báo cáo màu lúc trang này chạy nền, nên xoá bộ nhớ 'last' để báo lại.
 window.__edgeForceTop = function(){ last = ''; invalidateHeader(); run(); drainSelf(); };
 window.__edgeLift = function(){ runLift(); };
 window.addEventListener('scroll', function(){
   sched();
+  if (window.__edgeBottom > 0) schedLift();
   schedPageBackground(true);
 }, {capture: true, passive: true});
 
@@ -1322,20 +1496,20 @@ window.addEventListener('scroll', function(){
     if (e.defaultPrevented) report(1);
   }, {passive: true});
 })();
-window.addEventListener('resize', schedAll);
+window.addEventListener('resize', viewportChanged);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', viewportChanged);
 window.addEventListener('load', function(event){
   schedPageBackground();
   if (event.target === document || event.target.rel === 'stylesheet') {
-    invalidateHeader();
-    sched();
+    viewportChanged();
   }
 }, true);
-window.addEventListener('pageshow', schedAll);
+window.addEventListener('pageshow', viewportChanged);
 function onHeaderMotionEnd(event){
   if (!window.__edgeMode || inFs()) return;
   var el = event.target;
   if (el.nodeType !== 1 || (el !== (activeHeader && activeHeader.el) &&
-      el.getBoundingClientRect().top > (window.__edgeInset || 0) + 1)) return;
+      el.getBoundingClientRect().top > topReserveCss() + 1)) return;
   var position = getComputedStyle(el).position;
   if (position === 'sticky' || position === 'fixed' || el.matches(headerLandmarks + ',' + headerHints)) {
     hdCache = null;
@@ -1355,17 +1529,22 @@ function observeHeaderRoot(root){
 
 try {
   var colorSchemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
-  if (colorSchemeQuery.addEventListener) colorSchemeQuery.addEventListener('change', schedPageBackground);
-  else if (colorSchemeQuery.addListener) colorSchemeQuery.addListener(schedPageBackground);
+  if (colorSchemeQuery.addEventListener) colorSchemeQuery.addEventListener('change', viewportChanged);
+  else if (colorSchemeQuery.addListener) colorSchemeQuery.addListener(viewportChanged);
 } catch (e) {}
 
 try {
   var obsLast = 0, obsTimer = null;
   observer = new MutationObserver(function(records){
     if (inFs()) return;
+    var treeChanged = false;
     for (var i = 0; i < records.length; i++) {
-      if (records[i].type === 'childList') { schedAll(); return; }
+      var target = records[i].target;
+      if (target === document.documentElement || target === document.body ||
+          target === document.head || target.localName === 'style') rootReserveDirty = true;
+      if (records[i].type === 'childList') treeChanged = true;
     }
+    if (treeChanged) { schedAll(); return; }
     // Đổi class/style ngay trên html/body (bật tắt chế độ tối...) mới làm nền trang đổi: báo lại màu ngay,
     // vì lúc cuộn màu chỉ được lấy mẫu thưa.
     for (var j = 0; j < records.length; j++) {
@@ -1376,8 +1555,8 @@ try {
     // nếu không, animation tự kích hoạt dò lại cả trang. Chỉ khi còn thay đổi của trang thì mới xếp lịch.
     var foreign = false;
     for (var k = 0; k < records.length && !foreign; k++) {
-      var tt = records[k].target;
-      if (!compactBarRec(tt) && !findRec(tt)) foreign = true;
+      var tt = records[k].target, compact = compactBarRec(tt), lift = findRec(tt);
+      if (!compact || !compact.cycleStarted || (lift && !ownsInline(tt, 'translate', lift.appliedTranslate))) foreign = true;
     }
     if (!foreign) return;
     // Gộp thay đổi thuộc tính để dò lại header khi trang đổi trạng thái.

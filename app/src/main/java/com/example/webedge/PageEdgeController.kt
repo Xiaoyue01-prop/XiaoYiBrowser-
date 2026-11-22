@@ -38,21 +38,16 @@ class PageEdgeController(
         val d = host.density
         val edge = host.isEdgeMode
         val insetCss = (host.insetTop / d).toInt()
-        val topCss = if (edge) insetCss else 0
-        val bottomCss = (host.insetBottom / d).toInt() + 64
-        val rule = (if (edge) "padding-top:" + topCss + "px!important;" else "") +
-            "padding-bottom:" + bottomCss + "px!important;box-sizing:border-box!important"
-        val js = "(function(){var s=document.getElementById('__edge');" +
-            "if(!s){s=document.createElement('style');s.id='__edge';" +
-            "(document.head||document.documentElement).appendChild(s);}" +
-            "s.textContent='html{" + rule + "}';})();"
-        target.evaluateJavascript(js, null)
+        // Giữ khoảng cuộn cuối trang theo toolbar mở rộng để thanh thu gọn không làm bố cục nhảy.
+        val scrollBottom = if (host.imeBottom > 0 || host.isFullscreenVideoShowing) 0
+            else ((host.insetBottom + dp(bottomBarHeightDp + 16)) / d).toInt()
         val mode = if (edge) "1" else "0"
         val bottom = bottomReserveCss()
         // Trang đã nạp script rồi thì chỉ cập nhật vài con số; chỉ gửi cả đoạn script dài khi trang chưa có.
         target.evaluateJavascript(
             "(function(){if(!window.__edgeStarted)return 0;window.__edgeInset=" + insetCss +
                 ";window.__edgeMode=" + mode + ";window.__edgeBottom=" + bottom +
+                ";window.__edgeScrollBottom=" + scrollBottom +
                 ";window.__edgeCompact=" + shouldHideWebsiteBottomNav() + ";" + compactPillMetricsJs() +
                 "if(window.__edgeRun)window.__edgeRun();return 1})()"
         ) { result ->
@@ -61,6 +56,7 @@ class PageEdgeController(
                     EdgeScript.template(context).replace("%INSET%", insetCss.toString())
                         .replace("%MODE%", mode)
                         .replace("%BOTTOM%", bottom.toString())
+                        .replace("%SCROLL_BOTTOM%", scrollBottom.toString())
                         .replace("%COMPACT%", shouldHideWebsiteBottomNav().toString())
                         .replace("%PILL_METRICS%", compactPillMetricsJs()),
                     null
