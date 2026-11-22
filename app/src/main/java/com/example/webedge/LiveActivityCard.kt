@@ -62,6 +62,10 @@ internal class LiveActivityCard(
         clipChildren = false
         clipToPadding = false
         val radius = GlassSystem.Preset.MENU_CARD.radiusDp * d
+        // Cùng lớp vỏ và viền kính như menu ba chấm. Nền dự phòng chỉ nằm SAU BlurView,
+        // không tham gia BlurTarget nên không tạo blur đệ quy khi morph.
+        background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight)
+        foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, d, isNight)
         run {
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
@@ -231,14 +235,23 @@ internal class LiveActivityCard(
         val next = (index + delta).coerceIn(0, events.lastIndex)
         if (next == index) return
         index = next
-        // Commit the selected event synchronously: no delayed callback can restore an obsolete card.
-        AnimationSystem.cancel(column)
+        // Đổi ngay dữ liệu hiện hành, rồi cho icon, chữ, kính màu và chấm trang cùng
+        // chuyển động bằng spring chung của app. Không postDelayed: vuốt nhanh không thể
+        // gọi lại một callback cũ để ghi đè phiên mới hơn.
+        val moving = listOf(glow, bottomGlow, iconView, column, openBtn, dots)
+        moving.forEach { view ->
+            AnimationSystem.cancel(view, DynamicAnimation.TRANSLATION_Y)
+            AnimationSystem.cancel(view, DynamicAnimation.ALPHA)
+        }
         bind(events[index])
         rebuildDots(events.size)
-        column.translationY = (-delta * dp(16)).toFloat()
-        column.alpha = 0.35f
-        AnimationSystem.spring(column, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.SETTLE)
-        AnimationSystem.fade(column, 1f, AnimationSystem.QUICK)
+        val offset = (-delta * dp(14)).toFloat()
+        moving.forEach { view ->
+            view.translationY = offset
+            view.alpha = 0.25f
+            AnimationSystem.spring(view, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.SETTLE)
+            AnimationSystem.fade(view, 1f, AnimationSystem.QUICK)
+        }
     }
 
     // Vuốt dọc để đổi thẻ: vuốt lên = thẻ kế tiếp, vuốt xuống = thẻ trước.

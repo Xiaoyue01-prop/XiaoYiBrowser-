@@ -1,5 +1,6 @@
 package com.example.webedge
 
+import android.annotation.SuppressLint
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
@@ -7,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -50,6 +52,7 @@ class RingIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
+@SuppressLint("ClickableViewAccessibility")
 class OrbMenuController internal constructor(
     private val rootLayout: FrameLayout,
     private val blurTarget: BlurTarget,
@@ -76,6 +79,9 @@ class OrbMenuController internal constructor(
     private var isExpanded = false
     private var liveCard: LiveActivityCard? = null
     private var liveCardClosing = false
+    // Khi ấn giữ đã được nhận, ACTION_UP không được chạy PRESS_RELEASE đè lên
+    // MENU_POP đang điều khiển cùng scaleX/scaleY của nút nguồn.
+    private var liveHoldConsumed = false
     /** Back gesture must dismiss this overlay before navigating the WebView. */
     val isLiveCardShowing: Boolean get() = liveCard != null
     private var isCompacted = false
@@ -156,10 +162,48 @@ class OrbMenuController internal constructor(
             }
         )
         mainBtn.setOnClickListener { toggle() }
-        AnimationSystem.attachGlassPress(mainBtn)
+        // Giữ đúng phản hồi nảy của các nút kính khác, nhưng chuyển quyền scale cho
+        // OriginTransitionController khi long-press mở Live Session.
+        mainBtn.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    liveHoldConsumed = false
+                    AnimationSystem.unclipParents(v)
+                    AnimationSystem.pressDown(v, AnimationSystem.GLASS_PRESS_SCALE)
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!liveHoldConsumed) {
+                        // Cùng mức nhấn tối thiểu của AnimationSystem.attachGlassPress.
+                        val mid = 1f + (AnimationSystem.GLASS_PRESS_SCALE - 1f) * 0.7f
+                        if (kotlin.math.abs(v.scaleX - 1f) < kotlin.math.abs(mid - 1f)) {
+                            v.scaleX = mid
+                            v.scaleY = mid
+                        }
+                        AnimationSystem.pressUp(v)
+                        if (ev.x >= 0f && ev.x <= v.width && ev.y >= 0f && ev.y <= v.height) {
+                            v.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                        }
+                    }
+                    liveHoldConsumed = false
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    if (!liveHoldConsumed) AnimationSystem.pressUp(v)
+                    liveHoldConsumed = false
+                }
+            }
+            false
+        }
         mainBtn.setOnLongClickListener {
             if (!isAvailable()) return@setOnLongClickListener false
-            if (LiveEventHub.visible().isNotEmpty()) showLiveCard()
+            if (LiveEventHub.visible().isNotEmpty()) {
+                liveHoldConsumed = true
+                // Huỷ spring nhấn trước khi nút thực sự nảy ra. Không reset alpha,
+                // translation vì OriginTransitionController sẽ quản lý các thuộc tính đó.
+                AnimationSystem.cancel(mainBtn)
+                mainBtn.scaleX = 1f
+                mainBtn.scaleY = 1f
+                showLiveCard()
+            }
             true
         }
         LiveEventHub.addListener(liveListener)
@@ -232,6 +276,9 @@ class OrbMenuController internal constructor(
         val top = desiredTop.coerceIn(dp(16), maxTop)
         val left = ((rootLayout.width - width) / 2).coerceAtLeast(0)
         card.elevation = dp(5).toFloat()
+        // Ẩn vỏ cho tới khi có kích thước thật và BlurView sẵn sàng pre-draw.
+        // card.post ngay sau addView thường chạy trước layout khiến origin morph thất bại.
+        card.alpha = 0f
         card.isClickable = true
         card.isFocusable = true
         liveCard = card
@@ -242,22 +289,50 @@ class OrbMenuController internal constructor(
         })
         showScrim()
         applyAvailability()
-        card.post {
-            if (liveCard !== card || liveCardClosing) return@post
+        // Khởi động trên pre-draw đầu tiên sau layout: cả orb và thẻ đều có bounds
+        // hợp lệ, nên morph bật ổn định thay vì rơi về fade/scale dự phòng.
+        var animationStarted = false
+        fun startCardMorph() {
+            if (animationStarted || liveCard !== card || liveCardClosing) return
             if (!isAvailable()) {
                 dismissLiveCard(immediate = true)
-                return@post
+                return
             }
+            if (!card.isAttachedToWindow || card.width <= 0 || card.height <= 0) return
+            animationStarted = true
             val started = OriginTransitionController.open(
                 view = card,
                 origin = mainBtn,
                 endCornerRadiusPx = dp(GlassSystem.Preset.MENU_CARD.radiusDp).toFloat(),
+                // Kính hiện như một bề mặt đặc, chữ/icon xuất hiện ngay khi vỏ bắt đầu bung.
+                fadeIn = false,
                 counterTransformView = card.glassView,
                 contentViews = card::contentViews,
-                springSpec = AnimationSystem.MENU_MORPH
+                contentStart = 0f,
+                contentSpan = 0.25f,
+                springSpec = AnimationSystem.MENU_MORPH,
+                // Dùng đúng preset nảy của menu ba chấm: nút pop trước, thẻ morph sau.
+                popScale = Constants.MENU_POP_SCALE,
+                popTowardTarget = Constants.MENU_POP_TOWARD,
+                popDelayMs = Constants.MENU_POP_DELAY_MS
             )
-            if (!started) AnimationSystem.enter(card)
+            if (!started) AnimationSystem.enter(card, spec = AnimationSystem.MENU_MORPH)
         }
+        val observer = card.viewTreeObserver
+        if (observer.isAlive) {
+            observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    if (card.viewTreeObserver.isAlive) {
+                        card.viewTreeObserver.removeOnPreDrawListener(this)
+                    }
+                    startCardMorph()
+                    return true
+                }
+            })
+        }
+        // Thiết bị bỏ qua pre-draw lần đầu vẫn có đường dự phòng; không chạy khi
+        // thẻ đã đóng hoặc animation đã khởi động.
+        card.postDelayed({ startCardMorph() }, 180L)
     }
 
     /** Keep one owner for the scrim and always release the source view's morph state. */
