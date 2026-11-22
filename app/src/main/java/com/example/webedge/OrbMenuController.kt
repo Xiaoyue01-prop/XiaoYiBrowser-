@@ -558,6 +558,12 @@ internal class OrbMenuController(
         }
     }
 
+    /**
+     * Khung (toạ độ màn hình) mà thẻ live activity phải che kín theo chiều dọc: viên thuốc và thanh điều hướng.
+     * Không có thì thẻ nằm ngay phía trên orb.
+     */
+    var coverTarget: (() -> android.graphics.RectF?)? = null
+
     private fun showCard() {
         if (cardShown) return
         val card = liveCard ?: LiveActivityCard(rootLayout.context, blurTarget, d, isNight) { event ->
@@ -567,32 +573,64 @@ internal class OrbMenuController(
         if (!card.refresh()) return
         cardShown = true
         showScrim()
-        val margin = dp(12)
-        val orbLoc = IntArray(2).also { mainBtn.getLocationInWindow(it) }
-        val rootLoc = IntArray(2).also { rootLayout.getLocationInWindow(it) }
-        val orbCx = orbLoc[0] - rootLoc[0] + mainBtn.width / 2f
-        val orbTop = orbLoc[1] - rootLoc[1]
+
+        val margin = dp(LiveActivityCard.SIDE_MARGIN_DP)
         val h = dp(LiveActivityCard.CARD_HEIGHT_DP)
-        val top = (orbTop - dp(12) - h).coerceAtLeast(dp(48))
-        card.elevation = dp(3).toFloat()
-        if (card.parent == null) {
-            rootLayout.addView(card, FrameLayout.LayoutParams(rootLayout.width - margin * 2, h).apply {
-                gravity = Gravity.TOP or Gravity.START
-                leftMargin = margin
-                topMargin = top
-            })
+        val rootLoc = IntArray(2).also { rootLayout.getLocationOnScreen(it) }
+        val cover = coverTarget?.invoke()
+        val top = if (cover != null) {
+            // Căn giữa theo viên thuốc nên thẻ che trọn viên thuốc, orb và các nút xung quanh.
+            (cover.centerY() - rootLoc[1] - h / 2f).toInt()
         } else {
-            card.layoutParams = (card.layoutParams as FrameLayout.LayoutParams).apply {
-                width = rootLayout.width - margin * 2
-                topMargin = top
+            val orbLoc = IntArray(2).also { mainBtn.getLocationOnScreen(it) }
+            orbLoc[1] - rootLoc[1] - dp(12) - h
+        }.coerceIn(dp(48), (rootLayout.height - h - dp(8)).coerceAtLeast(dp(48)))
+
+        AnimationSystem.cancel(card)
+        OriginTransitionController.cancel(card)
+        card.elevation = dp(12).toFloat() // trên viên thuốc và thanh điều hướng
+        val lp = FrameLayout.LayoutParams(rootLayout.width - margin * 2, h).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = margin
+            topMargin = top
+        }
+        // Kính mờ chưa có ảnh thật ở frame đầu: giữ gần như vô hình rồi đợi 2 nhịp vsync mới bung (giống menu ba chấm).
+        card.alpha = 0.01f
+        card.scaleX = 1f
+        card.scaleY = 1f
+        card.translationX = 0f
+        card.translationY = 0f
+        card.visibility = View.VISIBLE
+        if (card.parent == null) rootLayout.addView(card, lp) else card.layoutParams = lp
+
+        val choreographer = android.view.Choreographer.getInstance()
+        card.post {
+            choreographer.postFrameCallback {
+                choreographer.postFrameCallback {
+                    if (!cardShown || liveCard !== card) return@postFrameCallback
+                    // Bung đúng như menu ba chấm: nút nảy phóng to, rồi thẻ nở ra từ nút.
+                    val morphing = OriginTransitionController.open(
+                        card,
+                        mainBtn,
+                        endCornerRadiusPx = GlassSystem.Preset.LIVE_CARD.radiusDp * d,
+                        springSpec = AnimationSystem.MENU_MORPH,
+                        fadeIn = false,
+                        counterTransformView = card.glassView,
+                        contentViews = { card.contentViews() },
+                        contentStart = 0f,
+                        contentSpan = 0.25f,
+                        popScale = Constants.MENU_POP_SCALE,
+                        popTowardTarget = Constants.MENU_POP_TOWARD,
+                        popDelayMs = Constants.MENU_POP_DELAY_MS
+                    )
+                    if (!morphing) {
+                        card.pivotX = mainBtn.x + mainBtn.width / 2f - card.left
+                        card.pivotY = mainBtn.y + mainBtn.height / 2f - card.top
+                        AnimationSystem.enter(card, fromScale = 0.2f, spec = AnimationSystem.MENU_MORPH)
+                    }
+                }
             }
         }
-        card.visibility = View.VISIBLE
-        // Bung ra từ chính orb: tâm thu phóng đặt đúng tâm orb.
-        card.pivotX = orbCx - margin
-        card.pivotY = (orbTop + mainBtn.height / 2f) - top
-        AnimationSystem.cancel(card)
-        AnimationSystem.enter(card, fromScale = 0.2f)
     }
 
     private fun hideCard() {
@@ -600,10 +638,10 @@ internal class OrbMenuController(
         cardShown = false
         hideScrim()
         val card = liveCard ?: return
-        AnimationSystem.cancel(card)
-        AnimationSystem.scaleTo(card, 0.2f, 0.2f, AnimationSystem.DISMISS)
-        AnimationSystem.fade(card, 0f, AnimationSystem.DISMISS) {
+        // Thu ngược về orb bằng chính morph đã bung ra.
+        OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
             if (!cardShown) card.visibility = View.GONE
+            AnimationSystem.fade(mainBtn, 1f, AnimationSystem.QUICK)
         }
     }
 

@@ -1711,6 +1711,8 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             }
         )
         orbController?.alignWith(backBtn)
+        // Thẻ live activity bung từ orb rồi che kín viên thuốc và thanh điều hướng.
+        orbController?.coverTarget = { OriginTransitionController.boundsOnScreen(urlPillFrame) }
         // Menu ba chấm mở: orb thu vào viên thuốc trước, rồi viên thuốc mới bị menu hút vào.
         orbController?.absorbTarget = {
             // Menu trang nằm đè lên viên thuốc nên orb không thu vào viên thuốc.

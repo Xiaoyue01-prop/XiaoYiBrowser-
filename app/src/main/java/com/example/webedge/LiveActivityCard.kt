@@ -41,7 +41,14 @@ internal class LiveActivityCard(
     private var index = 0
     private var shown: LiveEvent? = null
 
-    private val card = FrameLayout(context)
+    private val column = LinearLayout(context)
+    private val glass = GlassSystem.createBlurView(context, blurTarget, GlassSystem.Preset.LIVE_CARD, d, isNight)
+
+    /** Lớp kính mờ: OriginTransitionController bù ngược transform cho nó để vùng blur đứng yên theo cửa sổ. */
+    val glassView: View get() = glass
+
+    /** Mọi thứ trừ lớp kính: hiện muộn hơn vỏ khi morph. */
+    fun contentViews(): List<View> = (0 until childCount).map { getChildAt(it) }.filter { it !== glass }
     private val glow = View(context)
     private val bottomGlow = View(context)
     private val iconView = ImageView(context)
@@ -62,17 +69,14 @@ internal class LiveActivityCard(
         clipChildren = false
         clipToPadding = false
         val radius = GlassSystem.Preset.LIVE_CARD.radiusDp * d
-        card.apply {
+        run {
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
                     outline.setRoundRect(0, 0, view.width, view.height, radius)
                 }
             }
             clipToOutline = true
-            addView(
-                GlassSystem.createBlurView(context, blurTarget, GlassSystem.Preset.LIVE_CARD, d, isNight),
-                LayoutParams(-1, -1)
-            )
+            addView(glass, LayoutParams(-1, -1))
             addView(bottomGlow, LayoutParams(-1, dp(34)).apply { gravity = Gravity.BOTTOM })
             addView(glow, LayoutParams(dp(112), dp(112)).apply {
                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
@@ -86,10 +90,8 @@ internal class LiveActivityCard(
                 leftMargin = dp(31)
             })
 
-            val column = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
+            column.orientation = LinearLayout.VERTICAL
+            column.gravity = Gravity.CENTER_VERTICAL
             column.addView(titleView.apply {
                 setTextColor(textColor)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
@@ -136,17 +138,16 @@ internal class LiveActivityCard(
                 rightMargin = dp(16)
             })
         }
-        addView(card, LayoutParams(-1, dp(CARD_HEIGHT_DP)).apply { rightMargin = 0 })
-
         dots.orientation = LinearLayout.VERTICAL
         dots.gravity = Gravity.CENTER
-        addView(dots, LayoutParams(dp(14), dp(CARD_HEIGHT_DP)).apply { gravity = Gravity.END })
+        addView(dots, LayoutParams(dp(10), -1).apply { gravity = Gravity.END; rightMargin = dp(10) })
     }
 
     /** Chiều ngang thẻ: chừa chỗ cho hàng chấm khi có từ 2 sự kiện. */
     private fun applyDotsInset(multiple: Boolean) {
-        (card.layoutParams as LayoutParams).rightMargin = if (multiple) dp(20) else 0
-        card.requestLayout()
+        (openBtn.layoutParams as LayoutParams).rightMargin = if (multiple) dp(28) else dp(16)
+        (column.layoutParams as LayoutParams).rightMargin = if (multiple) dp(96) else dp(84)
+        requestLayout()
     }
 
     /** Nạp lại danh sách sự kiện (gọi khi hiện thẻ và mỗi khi bảng tin đổi). Trả false nếu hết sự kiện. */
@@ -237,15 +238,15 @@ internal class LiveActivityCard(
         index = next
         // Thẻ cũ trượt ra, thẻ mới trượt vào từ phía ngược lại.
         val out = -delta * dp(18).toFloat()
-        card.animate().cancel()
-        AnimationSystem.fade(card, 0f, AnimationSystem.QUICK) {
+        // Chỉ phần nội dung trượt/mờ; vỏ kính đứng yên (vỏ đang do morph điều khiển).
+        AnimationSystem.fade(column, 0f, AnimationSystem.QUICK) {
             bind(events[index])
             rebuildDots(events.size)
-            card.translationY = -out
-            AnimationSystem.spring(card, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.SETTLE)
-            AnimationSystem.fade(card, 1f, AnimationSystem.QUICK)
+            column.translationY = -out
+            AnimationSystem.spring(column, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.SETTLE)
+            AnimationSystem.fade(column, 1f, AnimationSystem.QUICK)
         }
-        AnimationSystem.spring(card, DynamicAnimation.TRANSLATION_Y, out, AnimationSystem.QUICK)
+        AnimationSystem.spring(column, DynamicAnimation.TRANSLATION_Y, out, AnimationSystem.QUICK)
     }
 
     // Vuốt dọc để đổi thẻ: vuốt lên = thẻ kế tiếp, vuốt xuống = thẻ trước.
@@ -324,6 +325,7 @@ internal class LiveActivityCard(
 
     companion object {
         const val CARD_HEIGHT_DP = 88
+        const val SIDE_MARGIN_DP = 12
         private const val TICK_MS = 500L
     }
 }
