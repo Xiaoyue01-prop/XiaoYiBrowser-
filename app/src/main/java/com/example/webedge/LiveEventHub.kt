@@ -5,7 +5,7 @@ import android.os.Looper
 import android.os.SystemClock
 
 /** Loại sự kiện đang chạy, mỗi loại có icon riêng hiện trên orb thay cho vòng nhẫn. */
-internal enum class LiveKind { DOWNLOAD, READER, FOOTBALL, MEDIA }
+internal enum class LiveKind { DOWNLOAD, READER, FOOTBALL, VIDEO, MUSIC }
 
 /**
  * Một sự kiện đang chạy trong app (tải file, tiến độ đọc, trận bóng đá...).
@@ -24,23 +24,8 @@ internal data class LiveEvent(
     val tabId: Long? = null,
     val pageKey: String? = null,
     /** Lúc sự kiện bắt đầu (hub tự gán ở lần đăng đầu tiên, các lần cập nhật sau giữ nguyên). */
-    val startedAt: Long = 0L,
-    /** Chỉ media: vị trí phát lúc [positionAt] (uptimeMillis), tổng thời lượng và tốc độ, để thẻ tự chạy thanh tiến độ. */
-    val positionMs: Long = 0L,
-    val durationMs: Long = 0L,
-    val rate: Float = 1f,
-    val positionAt: Long = 0L
-) {
-    /** Tiến độ 0..1 tại thời điểm [now]; media đang phát thì tự ngoại suy từ vị trí đã báo. */
-    fun progressAt(now: Long): Float? {
-        if (kind == LiveKind.MEDIA) {
-            if (durationMs <= 0L) return null
-            val pos = if (paused) positionMs else positionMs + ((now - positionAt) * rate).toLong()
-            return (pos.toFloat() / durationMs).coerceIn(0f, 1f)
-        }
-        return progress
-    }
-}
+    val startedAt: Long = 0L
+)
 
 /**
  * Bảng tin sự kiện chung của app: mọi nguồn (tải file, Reader, bóng đá...) chỉ việc [post] / [remove],
@@ -103,9 +88,6 @@ internal object LiveEventHub {
         events.values
             .filter { it.tabId == null || it.tabId == activeTabId }
             .sortedByDescending { it.startedAt }
-
-    /** Một sự kiện theo khóa, kể cả khi không phải cái nổi nhất. Chỉ gọi trên luồng chính. */
-    fun find(key: String): LiveEvent? = events[key]
 
     /** Sự kiện nổi nhất để orb hiện: cái bắt đầu sau cùng. Chỉ gọi trên luồng chính. */
     fun top(): LiveEvent? = visible().firstOrNull()

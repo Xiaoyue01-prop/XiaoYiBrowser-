@@ -336,6 +336,8 @@ function send(force){
   lastSent = now;
   var m = cur;
   if (!m || !m.isConnected) { EdgeBridge.mediaState(0, false, '', '', '', 0, 0, 1, 0, 0); return; }
+  // <video> chưa có metadata thì chưa biết có hình hay không: đợi loadedmetadata (onEvent tự gửi lại) để khỏi báo nhầm là nhạc.
+  if (m.tagName === 'VIDEO' && m.readyState < 1) return;
   var i = info();
   var dur = isFinite(m.duration) ? m.duration * 1000 : 0;
   EdgeBridge.mediaState(1, !m.paused && !m.ended, i.title, i.artist, i.art,

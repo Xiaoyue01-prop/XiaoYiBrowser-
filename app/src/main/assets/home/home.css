@@ -75,8 +75,7 @@ main {
 }
 
 #clockText, .glyph {
-  font: 900 160px "Nunito Sans", ui-rounded, "Roboto", system-ui, sans-serif;
-  font-variant-numeric: tabular-nums;
+  font: 900 160px ui-rounded, "Nunito", "Roboto", system-ui, sans-serif;
   letter-spacing: -6px;
   text-anchor: middle;
 }

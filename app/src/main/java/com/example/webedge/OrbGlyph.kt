@@ -453,7 +453,10 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
         fun outlineOf(kind: LiveKind): String = when (kind) {
             LiveKind.DOWNLOAD -> "M12 3H15V11H19L12 20L5 11H9V3Z"
             LiveKind.READER -> "M12 6C14 4.5 17 4 21 4.5V19C17 18.5 14 19 12 20.5C10 19 7 18.5 3 19V4.5C7 4 10 4.5 12 6Z"
-            LiveKind.MEDIA -> "M8 5L19 12L8 19Z"
+            // Máy quay: thân bo góc + ống kính; bắt đầu ở giữa cạnh trên, đi theo chiều kim đồng hồ như các hình khác.
+            LiveKind.VIDEO -> "M10 5H14C15 5 16 6 16 7V10L21 7V17L16 14V17C16 18 15 19 14 19H5C4 19 3 18 3 17V7C3 6 4 5 5 5Z"
+            // Nốt móc đơn: đầu nốt, thân và cờ liền một nét.
+            LiveKind.MUSIC -> "M11 4L14.5 5.5C15.2 8 17.8 9 18 12C16.5 10.5 14.8 10.2 13 9.8V17.5C13 19.6 11 21 8.7 21C6.5 21 5 19.8 5 18.3C5 16.7 6.8 15.5 9 15.5C9.7 15.5 10.4 15.7 11 16Z"
             LiveKind.FOOTBALL -> "M12 2A10 10 0 1 1 11.99 2Z"
         }
     }
