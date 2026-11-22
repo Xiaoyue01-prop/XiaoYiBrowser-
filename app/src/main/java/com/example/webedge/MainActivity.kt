@@ -137,10 +137,49 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     // Trạng thái media của tab đang xem: đẩy sang MediaSession và cập nhật cửa sổ PiP.
     private fun onWebMediaState(info: WebMediaInfo) {
         webMedia.onPageState(info)
+        syncMediaLiveEvent(info)
         if (info.active) {
             lastVideoAspect = info.aspect
             pipController.setVideoInfo(info.videoWidth, info.videoHeight, info.title, info.artist)
         }
+    }
+
+    /** Sự kiện media đang đăng lên bảng tin (key + dấu vết nội dung) để chỉ đăng lại khi thật sự đổi, không đăng mỗi lần cập nhật vị trí. */
+    private var mediaLiveKey: String? = null
+    private var mediaLiveSig: String? = null
+
+    /**
+     * Trang đang có MediaSession (video/nhạc) thì orb hiện icon phát; hết media thì gỡ, orb chạy ngược về vòng nhẫn.
+     * Gắn với tab và trang đang xem: sang trang khác hoặc đóng tab là tự mất (LiveEventHub lo).
+     */
+    private fun syncMediaLiveEvent(info: WebMediaInfo) {
+        if (!::web.isInitialized || !::tabManager.isInitialized) return
+        val tab = tabManager.getForWebView(web) ?: return
+        val key = "media:${tab.id}"
+        if (!info.active) {
+            mediaLiveKey?.let { LiveEventHub.remove(it) }
+            mediaLiveKey = null
+            mediaLiveSig = null
+            return
+        }
+        val pageUrl = web.url ?: tab.url
+        val sig = "${info.title}|${info.artist}|${info.playing}|$pageUrl"
+        if (key == mediaLiveKey && sig == mediaLiveSig) return
+        // Chuyển sang media của tab khác: gỡ sự kiện cũ.
+        if (mediaLiveKey != null && mediaLiveKey != key) LiveEventHub.remove(mediaLiveKey!!)
+        mediaLiveKey = key
+        mediaLiveSig = sig
+        LiveEventHub.post(
+            LiveEvent(
+                key = key,
+                kind = LiveKind.MEDIA,
+                title = info.title.ifBlank { tab.title.ifBlank { pageUrl } },
+                subtitle = info.artist,
+                paused = !info.playing,
+                tabId = tab.id,
+                pageKey = LiveEventHub.pageKeyOf(pageUrl)
+            )
+        )
     }
 
     override fun onUserInteraction() {
