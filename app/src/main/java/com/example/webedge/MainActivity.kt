@@ -978,7 +978,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             // Cử chỉ Back của hệ thống (vuốt từ cạnh trái/phải): trang trượt theo ngón tay như Safari.
             override fun handleOnBackStarted(backEvent: BackEventCompat) {
-                if (readerModeController?.isActive == true) return
+                if (orbController?.isLiveCardShowing == true || readerModeController?.isActive == true) return
                 if (pageSwipeAvailable()) {
                     val sign = if (backEvent.swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
                     pageTransition.beginSwipe(web, sign)
@@ -986,14 +986,15 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             }
 
             override fun handleOnBackProgressed(backEvent: BackEventCompat) {
-                if (readerModeController?.isActive != true) pageTransition.updateSwipe(backEvent.progress)
+                if (orbController?.isLiveCardShowing != true && readerModeController?.isActive != true) pageTransition.updateSwipe(backEvent.progress)
             }
 
             override fun handleOnBackCancelled() {
-                if (readerModeController?.isActive != true) pageTransition.cancelSwipe()
+                pageTransition.cancelSwipe()
             }
 
             override fun handleOnBackPressed() {
+                if (orbController?.closeLiveCard() == true) return
                 if (readerModeController?.handleBack() == true) return
                 if (glassDialog.isShowing) glassDialog.cancelCurrent()
                 else if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
@@ -1528,6 +1529,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             }
             exitFullscreenView()
         }
+        orbController?.closeLiveCard(immediate = true)
         super.onStop()
     }
 
@@ -1695,7 +1697,18 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             BOTTOM_BAR_HEIGHT_DP = BOTTOM_BAR_HEIGHT_DP,
             onBack = { goBackAnimated() },
             onForward = { goForwardAnimated() },
-            onHome = { load(store.homeUrl) }
+            onHome = { load(store.homeUrl) },
+            onOpenLive = { event ->
+                when (event.kind) {
+                    LiveKind.DOWNLOAD -> menu.showLiveDownloads()
+                    LiveKind.FOOTBALL -> menu.showLiveFootball()
+                    LiveKind.READER -> openReader(null)
+                    LiveKind.VIDEO, LiveKind.MUSIC -> {
+                        if (event.paused) WebMediaHub.jsRunner?.invoke(mediaJs("play()"))
+                        // Media is tab-scoped in LiveEventHub, so its page is already in the foreground.
+                    }
+                }
+            }
         )
         orbController?.alignWith(backBtn)
         // Menu ba chấm mở: orb thu vào viên thuốc trước, rồi viên thuốc mới bị menu hút vào.

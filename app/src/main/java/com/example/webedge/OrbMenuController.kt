@@ -50,7 +50,7 @@ class RingIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
-class OrbMenuController(
+class OrbMenuController internal constructor(
     private val rootLayout: FrameLayout,
     private val blurTarget: BlurTarget,
     private val d: Float,
@@ -58,7 +58,8 @@ class OrbMenuController(
     private val BOTTOM_BAR_HEIGHT_DP: Int,
     private val onBack: () -> Unit,
     private val onForward: () -> Unit,
-    private val onHome: () -> Unit
+    private val onHome: () -> Unit,
+    private val onOpenLive: (LiveEvent) -> Unit
 ) {
     private val iconColor = if (isNight) Color.WHITE else Color.rgb(28, 28, 32)
 
@@ -67,11 +68,16 @@ class OrbMenuController(
     private val liveListener: () -> Unit = {
         val top = LiveEventHub.top()
         glyph.setLive(top?.kind, top?.progress)
+        if (!liveCardClosing && liveCard?.refresh() == false) dismissLiveCard(immediate = true)
     }
 
     private var toolbarAvailable = true
     private var temporarilyHidden = false
     private var isExpanded = false
+    private var liveCard: LiveActivityCard? = null
+    private var liveCardClosing = false
+    /** Back gesture must dismiss this overlay before navigating the WebView. */
+    val isLiveCardShowing: Boolean get() = liveCard != null
     private var isCompacted = false
     private var restoringFromCompact = false
     /** Translation đích gốc, giữ lại để đảo chiều morph giữa chừng không bị lệch khỏi anchor. */
@@ -118,7 +124,9 @@ class OrbMenuController(
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         elevation = dp(2).toFloat() // trên mọi thứ có elevation thấp, vẫn dưới orb (3dp)
         setOnTouchListener { _, event ->
-            if (event.actionMasked == MotionEvent.ACTION_DOWN) collapse()
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                if (liveCard != null) dismissLiveCard() else collapse()
+            }
             true
         }
     }
@@ -131,7 +139,11 @@ class OrbMenuController(
 
     private fun hideScrim() {
         // Gỡ sau một nhịp: collapse() có thể được gọi ngay trong lúc scrim đang xử lý chính cú chạm của nó.
-        rootLayout.post { if (!isExpanded && scrim.parent === rootLayout) rootLayout.removeView(scrim) }
+        rootLayout.post {
+            if (!isExpanded && liveCard == null && !liveCardClosing && scrim.parent === rootLayout) {
+                rootLayout.removeView(scrim)
+            }
+        }
     }
 
     init {
@@ -145,6 +157,11 @@ class OrbMenuController(
         )
         mainBtn.setOnClickListener { toggle() }
         AnimationSystem.attachGlassPress(mainBtn)
+        mainBtn.setOnLongClickListener {
+            if (!isAvailable()) return@setOnLongClickListener false
+            if (LiveEventHub.visible().isNotEmpty()) showLiveCard()
+            true
+        }
         LiveEventHub.addListener(liveListener)
         liveListener()
 
@@ -185,6 +202,96 @@ class OrbMenuController(
             subBtns.add(btn)
         }
         applyAvailability()
+    }
+
+    /** Long press opens the card; normal click still toggles Back / Forward / Home. */
+    private fun showLiveCard() {
+        if (!isAvailable()) return
+        if (liveCard != null) {
+            if (!liveCardClosing) dismissLiveCard()
+            return
+        }
+        if (LiveEventHub.visible().isEmpty()) return
+        if (isExpanded) collapse()
+
+        val card = LiveActivityCard(rootLayout.context, blurTarget, d, isNight) { event ->
+            // Detach before opening a sheet/Reader so the old glass is never sampled by a new overlay.
+            dismissLiveCard(immediate = true)
+            onOpenLive(event)
+        }
+        if (!card.refresh()) return
+        if (rootLayout.width <= 0 || rootLayout.height <= 0) return
+        val width = minOf(dp(420), (rootLayout.width - dp(24)).coerceAtLeast(1))
+        val height = dp(LiveActivityCard.CARD_HEIGHT_DP)
+        val rootWindow = IntArray(2)
+        val orbWindow = IntArray(2)
+        rootLayout.getLocationInWindow(rootWindow)
+        mainBtn.getLocationInWindow(orbWindow)
+        val desiredTop = orbWindow[1] - rootWindow[1] - height - dp(16)
+        val maxTop = (rootLayout.height - height - dp(16)).coerceAtLeast(dp(16))
+        val top = desiredTop.coerceIn(dp(16), maxTop)
+        val left = ((rootLayout.width - width) / 2).coerceAtLeast(0)
+        card.elevation = dp(5).toFloat()
+        card.isClickable = true
+        card.isFocusable = true
+        liveCard = card
+        rootLayout.addView(card, FrameLayout.LayoutParams(width, height).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = left
+            topMargin = top
+        })
+        showScrim()
+        applyAvailability()
+        card.post {
+            if (liveCard !== card || liveCardClosing) return@post
+            if (!isAvailable()) {
+                dismissLiveCard(immediate = true)
+                return@post
+            }
+            val started = OriginTransitionController.open(
+                view = card,
+                origin = mainBtn,
+                endCornerRadiusPx = dp(GlassSystem.Preset.MENU_CARD.radiusDp).toFloat(),
+                counterTransformView = card.glassView,
+                contentViews = card::contentViews,
+                springSpec = AnimationSystem.MENU_MORPH
+            )
+            if (!started) AnimationSystem.enter(card)
+        }
+    }
+
+    /** Keep one owner for the scrim and always release the source view's morph state. */
+    private fun dismissLiveCard(immediate: Boolean = false) {
+        val card = liveCard ?: return
+        if (liveCardClosing && !immediate) return
+        if (immediate || !card.isAttachedToWindow) {
+            OriginTransitionController.cancel(card)
+            AnimationSystem.cancel(card)
+            if (card.parent === rootLayout) rootLayout.removeView(card)
+            if (liveCard === card) liveCard = null
+            liveCardClosing = false
+            hideScrim()
+            applyAvailability()
+            return
+        }
+        liveCardClosing = true
+        card.isClickable = false
+        OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
+            if (liveCard !== card) return@close
+            OriginTransitionController.cancel(card)
+            if (card.parent === rootLayout) rootLayout.removeView(card)
+            liveCard = null
+            liveCardClosing = false
+            hideScrim()
+            applyAvailability()
+        }
+    }
+
+    /** Returns true if Back was consumed by the Live Session overlay. */
+    fun closeLiveCard(immediate: Boolean = false): Boolean {
+        if (liveCard == null) return false
+        dismissLiveCard(immediate)
+        return true
     }
 
     fun alignWith(backBtn: View) {
@@ -321,9 +428,10 @@ class OrbMenuController(
         val visible = toolbarAvailable && !temporarilyHidden
         val interactive = visible && !isCompacted && !restoringFromCompact
         mainBtn.visibility = if (visible) View.VISIBLE else View.GONE
-        mainBtn.isClickable = interactive
-        mainBtn.isEnabled = interactive
-        mainBtn.isFocusable = interactive
+        // A morphing card owns all touch input until it is fully detached.
+        mainBtn.isClickable = interactive && liveCard == null
+        mainBtn.isEnabled = interactive && liveCard == null
+        mainBtn.isFocusable = interactive && liveCard == null
         if (!visible) {
             subBtns.forEach {
                 AnimationSystem.cancel(it)
@@ -352,6 +460,7 @@ class OrbMenuController(
         if (compact == isCompacted) return
         if (temporarilyHidden || !toolbarAvailable) return
         if (compact) {
+            dismissLiveCard(immediate = true)
             // Phòng hờ (scrim đã chặn vuốt thu nhỏ viên thuốc): đang bung thì thu các nút con về trước,
             // không để chúng kẹt lại ngoài viên thuốc rồi nằm yên khi viên thuốc mở rộng lại.
             if (isExpanded) collapse()
@@ -510,7 +619,7 @@ class OrbMenuController(
     }
 
     fun toggle() {
-        if (!isAvailable()) return
+        if (!isAvailable() || liveCard != null) return
         if (isExpanded) collapse() else expand()
     }
 
@@ -562,6 +671,7 @@ class OrbMenuController(
     }
 
     private fun collapseImmediately() {
+        dismissLiveCard(immediate = true)
         isExpanded = false
         hideScrim()
         isCompacted = false
@@ -588,6 +698,7 @@ class OrbMenuController(
     }
 
     fun destroy() {
+        dismissLiveCard(immediate = true)
         LiveEventHub.removeListener(liveListener)
         glyph.release()
         anchorView?.viewTreeObserver?.let { observer ->
@@ -599,6 +710,7 @@ class OrbMenuController(
         if (scrim.parent === rootLayout) rootLayout.removeView(scrim)
         AnimationSystem.cancel(mainBtn)
         mainBtn.setOnClickListener(null)
+        mainBtn.setOnLongClickListener(null)
         subBtns.forEach {
             AnimationSystem.cancel(it)
             it.setOnClickListener(null)
