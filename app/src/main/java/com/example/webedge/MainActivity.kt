@@ -1558,7 +1558,14 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
      */
     private fun onReaderExited(snapshot: ReadingSnapshot, articleUrl: String) {
         if (!::web.isInitialized) return
-        val tab = tabManager.getForWebView(web) ?: return
+        // Reader luôn mở trên tab đang xem; không tìm được theo WebView thì dùng tab đang hoạt động.
+        val tab = tabManager.getForWebView(web) ?: tabManager.getActive()
+        if (tab == null) {
+            android.util.Log.w("SummitReader", "onReaderExited: không có tab, bỏ qua")
+            return
+        }
+        // Bảo đảm bảng tin biết tab đang xem là tab này, nếu không sự kiện gắn tabId sẽ bị lọc mất khỏi orb.
+        LiveEventHub.setActiveTab(tab.id)
         val key = "reader:${tab.id}"
         // tab.url chỉ cập nhật ở vài thời điểm (onPageFinished, chuyển tab) nên có thể cũ hơn trang đang xem
         // (SPA đổi URL bằng pushState, chuyển hướng...). Dùng URL sống của WebView, tab.url chỉ là dự phòng.
@@ -1567,9 +1574,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         val samePage = articleUrl.isEmpty() || currentUrl.isEmpty() ||
             LiveEventHub.pageKeyOf(articleUrl) == LiveEventHub.pageKeyOf(currentUrl)
         if (!samePage) {
+            android.util.Log.d("SummitReader", "onReaderExited: sang trang khác ($articleUrl -> $currentUrl), gỡ sự kiện")
             LiveEventHub.remove(key)
             return
         }
+        android.util.Log.d("SummitReader", "onReaderExited: đăng sự kiện $key ${snapshot.percent}%")
         // Chưa cuộn (0%) vẫn hiện: orb báo "bạn đang đọc bài này" với vòng tiến độ trống.
         LiveEventHub.post(
             LiveEvent(

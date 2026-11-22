@@ -246,7 +246,10 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
         // Có tiến độ: đường viền lui thành nền mờ, nét sáng chạy dọc theo nó từ vị trí 12 giờ theo chiều kim đồng hồ.
         val hasProgress = shownProgress >= 0f
         val pa = if (hasProgress) smooth(DETAIL_START, 1f, tm) else 0f
-        ringPaint.alpha = (baseAlpha * (1f - 0.78f * pa)).toInt()
+        // Viền lui thành nền mờ chỉ khi đã có tiến độ để vẽ nét sáng: tiến độ ~0% (vừa thoát Reader) thì icon vẫn rõ,
+        // trước đây nó chỉ còn 22% độ đậm nên trông như không hiện.
+        val dim = pa * smooth(0f, 0.05f, shownProgress.coerceAtLeast(0f))
+        ringPaint.alpha = (baseAlpha * (1f - 0.55f * dim)).toInt()
         canvas.drawPath(morphPath, ringPaint)
         if (pa > 0.01f && shownProgress > 0.001f) {
             measure.setPath(morphPath, false)
