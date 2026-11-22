@@ -280,8 +280,8 @@ internal class LiveActivityCard(
         LiveKind.DOWNLOAD -> Icons.DOWNLOAD
         LiveKind.READER -> Icons.BOOK_OPEN
         LiveKind.FOOTBALL -> Icons.FOOTBALL
-        LiveKind.VIDEO -> OrbGlyphDrawable.outlineOf(LiveKind.VIDEO)
-        LiveKind.MUSIC -> OrbGlyphDrawable.outlineOf(LiveKind.MUSIC)
+        LiveKind.VIDEO -> "M10 5H14C15 5 16 6 16 7V10L21 7V17L16 14V17C16 18 15 19 14 19H5C4 19 3 18 3 17V7C3 6 4 5 5 5Z"
+        LiveKind.MUSIC -> "M11 4L14.5 5.5C15.2 8 17.8 9 18 12C16.5 10.5 14.8 10.2 13 9.8V17.5C13 19.6 11 21 8.7 21C6.5 21 5 19.8 5 18.3C5 16.7 6.8 15.5 9 15.5C9.7 15.5 10.4 15.7 11 16Z"
     }
 
     /** Thanh tiến độ mảnh, đầu tròn. */
