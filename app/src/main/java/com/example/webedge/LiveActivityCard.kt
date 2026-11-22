@@ -59,8 +59,11 @@ internal class LiveActivityCard(
 
 
     init {
-        clipChildren = false
-        clipToPadding = false
+        // PageMenu cắt toàn bộ lớp con theo biên kính trong suốt quá trình morph.
+        clipChildren = true
+        clipToPadding = true
+        glass.isClickable = false
+        glass.isFocusable = false
         val radius = GlassSystem.Preset.MENU_CARD.radiusDp * d
         // Cùng lớp vỏ và viền kính như menu ba chấm. Nền dự phòng chỉ nằm SAU BlurView,
         // không tham gia BlurTarget nên không tạo blur đệ quy khi morph.

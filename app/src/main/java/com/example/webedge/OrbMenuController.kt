@@ -79,6 +79,9 @@ class OrbMenuController internal constructor(
     private var isExpanded = false
     private var liveCard: LiveActivityCard? = null
     private var liveCardClosing = false
+    // Cùng kỹ thuật của PageMenu: ép BlurTarget và BlurView cập nhật mỗi frame
+    // trong lúc vỏ kính morph, không chụp lại chính thẻ (tránh đệ quy blur).
+    private var liveBlurSync: GlassSystem.BlurSync? = null
     // Khi ấn giữ đã được nhận, ACTION_UP không được chạy PRESS_RELEASE đè lên
     // MENU_POP đang điều khiển cùng scaleX/scaleY của nút nguồn.
     private var liveHoldConsumed = false
@@ -271,17 +274,25 @@ class OrbMenuController internal constructor(
         val orbWindow = IntArray(2)
         rootLayout.getLocationInWindow(rootWindow)
         mainBtn.getLocationInWindow(orbWindow)
-        val desiredTop = orbWindow[1] - rootWindow[1] - height - dp(16)
-        val maxTop = (rootLayout.height - height - dp(16)).coerceAtLeast(dp(16))
-        val top = desiredTop.coerceIn(dp(16), maxTop)
-        val left = ((rootLayout.width - width) / 2).coerceAtLeast(0)
+        // Neo như PageMenu: nút gốc nằm trong dấu chân của thẻ, cùng một bề mặt
+        // lớn lên tại chỗ, không phải thẻ nằm giữa màn hình rồi "bay" từ Orb tới.
+        // PageMenu neo mép phải/đáy theo nút trong pill; Orb ở bên trái nên neo
+        // mép trái/đáy của Live Session theo chính nút Orb.
+        val margin = dp(12)
+        val maxLeft = (rootLayout.width - width - margin).coerceAtLeast(margin)
+        val maxTop = (rootLayout.height - height - margin).coerceAtLeast(margin)
+        val left = (orbWindow[0] - rootWindow[0] - dp(2)).coerceIn(margin, maxLeft)
+        val top = (orbWindow[1] - rootWindow[1] + mainBtn.height - height + dp(2))
+            .coerceIn(margin, maxTop)
         card.elevation = dp(5).toFloat()
-        // Ẩn vỏ cho tới khi có kích thước thật và BlurView sẵn sàng pre-draw.
-        // card.post ngay sau addView thường chạy trước layout khiến origin morph thất bại.
-        card.alpha = 0f
+        // PageMenu giữ kính gần như vô hình đến khi BlurView có frame đầu tiên.
+        card.alpha = 0.01f
+        card.scaleX = 0.8f
+        card.scaleY = 0.8f
         card.isClickable = true
         card.isFocusable = true
         liveCard = card
+        liveBlurSync = GlassSystem.BlurSync(blurTarget, card.glassView)
         rootLayout.addView(card, FrameLayout.LayoutParams(width, height).apply {
             gravity = Gravity.TOP or Gravity.START
             leftMargin = left
@@ -289,8 +300,9 @@ class OrbMenuController internal constructor(
         })
         showScrim()
         applyAvailability()
-        // Khởi động trên pre-draw đầu tiên sau layout: cả orb và thẻ đều có bounds
-        // hợp lệ, nên morph bật ổn định thay vì rơi về fade/scale dự phòng.
+        liveBlurSync?.hold(1000L)
+        // Khớp PageMenu: đợi pre-draw của chính BlurView, thêm hai vsync để ảnh
+        // mờ kịp xuất hiện rồi mới cho nút pop -> vỏ kính morph -> nội dung hiện.
         var animationStarted = false
         fun startCardMorph() {
             if (animationStarted || liveCard !== card || liveCardClosing) return
@@ -316,23 +328,33 @@ class OrbMenuController internal constructor(
                 popTowardTarget = Constants.MENU_POP_TOWARD,
                 popDelayMs = Constants.MENU_POP_DELAY_MS
             )
-            if (!started) AnimationSystem.enter(card, spec = AnimationSystem.MENU_MORPH)
+            if (!started) {
+                // Cùng đường dự phòng của PageMenu nếu màn hình chưa có origin hợp lệ.
+                card.pivotX = 0f
+                card.pivotY = card.height.toFloat()
+                AnimationSystem.enter(card, spec = AnimationSystem.MENU_MORPH)
+            }
+            liveBlurSync?.hold(850L)
         }
-        val observer = card.viewTreeObserver
+        // PageMenu đợi pre-draw của BlurView, không phải của FrameLayout bên ngoài.
+        val glass = card.glassView
+        val observer = glass.viewTreeObserver
         if (observer.isAlive) {
             observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
                 override fun onPreDraw(): Boolean {
-                    if (card.viewTreeObserver.isAlive) {
-                        card.viewTreeObserver.removeOnPreDrawListener(this)
+                    if (glass.viewTreeObserver.isAlive) {
+                        glass.viewTreeObserver.removeOnPreDrawListener(this)
                     }
-                    startCardMorph()
+                    val choreographer = android.view.Choreographer.getInstance()
+                    choreographer.postFrameCallback {
+                        choreographer.postFrameCallback { startCardMorph() }
+                    }
                     return true
                 }
             })
         }
-        // Thiết bị bỏ qua pre-draw lần đầu vẫn có đường dự phòng; không chạy khi
-        // thẻ đã đóng hoặc animation đã khởi động.
-        card.postDelayed({ startCardMorph() }, 180L)
+        // Như PageMenu: fallback duy nhất nếu thiết bị bỏ qua pre-draw.
+        card.postDelayed({ startCardMorph() }, 200L)
     }
 
     /** Keep one owner for the scrim and always release the source view's morph state. */
@@ -340,6 +362,7 @@ class OrbMenuController internal constructor(
         val card = liveCard ?: return
         if (liveCardClosing && !immediate) return
         if (immediate || !card.isAttachedToWindow) {
+            liveBlurSync = null
             OriginTransitionController.cancel(card)
             AnimationSystem.cancel(card)
             if (card.parent === rootLayout) rootLayout.removeView(card)
@@ -351,10 +374,13 @@ class OrbMenuController internal constructor(
         }
         liveCardClosing = true
         card.isClickable = false
+        // PageMenu dùng cùng nhịp blur 600ms lúc thu về nút gốc.
+        liveBlurSync?.hold(600L)
         OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
             if (liveCard !== card) return@close
             OriginTransitionController.cancel(card)
             if (card.parent === rootLayout) rootLayout.removeView(card)
+            liveBlurSync = null
             liveCard = null
             liveCardClosing = false
             hideScrim()
