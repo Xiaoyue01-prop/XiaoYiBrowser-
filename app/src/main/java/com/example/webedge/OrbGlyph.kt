@@ -27,7 +27,7 @@ import kotlin.math.sin
  *  1. vòng nhẫn quay kiểu con quay hồi chuyển (3 vòng lật quanh 3 trục, đúng 1 giây),
  *  2. khớp lại thành ring phẳng,
  *  3. chính nét ring đó biến dạng (morph) thành đường viền RỖNG của icon (vd. mũi tên chỉ xuống khi tải file).
- * Chiều ngược lại chạy ngược, nhanh hơn. Sự kiện có tiến độ thì nét viền sáng dần chạy dọc theo đường viền icon.
+ * Chiều ngược lại (mũi tên nở thành vòng rồi xoay) chạy ngược, nhanh hơn một chút (1,5 giây). Sự kiện có tiến độ thì nét viền sáng dần chạy dọc theo đường viền icon.
  *
  * Đoạn xoay chạy theo thời gian (ValueAnimator) chứ không theo spring: spring kết thúc trong ~0,4s nên vòng
  * xoay chưa kịp nhìn thấy đã thành icon.
@@ -398,7 +398,8 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
         const val SPIN_MS = 1000L  // gyroscope
         const val SHAPE_MS = 714L  // ring -> icon (giữ nguyên như bản cũ)
         const val SPIN_IN_MS = REST_MS + SPIN_MS + SHAPE_MS // 1884
-        const val SPIN_OUT_MS = 420L
+        /** Chiều ngược (xong tải): mũi tên nở lại thành vòng (~0,57s) rồi vòng xoay gyroscope ngược (~0,8s). */
+        const val SPIN_OUT_MS = 1500L
         const val MIN_MORPH_MS = 120L
 
         /** Số điểm lấy mẫu của đường viền khi morph; nhiều hơn thì góc nhọn sắc hơn. */
