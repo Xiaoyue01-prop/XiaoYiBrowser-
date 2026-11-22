@@ -143,6 +143,15 @@ class MenuController(
         )
     }
 
+    /** Bấm nút mở trên thẻ live activity của orb: mở đúng nơi quản lý sự kiện đó (media thì không có chỗ riêng). */
+    internal fun openForLiveEvent(kind: LiveKind) {
+        when (kind) {
+            LiveKind.DOWNLOAD -> browserTools.showDownloads()
+            LiveKind.FOOTBALL -> footballSheet.show()
+            else -> Unit
+        }
+    }
+
     private val footballSheet by lazy(LazyThreadSafetyMode.NONE) {
         FootballSheetController(
             activity = activity,

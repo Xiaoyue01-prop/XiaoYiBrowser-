@@ -163,8 +163,13 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             return
         }
         val pageUrl = web.url ?: tab.url
-        val sig = "${info.title}|${info.artist}|${info.playing}|$pageUrl"
-        if (key == mediaLiveKey && sig == mediaLiveSig) return
+        val sig = "${info.title}|${info.artist}|${info.playing}|${info.durationMs}|$pageUrl"
+        // Vị trí lệch quá xa so với phần thẻ tự ngoại suy (tua) thì đăng lại để thanh tiến độ nhảy theo.
+        val prev = if (key == mediaLiveKey) LiveEventHub.find(key) else null
+        val drifted = prev != null && kotlin.math.abs(
+            info.positionMs - (prev.positionMs + if (prev.paused) 0L else ((SystemClock.uptimeMillis() - prev.positionAt) * prev.rate).toLong())
+        ) > 1_500L
+        if (key == mediaLiveKey && sig == mediaLiveSig && !drifted) return
         // Chuyển sang media của tab khác: gỡ sự kiện cũ.
         if (mediaLiveKey != null && mediaLiveKey != key) LiveEventHub.remove(mediaLiveKey!!)
         mediaLiveKey = key
@@ -177,7 +182,11 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
                 subtitle = info.artist,
                 paused = !info.playing,
                 tabId = tab.id,
-                pageKey = LiveEventHub.pageKeyOf(pageUrl)
+                pageKey = LiveEventHub.pageKeyOf(pageUrl),
+                positionMs = info.positionMs,
+                durationMs = info.durationMs,
+                rate = info.rate,
+                positionAt = SystemClock.uptimeMillis()
             )
         )
     }
@@ -1693,7 +1702,13 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             BOTTOM_BAR_HEIGHT_DP = BOTTOM_BAR_HEIGHT_DP,
             onBack = { goBackAnimated() },
             onForward = { goForwardAnimated() },
-            onHome = { load(store.homeUrl) }
+            onHome = { load(store.homeUrl) },
+            onOpenEvent = { event ->
+                when (event.kind) {
+                    LiveKind.READER -> openReader(null)
+                    else -> menu.openForLiveEvent(event.kind)
+                }
+            }
         )
         orbController?.alignWith(backBtn)
         // Menu ba chấm mở: orb thu vào viên thuốc trước, rồi viên thuốc mới bị menu hút vào.

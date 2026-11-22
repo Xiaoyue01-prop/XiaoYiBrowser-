@@ -395,6 +395,7 @@ object GlassSystem {
         SUGGESTIONS(22),
         FIND_BAR(PILL_RADIUS_DP),
         MENU_CARD(26),
+        LIVE_CARD(40),
         ORB_BUTTON(PILL_RADIUS_DP),
         ORB_SUB_BUTTON(PILL_RADIUS_DP),
         TABS_DIALOG(0),
