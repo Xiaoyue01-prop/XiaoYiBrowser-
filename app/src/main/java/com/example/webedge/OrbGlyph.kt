@@ -17,13 +17,14 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.sin
 
 /**
  * Biểu tượng giữa orb: bình thường là vòng nhẫn; có sự kiện đang chạy ([setLive]) thì đổi thành icon của sự kiện đó.
  *
- * Đổi giữa vòng nhẫn và icon không cắt mà đi qua một đoạn (~1,7 giây):
- *  1. vòng nhẫn quay kiểu con quay hồi chuyển (3 vòng lật quanh 3 trục, ~1 giây),
+ * Đổi giữa vòng nhẫn và icon không cắt mà đi qua một đoạn (~1,9 giây: 0,17s đứng yên + 1s gyroscope + 0,71s co lại):
+ *  1. vòng nhẫn quay kiểu con quay hồi chuyển (3 vòng lật quanh 3 trục, đúng 1 giây),
  *  2. khớp lại thành ring phẳng,
  *  3. chính nét ring đó biến dạng (morph) thành đường viền RỖNG của icon (vd. mũi tên chỉ xuống khi tải file).
  * Chiều ngược lại chạy ngược, nhanh hơn. Sự kiện có tiến độ thì nét viền sáng dần chạy dọc theo đường viền icon.
@@ -217,36 +218,19 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
             return
         }
 
-        //   0 .. 0,10     vòng đứng yên (cỡ ring đầy đủ)
-        //   0,10 .. 0,58  3 vòng cùng cỡ ring lật 3D quanh 3 trục khác nhau, quay 2 vòng, chậm dần rồi khớp lại thành ring phẳng
-        //   0,58 .. 0,86  chính nét ring biến dạng (nảy nhẹ) thành đường viền rỗng của icon
+        // Dòng thời gian (SPIN_IN_MS = 1884ms):
+        //   0 .. SPIN_START          vòng đứng yên (170ms)
+        //   SPIN_START .. MORPH_START  gyroscope 1000ms, dựng lại từng frame của video tham chiếu (xem drawGyroscope)
+        //   MORPH_START .. 1           ring phẳng biến dạng (nảy nhẹ) thành đường viền rỗng của icon (714ms, giữ nguyên)
         if (t < MORPH_START) {
-            val u = ((t - 0.10f) / (MORPH_START - 0.10f)).coerceIn(0f, 1f)
-            // spread = 0 ở hai đầu đoạn quay nên các vòng trùng nhau; ở giữa các trục lệch nhau tối đa.
-            val spread = sin(PI.toFloat() * u)
-            val flip = smooth(0f, 1f, u) * 4f * PI.toFloat() // 2 vòng lật đầy; u = 1 là bội của π nên |cos| = 1
-            val drift = smooth(0f, 1f, u) * PI.toFloat()      // cả cụm xoay thêm nửa vòng trong mặt phẳng màn hình
-            // Vòng chính + 2 vòng phụ mờ hơn (mờ dần khi chúng khớp lại vào vòng chính).
-            for (k in 2 downTo 0) {
-                val axis = drift + k * (PI.toFloat() / 3f) * spread
-                val phase = flip + k * (2f * PI.toFloat() / 3f) * spread
-                val alphaK = if (k == 0) 1f else 0.5f * smooth(0f, 0.25f, spread)
-                if (alphaK <= 0.01f) continue
-                // Vệt mờ theo chuyển động: 2 bản trễ pha, rất nhạt, chỉ khi đang quay.
-                if (spread > 0.05f) {
-                    for (g in 1..2) {
-                        ringPaint.alpha = (baseAlpha * alphaK * 0.16f).toInt()
-                        drawTiltedRing(canvas, cx, cy, radius, abs(cos(phase - g * 0.28f * spread)), axis)
-                    }
-                }
-                ringPaint.alpha = (baseAlpha * alphaK).toInt()
-                drawTiltedRing(canvas, cx, cy, radius, abs(cos(phase)), axis)
-            }
+            val u = ((t - SPIN_START) / (MORPH_START - SPIN_START)).coerceIn(0f, 1f)
+            drawGyroscope(canvas, cx, cy, radius, u)
             return
         }
 
         // Morph: mỗi điểm của vòng tròn trượt tới điểm tương ứng của đường viền icon. Nét vẽ vẫn là nét ring mảnh.
-        val shape = easeOutBack(smooth(MORPH_START, 0.86f, t))
+        val tm = ((t - MORPH_START) / (1f - MORPH_START)).coerceIn(0f, 1f) // 0..1 trong đoạn biến dạng
+        val shape = easeOutBack(smooth(0f, SHAPE_END, tm))
         val size = radius * 2f * targetFraction
         morphPath.rewind()
         for (i in 0 until POINTS) {
@@ -261,7 +245,7 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
 
         // Có tiến độ: đường viền lui thành nền mờ, nét sáng chạy dọc theo nó từ vị trí 12 giờ theo chiều kim đồng hồ.
         val hasProgress = shownProgress >= 0f
-        val pa = if (hasProgress) smooth(0.80f, 1f, t) else 0f
+        val pa = if (hasProgress) smooth(DETAIL_START, 1f, tm) else 0f
         ringPaint.alpha = (baseAlpha * (1f - 0.78f * pa)).toInt()
         canvas.drawPath(morphPath, ringPaint)
         if (pa > 0.01f && shownProgress > 0.001f) {
@@ -274,7 +258,7 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
         }
 
         if (extraPentagon) {
-            val fade = smooth(0.80f, 1f, t)
+            val fade = smooth(DETAIL_START, 1f, tm)
             if (fade > 0.01f) {
                 val pr = radius * 0.34f
                 progressSeg.rewind()
@@ -289,6 +273,80 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
                 canvas.drawPath(progressSeg, ringPaint)
             }
         }
+    }
+
+    /**
+     * Gyroscope dựng lại từng frame của video tham chiếu (30fps): 16 mốc, frame 26..41, kéo giãn ra [SPIN_MS].
+     * [u] 0..1 là tiến độ đoạn xoay; mốc thứ i nằm ở u = i / 15.
+     *  - Vòng chính nghiêng nhanh về đứng cạnh (frame 32), giữ gần như thẳng ~3 frame rồi mở ra chậm lại thành ring phẳng.
+     *    Trục dài của nó quay từ thẳng đứng sang nằm ngang (90 -> 180 độ), quay vọt lúc đứng cạnh.
+     *  - 2 vòng phụ đi theo quỹ đạo riêng đo từ video (GYRO_SEC_AXIS_DEG / GYRO_SEC_SPLIT_DEG): mờ hơn, có quầng nhoè và vệt chuyển động.
+     *  - Cả 3 hội tụ về ring phẳng ở u = 1.
+     */
+    private fun drawGyroscope(canvas: Canvas, cx: Float, cy: Float, radius: Float, u: Float) {
+        val pi = PI.toFloat()
+        val deg = pi / 180f
+        val spread = sin(pi * u).pow(0.9f)
+        val axisMain = sampleKeys(GYRO_AXIS_DEG, u) * deg
+        val axisSec = sampleKeys(GYRO_SEC_AXIS_DEG, u) * deg
+        val split = sampleKeys(GYRO_SEC_SPLIT_DEG, u) * deg
+        // Độ dài vệt mờ theo tốc độ: đầy ở khoảng frame 29..34, tắt dần hai đầu.
+        val speed = smooth(0.05f, 0.30f, u) * (1f - smooth(0.55f, 0.95f, u))
+        val trailFade = smooth(0.04f, 0.3f, speed)
+        val baseStroke = ringPaint.strokeWidth
+        for (k in 2 downTo 0) {
+            val main = k == 0
+            // 2 vòng phụ tách đối xứng quanh trục chung [axisSec] một góc [split].
+            val sgn = if (k == 1) 1f else -1f
+            val axis = if (main) axisMain else axisSec + sgn * split
+            val alphaK = if (main) 1f else SEC_ALPHA * smooth(0f, 0.12f, spread)
+            if (alphaK <= 0.01f) continue
+            val w = if (main) baseStroke else baseStroke * SEC_STROKE
+            val sq = ringSquash(u, main)
+
+            // Quầng mờ (giả lập độ nhoè của video): nét dày hơn, rất nhạt, nằm dưới nét chính.
+            ringPaint.strokeWidth = if (main) w * 1.9f else w * 2.2f
+            ringPaint.alpha = alphaInt(if (main) 0.14f * smooth(0f, 0.1f, spread) else alphaK * 0.2f)
+            if (ringPaint.alpha > 1) drawTiltedRing(canvas, cx, cy, radius, sq, axis)
+
+            ringPaint.strokeWidth = w
+            if (speed > 0.04f) {
+                val trails = if (main) 2 else 4
+                val squashLag = if (main) 0.06f else 0.10f
+                val axisLag = if (main) 0.10f else 0.30f
+                for (g in trails downTo 1) {
+                    val f = g / trails.toFloat()
+                    ringPaint.alpha = alphaInt(alphaK * (0.05f + 0.15f * (1f - f)) * trailFade)
+                    drawTiltedRing(
+                        canvas, cx, cy, radius,
+                        ringSquash(u - f * squashLag * speed, main),
+                        axis - f * axisLag * speed * (if (main) 1f else sgn)
+                    )
+                }
+            }
+            ringPaint.alpha = alphaInt(alphaK)
+            drawTiltedRing(canvas, cx, cy, radius, sq, axis)
+        }
+        ringPaint.strokeWidth = baseStroke
+    }
+
+    private fun alphaInt(a: Float): Int = (baseAlpha * a).toInt().coerceIn(0, 255)
+
+    /** Bề rộng/bề cao của vòng chính ([main]) hoặc vòng phụ tại [u]; vòng phụ mảnh hơn (video: chữ X gồm các đường thẳng). */
+    private fun ringSquash(u: Float, main: Boolean): Float =
+        sampleKeys(if (main) GYRO_SQUASH else GYRO_SQUASH_SEC, u.coerceIn(0f, 1f)).coerceIn(0.02f, 1f)
+
+    /** Nội suy Catmull-Rom qua các mốc đều nhau trên 0..1. */
+    private fun sampleKeys(keys: FloatArray, u: Float): Float {
+        val n = keys.size
+        val x = u.coerceIn(0f, 1f) * (n - 1)
+        val i = x.toInt().coerceAtMost(n - 2)
+        val t = x - i
+        val p0 = keys[maxOf(i - 1, 0)]
+        val p1 = keys[i]
+        val p2 = keys[i + 1]
+        val p3 = keys[minOf(i + 2, n - 1)]
+        return 0.5f * ((2f * p1) + (-p0 + p2) * t + (2f * p0 - 5f * p1 + 4f * p2 - p3) * t * t + (-p0 + 3f * p1 - 3f * p2 + p3) * t * t * t)
     }
 
     /** Vòng bán kính [r] đã bị nghiêng: bề rộng r * [squash] (0 = nhìn ngang thành đường thẳng), xoay [axis] radian. */
@@ -336,7 +394,10 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
 
     private companion object {
         /** Thời gian chạy hết đoạn vòng xoay -> icon, và chiều ngược lại. */
-        const val SPIN_IN_MS = 1700L
+        const val REST_MS = 170L   // đứng yên trước khi quay
+        const val SPIN_MS = 1000L  // gyroscope
+        const val SHAPE_MS = 714L  // ring -> icon (giữ nguyên như bản cũ)
+        const val SPIN_IN_MS = REST_MS + SPIN_MS + SHAPE_MS // 1884
         const val SPIN_OUT_MS = 420L
         const val MIN_MORPH_MS = 120L
 
@@ -344,7 +405,33 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
         const val POINTS = 120
 
         /** Mốc của morph (0..1) mà ring phẳng bắt đầu biến dạng thành icon. */
-        const val MORPH_START = 0.58f
+        const val SPIN_START = 0.0902f  // REST_MS / SPIN_IN_MS
+        const val MORPH_START = 0.6210f // (REST_MS + SPIN_MS) / SPIN_IN_MS
+
+        /** Độ đậm/nhạt của 2 vòng phụ so với vòng chính, và độ dày nét của chúng. */
+        const val SEC_ALPHA = 0.62f
+        const val SEC_STROKE = 0.8f
+
+        // 16 mốc = frame 26..41 của video tham chiếu (30fps), mốc i nằm ở u = i / 15; kéo giãn 0,5s -> SPIN_MS.
+
+        /** Bề rộng/bề cao của vòng chính (1 = tròn, ~0 = nhìn ngang thành đường thẳng). */
+        val GYRO_SQUASH = floatArrayOf(1.00f, .92f, .82f, .62f, .45f, .22f, .07f, .05f, .12f, .20f, .27f, .35f, .45f, .55f, .85f, 1.00f)
+
+        /** Góc trục dài của vòng chính (độ, chiều kim đồng hồ; 90 = thẳng đứng, 180 = nằm ngang). */
+        val GYRO_AXIS_DEG = floatArrayOf(90f, 90f, 95f, 100f, 105f, 112f, 145f, 165f, 172f, 176f, 178f, 180f, 180f, 178f, 172f, 180f)
+
+        /** Bề rộng/bề cao của 2 vòng phụ: mảnh hơn vòng chính ở giữa đoạn xoay. */
+        val GYRO_SQUASH_SEC = floatArrayOf(1.00f, .95f, .80f, .40f, .33f, .12f, .06f, .05f, .07f, .10f, .12f, .20f, .40f, .55f, .85f, 1.00f)
+
+        /** Trục chung của 2 vòng phụ: gần trục vòng chính lúc đầu, bật sang nằm ngang (frame 29-30), dải dốc, chữ X, 2 elip đứng, rồi hội tụ về ring. */
+        val GYRO_SEC_AXIS_DEG = floatArrayOf(90f, 90f, 100f, 180f, 180f, 120f, 110f, 90f, 90f, 100f, 142f, 123f, 90f, 90f, 170f, 180f)
+
+        /** Góc 2 vòng phụ tách ra hai phía quanh trục chung (0 = chồng lên nhau thành một vòng; lớn = chữ X). */
+        val GYRO_SEC_SPLIT_DEG = floatArrayOf(0f, 22f, 30f, 3f, 0f, 8f, 8f, 25f, 45f, 55f, 13f, 8f, 24f, 22f, 25f, 0f)
+
+        /** Trong đoạn biến dạng (tm 0..1): hình xong ở SHAPE_END, nét tiến độ/ngũ giác hiện từ DETAIL_START (như timeline cũ). */
+        const val SHAPE_END = 0.667f
+        const val DETAIL_START = 0.524f
 
         /** Cạnh dài nhất của icon viền so với đường kính ring. Tăng lên thì icon to hơn. */
         const val ICON_FRACTION = 0.66f
