@@ -91,7 +91,7 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
             }
             shown != wanted -> {
                 // Icon này sang icon khác: về vòng nhẫn trước, đổi icon, rồi mới ra icon mới.
-                morphTo(0f) {
+                morphTo(0f, outMs = SWAP_OUT_MS) {
                     val next = targetKind
                     if (next != null) {
                         showIcon(next)
@@ -131,7 +131,7 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
         }
     }
 
-    private fun morphTo(target: Float, then: (() -> Unit)? = null) {
+    private fun morphTo(target: Float, outMs: Long = SPIN_OUT_MS, then: (() -> Unit)? = null) {
         morphAnimator?.let {
             it.removeAllListeners()
             it.removeAllUpdateListeners()
@@ -143,7 +143,7 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
             then?.invoke()
             return
         }
-        val full = if (target > from) SPIN_IN_MS else SPIN_OUT_MS
+        val full = if (target > from) SPIN_IN_MS else outMs
         val anim = ValueAnimator.ofFloat(from, target).apply {
             duration = (full * abs(target - from)).toLong().coerceAtLeast(MIN_MORPH_MS)
             interpolator = LinearInterpolator() // nhịp được tạo trong draw() theo từng đoạn
@@ -400,6 +400,9 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
         const val SPIN_IN_MS = REST_MS + SPIN_MS + SHAPE_MS // 1884
         /** Chiều ngược (xong tải): mũi tên nở lại thành vòng (~0,57s) rồi vòng xoay gyroscope ngược (~0,8s). */
         const val SPIN_OUT_MS = 1500L
+
+        /** Đổi từ icon này sang icon khác (reader -> tải file...): lượt về vòng nhẫn ngắn hơn để khỏi chờ lâu. */
+        const val SWAP_OUT_MS = 700L
         const val MIN_MORPH_MS = 120L
 
         /** Số điểm lấy mẫu của đường viền khi morph; nhiều hơn thì góc nhọn sắc hơn. */
