@@ -275,64 +275,233 @@ function runTop(){
 }
 
 // Màu nền thật của header (nền có thể nằm ở phần tử con): lấy mẫu chỗ thấy được rồi mới leo lên cha
-function headerColor(hdEl, I){
+function headerColor(hdEl){
   try {
     var hb = window.__edgeHdBg;
-    if (hb && hb.isConnected) { var c0 = climb(hb); if (c0) return c0; }
+    if (hb && hb.isConnected && headerStyleVisible(getComputedStyle(hb))) {
+      var c0 = bgOf(hb) || gradientBackgroundColor(getComputedStyle(hb));
+      if (c0) return c0;
+    }
   } catch (e) {}
   try {
-    var w = window.innerWidth, y = I + 4, xs = [0.03, 0.97, 0.5];
+    var r = hdEl.getBoundingClientRect();
+    var left = Math.max(0, r.left), right = Math.min(window.innerWidth, r.right);
+    var y = Math.max(0, r.top) + Math.min(5, (r.bottom - Math.max(0, r.top)) / 2);
+    var xs = [0.04, 0.96, 0.5];
     for (var i = 0; i < xs.length; i++) {
-      var st = document.elementsFromPoint(w * xs[i], y);
+      var st = document.elementsFromPoint(left + (right - left) * xs[i], y);
       for (var j = 0; j < st.length; j++) {
-        if (!hdEl.contains(st[j])) continue;
-        var c = climb(st[j]);
-        if (c) return c;
+        var el = st[j];
+        while (el && el.shadowRoot && el.shadowRoot.elementFromPoint) {
+          var inner = el.shadowRoot.elementFromPoint(left + (right - left) * xs[i], y);
+          if (!inner || inner.getRootNode() !== el.shadowRoot) break;
+          el = inner;
+        }
+        if (!headerContains(hdEl, el)) continue;
+        for (; el; el = headerParent(el)) {
+          if (el === hdEl || el.getBoundingClientRect().width >= (right - left) * 0.6) {
+            var c = bgOf(el) || gradientBackgroundColor(getComputedStyle(el));
+            if (c) return c;
+          }
+          if (el === hdEl) break;
+        }
       }
     }
-    var kids = hdEl.querySelectorAll('*');
+    var kids = (hdEl.shadowRoot || hdEl).querySelectorAll('*');
     for (var k = 0; k < kids.length && k < 60; k++) {
       var b = bgOf(kids[k]);
-      if (b && kids[k].getBoundingClientRect().width > w * 0.6) return b;
+      if (!b || !headerStyleVisible(getComputedStyle(kids[k]))) continue;
+      var kr = kids[k].getBoundingClientRect();
+      if (kr.width > (right - left) * 0.6 && kr.top <= y && kr.bottom > y) return b;
     }
   } catch (e) {}
-  var cl = climb(hdEl);
-  if (cl) return cl;
+  for (var p = hdEl; p; p = headerParent(p)) {
+    var cl = bgOf(p) || gradientBackgroundColor(getComputedStyle(p));
+    if (cl) return cl;
+  }
   var dark = false;
   try { dark = window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) {}
   return dark ? [24, 25, 26, 1] : [255, 255, 255, 1];
 }
 
-// Header có nội dung thật: có chữ, hoặc (YouTube khi đã đăng nhập: chỉ có logo/tìm kiếm/menu dạng icon, không có chữ)
-// có icon/ảnh/nút/liên kết. Lớp phủ rỗng (banner cookie trống...) không có gì trong đó nên vẫn bị loại.
-function hasContent(el){
-  if (/\S/.test(el.textContent || '')) return true;
-  try { return !!el.querySelector('svg,img,button,a,input,canvas,[role="button"],[aria-label]'); } catch (e) { return false; }
+var headerLandmarks = 'header,nav,[role~="banner"],[role~="navigation"],[role~="toolbar"]';
+var headerHints = '[id*="header" i],[class*="header" i],[id*="topbar" i],[class*="topbar" i],' +
+  '[id*="masthead" i],[class*="masthead" i],[id*="top-bar" i],[class*="top-bar" i],' +
+  '[id*="navbar" i],[class*="navbar" i],[id*="nav-bar" i],[class*="nav-bar" i]';
+var headerOverlays = 'dialog,[role~="dialog"],[role~="alertdialog"],[role~="alert"],[role~="menu"],' +
+  '[aria-modal="true"],[popover]';
+
+function headerParent(el){
+  return el.assignedSlot || el.parentElement || el.getRootNode().host || null;
 }
 
-// Tìm khối header cố định (fixed/sticky) đang chồng lên dải thanh trạng thái, kể cả khi có lớp phủ rỗng
-// (banner cookie...) nằm trên nó. Chọn khối ngoài cùng thấp hơn 30% màn hình và có chữ.
-function findHeader(I){
-  var w = window.innerWidth, h = window.innerHeight;
-  var ys = [Math.max(2, I * 0.4), I + 4];
-  var xs = [0.5, 0.15, 0.85], best = null;
-  for (var q = 0; q < xs.length * ys.length; q++) {
-    var st = document.elementsFromPoint(w * xs[q % xs.length], ys[Math.floor(q / xs.length)]);
-    for (var j = 0; j < st.length; j++) {
-      var el = st[j];
-      while (el && el !== document.documentElement && el !== document.body) {
-        var cs = getComputedStyle(el);
-        if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none' && parseFloat(cs.opacity) >= 0.1) {
-          var r = el.getBoundingClientRect();
-          // textContent của khối lớn rất nặng: chỉ lấy khi kích thước đã hợp lệ, và chỉ cần biết có chữ hay không.
-          if (r.top <= I + 1 && r.width > w * 0.6 && r.height > 8 && r.height < h * 0.3 &&
-              hasContent(el)) {
-            if (!best || el.contains(best.el)) best = { el: el, cs: cs };
-          }
+function headerContains(parent, el){
+  for (; el; el = headerParent(el)) if (el === parent) return true;
+  return false;
+}
+
+function headerStyleVisible(cs){
+  return cs.display !== 'none' && cs.visibility === 'visible' &&
+    cs.contentVisibility !== 'hidden' && parseFloat(cs.opacity) >= 0.1;
+}
+
+function headerName(el){
+  return (el.localName + ' ' + el.id + ' ' + (el.getAttribute('class') || '')).replace(/([a-z0-9])([A-Z])/g, '$1-$2');
+}
+
+function headerSignal(el){
+  if (el.matches('header,[role~="banner"]')) return 5;
+  var name = headerName(el);
+  if (/(^|[\s_-])(header|mast[-_]?head|top[-_]?bar)(?=$|[\s_-])/i.test(name)) return 4;
+  if (el.matches('nav,[role~="navigation"],[role~="toolbar"]') ||
+      /(^|[\s_-])nav[-_]?bar(?=$|[\s_-])/i.test(name)) return 3;
+  return 0;
+}
+
+function transientHeaderUI(el){
+  return /(^|[\s_-])(cookie|consent|toast|snackbar|chat[-_]?widget)(?=$|[\s_-])/i.test(headerName(el));
+}
+
+function stickyAnchor(el, cs, rect, inset){
+  var top = activeHeader && activeHeader.el === el && ownsInline(el, 'top', activeHeader.applied)
+    ? activeHeader.stickyTop : parseFloat(cs.top);
+  if (isNaN(top)) return null;
+  var scrollTop = 0;
+  for (var p = headerParent(el); p && p !== document.body && p !== document.documentElement; p = headerParent(p)) {
+    if (!/^(auto|scroll|hidden|overlay)$/.test(getComputedStyle(p).overflowY)) continue;
+    var pr = p.getBoundingClientRect();
+    scrollTop = pr.top + p.clientTop;
+    if (scrollTop > inset + 1 || scrollTop + p.clientHeight <= Math.max(0, rect.top)) return null;
+    break;
+  }
+  var offset = scrollTop;
+  if (cs.transform !== 'none' && typeof DOMMatrixReadOnly !== 'undefined') {
+    offset += new DOMMatrixReadOnly(cs.transform).m42;
+  }
+  var translateY = (cs.translate || '').split(' ')[1];
+  if (translateY) offset += (parseFloat(translateY) || 0) * (translateY.endsWith('%') ? rect.height / 100 : 1);
+  // Khi đã chạm đáy khối chứa, sticky sẽ rời mép trên theo khối đó.
+  return rect.top >= offset + top - 2 && offset + top <= inset + 1 ? offset : null;
+}
+
+function headerGeometry(el, I, w, h){
+  var cs = getComputedStyle(el);
+  var sticky = cs.position === 'sticky' || cs.position === '-webkit-sticky';
+  if ((!sticky && cs.position !== 'fixed') || !headerStyleVisible(cs) ||
+      el.hasAttribute('data-edge-shift')) return null;
+  var r = el.getBoundingClientRect();
+  var width = Math.min(w, r.right) - Math.max(0, r.left);
+  if (r.top > I + 1 || r.bottom < 7 || width < w * 0.45 ||
+      r.height < 9 || r.height > h * 0.39) return null;
+  for (var p = el; p && p !== document.documentElement; p = headerParent(p)) {
+    var style = p === el ? cs : getComputedStyle(p);
+    if (parseFloat(style.opacity) < 0.1) return null;
+    if (p === document.body) break;
+    if (p.matches(headerOverlays) ||
+        ((p === el || style.position !== 'static') && transientHeaderUI(p)) ||
+        (sticky && p.matches('article,aside,table,[role~="complementary"],[role~="grid"]'))) return null;
+  }
+  var anchor = sticky ? stickyAnchor(el, cs, r, I) : null;
+  if (sticky && anchor === null) return null;
+  return { el: el, cs: cs, rect: r, width: width, sticky: sticky, anchor: anchor };
+}
+
+// Kiểm tra cả chữ, icon và vùng điều hướng trong wrapper, với giới hạn số nút mỗi ứng viên.
+function headerContent(el, rect){
+  var signal = headerSignal(el), content = false, visited = 0;
+  function visit(node, depth){
+    if (visited++ >= 64 || depth > 10) return;
+    if (node.nodeType === 3) {
+      if (/\S/.test(node.data)) content = true;
+      return;
+    }
+    if (node.nodeType === 1) {
+      if (node !== el) {
+        if (node.matches('script,style,template,noscript') || node.matches(headerOverlays) || transientHeaderUI(node)) return;
+        var cs = getComputedStyle(node);
+        if (!headerStyleVisible(cs) || cs.position === 'fixed') return;
+        if (cs.display !== 'contents') {
+          var r = node.getBoundingClientRect();
+          if (r.bottom <= Math.max(0, rect.top) || r.top >= rect.bottom ||
+              r.right <= Math.max(0, rect.left) || r.left >= Math.min(window.innerWidth, rect.right)) return;
         }
-        el = el.parentElement;
+        signal = Math.max(signal, headerSignal(node));
+      }
+      if (node.matches('svg,img,button,a[href],input,canvas,[role~="button"],[aria-label]:not([aria-label=""])')) content = true;
+    }
+    if (content && signal >= 4) return;
+    if (node.assignedNodes) {
+      var assigned = node.assignedNodes({ flatten: true });
+      if (assigned.length) {
+        for (var i = 0; i < assigned.length && visited < 64; i++) visit(assigned[i], depth + 1);
+        return;
       }
     }
+    var root = node.shadowRoot || node;
+    for (var child = root.firstChild; child && visited < 64; child = child.nextSibling) {
+      visit(child, depth + 1);
+      if (content && signal >= 4) break;
+    }
+  }
+  visit(el, 0);
+  return content ? signal || 1 : 0;
+}
+
+var headerLandmarkCache = new WeakMap();
+function findHeader(I){
+  var w = window.innerWidth, h = window.innerHeight, best = null;
+  var seen = new Set(), roots = new Set([document]);
+  function consider(el){
+    for (; el && el !== document.body && el !== document.documentElement; el = headerParent(el)) {
+      if (seen.has(el)) break;
+      seen.add(el);
+      var hd = headerGeometry(el, I, w, h);
+      if (!hd) continue;
+      var signal = headerContent(el, hd.rect);
+      if (!signal || (signal < 3 && (hd.width < w * 0.65 || hd.rect.height > h * 0.29))) continue;
+      hd.signal = signal;
+      if (!best || signal > best.signal || (signal === best.signal &&
+          (headerContains(el, best.el) ||
+           (!headerContains(best.el, el) && hd.rect.top < best.rect.top - 2)))) best = hd;
+    }
+  }
+  function probe(root, x, y){
+    if (!root.elementsFromPoint) return;
+    var stack = root.elementsFromPoint(x, y);
+    for (var j = 0; j < stack.length; j++) {
+      var el = stack[j];
+      if (root !== document && el.getRootNode() !== root) continue;
+      consider(el);
+      if (el.shadowRoot && !roots.has(el.shadowRoot) && roots.size < 12) {
+        roots.add(el.shadowRoot);
+        observeHeaderRoot(el.shadowRoot);
+      }
+    }
+  }
+  var xs = [0.5, 0.08, 0.92, 0.28, 0.72];
+  var ys = [1, Math.max(2, I * 0.5), I + 1, I + 7];
+  for (var q = 0; q < ys.length; q++) {
+    for (var i = 0; i < xs.length; i++) {
+      roots.forEach(function(root){ probe(root, w * xs[i], Math.min(h - 1, ys[q])); });
+    }
+  }
+  // elementsFromPoint bỏ qua phần tử có pointer-events:none. Dò thêm các landmark khi mẫu còn mơ hồ.
+  if (!best || best.signal < 4) {
+    var remaining = 80;
+    roots.forEach(function(root){
+      if (!remaining) return;
+      var cached = headerLandmarkCache.get(root);
+      if (!cached || Date.now() - cached.at > 1500) {
+        var matches = root.querySelectorAll(headerLandmarks + ',' + headerHints);
+        var sample = Array.prototype.slice.call(matches, 0, 80);
+        cached = { nodes: sample, at: Date.now() };
+        headerLandmarkCache.set(root, cached);
+      }
+      var nodes = cached.nodes;
+      for (var j = 0; j < nodes.length && remaining > 0; j++, remaining--) {
+        if (nodes[j].isConnected) consider(nodes[j]);
+      }
+    });
   }
   return best;
 }
@@ -341,49 +510,60 @@ function findHeader(I){
 // kiểm tra lại giá trị thực tế và áp lại phần đã cộng thêm.
 var edgeShiftList = [];
 function edgeShiftTop(el, baseTop, delta){
+  var rec = { el: el, saved: saveInline(el, 'top'), delta: delta, applied: (baseTop + delta) + 'px' };
   el.setAttribute('data-edge-shift', '1');
-  el.__edgeDelta = delta;
-  el.__edgeWant = baseTop + delta;
-  el.style.setProperty('top', el.__edgeWant + 'px', 'important');
-  edgeShiftList.push(el);
+  el.style.setProperty('top', rec.applied, 'important');
+  rec.applied = el.style.getPropertyValue('top');
+  edgeShiftList.push(rec);
 }
 function edgeReassert(){
   try {
     for (var i = edgeShiftList.length - 1; i >= 0; i--) {
-      var el = edgeShiftList[i];
-      if (!el.isConnected) { edgeShiftList.splice(i, 1); continue; }
-      var t = parseFloat(getComputedStyle(el).top);
-      if (!isNaN(t) && Math.abs(t - el.__edgeWant) > 0.5) {
-        el.__edgeWant = t + el.__edgeDelta;
-        el.style.setProperty('top', el.__edgeWant + 'px', 'important');
+      var rec = edgeShiftList[i], el = rec.el;
+      if (!el.isConnected) {
+        forgetShift(rec);
+        edgeShiftList.splice(i, 1);
+      } else if (!ownsInline(el, 'top', rec.applied)) {
+        var top = parseFloat(getComputedStyle(el).top);
+        if (isNaN(top)) continue;
+        rec.saved = saveInline(el, 'top');
+        el.style.setProperty('top', (top + rec.delta) + 'px', 'important');
+        rec.applied = el.style.getPropertyValue('top');
       }
     }
   } catch (e) {}
 }
 
+function forgetShift(rec){
+  if (ownsInline(rec.el, 'top', rec.applied)) restoreInline(rec.el, 'top', rec.saved);
+  rec.el.removeAttribute('data-edge-shift');
+  rec.el.removeAttribute('data-edge-hdbg');
+}
+
 // Các phần tử fixed/sticky nằm ngay dưới header (vd. player YouTube) cũng phải hạ theo header,
 // nếu không header đã hạ xuống dưới thanh trạng thái sẽ đè lên chúng. Chỉ đụng tới phần tử bắt đầu
 // trong dải header mới (từ đáy header cũ tới đáy header mới); lớp phủ bắt đầu từ mép trên thì bỏ qua.
-function shiftCompanions(hd, I){
+function shiftCompanions(hd, delta){
   try {
     var w = window.innerWidth;
-    var hH = hd.el.getBoundingClientRect().height;
-    var probeY = I + hH - 6;
-    if (hH < 8 || probeY <= 0 || probeY >= window.innerHeight) return;
+    var hr = hd.el.getBoundingClientRect();
+    var probeY = hr.bottom - Math.min(6, delta / 2);
+    if (probeY <= 0 || probeY >= window.innerHeight) return;
     var xs = [0.5, 0.2, 0.8];
     for (var q = 0; q < xs.length; q++) {
       var st = document.elementsFromPoint(w * xs[q], probeY);
       for (var j = 0; j < st.length; j++) {
         var el = st[j];
         while (el && el !== document.documentElement && el !== document.body) {
-          if (el === hd.el || hd.el.contains(el) || el.contains(hd.el)) break;
+          if (headerContains(hd.el, el) || headerContains(el, hd.el)) break;
           var cs = getComputedStyle(el);
           if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none') {
             if (!el.hasAttribute('data-edge-shift')) {
               var r = el.getBoundingClientRect();
               var top = parseFloat(cs.top);
-              if (!isNaN(top) && r.width > w * 0.6 && r.height > 20 && r.top >= hH - 4 && r.top < probeY) {
-                edgeShiftTop(el, top, I);
+              if (!isNaN(top) && r.width > w * 0.6 && r.height > 20 && r.top >= hr.bottom - delta - 4 && r.top < probeY &&
+                  !el.matches(headerOverlays) && !transientHeaderUI(el)) {
+                edgeShiftTop(el, top, delta);
               }
             }
             break;
@@ -431,7 +611,7 @@ function shiftVideoHost(hd, I){
 // đang bị header đè. Thử cách cũ (đổi top của khối sticky/fixed) trước; nếu sau đó vẫn bị đè thì dùng cách dự phòng
 // theo hình học: tìm "khung player" (tổ tiên rộng bằng màn hình, cao cỡ player) rồi dời nó bằng transform,
 // không phụ thuộc position/top của YouTube.
-var lateAt = 0, lateTries = 0, lateVideo = null;
+var lateAt = 0, lateTries = 0, lateVideo = null, edgeVideoTransforms = new Map();
 function bigVideo(){
   var vids = document.getElementsByTagName('video'), best = null, area = 0;
   for (var i = 0; i < vids.length; i++) {
@@ -470,18 +650,24 @@ function lateVideoHost(hd, I){
     var delta = hb - box.getBoundingClientRect().top;
     if (delta < 4) return;
     var cur = getComputedStyle(box).transform;
+    var rec = edgeVideoTransforms.get(box);
+    if (!rec || !ownsInline(box, 'transform', rec.applied)) {
+      rec = { saved: saveInline(box, 'transform') };
+      edgeVideoTransforms.set(box, rec);
+    }
     box.setAttribute('data-edge-xf', '1');
     box.style.setProperty('transform', 'translateY(' + delta + 'px)' + (cur && cur !== 'none' ? ' ' + cur : ''), 'important');
+    rec.applied = box.style.getPropertyValue('transform');
   } catch (e) {}
 }
 
 // Nền của header đôi khi là một khối fixed riêng (YouTube: mobile-topbar-header-background, z-index -1)
 // nằm cùng vị trí và cao bằng header. Header đã hạ mà nền ở lại chỗ cũ thì chữ/icon trắng nằm trên nền trắng.
-function shiftHeaderBackground(hd, I){
+function shiftHeaderBackground(hd, delta){
   try {
     var w = window.innerWidth;
     var hr = hd.el.getBoundingClientRect();
-    var hH = hr.height, oldTop = hr.top - I;
+    var hH = hr.height, oldTop = hr.top - delta;
     if (hH < 8) return;
     var cands = [], par = hd.el.parentElement, i, j;
     for (var lvl = 0; par && lvl < 2; lvl++, par = par.parentElement) {
@@ -491,98 +677,156 @@ function shiftHeaderBackground(hd, I){
     for (j = 0; j < st.length; j++) cands.push(st[j]);
     for (i = 0; i < cands.length; i++) {
       var el = cands[i];
-      if (el === hd.el || hd.el.contains(el) || el.contains(hd.el)) continue;
+      if (headerContains(hd.el, el) || headerContains(el, hd.el)) continue;
       if (el.hasAttribute('data-edge-shift') || el.hasAttribute('data-edge-hdbg')) continue;
       var cs = getComputedStyle(el);
-      if ((cs.position !== 'fixed' && cs.position !== 'sticky') || cs.display === 'none') continue;
+      if ((cs.position !== 'fixed' && cs.position !== 'sticky') || !headerStyleVisible(cs) ||
+          el.matches(headerOverlays + ',' + headerLandmarks) || transientHeaderUI(el)) continue;
       var r = el.getBoundingClientRect(), top = parseFloat(cs.top);
-      if (!isNaN(top) && r.width > w * 0.6 && Math.abs(r.top - oldTop) <= 2 && Math.abs(r.height - hH) <= 4) {
+      if (!isNaN(top) && r.width > w * 0.6 && Math.abs(r.top - oldTop) <= 2 && Math.abs(r.height - hH) <= 4 &&
+          (bgOf(el) || cs.backgroundImage !== 'none') && !headerContent(el, r)) {
         el.setAttribute('data-edge-hdbg', '1');
-        edgeShiftTop(el, top, I);
+        edgeShiftTop(el, top, delta);
         window.__edgeHdBg = el;
       }
     }
   } catch (e) {}
 }
 
-// Header đã tìm thấy được giữ lại tối đa 1.5s: các lần chạy khi cuộn chỉ kiểm tra lại đúng phần tử đó (rẻ),
-// còn việc dò từ đầu (nhiều elementsFromPoint) chỉ làm khi hết hạn, DOM đổi, đổi cỡ màn hình hoặc đổi tab.
-var hdCache = null;
-function cachedHeader(I){
-  var c = hdCache;
-  if (!c || !c.el.isConnected || Date.now() - c.at > 1500) return null;
-  try {
-    var cs = getComputedStyle(c.el);
-    if ((cs.position !== 'fixed' && cs.position !== 'sticky') || cs.display === 'none' || parseFloat(cs.opacity) < 0.1) return null;
-    var r = c.el.getBoundingClientRect(), w = window.innerWidth, h = window.innerHeight;
-    if (r.top <= I + 1 && r.width > w * 0.6 && r.height > 8 && r.height < h * 0.3) return { el: c.el, cs: cs };
-  } catch (e) {}
-  return null;
+var hdCache = null, activeHeader = null, topOverlay = null;
+
+function releaseHeader(){
+  if (!activeHeader) return;
+  var el = activeHeader.el;
+  if (ownsInline(el, 'top', activeHeader.applied)) restoreInline(el, 'top', activeHeader.saved);
+  el.removeAttribute('data-edge-hd');
+  activeHeader = null;
+  edgeShiftList.forEach(forgetShift);
+  edgeShiftList = [];
+  edgeVideoTransforms.forEach(function(rec, box){
+    if (ownsInline(box, 'transform', rec.applied)) restoreInline(box, 'transform', rec.saved);
+    box.removeAttribute('data-edge-xf');
+  });
+  edgeVideoTransforms.clear();
+  lateAt = 0;
+  lateTries = 0;
+  lateVideo = null;
+  window.__edgeHdBg = null;
+}
+
+function alignHeader(hd, I){
+  var el = hd.el;
+  if (!activeHeader) activeHeader = { el: el, inset: I, sticky: hd.sticky, delta: 0 };
+  if (ownsInline(el, 'top', activeHeader.applied)) return;
+  if (hd.rect.top >= I - 0.5) {
+    activeHeader.delta = 0;
+    return;
+  }
+  var top = parseFloat(hd.cs.top);
+  var base = isNaN(top) ? (el.offsetTop || 0) - (parseFloat(hd.cs.marginTop) || 0) : top;
+  var next = hd.sticky ? I - hd.anchor : base + I - hd.rect.top;
+  activeHeader.saved = saveInline(el, 'top');
+  activeHeader.stickyTop = top;
+  el.style.setProperty('top', next + 'px', 'important');
+  activeHeader.applied = el.style.getPropertyValue('top');
+  el.setAttribute('data-edge-hd', '1');
+  activeHeader.delta = Math.max(0, el.getBoundingClientRect().top - hd.rect.top);
+}
+
+function releaseTopOverlay(){
+  if (!topOverlay) return;
+  var rec = topOverlay;
+  if (ownsInline(rec.el, 'padding-top', rec.applied)) restoreInline(rec.el, 'padding-top', rec.padding);
+  if (ownsInline(rec.el, 'box-sizing', 'border-box')) restoreInline(rec.el, 'box-sizing', rec.box);
+  rec.el.removeAttribute('data-edge-pad');
+  topOverlay = null;
+}
+
+function runTopOverlay(I){
+  var y = I + 2, w = window.innerWidth, hit = null, color = null;
+  var xs = [0.5, 0.15, 0.85];
+  for (var i = 0; i < xs.length && !hit; i++) {
+    var stack = document.elementsFromPoint(w * xs[i], y);
+    for (var j = 0; j < stack.length && !hit; j++) {
+      var f = pinned(stack[j]);
+      if (!f) continue;
+      var r = f.getBoundingClientRect();
+      if (r.top < I && r.width > w * 0.6 && r.height >= window.innerHeight * 0.45 &&
+          headerStyleVisible(getComputedStyle(f))) {
+        hit = f;
+        color = climb(stack[j]);
+      }
+    }
+  }
+  if (topOverlay && (topOverlay.el !== hit || topOverlay.inset !== I)) releaseTopOverlay();
+  if (!hit) { report('none'); return; }
+  if (!topOverlay) {
+    var padding = (parseFloat(getComputedStyle(hit).paddingTop) || 0) + I;
+    topOverlay = { el: hit, inset: I, padding: saveInline(hit, 'padding-top'), box: saveInline(hit, 'box-sizing') };
+    hit.setAttribute('data-edge-pad', '1');
+    hit.style.setProperty('box-sizing', 'border-box', 'important');
+    hit.style.setProperty('padding-top', padding + 'px', 'important');
+    topOverlay.applied = hit.style.getPropertyValue('padding-top');
+  }
+  report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
 }
 
 function runEdge(){
   var I = window.__edgeInset || 0;
-  if (!I || !document.elementsFromPoint) return;
+  if (!I || !document.elementsFromPoint) {
+    releaseHeader();
+    releaseTopOverlay();
+    hdCache = null;
+    report('none');
+    return;
+  }
   try {
-    var hd = cachedHeader(I), fresh = false;
-    if (!hd) {
+    var current = null;
+    if (activeHeader) {
+      if (activeHeader.inset === I && activeHeader.el.isConnected) {
+        current = headerGeometry(activeHeader.el, I, window.innerWidth, window.innerHeight);
+      }
+      if (!current || current.sticky !== activeHeader.sticky) {
+        releaseHeader();
+        hdCache = null;
+        current = null;
+      }
+    }
+    var hd = hdCache && Date.now() - hdCache <= 1500 && current;
+    var fresh = !hd;
+    if (fresh) {
       hd = findHeader(I);
-      if (hd) { fresh = true; hdCache = { el: hd.el, at: Date.now() }; }
-    }
-    if (hd) {
-      var topNow = parseFloat(hd.cs.top);
-      if (isNaN(topNow) || topNow < I - 0.5) {
-        hd.el.style.setProperty('top', I + 'px', 'important');
-        hd.el.setAttribute('data-edge-hd', '1');
+      if (activeHeader && (!hd || hd.el !== activeHeader.el)) {
+        releaseHeader();
+        hd = findHeader(I);
       }
-      if (fresh && hd.el.getAttribute('data-edge-hd')) shiftHeaderBackground(hd, I);
-      edgeReassert();
-      if (fresh) { shiftCompanions(hd, I); shiftVideoHost(hd, I); }
-      else if (hd.el.getAttribute('data-edge-hd')) lateVideoHost(hd, I);
-      var hc = headerColor(hd.el, I);
-      report(hc ? (hc[0] + ',' + hc[1] + ',' + hc[2]) : 'none');
-      return;
+      hdCache = hd ? Date.now() : null;
     }
-    var y = I + 2, w = window.innerWidth, hit = null, big = false, color = null;
-    var xs = [0.5, 0.15, 0.85];
-    for (var i = 0; i < xs.length && !hit; i++) {
-      var stack = document.elementsFromPoint(w * xs[i], y);
-      for (var j = 0; j < stack.length && !hit; j++) {
-        var f = pinned(stack[j]);
-        if (!f) continue;
-        var r = f.getBoundingClientRect();
-        if (r.top <= y && r.width > w * 0.6) {
-          hit = f;
-          big = r.height >= window.innerHeight * 0.45;
-          color = climb(stack[j]);
-        }
-      }
+    if (!hd) { runTopOverlay(I); return; }
+    releaseTopOverlay();
+    alignHeader(hd, I);
+    var delta = activeHeader.delta;
+    if (fresh && delta > 0.5) {
+      shiftHeaderBackground(hd, delta);
+      shiftCompanions(hd, delta);
+      shiftVideoHost(hd, I);
     }
-    if (!hit) { report('none'); return; }
-    if (big) {
-      if (!hit.getAttribute('data-edge-pad')) {
-        hit.setAttribute('data-edge-pad', '1');
-        var cs = styleCache.get(hit) || getComputedStyle(hit);
-        if (!styleCache.has(hit)) styleCache.set(hit, cs);
-        hit.style.setProperty('box-sizing', 'border-box', 'important');
-        hit.style.setProperty('padding-top', ((parseFloat(cs.paddingTop) || 0) + I) + 'px', 'important');
-      }
-    } else {
-      var cs2 = styleCache.get(hit) || getComputedStyle(hit);
-      if (!styleCache.has(hit)) styleCache.set(hit, cs2);
-      var top = parseFloat(cs2.top);
-      if (!isNaN(top) && top < I - 0.5) {
-        hit.style.setProperty('top', I + 'px', 'important');
-      }
-    }
-    report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
+    edgeReassert();
+    if (!fresh && delta > 0.5) lateVideoHost(hd, I);
+    var hc = headerColor(hd.el);
+    report(hc ? (hc[0] + ',' + hc[1] + ',' + hc[2]) : 'none');
   } catch (e) { report('none'); }
 }
 
 function run(){
   if (inFs()) return;
   if (window.__edgeMode) { runEdge(); }
-  else { runTop(); }
+  else {
+    releaseHeader();
+    releaseTopOverlay();
+    hdCache = null;
+    runTop();
+  }
 }
 
 // Không bỏ qua phần tử bị chính script ghi style (xem drainSelf) và không chạy dò header ở mọi khung hình khi cuộn:
@@ -597,29 +841,11 @@ var runLastAt = 0, runTimer = null;
 function inFs(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
 var wasFs = false;
 function edgeResetAll(){
-  try {
-    var els = document.querySelectorAll('[data-edge-shift],[data-edge-hd],[data-edge-hdbg],[data-edge-pad],[data-edge-xf]');
-    for (var i = 0; i < els.length; i++) {
-      var el = els[i];
-      if (el.hasAttribute('data-edge-pad')) {
-        el.style.removeProperty('padding-top');
-        el.style.removeProperty('box-sizing');
-      }
-      if (el.hasAttribute('data-edge-shift') || el.hasAttribute('data-edge-hd') || el.hasAttribute('data-edge-hdbg')) {
-        el.style.removeProperty('top');
-      }
-      if (el.hasAttribute('data-edge-xf')) { el.style.removeProperty('transform'); el.removeAttribute('data-edge-xf'); }
-      el.removeAttribute('data-edge-shift');
-      el.removeAttribute('data-edge-hd');
-      el.removeAttribute('data-edge-hdbg');
-      el.removeAttribute('data-edge-pad');
-    }
-    edgeShiftList = [];
-    hdCache = null;
-    window.__edgeHdBg = null;
-    styleCache = new WeakMap();
-    last = '';
-  } catch (e) {}
+  releaseHeader();
+  releaseTopOverlay();
+  invalidateHeader();
+  styleCache = new WeakMap();
+  last = '';
 }
 function fsCheck(){
   if (inFs()) { wasFs = true; return; }
@@ -685,6 +911,11 @@ function saveInline(el, name){
 function restoreInline(el, name, saved){
   if (saved.value) el.style.setProperty(name, saved.value, saved.priority);
   else el.style.removeProperty(name);
+}
+
+function ownsInline(el, name, value){
+  return !!value && el.style.getPropertyValue(name) === value &&
+    el.style.getPropertyPriority(name) === 'important';
 }
 
 function isBottomNav(el, H, W, offset, known){
@@ -1034,17 +1265,22 @@ function schedLift(){
   liftTimer = setTimeout(function(){ liftTimer = null; liftLast = Date.now(); runLift(); }, wait);
 }
 
-function schedAll(){ hdCache = null; sched(); schedLift(); schedPageBackground(); }
+function invalidateHeader(){
+  hdCache = null;
+  headerLandmarkCache = new WeakMap();
+}
 
-window.__edgeRun = function(){ hdCache = null; run(); runLift(); schedPageBackground(); };
+function schedAll(){ invalidateHeader(); sched(); schedLift(); schedPageBackground(); }
+
+window.__edgeRun = function(){ invalidateHeader(); run(); runLift(); schedPageBackground(); };
 window.__edgePageBgRun = function(){ runPageBackground(); };
 // Đổi tab: native đã bỏ qua báo cáo màu lúc trang này chạy nền, nên xoá bộ nhớ 'last' để báo lại.
-window.__edgeForceTop = function(){ last = ''; hdCache = null; run(); };
+window.__edgeForceTop = function(){ last = ''; invalidateHeader(); run(); drainSelf(); };
 window.__edgeLift = function(){ runLift(); };
 window.addEventListener('scroll', function(){
   sched();
   schedPageBackground(true);
-}, {passive: true});
+}, {capture: true, passive: true});
 
 // Kéo-để-tải-lại của app chỉ nên chạy khi cử chỉ thuộc về trang cuộn gốc: báo về nếu chạm bắt đầu trong khung cuộn
 // đã cuộn xuống, trên trình phát video, hoặc nếu trang tự preventDefault khi kéo.
@@ -1087,8 +1323,35 @@ window.addEventListener('scroll', function(){
   }, {passive: true});
 })();
 window.addEventListener('resize', schedAll);
-window.addEventListener('load', schedPageBackground, true);
-window.addEventListener('pageshow', schedPageBackground);
+window.addEventListener('load', function(event){
+  schedPageBackground();
+  if (event.target === document || event.target.rel === 'stylesheet') {
+    invalidateHeader();
+    sched();
+  }
+}, true);
+window.addEventListener('pageshow', schedAll);
+function onHeaderMotionEnd(event){
+  if (!window.__edgeMode || inFs()) return;
+  var el = event.target;
+  if (el.nodeType !== 1 || (el !== (activeHeader && activeHeader.el) &&
+      el.getBoundingClientRect().top > (window.__edgeInset || 0) + 1)) return;
+  var position = getComputedStyle(el).position;
+  if (position === 'sticky' || position === 'fixed' || el.matches(headerLandmarks + ',' + headerHints)) {
+    hdCache = null;
+    sched();
+  }
+}
+window.addEventListener('transitionend', onHeaderMotionEnd, true);
+window.addEventListener('animationend', onHeaderMotionEnd, true);
+
+var observedHeaderRoots = new WeakSet();
+function observeHeaderRoot(root){
+  if (!observer || observedHeaderRoots.has(root)) return;
+  observer.observe(root, {childList: true, subtree: true, attributes: true,
+    attributeFilter: ['class', 'style', 'id', 'role', 'hidden', 'open', 'popover', 'aria-modal']});
+  observedHeaderRoots.add(root);
+}
 
 try {
   var colorSchemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -1101,7 +1364,7 @@ try {
   observer = new MutationObserver(function(records){
     if (inFs()) return;
     for (var i = 0; i < records.length; i++) {
-      if (records[i].type === 'childList') { hdCache = null; schedAll(); return; }   // thêm/bớt phần tử: làm đủ như cũ
+      if (records[i].type === 'childList') { schedAll(); return; }
     }
     // Đổi class/style ngay trên html/body (bật tắt chế độ tối...) mới làm nền trang đổi: báo lại màu ngay,
     // vì lúc cuộn màu chỉ được lấy mẫu thưa.
@@ -1117,13 +1380,18 @@ try {
       if (!compactBarRec(tt) && !findRec(tt)) foreign = true;
     }
     if (!foreign) return;
-    // Chỉ đổi class/style (hoạt ảnh, carousel...): nhẹ hơn và gộp tối đa một lần mỗi 150ms
+    // Gộp thay đổi thuộc tính để dò lại header khi trang đổi trạng thái.
     if (obsTimer) return;
     var wait = Math.max(0, 150 - (Date.now() - obsLast));
-    obsTimer = setTimeout(function(){ obsTimer = null; obsLast = Date.now(); sched(); schedLift(); }, wait);
+    obsTimer = setTimeout(function(){
+      obsTimer = null;
+      obsLast = Date.now();
+      invalidateHeader();
+      sched();
+      schedLift();
+    }, wait);
   });
-  observer.observe(document.documentElement,
-    {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style']});
+  observeHeaderRoot(document.documentElement);
   window.addEventListener('beforeunload', function(){
     observer.disconnect();
     if (pageBgTimer) clearTimeout(pageBgTimer);
