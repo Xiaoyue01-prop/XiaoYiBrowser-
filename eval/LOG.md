@@ -40,3 +40,45 @@ Lệnh chạy ở thư mục gốc là `EVAL_CHROMIUM=/usr/bin/chromium node eva
 - **`f16_header_hides_on_scroll`**. Header cao 56 px, được dời đến `top: 50px`. Khi trang tự ẩn bằng phép dịch −56 px, hộp kết thúc tại vùng −6 đến 50 px và chữ còn lộ dưới thanh trạng thái. Script tiếp tục giữ phần bù `top` trong trạng thái tự ẩn.
 
 Cả hai đều có thể tiếp tục xử lý ở phía JavaScript. Ca thứ nhất cần theo dõi điểm neo khi hàng chuyển từ bố cục thường sang sticky. Ca thứ hai cần phân biệt trạng thái trang chủ động ẩn header với trạng thái header vẫn đang hiển thị.
+
+## Đợt nâng ngưỡng lên 9,5
+
+Chạy lại commit `34c6669` trên cùng bản Chromium. TOTAL 9,05, Fixed 9,38, Sticky 8,57, 0 hồi quy, `__edgeRun` 17,0 ms và khung cuộn 16,1 ms.
+
+### Vòng 3 — trạng thái hiện và ẩn của điểm neo
+
+Giả thuyết trước khi sửa. Hộp header đã bao gồm phần bù của Summit khi trang bắt đầu dịch nó lên. Đọc mép dưới của hộp đó có thể giữ lại một header mà trang đã giấu. Ghi đè trực tiếp `top` của một header fixed còn có thể che mất thao tác ẩn bằng CSS. Cần đọc vị trí trước phần bù và trả quyền định vị cho trang khi header rút lên. Trạng thái này quyết định khi nào các hàng bên dưới có thể dùng đáy header làm điểm neo.
+
+Lần thử đầu tăng TOTAL từ 9,05 lên 9,43, 0 hồi quy, 18,8 ms và 16,1 ms. Các biến thể Chromium đạt 5/6, bản gốc đạt 2/6. Đã hoàn tác lần thử này vì header sticky có transition trên `top` vẫn giữ phần bù khi một thuộc tính trạng thái của tổ tiên thay đổi.
+
+Giả thuyết cho lần thử tiếp. Khi `top` của sticky do Summit quản lý, trình duyệt có thể chưa phát transition để báo CSS của trang đã đổi. Có thể quan sát riêng các thuộc tính trên chuỗi tổ tiên của header đã nhận diện, kể cả lúc nó đang ẩn, rồi dùng lịch cập nhật hiện có để đọc lại vị trí.
+
+Đã tách phần dời hộp fixed sang `margin-top`, đọc vị trí gốc trước phần bù và theo dõi thay đổi thuộc tính tại header cùng các tổ tiên. Header sticky trả lại `top` cho trang khi trạng thái CSS đổi. Giữ thay đổi ở **9,05 → 9,43**, Fixed 10,00 và Sticky 8,57. Đối chiếu 107 phép kiểm có 0 hồi quy. Hiệu năng đạt ở 16,7 ms và 16,1 ms. Lần ghi baseline lặp lại cùng kết quả với 18,6 ms và 15,9 ms.
+
+Chạy `EVAL_CHROMIUM=/usr/bin/chromium node tools/check_edge_layout.cjs motion` cho kết quả **6/6**. Các ca dùng header cao 63–81 px, inset 27–41 px, gồm fixed đặt sau nội dung, translate một phần, CSS top âm trên tổ tiên, top inline có ưu tiên, sticky transform trong wrapper và sticky có transition top. Mỗi ca kiểm tra lúc ẩn, hiện lại và trả style khi tắt chế độ. Bộ kiểm tra Chromium của phiên bản trước đạt 52/52.
+
+### Vòng 4 — điểm neo của các tầng sticky
+
+Giả thuyết trước khi sửa. Dò một điểm bên trong hộp header đã dời không cho biết hàng nào vốn bám ngay sau nó. Nâng mọi sticky lên cùng một `top` còn làm mất khoảng cách giữa các tầng. Cần đo cả mép trong bố cục gốc và mép đã chừa inset, ghi nhớ quan hệ khi các hàng tiếp giáp, rồi đổi ngưỡng CSS trong hệ tọa độ của từng khung cuộn. Với sticky lồng nhau, phải tính phần dời một lần theo ngưỡng gốc của mỗi tầng.
+
+Đã dùng vị trí ghim do trang khai báo hoặc hai mép tiếp giáp để nhận ra hàng dưới, kể cả khi thứ tự DOM khác thứ tự hiển thị. Mỗi tầng nhận ngưỡng CSS theo vùng cuộn của nó. Giữa các lần dò, trình duyệt thực hiện việc ghim. Bộ dò dùng lại các phần tử đã gặp, giới hạn số điểm dò thêm và gộp các sự kiện `scrollend` để phát hiện hàng trước đó còn nằm xa header.
+
+Giữ thay đổi ở **9,43 → 10,00**. Ca `s04_tabs_under_fixed_header` đạt cả khi cuộn. Scorer báo 0 hồi quy, `__edgeRun` 16,7 ms và khung cuộn 16,3 ms. Chỉ sau lần chạy đó mới dùng `--write-baseline`. Lần xác nhận tiếp tục đạt đủ 107 phép kiểm, với 16,5 ms và 16,1 ms.
+
+Chạy `EVAL_CHROMIUM=/usr/bin/chromium node tools/check_edge_layout.cjs sticky` cho **9/9** trên bản mới, so với 0/9 trên bản 9,43.
+
+- Hàng chip dưới header cao 37 px và đổi chiều cao khi đang ghim. Một ca khác đặt header cao 89 px sau hàng trong DOM và bắt đầu ở trang đã cuộn.
+- Breadcrumb có `top: 0` tiếp giáp header trong bố cục ban đầu, hai thanh sticky ở các wrapper khác nhau, bộ lọc từ ngoài màn hình cuộn tới, và hàng ghim khi header tự ẩn rồi xuất hiện lại.
+- Tiêu đề ngoài, nút bên trong và hàng kế tiếp trong cùng khung cuộn. Lặp lại với khung cuộn có viền, đổi inset và một khung độc lập. Ca cuối dùng ba hàng anh em được CSS sắp ngược thứ tự DOM.
+
+### Kết quả đợt nâng ngưỡng
+
+| Hạng mục | Bản 9,05 | Sau vòng 3 | Sau vòng 4 |
+| --- | ---: | ---: | ---: |
+| Fixed | 9,38 (15/16) | 10,00 (16/16) | 10,00 (16/16) |
+| Sticky | 8,57 (6/7) | 8,57 (6/7) | 10,00 (7/7) |
+| An toàn | 55/55 | 55/55 | 55/55 |
+| Hiệu năng | 2/2 | 2/2 | 2/2 |
+| **TOTAL** | **9,05** | **9,43** | **10,00** |
+
+Dừng khi vượt mục tiêu 9,5. Tất cả 26 ca công khai và cả hai phép kiểm hiệu năng đều đạt. Bộ biến thể riêng đạt 15/15, bộ kiểm tra Chromium cũ đạt 52/52. Tệp đính kèm chỉ cung cấp tập công khai. Điểm của bộ ẩn và hiệu năng trên WebView của điện thoại chưa được đo.

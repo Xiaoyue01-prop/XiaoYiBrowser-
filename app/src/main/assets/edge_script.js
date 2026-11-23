@@ -451,17 +451,19 @@ function insetLength(value, basis){
   } catch (e) { return NaN; }
 }
 
-function stickyAnchor(el, cs, rect, inset){
-  var authoredTop = activeHeader && activeHeader.el === el && ownsInline(el, 'top', activeHeader.applied)
-    ? activeHeader.stickyTop : cs.top;
+function stickyPin(el, cs, rect){
+  var rec = stickyInsets.get(el), authoredTop = cs.top;
+  if (rec && ownsInline(el, 'top', rec.applied)) authoredTop = rec.authoredTop;
+  if (activeHeader && activeHeader.el === el && ownsInline(el, 'top', activeHeader.applied)) authoredTop = activeHeader.stickyTop;
   if (authoredTop === 'auto') return null;
-  var scrollTop = 0, scrollHeight = document.documentElement.clientHeight;
+  var port = document.documentElement, scrollTop = 0, scrollHeight = port.clientHeight;
   for (var p = headerParent(el); p && p !== document.body && p !== document.documentElement; p = headerParent(p)) {
     if (!/^(auto|scroll|hidden|overlay)$/.test(getComputedStyle(p).overflowY)) continue;
     var pr = p.getBoundingClientRect();
     scrollTop = pr.top + p.clientTop;
     scrollHeight = p.clientHeight;
-    if (scrollTop > inset + 1 || scrollTop + scrollHeight <= Math.max(0, rect.top)) return null;
+    if (scrollTop + scrollHeight <= Math.max(0, rect.top)) return null;
+    port = p;
     break;
   }
   var top = insetLength(authoredTop, scrollHeight);
@@ -473,11 +475,12 @@ function stickyAnchor(el, cs, rect, inset){
   var translateY = (cs.translate || '').split(' ')[1];
   if (translateY) offset += (parseFloat(translateY) || 0) * (translateY.endsWith('%') ? rect.height / 100 : 1);
   // Khi đã chạm đáy khối chứa, sticky sẽ rời mép trên theo khối đó.
-  return rect.top >= offset + top - 2 && offset + top <= inset + 1 ? offset : null;
+  return rect.top < offset + top - 2 ? null :
+    { port: port, start: scrollTop, offset: offset, y: offset + top, authoredTop: authoredTop };
 }
 
 // CSS vẫn quyết định lúc phần tử sticky bám và rời khung cuộn. Chỉ đổi ngưỡng top.
-var stickyInsets = new Map();
+var stickyInsets = new Map(), stickyLinks = null;
 function syncStickyInsets(targets){
   stickyInsets.forEach(function(rec, el){
     var owned = ownsInline(el, 'top', rec.applied);
@@ -486,11 +489,12 @@ function syncStickyInsets(targets){
     stickyInsets.delete(el);
   });
   if (!targets) return;
-  targets.forEach(function(top, el){
+  targets.forEach(function(row, el){
+    var top = row.target - row.pin.offset;
     var rec = stickyInsets.get(el);
     if (rec && rec.top === top) return;
     if (!rec) {
-      rec = { saved: saveInline(el, 'top') };
+      rec = { saved: saveInline(el, 'top'), authoredTop: row.pin.authoredTop };
       stickyInsets.set(el, rec);
     }
     el.style.setProperty('top', top + 'px', 'important');
@@ -499,22 +503,27 @@ function syncStickyInsets(targets){
   });
 }
 
-function headerGeometry(el, I, w, h, stickyTargets){
+function headerGeometry(el, I, w, h, rows, rowsOnly){
   var cs = getComputedStyle(el);
   var sticky = cs.position === 'sticky' || cs.position === '-webkit-sticky';
-  if ((!sticky && cs.position !== 'fixed') || !headerStyleVisible(cs) ||
+  if ((!sticky && (rowsOnly || cs.position !== 'fixed')) || !headerStyleVisible(cs) ||
       el.hasAttribute('data-edge-shift')) return null;
   var r = el.getBoundingClientRect();
+  var managed = activeHeader && activeHeader.el === el && ownsInline(el, activeHeader.property, activeHeader.applied);
+  var originalTop = r.top - (managed ? activeHeader.delta : 0);
+  var authoredTop = managed && sticky ? activeHeader.stickyTop : cs.top;
+  // Khi trang rút thanh lên, đo hộp trước phần bù của Summit để nó có thể rời màn hình.
+  if (originalTop < -1 && (originalTop + r.height <= 1 || parseFloat(authoredTop) < 0 ||
+      ((cs.transform !== 'none' || (cs.translate && cs.translate !== 'none')) &&
+       originalTop < (headerRestTop.get(el) ?? originalTop) - 1))) return null;
   var width = Math.min(w, r.right) - Math.max(0, r.left);
-  if (r.top > I + 1 || r.bottom < 7 || width < 1 ||
-      r.height < 9 || r.height > h * 0.39) return null;
-  var anchor = sticky ? stickyAnchor(el, cs, r, I) : null;
-  if (sticky && anchor === null) return null;
-  if (sticky && stickyTargets && (stickyInsets.has(el) ||
-      (r.top < I - 0.5 && !headerHasSafePadding({ el: el, cs: cs, rect: r }, I)))) {
-    stickyTargets.set(el, I - anchor);
-  }
-  if (width < w * 0.45) return null;
+  if (r.bottom < 1 || width < 1 || r.height < 1) return null;
+  var pin = sticky ? stickyPin(el, cs, r) : null;
+  if (sticky && !pin) return null;
+  var hd = { el: el, cs: cs, rect: r, originalTop: originalTop, width: width, sticky: sticky, pin: pin };
+  if (sticky && rows) rows.set(el, hd);
+  if (rowsOnly || r.top > I + 1 || r.bottom < 7 || width < w * 0.45 || r.height < 9 ||
+      r.height > h * 0.39 || (pin && (pin.start > I + 1 || pin.y > I + 1))) return null;
   var bandOnly = false;
   for (var p = el; p && p !== document.documentElement; p = headerParent(p)) {
     var style = p === el ? cs : getComputedStyle(p);
@@ -526,7 +535,8 @@ function headerGeometry(el, I, w, h, stickyTargets){
       bandOnly = true;
     }
   }
-  return { el: el, cs: cs, rect: r, width: width, sticky: sticky, anchor: anchor, bandOnly: bandOnly };
+  hd.bandOnly = bandOnly;
+  return hd;
 }
 
 // Kiểm tra cả chữ, icon và vùng điều hướng trong wrapper, với giới hạn số nút mỗi ứng viên.
@@ -570,24 +580,98 @@ function headerContent(el, rect){
   return content ? signal || 1 : 0;
 }
 
+var emptyStickyLayout = null;
+function resetStickyLayout(){
+  syncStickyInsets(null);
+  stickyLinks = null;
+  emptyStickyLayout = null;
+}
+function layoutStickyRows(I, header, rows, sample){
+  if (!header && !rows.size && !stickyInsets.size) return;
+  var targets = new Map(), edges = [], cursor = 0;
+  function edge(row, base, placed){
+    edges.push({ row: row, before: base + row.rect.height, after: placed + row.rect.height, delta: placed - base });
+  }
+  function place(row, top, above){
+    if (row === header || targets.has(row.el) || top <= row.pin.y + 0.5) return;
+    row.target = top;
+    targets.set(row.el, row);
+    if (above) {
+      if (!stickyLinks) stickyLinks = new WeakMap();
+      stickyLinks.set(row.el, { above: above.el, parent: headerParent(row.el), port: row.pin.port });
+    }
+    edge(row, row.pin.y, top);
+  }
+  function followEdges(){
+    while (cursor < edges.length && cursor < 40) {
+      var e = edges[cursor++], upper = e.row;
+      sample(e.before + 1, upper.rect);
+      sample(e.after + 1, upper.rect);
+      rows.forEach(function(row){
+        if (row === header || targets.has(row.el) || row.pin.y >= e.after - 0.5 ||
+            (upper.pin && upper.pin.port !== row.pin.port) || headerContains(row.el, upper.el)) return;
+        var a = row.rect, b = upper.rect;
+        if (Math.min(a.right, b.right) - Math.max(a.left, b.left) < Math.min(row.width, upper.width) * 0.5) return;
+        if (headerContains(upper.el, row.el)) {
+          // Hai tầng lồng cùng khung cuộn dùng cùng độ dời. CSS giữ giới hạn của khối cha.
+          if (upper.pin) place(row, row.pin.y + e.delta);
+          return;
+        }
+        var link = stickyLinks && stickyLinks.get(row.el);
+        var remembered = link && link.above === upper.el && link.parent === headerParent(row.el) &&
+          link.port === row.pin.port && a.top <= e.after + 2;
+        var gap = row.pin.y - e.before;
+        if (Math.abs(gap) <= 2 || remembered || Math.abs(a.top - e.before) <= 2 || Math.abs(a.top - e.after) <= 2) {
+          place(row, e.after + Math.max(0, gap), upper);
+        }
+      });
+    }
+  }
+  if (header) {
+    var base = header.pin ? header.pin.y : header.originalTop;
+    var placed = headerHasSafePadding(header, I, header.rect.top - base) ? base : Math.max(I, base);
+    var bottom = base + header.rect.height;
+    if (!rows.size && !stickyInsets.size && emptyStickyLayout && emptyStickyLayout.el === header.el &&
+        emptyStickyLayout.bottom === bottom && emptyStickyLayout.placed === placed) return;
+    edge(header, base, placed);
+    for (var lower = header.fixedBelow; lower; lower = lower.fixedBelow) {
+      edge(lower, lower.originalTop, lower.originalTop + placed - base);
+    }
+    followEdges();
+    emptyStickyLayout = rows.size ? null : { el: header.el, bottom: bottom, placed: placed };
+  }
+  // Xử lý tổ tiên trước khi xét các tầng cùng vùng cuộn và các ô song song.
+  Array.from(rows.values()).sort(function(a, b){
+    if (a.el !== b.el && headerContains(a.el, b.el)) return -1;
+    if (a.el !== b.el && headerContains(b.el, a.el)) return 1;
+    return a.pin.y - b.pin.y || a.rect.top - b.rect.top;
+  }).forEach(function(row){
+    if (row !== header && !targets.has(row.el) && row.pin.start < I && row.pin.y < I &&
+        row.rect.top <= I + 1 && !headerHasSafePadding(row, I, row.rect.top - row.pin.y)) {
+      place(row, I);
+      followEdges();
+    }
+  });
+  if (targets.size || stickyInsets.size) {
+    syncStickyInsets(targets);
+    if (header) header.rect = header.el.getBoundingClientRect();
+  }
+}
+
 var headerLandmarkCache = new WeakMap();
 function findHeader(I){
   var w = window.innerWidth, h = window.innerHeight, best = null;
-  var seen = new Set(), roots = new Set([document]), stickyTargets = new Map(), fixedBands = [];
+  var seen = new Set(), roots = new Set([document]), rows = new Map(), fixedBands = [], rowsOnly = false;
   function consider(el){
     for (; el && el !== document.body && el !== document.documentElement; el = headerParent(el)) {
       if (seen.has(el)) break;
       seen.add(el);
-      var hd = headerGeometry(el, I, w, h, stickyTargets);
+      var hd = headerGeometry(el, I, w, h, rows, rowsOnly);
       if (!hd) continue;
       var signal = headerContent(el, hd.rect);
       if (!signal || (signal < 3 && (hd.width < w * 0.65 || hd.rect.height > h * 0.29))) continue;
       hd.signal = signal;
       if (!hd.sticky) {
-        hd.originalTop = hd.rect.top;
-        if (activeHeader && activeHeader.el === el && ownsInline(el, 'top', activeHeader.applied)) {
-          hd.originalTop -= activeHeader.delta;
-        }
         if (hd.originalTop >= -1 && hd.cs.top !== 'auto' && hd.width >= w * 0.65 &&
             hd.rect.height <= h * 0.29) fixedBands.push(hd);
       }
@@ -649,13 +733,18 @@ function findHeader(I){
       best = band;
     });
   }
-  if (stickyTargets.size || stickyInsets.size) {
-    if (best) stickyTargets.forEach(function(top, el){
-      if (headerContains(best.el, el) || headerContains(el, best.el)) stickyTargets.delete(el);
+  rowsOnly = true;
+  var sampled = new Set();
+  layoutStickyRows(I, best, rows, function(y, rect){
+    if (y < 0 || y >= h || sampled.size >= 24) return;
+    var left = Math.max(0, rect.left), right = Math.min(w, rect.right);
+    [0.25, 0.75].forEach(function(fraction){
+      var x = left + (right - left) * fraction, key = Math.round(x) + ',' + Math.round(y);
+      if (sampled.has(key)) return;
+      sampled.add(key);
+      roots.forEach(function(root){ probe(root, x, y); });
     });
-    syncStickyInsets(stickyTargets);
-    if (best) best.rect = best.el.getBoundingClientRect();
-  }
+  });
   return best;
 }
 
@@ -714,7 +803,7 @@ function shiftCompanions(hd, delta){
         while (el && el !== document.documentElement && el !== document.body) {
           if (headerContains(hd.el, el) || headerContains(el, hd.el)) break;
           var cs = getComputedStyle(el);
-          if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none') {
+          if (cs.position === 'fixed' && cs.display !== 'none') {
             if (!el.hasAttribute('data-edge-shift')) {
               var r = el.getBoundingClientRect();
               var top = parseFloat(cs.top);
@@ -851,6 +940,20 @@ function shiftHeaderBackground(hd, delta){
 }
 
 var hdCache = null, activeHeader = null, topOverlay = null;
+var headerRestTop = new WeakMap();
+var watchedHeader = null, headerAttributes = null, headerStateDirty = false;
+function watchHeaderState(el){
+  if (el === watchedHeader) return;
+  if (headerAttributes) headerAttributes.disconnect();
+  watchedHeader = el;
+  headerStateDirty = false;
+  if (!el) return;
+  if (!headerAttributes) headerAttributes = new MutationObserver(function(){
+    headerStateDirty = true;
+    sched();
+  });
+  for (var p = el; p; p = headerParent(p)) headerAttributes.observe(p, { attributes: true });
+}
 var searchOverlay = null, searchCheckedAt = 0;
 
 var searchFieldSelector = 'input[type="search"],input[role="searchbox"],input[name="search_query"],' +
@@ -932,7 +1035,7 @@ function runSearchOverlay(I){
 function releaseHeader(){
   if (!activeHeader) return;
   var el = activeHeader.el;
-  if (ownsInline(el, 'top', activeHeader.applied)) restoreInline(el, 'top', activeHeader.saved);
+  if (ownsInline(el, activeHeader.property, activeHeader.applied)) restoreInline(el, activeHeader.property, activeHeader.saved);
   if (activeHeader.marked) el.removeAttribute('data-edge-hd');
   activeHeader = null;
   edgeShiftList.forEach(forgetShift);
@@ -963,19 +1066,26 @@ function headerHasSafePadding(hd, inset, shift){
 
 function alignHeader(hd, I){
   var el = hd.el;
-  if (!activeHeader) activeHeader = { el: el, inset: I, sticky: hd.sticky, delta: 0 };
-  if (ownsInline(el, 'top', activeHeader.applied)) return;
+  if (!activeHeader) {
+    activeHeader = { el: el, inset: I, sticky: hd.sticky, delta: 0, property: hd.sticky ? 'top' : 'margin-top' };
+    headerRestTop.set(el, Math.min(0, hd.originalTop));
+  }
+  watchHeaderState(el);
+  var property = activeHeader.property;
+  if (ownsInline(el, property, activeHeader.applied)) return;
   if (hd.rect.top >= I - 0.5 || headerHasSafePadding(hd, I)) {
     activeHeader.delta = 0;
     return;
   }
-  var top = parseFloat(hd.cs.top);
-  var base = isNaN(top) ? (el.offsetTop || 0) - (parseFloat(hd.cs.marginTop) || 0) : top;
-  var next = hd.sticky ? I - hd.anchor : base + I - hd.rect.top;
-  activeHeader.saved = saveInline(el, 'top');
+  // Dời hộp fixed bằng margin để trang vẫn điều khiển top và transition của nó.
+  var next = hd.sticky ? I - hd.pin.offset : (parseFloat(hd.cs.marginTop) || 0) + I - hd.rect.top;
+  if (hd.sticky && el.getAnimations && el.getAnimations().some(function(a){
+    return a.transitionProperty === 'top' || a.transitionProperty === 'inset-block-start';
+  })) return;
+  activeHeader.saved = saveInline(el, property);
   activeHeader.stickyTop = hd.cs.top;
-  el.style.setProperty('top', next + 'px', 'important');
-  activeHeader.applied = el.style.getPropertyValue('top');
+  el.style.setProperty(property, next + 'px', 'important');
+  activeHeader.applied = el.style.getPropertyValue(property);
   if (!hd.bandOnly) {
     el.setAttribute('data-edge-hd', '1');
     activeHeader.marked = true;
@@ -1026,7 +1136,8 @@ function runEdge(){
   if (viewportZoomed()) return;
   var I = topReserveCss();
   if (!I || !document.elementsFromPoint) {
-    syncStickyInsets(null);
+    watchHeaderState(null);
+    resetStickyLayout();
     releaseSearchOverlay();
     releaseHeader();
     releaseTopOverlay();
@@ -1035,6 +1146,13 @@ function runEdge(){
     return;
   }
   try {
+    if (headerStateDirty) {
+      headerStateDirty = false;
+      if (activeHeader && activeHeader.sticky && activeHeader.applied) {
+        releaseHeader();
+        hdCache = null;
+      }
+    }
     var search = runSearchOverlay(I);
     if (search) {
       var searchColor = headerColor(search, false);
@@ -1057,7 +1175,7 @@ function runEdge(){
     if (fresh) {
       hd = findHeader(I);
       var nowSafe = activeHeader && hd && hd.el === activeHeader.el && activeHeader.delta > 0.5 &&
-        ownsInline(hd.el, 'top', activeHeader.applied) && headerHasSafePadding(hd, I, activeHeader.delta);
+        ownsInline(hd.el, activeHeader.property, activeHeader.applied) && headerHasSafePadding(hd, I, activeHeader.delta);
       if (activeHeader && (!hd || hd.el !== activeHeader.el || nowSafe)) {
         releaseHeader();
         hd = findHeader(I);
@@ -1085,7 +1203,8 @@ function run(){
   syncRootReserve();
   if (window.__edgeMode) { runEdge(); }
   else {
-    syncStickyInsets(null);
+    watchHeaderState(null);
+    resetStickyLayout();
     releaseSearchOverlay();
     releaseHeader();
     releaseTopOverlay();
@@ -1104,6 +1223,8 @@ var runLastAt = 0, runTimer = null;
 function inFs(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
 var wasFs = false;
 function edgeResetAll(){
+  watchHeaderState(null);
+  resetStickyLayout();
   releaseSearchOverlay();
   releaseHeader();
   releaseTopOverlay();
@@ -1134,6 +1255,7 @@ window.__edgeFsCheck = fsCheck;
 function drainSelf(){
   // Mutation do chính script gây ra (dời top, translate...) đang nằm trong hàng đợi: bỏ đi để không tự kích hoạt lại
   try { if (observer) observer.takeRecords(); } catch (e) {}
+  if (headerAttributes) headerAttributes.takeRecords();
 }
 function sched(){
   if (rafId || runTimer) return;
@@ -1596,7 +1718,7 @@ function invalidateHeader(){
   headerLandmarkCache = new WeakMap();
 }
 
-function schedAll(){ invalidateHeader(); sched(); schedLift(); schedPageBackground(); }
+function schedAll(){ emptyStickyLayout = null; invalidateHeader(); sched(); schedLift(); schedPageBackground(); }
 
 function viewportChanged(){
   rootReserveDirty = true;
@@ -1612,6 +1734,18 @@ window.addEventListener('scroll', function(){
   sched();
   if (window.__edgeBottom > 0) schedLift();
   schedPageBackground(true);
+}, {capture: true, passive: true});
+
+// Hàng ở xa có thể vừa ghim vào header sau một cử chỉ. Dò lại các mép khi cuộn đã dừng.
+var stickySettleTimer = null;
+window.addEventListener('scrollend', function(){
+  if (!window.__edgeMode || !activeHeader) return;
+  clearTimeout(stickySettleTimer);
+  stickySettleTimer = setTimeout(function(){
+    emptyStickyLayout = null;
+    hdCache = null;
+    sched();
+  }, 150);
 }, {capture: true, passive: true});
 
 // Kéo-để-tải-lại của app chỉ nên chạy khi cử chỉ thuộc về trang cuộn gốc: báo về nếu chạm bắt đầu trong khung cuộn
@@ -1713,7 +1847,11 @@ try {
           target === document.head || target.localName === 'style') rootReserveDirty = true;
       if (records[i].type === 'childList') treeChanged = true;
     }
-    if (treeChanged) { schedAll(); return; }
+    if (treeChanged) {
+      if (watchedHeader && !watchedHeader.isConnected) watchHeaderState(null);
+      schedAll();
+      return;
+    }
     // Đổi class/style ngay trên html/body (bật tắt chế độ tối...) mới làm nền trang đổi: báo lại màu ngay,
     // vì lúc cuộn màu chỉ được lấy mẫu thưa.
     for (var j = 0; j < records.length; j++) {
@@ -1734,6 +1872,7 @@ try {
     obsTimer = setTimeout(function(){
       obsTimer = null;
       obsLast = Date.now();
+      emptyStickyLayout = null;
       invalidateHeader();
       sched();
       schedLift();

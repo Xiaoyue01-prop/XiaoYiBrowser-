@@ -1,8 +1,8 @@
 {
- "total": 9.053571428571429,
+ "total": 10,
  "score": {
-  "F": 9.375,
-  "S": 8.571428571428571,
+  "F": 10,
+  "S": 10,
   "failX": 0,
   "failP": 0
  },
@@ -70,7 +70,7 @@
   "s03_table_header_sticky::no content under status bar::scrolled": true,
   "s03_table_header_sticky::state restored after mode off::restored": true,
   "s03_table_header_sticky::no page errors::load": true,
-  "s04_tabs_under_fixed_header::#t sits right under header::scrolled": false,
+  "s04_tabs_under_fixed_header::#t sits right under header::scrolled": true,
   "s04_tabs_under_fixed_header::no content under status bar::scrolled": true,
   "s04_tabs_under_fixed_header::state restored after mode off::restored": true,
   "s04_tabs_under_fixed_header::no page errors::load": true,
@@ -92,7 +92,7 @@
   "f15_promo_bar_plus_header::no page errors::load": true,
   "f16_header_hides_on_scroll::top(header)≈50::load": true,
   "f16_header_hides_on_scroll::color≈200,30,30::load": true,
-  "f16_header_hides_on_scroll::no content under status bar::scrolled": false,
+  "f16_header_hides_on_scroll::no content under status bar::scrolled": true,
   "f16_header_hides_on_scroll::state restored after mode off::restored": true,
   "f16_header_hides_on_scroll::no page errors::load": true,
   "s06_site_nav_in_grid_wrapper::top(nav)≈50::load": true,
