@@ -1,0 +1,6 @@
+# Hạ tầng "identity resolution" (biến email thành ID theo dõi) mà Safari 27 / WebKit bị cho là chặn.
+# NGUỒN: tin báo chí (ppc.land, 2026-10), KHÔNG phải danh sách WebKit công bố. WebKit không công bố danh sách domain.
+# Chỉ giữ các domain bài báo nêu rõ. Xác minh từng domain trước khi thêm; thêm dòng mới bằng tay.
+uidapi.com
+rlcdn.com
+pippio.com

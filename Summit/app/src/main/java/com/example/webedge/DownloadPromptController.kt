@@ -1,0 +1,235 @@
+package com.example.webedge
+
+import android.app.Activity
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import eightbitlab.com.blurview.BlurTarget
+
+/** In-app download confirmation. DownloadManager is started only after the user confirms. */
+class DownloadPromptController(
+    private val activity: Activity,
+    private val root: FrameLayout,
+    private val blurTarget: BlurTarget,
+    private val density: Float,
+    private val isNight: () -> Boolean,
+    private val foregroundColor: Int,
+    private val accentColor: Int,
+    private val topInset: () -> Int
+) {
+    private data class Prompt(
+        val fileName: String,
+        val onConfirm: () -> Unit
+    )
+
+    private val queue = ArrayDeque<Prompt>()
+    private var active: Prompt? = null
+    private var activeView: FrameLayout? = null
+    private var finishing = false
+
+
+    /**
+     * Phần đầu màn hình mà hộp hỏi đang chiếm (px, gồm một khoảng cách nhỏ bên dưới); 0 khi không hiện
+     * hoặc đang đóng. Toast dùng để xếp ngay dưới hộp thay vì đè lên các nút Hủy / Tải xuống.
+     */
+    fun occupiedHeight(): Int {
+        val view = activeView ?: return 0
+        if (finishing) return 0
+        val h = if (view.height > 0) view.height else view.measuredHeight
+        return if (h > 0) h + dp(8) else 0
+    }
+
+    fun show(fileName: String, onConfirm: () -> Unit) {
+        queue.addLast(Prompt(fileName, onConfirm))
+        if (active == null) showNext()
+    }
+
+    /** Dismisses visible and queued prompts when the Activity leaves the foreground. */
+    fun dismissAll() {
+        queue.clear()
+        val view = activeView
+        active = null
+        activeView = null
+        finishing = false
+        if (view != null) {
+            GlassSystem.removePageToneObserver(view)
+            AnimationSystem.cancel(view)
+            root.removeView(view)
+        }
+    }
+
+    private fun showNext() {
+        val prompt = queue.removeFirstOrNull() ?: run {
+            active = null
+            activeView = null
+            finishing = false
+            return
+        }
+
+        active = prompt
+        finishing = false
+        val night = GlassSystem.isDarkPage()
+
+        // Same shared glass banner shell used by ordinary in-app notifications.
+        val card = GlassSystem.createBannerCard(
+            activity,
+            blurTarget,
+            density,
+            night
+        )
+
+        val content = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+
+        val heading = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val downloadIcon = ImageView(activity).apply {
+            setImageResource(android.R.drawable.stat_sys_download)
+            setColorFilter(accentColor)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "Tải xuống"
+        }
+        heading.addView(downloadIcon, LinearLayout.LayoutParams(dp(22), dp(22)))
+
+        val fileText = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, 0, 0)
+        }
+        fileText.addView(TextView(activity).apply {
+            text = prompt.fileName
+            textSize = 14f
+            setTextColor(foregroundColor)
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        val subtitleView = TextView(activity).apply {
+            text = "Trang web muốn tải file xuống"
+            textSize = 12f
+            setTextColor(GlassSystem.pageSecondaryText())
+            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+            maxLines = 1
+        }
+        fileText.addView(subtitleView)
+        heading.addView(
+            fileText,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        content.addView(heading)
+
+        val buttons = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        fun button(label: String, primary: Boolean, onClick: () -> Unit): TextView {
+            val button = TextView(activity).apply {
+                text = label
+                textSize = 14f
+                setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                setTextColor(if (primary) Color.WHITE else foregroundColor)
+                background = GradientDrawable().apply {
+                    cornerRadius = pillRadiusPx()
+                    setColor(
+                        if (primary) accentColor
+                        else if (night) Color.argb(42, 255, 255, 255)
+                        else Color.argb(24, 0, 0, 0)
+                    )
+                }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { onClick() }
+            }
+            AnimationSystem.press(button, Constants.PRESS_SCALE_ROW)
+            return button
+        }
+
+        val cancelButton = button("Hủy", false) { finish(false) }
+        val cancelSurface = cancelButton.background as? GradientDrawable
+        val confirmButton = button("Tải xuống", true) { finish(true) }
+        buttons.addView(cancelButton, LinearLayout.LayoutParams(0, dp(42), 1f))
+        buttons.addView(View(activity), LinearLayout.LayoutParams(dp(10), 1))
+        buttons.addView(confirmButton, LinearLayout.LayoutParams(0, dp(42), 1f))
+
+        val buttonParams = LinearLayout.LayoutParams(-1, dp(42)).apply {
+            topMargin = dp(12)
+        }
+        content.addView(buttons, buttonParams)
+        card.addView(content, FrameLayout.LayoutParams(-1, -2))
+
+        val params = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP
+        ).apply {
+            leftMargin = dp(14)
+            rightMargin = dp(14)
+            val systemTop = ViewCompat.getRootWindowInsets(root)?.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )?.top ?: 0
+            topMargin = maxOf(topInset(), systemTop) + dp(12)
+        }
+        root.addView(card, params)
+        activeView = card
+        GlassSystem.observePageTone(card) { color ->
+            val foreground = GlassSystem.pagePrimaryText(color)
+            fileText.getChildAt(0).let { (it as? TextView)?.setTextColor(foreground) }
+            subtitleView.setTextColor(GlassSystem.pageSecondaryText(color))
+            cancelSurface?.setColor(GlassSystem.pageSheetButtonColor(color))
+            cancelButton.setTextColor(foreground)
+            cancelButton.invalidate()
+        }
+
+        AnimationSystem.enter(card, offsetY = -dp(150).toFloat(), fromScale = 1f)
+    }
+
+    private fun finish(confirmed: Boolean) {
+        val prompt = active ?: return
+        if (finishing) return
+        finishing = true
+
+        val view = activeView
+        // Start the download immediately on confirmation; the exit animation is cosmetic.
+        if (confirmed) runCatching { prompt.onConfirm() }
+
+        val complete: () -> Unit = {
+            if (active === prompt) {
+                active = null
+                activeView = null
+                finishing = false
+                if (view != null) {
+                    GlassSystem.removePageToneObserver(view)
+                    root.removeView(view)
+                }
+                showNext()
+            } else {
+                if (view != null) {
+                    GlassSystem.removePageToneObserver(view)
+                    root.removeView(view)
+                }
+            }
+        }
+
+        if (view == null) {
+            complete()
+        } else {
+            AnimationSystem.exit(view, offsetY = -dp(130).toFloat(), toScale = 1f, onEnd = complete)
+        }
+    }
+}
