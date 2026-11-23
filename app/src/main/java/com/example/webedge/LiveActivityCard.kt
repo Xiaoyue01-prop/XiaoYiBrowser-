@@ -5,7 +5,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.Outline
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.util.TypedValue
@@ -41,135 +40,138 @@ internal class LiveActivityCard(
     private var shown: LiveEvent? = null
 
     private val column = LinearLayout(context)
-    private val glass = GlassSystem.createBlurView(context, blurTarget, GlassSystem.Preset.MENU_CARD, d, isNight)
+    private val surface = GlassSystem.Preset.TOOLBAR_BUTTON
+    private val glass = GlassSystem.createBlurView(context, blurTarget, surface, d, isNight, rim = false)
 
     /** Lớp kính mờ: OriginTransitionController bù ngược transform cho nó để vùng blur đứng yên theo cửa sổ. */
     val glassView: View get() = glass
+    val cornerRadiusPx: Float get() = minOf(width, height) / 2f
 
-    /** Mọi thứ trừ lớp kính: hiện muộn hơn vỏ khi morph. */
-    fun contentViews(): List<View> = (0 until childCount).map { getChildAt(it) }.filter { it !== glass }
     private val glow = View(context)
     private val bottomGlow = View(context)
     private val iconView = ImageView(context)
     private val titleView = TextView(context)
     private val captionView = TextView(context)
-    private val bar = ProgressBarView(context)
+    private val bar = ProgressBarView(context, Color.argb(60, Color.red(textColor), Color.green(textColor), Color.blue(textColor)))
     private val openBtn = FrameLayout(context)
-    private val dots = LinearLayout(context)
-
+    private val dots = PageDots(context, textColor, d)
+    val contentViews: List<View> = listOf(bottomGlow, glow, iconView, column, openBtn, dots)
 
     init {
-        // PageMenu cắt toàn bộ lớp con theo biên kính trong suốt quá trình morph.
         clipChildren = true
         clipToPadding = true
+        background = GlassSystem.create(surface, d, isNight)
+        foreground = GlassSystem.createBorder(surface.radiusDp, d, isNight)
+        outlineProvider = ViewOutlineProvider.BACKGROUND
+        clipToOutline = true
         glass.isClickable = false
         glass.isFocusable = false
-        val radius = GlassSystem.Preset.MENU_CARD.radiusDp * d
-        // Cùng lớp vỏ và viền kính như menu ba chấm. Nền dự phòng chỉ nằm SAU BlurView,
-        // không tham gia BlurTarget nên không tạo blur đệ quy khi morph.
-        background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight)
-        foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, d, isNight)
-        run {
-            outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: Outline) {
-                    outline.setRoundRect(0, 0, view.width, view.height, radius)
-                }
+        addView(glass, LayoutParams(-1, -1))
+        addView(bottomGlow, LayoutParams(-1, dp(34)).apply { gravity = Gravity.BOTTOM })
+        addView(glow, LayoutParams(dp(112), dp(112)).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            leftMargin = -dp(8)
+        })
+        addView(iconView.apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LayoutParams(dp(34), dp(34)).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            leftMargin = dp(31)
+        })
+
+        column.orientation = LinearLayout.VERTICAL
+        column.gravity = Gravity.CENTER_VERTICAL
+        column.addView(titleView.apply {
+            setTextColor(textColor)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(-1, -2))
+        column.addView(bar, LinearLayout.LayoutParams(-1, dp(4)).apply {
+            topMargin = dp(8)
+            bottomMargin = dp(6)
+        })
+        column.addView(captionView.apply {
+            setTextColor(textColor)
+            alpha = 0.7f
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(-1, -2))
+        addView(column, LayoutParams(-1, -2).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            leftMargin = dp(84)
+            rightMargin = dp(84)
+        })
+
+        openBtn.apply {
+            isClickable = true
+            isFocusable = true
+            contentDescription = "Mở"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(if (isNight) Color.argb(70, 255, 255, 255) else Color.argb(36, 0, 0, 0))
             }
-            clipToOutline = true
-            addView(glass, LayoutParams(-1, -1))
-            addView(bottomGlow, LayoutParams(-1, dp(34)).apply { gravity = Gravity.BOTTOM })
-            addView(glow, LayoutParams(dp(112), dp(112)).apply {
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                leftMargin = -dp(8)
-            })
-            addView(iconView.apply {
+            addView(ImageView(context).apply {
+                setImageDrawable(PathIcon(Icons.OPEN_IN_NEW, textColor))
                 scaleType = ImageView.ScaleType.FIT_CENTER
+                setPadding(dp(14), dp(14), dp(14), dp(14))
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            }, LayoutParams(dp(34), dp(34)).apply {
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                leftMargin = dp(31)
-            })
-
-            column.orientation = LinearLayout.VERTICAL
-            column.gravity = Gravity.CENTER_VERTICAL
-            column.addView(titleView.apply {
-                setTextColor(textColor)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(-1, -2))
-            column.addView(bar, LinearLayout.LayoutParams(-1, dp(4)).apply {
-                topMargin = dp(8)
-                bottomMargin = dp(6)
-            })
-            column.addView(captionView.apply {
-                setTextColor(textColor)
-                alpha = 0.7f
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(-1, -2))
-            addView(column, LayoutParams(-1, -2).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                leftMargin = dp(84)
-                rightMargin = dp(84)
-            })
-
-            openBtn.apply {
-                isClickable = true
-                isFocusable = true
-                contentDescription = "Mở"
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(if (isNight) Color.argb(70, 255, 255, 255) else Color.argb(36, 0, 0, 0))
-                }
-                addView(ImageView(context).apply {
-                    setImageDrawable(PathIcon(Icons.OPEN_IN_NEW, textColor))
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    setPadding(dp(14), dp(14), dp(14), dp(14))
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, LayoutParams(-1, -1))
-                setOnClickListener {
-                    shown?.key?.let { key ->
-                        LiveEventHub.visible().firstOrNull { it.key == key }?.let(onOpen)
-                    }
-                }
-                AnimationSystem.attachGlassPress(this)
+            }, LayoutParams(-1, -1))
+            setOnClickListener {
+                shown?.key?.let(LiveEventHub::findVisible)?.let(onOpen)
             }
-            addView(openBtn, LayoutParams(dp(52), dp(52)).apply {
-                gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                rightMargin = dp(16)
-            })
+            AnimationSystem.attachGlassPress(this)
         }
-        dots.orientation = LinearLayout.VERTICAL
-        dots.gravity = Gravity.CENTER
-        addView(dots, LayoutParams(dp(10), -1).apply { gravity = Gravity.END; rightMargin = dp(10) })
+        addView(openBtn, LayoutParams(dp(52), dp(52)).apply {
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            rightMargin = dp(16)
+        })
+        addView(dots, LayoutParams(dp(10), -1).apply {
+            gravity = Gravity.END
+            rightMargin = dp(14)
+        })
     }
 
-    /** Chiều ngang thẻ: chừa chỗ cho hàng chấm khi có từ 2 sự kiện. */
-    private fun applyDotsInset(multiple: Boolean) {
-        (openBtn.layoutParams as LayoutParams).rightMargin = if (multiple) dp(28) else dp(16)
-        (column.layoutParams as LayoutParams).rightMargin = if (multiple) dp(96) else dp(84)
-        requestLayout()
+    private fun updatePages(count: Int) {
+        val showDots = count > 1
+        val needsInsetUpdate = showDots != (dots.visibility == View.VISIBLE)
+        dots.setPages(count, index)
+        if (needsInsetUpdate) {
+            (openBtn.layoutParams as LayoutParams).rightMargin = dp(if (showDots) 28 else 16)
+            (column.layoutParams as LayoutParams).rightMargin = dp(if (showDots) 96 else 84)
+            requestLayout()
+        }
     }
 
-    /** Nạp lại danh sách sự kiện (gọi khi hiện thẻ và mỗi khi bảng tin đổi). Trả false nếu hết sự kiện. */
-    fun refresh(): Boolean {
-        val events = LiveEventHub.visible()
+    /** Trả false khi không còn phiên hiển thị. */
+    fun refresh(events: List<LiveEvent>): Boolean {
         if (events.isEmpty()) return false
         // Giữ nguyên thẻ đang xem nếu nó còn, không thì lấy thẻ ở cùng vị trí.
         val keep = shown?.key?.let { key -> events.indexOfFirst { it.key == key } } ?: -1
         index = if (keep >= 0) keep else index.coerceIn(0, events.lastIndex)
         bind(events[index])
-        rebuildDots(events.size)
+        updatePages(events.size)
         return true
     }
 
     private fun bind(event: LiveEvent) {
+        if (shown?.kind != event.kind) bindKind(event.kind)
+        val title = event.title.ifBlank { labelOf(event.kind) }
+        if (!TextUtils.equals(titleView.text, title)) titleView.text = title
+        val progress = event.progress?.coerceIn(0f, 1f)
+        bar.visibility = if (progress == null) View.GONE else View.VISIBLE
+        bar.progress = progress ?: 0f
+        val caption = captionOf(event, progress)
+        if (!TextUtils.equals(captionView.text, caption)) captionView.text = caption
         shown = event
-        val accent = accentOf(event.kind)
-        iconView.setImageDrawable(PathIcon(iconPathOf(event.kind), Color.WHITE))
+    }
+
+    private fun bindKind(kind: LiveKind) {
+        val accent = accentOf(kind)
+        iconView.setImageDrawable(PathIcon(iconPathOf(kind), Color.WHITE))
         glow.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0, 0)).apply {
             gradientType = GradientDrawable.RADIAL_GRADIENT
             gradientRadius = dp(56).toFloat()
@@ -181,34 +183,20 @@ internal class LiveActivityCard(
             intArrayOf(Color.TRANSPARENT, Color.argb(120, Color.red(accent), Color.green(accent), Color.blue(accent)))
         )
         bar.accent = accent
-        bar.trackColor = Color.argb(60, Color.red(textColor), Color.green(textColor), Color.blue(textColor))
-        titleView.text = event.title.ifBlank { labelOf(event.kind) }
-        // Thanh tiến độ đặt lại cho mỗi thẻ mới, tránh trượt từ thẻ trước.
-        updateProgress()
     }
 
-    /** LiveEventHub is the single source of truth; updates are pushed by its listener. */
-    private fun updateProgress() {
-        val previous = shown ?: return
-        val event = LiveEventHub.visible().firstOrNull { it.key == previous.key } ?: return
-        shown = event
-        val progress = event.progress?.coerceIn(0f, 1f)
-        bar.visibility = if (progress == null) View.GONE else View.VISIBLE
-        bar.progress = progress ?: 0f
-        captionView.text = when (event.kind) {
-            LiveKind.DOWNLOAD -> when {
-                event.paused -> "Đã tạm dừng"
-                progress != null -> "Đã tải ${(progress * 100).toInt()}%"
-                else -> event.subtitle.ifBlank { "Đang tải" }
-            }
-            LiveKind.READER -> if (progress != null) "Đã đọc ${(progress * 100).toInt()}%"
-                               else event.subtitle.ifBlank { "Đang đọc" }
-            LiveKind.FOOTBALL -> event.subtitle.ifBlank { "Đang theo dõi" }
-            LiveKind.VIDEO, LiveKind.MUSIC -> when {
-                event.paused -> "Đã tạm dừng"
-                event.subtitle.isNotBlank() -> event.subtitle
-                else -> "Đang phát"
-            }
+    private fun captionOf(event: LiveEvent, progress: Float?): String = when (event.kind) {
+        LiveKind.DOWNLOAD -> when {
+            event.paused -> "Đã tạm dừng"
+            progress != null -> "Đã tải ${(progress * 100).toInt()}%"
+            else -> event.subtitle.ifBlank { "Đang tải" }
+        }
+        LiveKind.READER -> if (progress != null) "Đã đọc ${(progress * 100).toInt()}%"
+                           else event.subtitle.ifBlank { "Đang đọc" }
+        LiveKind.FOOTBALL -> event.subtitle.ifBlank { "Đang theo dõi" }
+        LiveKind.VIDEO, LiveKind.MUSIC -> when {
+            event.paused -> "Đã tạm dừng"
+            else -> event.subtitle.ifBlank { "Đang phát" }
         }
     }
 
@@ -220,18 +208,6 @@ internal class LiveActivityCard(
         LiveKind.MUSIC -> "Âm nhạc"
     }
 
-    private fun rebuildDots(count: Int) {
-        applyDotsInset(count > 1)
-        dots.removeAllViews()
-        dots.visibility = if (count > 1) View.VISIBLE else View.GONE
-        for (i in 0 until count) {
-            dots.addView(View(context).apply {
-                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(textColor) }
-                alpha = if (i == index) 1f else 0.3f
-            }, LinearLayout.LayoutParams(dp(6), dp(6)).apply { topMargin = dp(3); bottomMargin = dp(3) })
-        }
-    }
-
     private fun step(delta: Int) {
         val events = LiveEventHub.visible()
         if (events.size < 2) return
@@ -241,15 +217,14 @@ internal class LiveActivityCard(
         // Đổi ngay dữ liệu hiện hành, rồi cho icon, chữ, kính màu và chấm trang cùng
         // chuyển động bằng spring chung của app. Không postDelayed: vuốt nhanh không thể
         // gọi lại một callback cũ để ghi đè phiên mới hơn.
-        val moving = listOf(glow, bottomGlow, iconView, column, openBtn, dots)
-        moving.forEach { view ->
+        contentViews.forEach { view ->
             AnimationSystem.cancel(view, DynamicAnimation.TRANSLATION_Y)
             AnimationSystem.cancel(view, DynamicAnimation.ALPHA)
         }
         bind(events[index])
-        rebuildDots(events.size)
+        updatePages(events.size)
         val offset = (-delta * dp(14)).toFloat()
-        moving.forEach { view ->
+        contentViews.forEach { view ->
             view.translationY = offset
             view.alpha = 0.25f
             AnimationSystem.spring(view, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.SETTLE)
@@ -300,12 +275,46 @@ internal class LiveActivityCard(
         LiveKind.MUSIC -> "M11 4L14.5 5.5C15.2 8 17.8 9 18 12C16.5 10.5 14.8 10.2 13 9.8V17.5C13 19.6 11 21 8.7 21C6.5 21 5 19.8 5 18.3C5 16.7 6.8 15.5 9 15.5C9.7 15.5 10.4 15.7 11 16Z"
     }
 
-    /** Thanh tiến độ mảnh, đầu tròn. */
-    private class ProgressBarView(context: Context) : View(context) {
+    /** Vẽ các chấm trong vùng giữa để hai đầu cong của thẻ luôn chừa đủ chỗ. */
+    private class PageDots(context: Context, color: Int, private val density: Float) : View(context) {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
+        private var count = 0
+        private var selected = 0
+
+        init {
+            visibility = GONE
+            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+
+        fun setPages(count: Int, selected: Int) {
+            if (count == this.count && selected == this.selected) return
+            this.count = count
+            this.selected = selected
+            visibility = if (count > 1) VISIBLE else GONE
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            if (count < 2) return
+            val step = minOf(12f * density, height * 0.62f / count)
+            val radius = minOf(3f * density, step * 0.34f, width / 2f)
+            val center = height / 2f - step * (count - 1) / 2f
+            repeat(count) { i ->
+                paint.alpha = if (i == selected) 255 else 77
+                canvas.drawCircle(width / 2f, center + i * step, radius, paint)
+            }
+        }
+    }
+
+    private class ProgressBarView(context: Context, private val trackColor: Int) : View(context) {
         var progress = 0f
             set(value) { val v = value.coerceIn(0f, 1f); if (v != field) { field = v; invalidate() } }
         var accent = Color.WHITE
-        var trackColor = Color.argb(60, 255, 255, 255)
+            set(value) {
+                if (value == field) return
+                field = value
+                invalidate()
+            }
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val rect = RectF()
 
@@ -324,6 +333,5 @@ internal class LiveActivityCard(
 
     companion object {
         const val CARD_HEIGHT_DP = 88
-        const val SIDE_MARGIN_DP = 12
     }
 }

@@ -1,12 +1,7 @@
 package com.example.webedge
 
 import android.annotation.SuppressLint
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.ColorFilter
-import android.graphics.Paint
-import android.graphics.PixelFormat
-import android.graphics.drawable.Drawable
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -17,40 +12,6 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.dynamicanimation.animation.DynamicAnimation
 import eightbitlab.com.blurview.BlurTarget
-
-/** Orb chính dạng vòng nhẫn, phong cách HarmonyOS. */
-class RingIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
-    override val adaptiveBaseColor: Int = color
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        this.color = color
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-    }
-
-    override fun draw(canvas: Canvas) {
-        val b = bounds
-        if (b.width() <= 0 || b.height() <= 0) return
-
-        val strokeWidth = b.width() / 18f
-        paint.strokeWidth = strokeWidth
-        val cx = b.exactCenterX()
-        val cy = b.exactCenterY()
-        val radius = minOf(b.width(), b.height()) / 2f - strokeWidth
-        canvas.drawCircle(cx, cy, radius, paint)
-    }
-
-    override fun setAdaptiveForegroundColor(color: Int) {
-        if (paint.color != color) {
-            paint.color = color
-            invalidateSelf()
-        }
-    }
-    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
-    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
-
-    @Suppress("OVERRIDE_DEPRECATION")
-    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
-}
 
 @SuppressLint("ClickableViewAccessibility")
 class OrbMenuController internal constructor(
@@ -69,9 +30,11 @@ class OrbMenuController internal constructor(
     /** Biểu tượng giữa orb: vòng nhẫn, hoặc icon của sự kiện đang chạy (xem [LiveEventHub]). */
     private val glyph = OrbGlyphDrawable(iconColor)
     private val liveListener: () -> Unit = {
-        val top = LiveEventHub.top()
+        val card = liveCard?.takeUnless { liveCardClosing }
+        val events = card?.let { LiveEventHub.visible() }
+        val top = if (events == null) LiveEventHub.top() else events.firstOrNull()
         glyph.setLive(top?.kind, top?.progress)
-        if (!liveCardClosing && liveCard?.refresh() == false) dismissLiveCard(immediate = true)
+        if (card != null && events != null && !card.refresh(events)) dismissLiveCard(immediate = true)
     }
 
     private var toolbarAvailable = true
@@ -89,10 +52,11 @@ class OrbMenuController internal constructor(
     val isLiveCardShowing: Boolean get() = liveCard != null
     private var isCompacted = false
     private var restoringFromCompact = false
-    /** Translation đích gốc, giữ lại để đảo chiều morph giữa chừng không bị lệch khỏi anchor. */
-    private val compactBase = mutableMapOf<View, Pair<Float, Float>>()
+    private var compactedMain = false
     private var anchorView: View? = null
     private var preDrawListener: ViewTreeObserver.OnPreDrawListener? = null
+    private val anchorLocation = IntArray(2)
+    private val rootLocation = IntArray(2)
 
     private fun createGlass(preset: GlassSystem.Preset): View =
         GlassSystem.createBlurView(rootLayout.context, blurTarget, preset, d, isNight)
@@ -198,14 +162,15 @@ class OrbMenuController internal constructor(
         }
         mainBtn.setOnLongClickListener {
             if (!isAvailable()) return@setOnLongClickListener false
-            if (LiveEventHub.visible().isNotEmpty()) {
+            val events = LiveEventHub.visible()
+            if (events.isNotEmpty()) {
                 liveHoldConsumed = true
                 // Huỷ spring nhấn trước khi nút thực sự nảy ra. Không reset alpha,
                 // translation vì OriginTransitionController sẽ quản lý các thuộc tính đó.
                 AnimationSystem.cancel(mainBtn)
                 mainBtn.scaleX = 1f
                 mainBtn.scaleY = 1f
-                showLiveCard()
+                showLiveCard(events)
             }
             true
         }
@@ -252,13 +217,13 @@ class OrbMenuController internal constructor(
     }
 
     /** Long press opens the card; normal click still toggles Back / Forward / Home. */
-    private fun showLiveCard() {
+    private fun showLiveCard(events: List<LiveEvent>) {
         if (!isAvailable()) return
         if (liveCard != null) {
             if (!liveCardClosing) dismissLiveCard()
             return
         }
-        if (LiveEventHub.visible().isEmpty()) return
+        if (rootLayout.width <= 0 || rootLayout.height <= 0) return
         if (isExpanded) collapse()
 
         val card = LiveActivityCard(rootLayout.context, blurTarget, d, isNight) { event ->
@@ -266,8 +231,7 @@ class OrbMenuController internal constructor(
             dismissLiveCard(immediate = true)
             onOpenLive(event)
         }
-        if (!card.refresh()) return
-        if (rootLayout.width <= 0 || rootLayout.height <= 0) return
+        if (!card.refresh(events)) return
         val width = minOf(dp(420), (rootLayout.width - dp(24)).coerceAtLeast(1))
         val height = dp(LiveActivityCard.CARD_HEIGHT_DP)
         val rootWindow = IntArray(2)
@@ -315,11 +279,11 @@ class OrbMenuController internal constructor(
             val started = OriginTransitionController.open(
                 view = card,
                 origin = mainBtn,
-                endCornerRadiusPx = dp(GlassSystem.Preset.MENU_CARD.radiusDp).toFloat(),
+                endCornerRadiusPx = card.cornerRadiusPx,
                 // Kính hiện như một bề mặt đặc, chữ/icon xuất hiện ngay khi vỏ bắt đầu bung.
                 fadeIn = false,
                 counterTransformView = card.glassView,
-                contentViews = card::contentViews,
+                contentViews = { card.contentViews },
                 contentStart = 0f,
                 contentSpan = 0.25f,
                 springSpec = AnimationSystem.MENU_MORPH,
@@ -362,14 +326,7 @@ class OrbMenuController internal constructor(
         val card = liveCard ?: return
         if (liveCardClosing && !immediate) return
         if (immediate || !card.isAttachedToWindow) {
-            liveBlurSync = null
-            OriginTransitionController.cancel(card)
-            AnimationSystem.cancel(card)
-            if (card.parent === rootLayout) rootLayout.removeView(card)
-            if (liveCard === card) liveCard = null
-            liveCardClosing = false
-            hideScrim()
-            applyAvailability()
+            detachLiveCard(card)
             return
         }
         liveCardClosing = true
@@ -377,15 +334,20 @@ class OrbMenuController internal constructor(
         // PageMenu dùng cùng nhịp blur 600ms lúc thu về nút gốc.
         liveBlurSync?.hold(600L)
         OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
-            if (liveCard !== card) return@close
-            OriginTransitionController.cancel(card)
-            if (card.parent === rootLayout) rootLayout.removeView(card)
-            liveBlurSync = null
-            liveCard = null
-            liveCardClosing = false
-            hideScrim()
-            applyAvailability()
+            detachLiveCard(card)
         }
+    }
+
+    private fun detachLiveCard(card: LiveActivityCard) {
+        if (liveCard !== card) return
+        liveBlurSync = null
+        OriginTransitionController.cancel(card)
+        AnimationSystem.cancel(card)
+        if (card.parent === rootLayout) rootLayout.removeView(card)
+        liveCard = null
+        liveCardClosing = false
+        hideScrim()
+        applyAvailability()
     }
 
     /** Returns true if Back was consumed by the Live Session overlay. */
@@ -421,14 +383,9 @@ class OrbMenuController internal constructor(
         updatePosition()
     }
 
-    /**
-     * Remove OrbMenu views from the root while FindBar/IME overlays are active.
-     * This is stronger than visibility alone and prevents stale/animated views
-     * from remaining above the FindBar or receiving touches.
-     */
     /** Trả về tâm (toạ độ màn hình) của viên thuốc khi menu ba chấm mở (orb thu vào đó); null thì chỉ mờ đi như cũ. */
     var absorbTarget: (() -> android.graphics.PointF?)? = null
-    private var absorbedState: FloatArray? = null
+    private var isAbsorbed = false
 
     private fun absorbInto(target: android.graphics.PointF, onDone: () -> Unit) {
         val loc = IntArray(2)
@@ -436,13 +393,14 @@ class OrbMenuController internal constructor(
         // Đoạn 1: orb thu hẳn vào tâm viên thuốc.
         val dx = target.x - (loc[0] + mainBtn.width / 2f)
         val dy = target.y - (loc[1] + mainBtn.height / 2f)
-        absorbedState = floatArrayOf(dx, dy)
+        isAbsorbed = true
         AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_X, dx, AnimationSystem.MENU_MORPH)
         AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_Y, dy, AnimationSystem.MENU_MORPH)
         AnimationSystem.scaleTo(mainBtn, Constants.ABSORB_SCALE, Constants.ABSORB_SCALE, AnimationSystem.MENU_MORPH)
         AnimationSystem.fade(mainBtn, 0f, AnimationSystem.MENU_MORPH) { onDone() }
     }
 
+    /** Gỡ các nút khi FindBar, bàn phím hoặc menu khác chiếm vùng tương tác. */
     fun setTemporarilyHidden(hidden: Boolean) {
         val was = temporarilyHidden
         val wasCompactBefore = isCompacted
@@ -451,20 +409,11 @@ class OrbMenuController internal constructor(
             // Đã ẩn hẳn và gỡ khỏi root từ lần gọi trước: không làm lại.
             if (was && mainBtn.parent == null) return
             // Đang bị hút vào menu: để animation chạy tiếp, đừng reset giữa chừng.
-            if (was && absorbedState != null) return
+            if (was && isAbsorbed) return
             collapseImmediately()
             mainBtn.isClickable = false
             mainBtn.isEnabled = false
             mainBtn.isFocusable = false
-            subBtns.forEach { btn ->
-                AnimationSystem.cancel(btn)
-                btn.alpha = 0f
-                btn.scaleX = 0f
-                btn.scaleY = 0f
-                btn.isClickable = false
-                btn.isEnabled = false
-                btn.visibility = View.GONE
-            }
             // Detaching guarantees the menu cannot overlay FindBar or intercept touches.
             // Nút chính mờ đi trước rồi mới gỡ; nếu trong lúc đó được hiện lại thì việc gỡ bị bỏ qua.
             val detach = {
@@ -494,7 +443,7 @@ class OrbMenuController internal constructor(
                 ).apply { gravity = Gravity.TOP or Gravity.START; leftMargin = dp(16); topMargin = dp(16) })
                 mainBtn.alpha = 0f
             }
-            subBtns.forEachIndexed { index, btn ->
+            subBtns.forEach { btn ->
                 if (btn.parent == null) {
                     val params = btn.layoutParams ?: FrameLayout.LayoutParams(dp(32), dp(32)).apply {
                         gravity = Gravity.TOP or Gravity.START
@@ -506,9 +455,9 @@ class OrbMenuController internal constructor(
             }
             applyAvailability()
             updatePosition()
-            val absorbed = absorbedState
-            absorbedState = null
-            if (absorbed != null && mainBtn.visibility == View.VISIBLE) {
+            val wasAbsorbed = isAbsorbed
+            isAbsorbed = false
+            if (wasAbsorbed && mainBtn.visibility == View.VISIBLE) {
                 // Menu thu về: orb nảy ra từ trạng thái đã bị hút về đúng chỗ cũ.
                 AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_POP_BACK)
                 AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_POP_BACK)
@@ -530,21 +479,12 @@ class OrbMenuController internal constructor(
         val interactive = visible && !isCompacted && !restoringFromCompact
         mainBtn.visibility = if (visible) View.VISIBLE else View.GONE
         // A morphing card owns all touch input until it is fully detached.
-        mainBtn.isClickable = interactive && liveCard == null
-        mainBtn.isEnabled = interactive && liveCard == null
-        mainBtn.isFocusable = interactive && liveCard == null
+        val canUseOrb = interactive && liveCard == null
+        mainBtn.isClickable = canUseOrb
+        mainBtn.isEnabled = canUseOrb
+        mainBtn.isFocusable = canUseOrb
         if (!visible) {
-            subBtns.forEach {
-                AnimationSystem.cancel(it)
-                it.visibility = View.GONE
-                it.isClickable = false
-                it.isEnabled = false
-                it.alpha = 0f
-                it.scaleX = 0f
-                it.scaleY = 0f
-                it.translationX = 0f
-                it.translationY = 0f
-            }
+            hideSubButtons()
         } else {
             subBtns.forEach {
                 it.isClickable = interactive && isExpanded
@@ -554,73 +494,45 @@ class OrbMenuController internal constructor(
     }
 
     /**
-     * Thu toàn bộ Orb (kể cả các nút con đang mở) vào tâm URL Pill khi toolbar compact.
-     * Chiều ngược lại dùng cùng spring preset của app để bung về đúng vị trí cũ.
+     * Đóng các nút con rồi thu Orb vào tâm URL Pill khi toolbar compact.
      */
     fun setToolbarCompact(compact: Boolean, pillAnchor: View) {
         if (compact == isCompacted) return
         if (temporarilyHidden || !toolbarAvailable) return
         if (compact) {
             dismissLiveCard(immediate = true)
-            // Phòng hờ (scrim đã chặn vuốt thu nhỏ viên thuốc): đang bung thì thu các nút con về trước,
-            // không để chúng kẹt lại ngoài viên thuốc rồi nằm yên khi viên thuốc mở rộng lại.
-            if (isExpanded) collapse()
+            collapse()
             isCompacted = true
             restoringFromCompact = false
-            // Nếu Orb vừa được thu gọn bởi thao tác người dùng, không giữ các nút con
-            // còn đang fade-out dở rồi vô tình bung chúng trở lại ở lần mở Pill sau.
-            if (!isExpanded) {
-                subBtns.forEach { btn ->
-                    AnimationSystem.cancel(btn)
-                    btn.visibility = View.GONE
-                    btn.alpha = 0f
-                    btn.scaleX = 0f
-                    btn.scaleY = 0f
-                    btn.translationX = 0f
-                    btn.translationY = 0f
-                }
-            }
-            val active = buildList {
-                if (mainBtn.visibility == View.VISIBLE) add(mainBtn)
-                subBtns.filterTo(this) { it.visibility == View.VISIBLE && isExpanded }
-            }
-            compactBase.clear()
-            active.forEach { compactBase[it] = restTranslation(it) }
-            active.forEach { btn ->
-                btn.isClickable = false
-                btn.isEnabled = false
-                val base = compactBase[btn] ?: (btn.translationX to btn.translationY)
-                val target = translationAtPill(btn, pillAnchor, base.first, base.second)
-                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, target.first, AnimationSystem.MENU_MORPH_CLOSE)
-                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, target.second, AnimationSystem.MENU_MORPH_CLOSE)
-                AnimationSystem.scaleTo(btn, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
-                AnimationSystem.fade(btn, 0f, AnimationSystem.MENU_MORPH_CLOSE)
+            hideSubButtons()
+            compactedMain = mainBtn.visibility == View.VISIBLE
+            if (compactedMain) {
+                val (x, y) = translationAtPill(pillAnchor)
+                AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_X, x, AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_Y, y, AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.scaleTo(mainBtn, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.fade(mainBtn, 0f, AnimationSystem.MENU_MORPH_CLOSE)
             }
         } else {
             isCompacted = false
             restoringFromCompact = true
-            if (compactBase.isEmpty()) {
+            if (!compactedMain) {
                 restoringFromCompact = false
                 applyAvailability()
                 return
             }
-            val active = compactBase.keys.toList()
-            active.forEach { btn ->
-                if (btn.parent == null) return@forEach
-                btn.visibility = View.VISIBLE
-                btn.isClickable = btn === mainBtn || isExpanded
-                btn.isEnabled = btn.isClickable
-                val base = compactBase[btn] ?: (0f to 0f)
-                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, base.first, AnimationSystem.MENU_MORPH)
-                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, base.second, AnimationSystem.MENU_MORPH)
-                AnimationSystem.scaleTo(btn, 1f, 1f, AnimationSystem.MENU_MORPH)
-                AnimationSystem.fade(btn, 1f, AnimationSystem.QUICK)
+            if (mainBtn.parent != null) {
+                mainBtn.visibility = View.VISIBLE
+                AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.spring(mainBtn, DynamicAnimation.SCALE_X, 1f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.fade(mainBtn, 1f, AnimationSystem.QUICK)
             }
             // Chỉ xoá vị trí gốc sau khi spring của nút chính đã thực sự về đích.
             AnimationSystem.spring(mainBtn, DynamicAnimation.SCALE_Y, 1f, AnimationSystem.MENU_MORPH) {
                 if (!isCompacted) {
                     restoringFromCompact = false
-                    compactBase.clear()
+                    compactedMain = false
                     applyAvailability()
                 }
             }
@@ -628,22 +540,9 @@ class OrbMenuController internal constructor(
         applyAvailability()
     }
 
-    /**
-     * Translation "nghỉ" của một nút Orb: nơi nó sẽ đứng khi mọi spring đã dừng.
-     * Không đọc từ translation hiện tại vì lúc đó có thể đang spring giữa chừng
-     * (vd. orb vừa nảy ra từ tâm viên thuốc sau khi menu đóng), lưu nhầm sẽ làm orb kẹt giữa Pill.
-     */
-    private fun restTranslation(btn: View): Pair<Float, Float> {
-        if (btn === mainBtn || !isExpanded) return 0f to 0f
-        val i = subBtns.indexOf(btn)
-        if (i < 0) return 0f to 0f
-        val angle = Math.toRadians(SUB_ANGLES[i])
-        val radius = dp(60).toFloat()
-        return (radius * kotlin.math.cos(angle)).toFloat() to (radius * kotlin.math.sin(angle)).toFloat()
-    }
-
-    /** Tính translation cần thiết để tâm một Orb view trùng tâm Pill, không phụ thuộc vị trí Orb đang spring. */
-    private fun translationAtPill(view: View, pillAnchor: View, baseX: Float, baseY: Float): Pair<Float, Float> {
+    /** Tính độ dịch từ vị trí bố cục của Orb tới tâm Pill trong khi spring có thể đang chạy. */
+    private fun translationAtPill(pillAnchor: View): Pair<Float, Float> {
+        val view = mainBtn
         val oldX = view.translationX
         val oldY = view.translationY
         val oldSx = view.scaleX
@@ -676,47 +575,31 @@ class OrbMenuController internal constructor(
         val targetY = pillLoc[1] + pillAnchor.height / 2f
         val layoutX = viewLoc[0] + view.width / 2f
         val layoutY = viewLoc[1] + view.height / 2f
-        return (baseX + targetX - layoutX) to (baseY + targetY - layoutY)
+        return (targetX - layoutX) to (targetY - layoutY)
     }
 
     private fun updatePosition() {
         val anchor = anchorView ?: return
-        if (anchor.width <= 0) {
-            applyAvailability()
-            return
-        }
+        if (anchor.width <= 0) return
 
-        val loc = IntArray(2)
-        val rootLoc = IntArray(2)
-        anchor.getLocationInWindow(loc)
-        rootLayout.getLocationInWindow(rootLoc)
-        val x = loc[0] - rootLoc[0]
-        val y = loc[1] - rootLoc[1]
+        anchor.getLocationInWindow(anchorLocation)
+        rootLayout.getLocationInWindow(rootLocation)
+        val x = anchorLocation[0] - rootLocation[0]
+        val y = anchorLocation[1] - rootLocation[1]
 
-        val mainParams = mainBtn.layoutParams as FrameLayout.LayoutParams
-        if (mainParams.leftMargin != x || mainParams.topMargin != y ||
-            mainParams.gravity != (Gravity.TOP or Gravity.START)
-        ) {
-            mainParams.leftMargin = x
-            mainParams.topMargin = y
-            mainParams.gravity = Gravity.TOP or Gravity.START
-            mainBtn.layoutParams = mainParams
-        }
+        positionButton(mainBtn, x, y)
+        val inset = dp(4)
+        subBtns.forEach { positionButton(it, x + inset, y + inset) }
+    }
 
-        subBtns.forEach { btn ->
-            val params = btn.layoutParams as FrameLayout.LayoutParams
-            val newX = x + dp(4)
-            val newY = y + dp(4)
-            if (params.leftMargin != newX || params.topMargin != newY ||
-                params.gravity != (Gravity.TOP or Gravity.START)
-            ) {
-                params.leftMargin = newX
-                params.topMargin = newY
-                params.gravity = Gravity.TOP or Gravity.START
-                btn.layoutParams = params
-            }
-        }
-        applyAvailability()
+    private fun positionButton(button: View, x: Int, y: Int) {
+        val params = button.layoutParams as FrameLayout.LayoutParams
+        val gravity = Gravity.TOP or Gravity.START
+        if (params.leftMargin == x && params.topMargin == y && params.gravity == gravity) return
+        params.leftMargin = x
+        params.topMargin = y
+        params.gravity = gravity
+        button.layoutParams = params
     }
 
     fun toggle() {
@@ -777,7 +660,7 @@ class OrbMenuController internal constructor(
         hideScrim()
         isCompacted = false
         restoringFromCompact = false
-        compactBase.clear()
+        compactedMain = false
         AnimationSystem.cancel(mainBtn)
         mainBtn.rotation = 0f
         mainBtn.alpha = 1f
@@ -785,6 +668,10 @@ class OrbMenuController internal constructor(
         mainBtn.scaleY = 1f
         mainBtn.translationX = 0f
         mainBtn.translationY = 0f
+        hideSubButtons()
+    }
+
+    private fun hideSubButtons() {
         subBtns.forEach { btn ->
             AnimationSystem.cancel(btn)
             btn.visibility = View.GONE

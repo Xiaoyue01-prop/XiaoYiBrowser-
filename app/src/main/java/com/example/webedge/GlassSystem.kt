@@ -415,14 +415,6 @@ object GlassSystem {
             }
         )
 
-    fun createInputField(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
-        registerFallbackSurface(
-            GradientDrawable().apply {
-                cornerRadius = radiusDp.coerceAtLeast(0) * density
-            }
-        )
-
-
     /** Real blurred material for compact editable fields. */
     fun createInputBlurView(context: Context, target: BlurTarget, density: Float): BlurView {
         val view = BlurView(context).apply {

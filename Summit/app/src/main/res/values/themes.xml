@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:colorAccent">#0A84FF</item>
+    </style>
+
+    <!-- Chỉ dùng làm context cho WebView khi bật "Chế độ tối": WebView đọc isLightTheme=false để báo
+         prefers-color-scheme: dark cho trang. Giao diện app và việc darkening thuật toán không đổi. -->
+    <style name="WebDarkTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">#0A84FF</item>
+    </style>
+
+    <!-- Sheet xem nhanh link từ app khác (OverlayBrowserActivity): cửa sổ trong suốt để thấy app gọi phía sau. -->
+    <style name="OverlayTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:colorAccent">#0A84FF</item>
+    </style>
+</resources>

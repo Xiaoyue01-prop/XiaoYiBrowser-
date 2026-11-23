@@ -235,7 +235,7 @@ class GlassDialogController(
                 }
                 val inputGlass = FrameLayout(activity).apply {
                     clipToOutline = true
-                    background = GlassSystem.createInputField(12, d, night)
+                    background = GlassSystem.create(12, d, night)
                     addView(GlassSystem.createInputBlurView(activity, blurTarget, d), FrameLayout.LayoutParams(-1, -1))
                     addView(input, FrameLayout.LayoutParams(-1, -1))
                 }

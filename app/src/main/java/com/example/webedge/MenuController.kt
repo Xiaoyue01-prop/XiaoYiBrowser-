@@ -1454,7 +1454,7 @@ class MenuController(
         input.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
         val inputGlass = FrameLayout(activity).apply {
             clipToOutline = true
-            background = GlassSystem.createInputField(12, d, false)
+            background = GlassSystem.create(12, d, false)
             addView(GlassSystem.createInputBlurView(activity, blurTarget, d), FrameLayout.LayoutParams(-1, -1))
             addView(input, FrameLayout.LayoutParams(-1, -1))
         }

@@ -1,0 +1,300 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f6f8;
+  --fg: #1c1c22;
+  --sub: rgba(28, 28, 34, 0.6);
+  --card: rgba(0, 0, 0, 0.05);
+  --line: rgba(0, 0, 0, 0.08);
+  --rain: #3b82f6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141416;
+    --fg: #f2f2f5;
+    --sub: rgba(255, 255, 255, 0.6);
+    --card: rgba(255, 255, 255, 0.08);
+    --line: rgba(255, 255, 255, 0.16);
+    --rain: #7ab0ff;
+  }
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  font-family: system-ui, "Roboto", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+}
+
+main {
+  min-height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 20px 6vh;
+}
+
+#cat, #clock, #greeting {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Mèo ngồi lên mép trên đồng hồ: kéo margin âm để chân mèo chạm chữ số. */
+#cat {
+  width: min(72vw, 380px);
+  height: auto;
+  position: relative;
+  z-index: 2;
+  margin-bottom: calc(-1 * min(4.5vw, 22px));
+  pointer-events: none;
+}
+
+#clock {
+  width: min(90vw, 440px);
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+#clockText, .glyph {
+  font: 900 160px ui-rounded, "Nunito", "Roboto", system-ui, sans-serif;
+  letter-spacing: -6px;
+  text-anchor: middle;
+}
+
+/* Chữ số lăn khi đổi phút: neo ở đầu ký tự để trùng đúng vị trí chữ số thật. */
+.glyph { text-anchor: start; pointer-events: none; }
+
+#greeting {
+  margin: 8px 0 0;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--sub);
+}
+
+/* ---- Thẻ thời tiết (bố cục giống Google) ---- */
+[hidden] { display: none !important; }
+
+#weather {
+  margin-top: 20px;
+  width: min(100%, 380px);
+  box-sizing: border-box;
+}
+
+#wTitle { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.2px; }
+
+#wCity {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 6px 0 10px;
+  padding: 6px 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--sub);
+  cursor: pointer;
+}
+#wChevron { display: inline-block; transition: transform 0.35s cubic-bezier(0.3, 0.9, 0.3, 1.1); }
+#wCity.open #wChevron { transform: rotate(180deg); }
+
+#wPickWrap { overflow: hidden; }
+#wPickInner { padding: 0 0 10px; }
+#wQuery {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 14px;
+  font-size: 15px;
+  color: var(--fg);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  outline: none;
+}
+#wResults button {
+  display: block;
+  width: 100%;
+  padding: 11px 6px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+#wResults button span { color: var(--sub); }
+#wResults .none { padding: 11px 6px; font-size: 13px; color: var(--sub); }
+
+#wBanner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 11px 16px;
+  border-radius: 20px;
+  background: var(--card);
+  font-size: 16px;
+}
+#wBannerIcon { display: flex; }
+
+#wCard {
+  border-radius: 28px;
+  background: var(--card);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+#wNow { display: flex; justify-content: space-between; align-items: flex-start; padding: 16px 20px 4px; }
+#wLabel { font-size: 20px; font-weight: 500; }
+#wBig { display: flex; align-items: center; gap: 4px; }
+#wTemp { font-size: 64px; font-weight: 300; line-height: 1.05; letter-spacing: -2px; }
+#wIcon { display: flex; }
+#wNowR { text-align: right; padding-top: 6px; min-width: 0; }
+#wDesc { font-size: 20px; font-weight: 500; }
+#wSub { margin-top: 8px; font-size: 14px; color: var(--sub); }
+
+#wHours { display: flex; padding: 14px 8px 16px; }
+.h { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.h .d { font-size: 18px; font-weight: 500; }
+.h .p { font-size: 14px; font-weight: 500; color: var(--rain); min-height: 17px; }
+.h .i { display: flex; height: 40px; align-items: center; }
+.h .t { font-size: 14px; color: var(--sub); white-space: nowrap; }
+
+#wDays {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+#wDays::-webkit-scrollbar { display: none; }
+.chip {
+  flex: 0 0 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 11px 4px;
+  border-radius: 20px;
+  background: var(--card);
+  cursor: pointer;
+  box-shadow: inset 0 0 0 2px transparent;
+  transition: box-shadow 0.25s ease;
+}
+.chip.sel { box-shadow: inset 0 0 0 2px var(--fg); }
+.chip .n { font-size: 15px; font-weight: 500; }
+.chip .i { display: flex; height: 30px; align-items: center; }
+.chip .m { font-size: 14px; font-variant-numeric: tabular-nums; }
+
+/* ---- Cảnh minh họa (mèo ở nông trại), đổi theo giờ và thời tiết ---- */
+#scene {
+  position: relative;
+  aspect-ratio: 1400 / 772;
+  overflow: hidden;
+  isolation: isolate;
+  background: #7aa6c8;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#scene .ly {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+#scene img.ly { transition: filter 1.4s ease, scale 1.4s ease, opacity 1.4s ease; }
+
+#scene .c1 { transform-origin: 31.7% 9.3%; animation: drift1 19s ease-in-out infinite alternate; }
+#scene .c2 { transform-origin: 74.2% 17.7%; animation: drift2 23s ease-in-out infinite alternate; }
+@keyframes drift1 { from { translate: -1.2% 0; } to { translate: 2.4% 0.6%; } }
+@keyframes drift2 { from { translate: 1.4% 0; } to { translate: -2.6% -0.5%; } }
+
+#scene .orb { position: absolute; width: 12%; aspect-ratio: 1; translate: -50% -50%; opacity: 0; transition: opacity 1.2s ease, left 1.4s ease, top 1.4s ease; pointer-events: none; }
+#scene .orb.on { opacity: 1; }
+#sun .rays { animation: spin 50s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#moon { width: 10%; }
+
+#scene .star { position: absolute; width: 3%; translate: -50% -50%; fill: #FFEBA6; stroke: #1b1b1b; stroke-width: 2.4; stroke-linejoin: round; opacity: 0; transition: opacity 1.2s ease; pointer-events: none; }
+#scene.night.clear .star, #scene.night.partly .star { opacity: 1; animation: twinkle 3.2s ease-in-out infinite; }
+#scene .s1 { left: 9%; top: 9%; width: 3.2%; }
+#scene .s2 { left: 27%; top: 23%; animation-delay: -1.1s !important; }
+#scene .s3 { left: 46%; top: 7%; width: 2.6%; animation-delay: -2s !important; }
+#scene .s4 { left: 58%; top: 25%; width: 2.4%; animation-delay: -0.5s !important; }
+#scene .s5 { left: 69%; top: 6%; width: 3.4%; animation-delay: -1.7s !important; }
+#scene .s6 { left: 37%; top: 15%; width: 2.2%; animation-delay: -2.6s !important; }
+@keyframes twinkle { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+#umb { opacity: 0; transition: opacity 0.9s ease; }
+#umb.on { opacity: 1; }
+#umbG { transform-origin: 1115px 660px; animation: sway 3.4s ease-in-out infinite alternate; }
+@keyframes sway { from { transform: translate(1115px, 528px) rotate(-3deg); } to { transform: translate(1115px, 528px) rotate(3deg); } }
+
+#scene .tint { opacity: 0; transition: opacity 1.6s ease; mix-blend-mode: multiply; }
+#scene .tint.dusk { background: linear-gradient(180deg, #ff9d6b 0%, #ffb98a 45%, #c58cb0 100%); }
+#scene .tint.night { background: #24357f; }
+#scene.dusk .tint.dusk { opacity: 0.55; }
+#scene.night .tint.night { opacity: 0.62; }
+
+#scene .win { position: absolute; border-radius: 2px; background: #ffd36b; box-shadow: 0 0 10px 3px rgba(255, 190, 80, 0.75); mix-blend-mode: screen; opacity: 0; transition: opacity 1.6s ease; pointer-events: none; }
+#scene.night .win { opacity: 1; }
+#scene.dusk .win, #scene.storm .win { opacity: 0.55; }
+#scene .w1 { left: 57.7%; top: 43.1%; width: 2%; height: 2.75%; }
+#scene .w2 { left: 65.1%; top: 43.5%; width: 1.7%; height: 2.75%; }
+#scene .w3 { left: 68.1%; top: 43.1%; width: 2%; height: 3.1%; }
+#scene .w4 { left: 75.6%; top: 43.5%; width: 2%; height: 2.75%; }
+#scene .w5 { left: 64.9%; top: 51.7%; width: 1.9%; height: 3.45%; }
+#scene .w6 { left: 73%; top: 52.3%; width: 2%; height: 2.5%; }
+
+#scene .fog { background: linear-gradient(180deg, rgba(235, 240, 245, 0.55), rgba(235, 240, 245, 0.78)); opacity: 0; transition: opacity 1.6s ease; }
+#scene.fog .fog { opacity: 1; }
+
+#fx i { position: absolute; top: -8%; display: none; }
+#scene.rain #fx i, #scene.storm #fx i {
+  display: block;
+  width: 4px; height: 9px;
+  border: 1.5px solid #1b1b1b;
+  border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%;
+  background: #bfe0ff;
+  rotate: 10deg;
+  animation: fall linear infinite;
+  animation-duration: calc(0.7s + var(--r) * 0.55s);
+  animation-delay: calc(var(--r) * -2s);
+}
+#scene.snow #fx i {
+  display: block;
+  width: 6px; height: 6px;
+  border: 1.2px solid #1b1b1b;
+  border-radius: 50%;
+  background: #fff;
+  animation: snow linear infinite;
+  animation-duration: calc(4s + var(--r) * 3.5s);
+  animation-delay: calc(var(--r) * -6s);
+}
+@keyframes fall { from { top: -8%; } to { top: 104%; } }
+@keyframes snow { from { top: -8%; translate: 0 0; } 50% { translate: 10px 0; } to { top: 104%; translate: -6px 0; } }
+
+#scene .flash { background: #fff; opacity: 0; }
+#scene.storm .flash { animation: flash 6s infinite; }
+@keyframes flash { 0%, 100% { opacity: 0; } 3% { opacity: 0.75; } 5% { opacity: 0.1; } 7% { opacity: 0.55; } 10% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  #scene *, #scene { animation: none !important; transition: none !important; }
+}
