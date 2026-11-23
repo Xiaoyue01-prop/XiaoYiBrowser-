@@ -5,12 +5,10 @@ import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
-import android.graphics.LinearGradient
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
@@ -55,14 +53,11 @@ object GlassSystem {
         fun setMorphCornerRadiusPx(radiusPx: Float)
     }
 
-    // One adaptive material system: consistent frost, edge and corner language on light or dark pages.
-    private const val GLASS_BLUR_RADIUS_DP = 16f
-    // Shared frost density: the blur is deliberately strong enough to soften text beneath
-    // floating glass surfaces, while the adaptive tint keeps labels readable on light/dark pages.
-    private const val LIGHT_GLASS_TINT_ALPHA = 68
-    private const val DARK_GLASS_TINT_ALPHA = 76
+    private const val GLASS_BLUR_RADIUS_DP = 10f
+    // The neutral tint sets the surface color. A little of the blurred backdrop still shows through.
+    private const val LIGHT_GLASS_TINT = 0xE0F2F2F2.toInt()
+    private const val DARK_GLASS_TINT = 0xE6222222.toInt()
 
-    // Adaptive material: only the surface tint changes; blur and Liquid Glass rims stay fixed.
     private val blurSurfaces = java.util.WeakHashMap<BlurView, Unit>()
     private val fallbackSurfaces = java.util.WeakHashMap<GradientDrawable, Unit>()
     private val rimSurfaces = java.util.WeakHashMap<GlassRimDrawable, Unit>()
@@ -79,7 +74,7 @@ object GlassSystem {
     private val foregroundObservers = java.util.WeakHashMap<View, ViewTreeObserver.OnGlobalLayoutListener>()
 
     private var pageBackgroundColor: Int? = null
-    private var currentOverlayColor: Int = Color.argb(LIGHT_GLASS_TINT_ALPHA, 255, 255, 255)
+    private var currentOverlayColor: Int = LIGHT_GLASS_TINT
     private val pageToneObservers = java.util.WeakHashMap<View, (Int?) -> Unit>()
 
     /** The webpage's reported canvas tone; null means use Summit's neutral light fallback. */
@@ -349,20 +344,8 @@ object GlassSystem {
     private fun isNeutralDark(color: Int): Boolean =
         isNeutral(color) && pageLuminance(color) < 0.48f
 
-    private fun overlayForPage(color: Int?): Int {
-        // A page with no reported canvas uses Summit's light fallback. Keep a visible neutral tint
-        // so bright and dark images underneath cannot make one menu alternate between white and black.
-        if (color == null) return Color.argb(LIGHT_GLASS_TINT_ALPHA, 255, 255, 255)
-
-        return if (isDarkPage(color)) {
-            // Darken bright thumbnails/video frames beneath native dark-glass surfaces without
-            // turning the material into an opaque panel.
-            Color.argb(DARK_GLASS_TINT_ALPHA, 0, 0, 0)
-        } else {
-            // Lift dark content beneath light-glass surfaces for a steadier black foreground.
-            Color.argb(LIGHT_GLASS_TINT_ALPHA, 255, 255, 255)
-        }
-    }
+    private fun overlayForPage(color: Int?): Int =
+        if (isDarkPage(color)) DARK_GLASS_TINT else LIGHT_GLASS_TINT
 
     private fun registerFallbackSurface(drawable: GradientDrawable): GradientDrawable {
         drawable.setColor(currentOverlayColor)
@@ -379,10 +362,7 @@ object GlassSystem {
     private fun registerRimSurface(drawable: GlassRimDrawable): GlassRimDrawable =
         drawable.also { rimSurfaces[it] = Unit }
 
-    // Viền kính kiểu liquid glass: một vòng ngoài xám lạnh (giữ nét trên nền trắng) và một vành sáng mảnh
-    // bên trong, sáng nhất ở góc trên-trái và dưới-phải. Chỉnh độ đậm viền toàn app ở hai hằng số này.
-    private const val RIM_OUTER_DP = 1.25f
-    private const val RIM_HIGHLIGHT_DP = 0.6f
+    private const val RIM_STROKE_DP = 1f
 
     /**
      * Bán kính từng bề mặt kính. Nút và thanh (địa chỉ, tìm kiếm, nút tròn, nút chữ) dùng [PILL_RADIUS_DP]:
@@ -427,7 +407,7 @@ object GlassSystem {
         return registerBlurSurface(view)
     }
 
-    /** Viền kính liquid glass vẽ đè lên nội dung (foreground của thẻ kính). */
+    /** Viền mảnh vẽ trên bề mặt kính. */
     fun createBorder(radiusDp: Int, density: Float, isNight: Boolean): Drawable =
         registerRimSurface(GlassRimDrawable(radiusDp * density, density))
 
@@ -472,91 +452,32 @@ object GlassSystem {
         }
     }
 
-    /**
-     * Viền liquid glass: vòng ngoài xám lạnh dạng gradient + vành sáng mảnh bên trong.
-     * Vẽ như một Drawable độc lập nên dùng được cho mọi bề mặt kính; phần trong để trống.
-     */
+    /** Viền kính trung tính đi theo góc bo của bề mặt trong lúc chuyển động. */
     private class GlassRimDrawable(radiusPx: Float, density: Float) : Drawable(), MorphCornerRadiusTarget {
         private var radiusPx: Float = radiusPx
+        private var drawableAlpha = 255
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = RIM_STROKE_DP * density
+        }
+        private val rect = RectF()
 
         override fun setMorphCornerRadiusPx(radiusPx: Float) {
             if (this.radiusPx == radiusPx) return
             this.radiusPx = radiusPx.coerceAtLeast(0f)
             invalidateSelf()
         }
-        private val outerW = RIM_OUTER_DP * density
-        private val hiW = RIM_HIGHLIGHT_DP * density
-        private val outerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = outerW
-        }
-        private val hiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = hiW
-        }
-        private val rect = RectF()
-        private var lastDarkTone: Boolean? = null
-
-        private fun updateShaders(b: android.graphics.Rect, dark: Boolean) {
-            if (b.width() <= 0 || b.height() <= 0) return
-            val w = b.width().toFloat()
-            val h = b.height().toFloat()
-            val outer = if (dark) {
-                intArrayOf(
-                    Color.argb(72, 178, 186, 204),
-                    Color.argb(112, 190, 198, 216),
-                    Color.argb(72, 178, 186, 204)
-                )
-            } else {
-                intArrayOf(
-                    Color.argb(84, 80, 80, 98),
-                    Color.argb(118, 80, 80, 98),
-                    Color.argb(84, 80, 80, 98)
-                )
-            }
-            val highlight = if (dark) {
-                intArrayOf(
-                    Color.argb(150, 255, 255, 255),
-                    Color.argb(0, 255, 255, 255),
-                    Color.argb(0, 255, 255, 255),
-                    Color.argb(118, 230, 235, 248)
-                )
-            } else {
-                intArrayOf(
-                    Color.argb(220, 255, 255, 255),
-                    Color.argb(0, 255, 255, 255),
-                    Color.argb(0, 255, 255, 255),
-                    Color.argb(175, 255, 255, 255)
-                )
-            }
-            outerPaint.shader = LinearGradient(
-                b.left.toFloat(), b.top.toFloat(), b.left + w, b.top + h,
-                outer, floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
-            )
-            hiPaint.shader = LinearGradient(
-                b.left.toFloat(), b.top.toFloat(), b.left + w, b.top + h,
-                highlight, floatArrayOf(0f, 0.38f, 0.62f, 1f), Shader.TileMode.CLAMP
-            )
-            lastDarkTone = dark
-        }
-
-        override fun onBoundsChange(b: android.graphics.Rect) {
-            updateShaders(b, GlassSystem.isDarkPage())
-        }
 
         override fun draw(canvas: Canvas) {
             val b = bounds
-            val dark = GlassSystem.isDarkPage()
-            if (lastDarkTone != dark) updateShaders(b, dark)
             if (b.width() <= 0 || b.height() <= 0) return
-            val r = effectiveRadius()
-            val o = outerW / 2f
-            rect.set(b.left + o, b.top + o, b.right - o, b.bottom - o)
-            canvas.drawRoundRect(rect, (r - o).coerceAtLeast(0f), (r - o).coerceAtLeast(0f), outerPaint)
-            val i = outerW + hiW / 2f
-            rect.set(b.left + i, b.top + i, b.right - i, b.bottom - i)
-            val ri = (r - i).coerceAtLeast(0f)
-            canvas.drawRoundRect(rect, ri, ri, hiPaint)
+            val dark = GlassSystem.isDarkPage()
+            paint.color = if (dark) Color.WHITE else Color.BLACK
+            paint.alpha = (drawableAlpha * (if (dark) 34 else 29) + 127) / 255
+            val inset = paint.strokeWidth / 2f
+            rect.set(b.left + inset, b.top + inset, b.right - inset, b.bottom - inset)
+            val radius = (effectiveRadius() - inset).coerceAtLeast(0f)
+            canvas.drawRoundRect(rect, radius, radius, paint)
         }
 
         /** Bán kính không vượt quá nửa cạnh ngắn: [PILL_RADIUS_DP] cho ra viên thuốc đúng hình. */
@@ -568,13 +489,15 @@ object GlassSystem {
         }
 
         override fun setAlpha(alpha: Int) {
-            outerPaint.alpha = alpha
-            hiPaint.alpha = alpha
+            drawableAlpha = alpha
+            invalidateSelf()
         }
 
+        override fun getAlpha(): Int = drawableAlpha
+
         override fun setColorFilter(colorFilter: ColorFilter?) {
-            outerPaint.colorFilter = colorFilter
-            hiPaint.colorFilter = colorFilter
+            paint.colorFilter = colorFilter
+            invalidateSelf()
         }
 
         @Suppress("OVERRIDE_DEPRECATION")
