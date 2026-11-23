@@ -27,6 +27,8 @@ internal interface BrowserWebViewHost {
     val isUrlBarFocused: Boolean
     val webDarkMode: Boolean
     fun handleSpecialUrl(url: String, view: WebView): Boolean
+    fun preparePageNavigation(view: WebView, url: String, isRedirect: Boolean): String?
+    fun applyDesktopViewportFallback(view: WebView, url: String)
     fun toast(msg: String)
     /** Áp cỡ chữ đã lưu của website sắp tải cho [view] (cỡ chữ theo tên miền). */
     fun applyTextZoom(view: WebView, url: String)
@@ -83,6 +85,10 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
             }
             HttpsFirst.upgrade(view, target)?.let { secure ->
                 target = secure
+                rewritten = true
+            }
+            host.preparePageNavigation(view, target, request.isRedirect)?.let {
+                target = it
                 rewritten = true
             }
         }
@@ -207,6 +213,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
     }
 
     override fun onPageCommitVisible(view: WebView, url: String) {
+        host.applyDesktopViewportFallback(view, url)
         if (adBlockActiveFor(url)) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)
         YouTubeAdBlocker.sync(view, url, host.store.youtubeAdBlockEnabled)
         view.evaluateJavascript(MEDIA_JS, null)

@@ -343,8 +343,8 @@ function paintOver(front, back){
 }
 
 // Màu nền của thanh trong suốt lấy cả lớp nền trang ở phía sau điểm lấy mẫu.
-function headerColor(hdEl){
-  var hb = window.__edgeHdBg;
+function headerColor(hdEl, useHeaderBackground){
+  var hb = useHeaderBackground === false ? null : window.__edgeHdBg;
   var separate = hb && hb.isConnected && headerStyleVisible(getComputedStyle(hb)) ? headerPaint(hb) : null;
   var canvas = bgOf(document.body) || bgOf(document.documentElement);
   var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -786,6 +786,83 @@ function shiftHeaderBackground(hd, delta){
 }
 
 var hdCache = null, activeHeader = null, topOverlay = null;
+var searchOverlay = null, searchCheckedAt = 0;
+
+var searchFieldSelector = 'input[type="search"],input[role="searchbox"],input[name="search_query"],' +
+  'input[name="search"],input[enterkeyhint="search"],[role~="search"] input,ytm-search-box input,input.searchbox-input';
+var youtubePage = /(^|\.)youtube\.com$/i.test(location.hostname);
+
+function foregroundSearchField(field){
+  if (!field.isConnected || field.disabled || field.closest('[hidden],[inert],[aria-hidden="true"]') ||
+      !headerStyleVisible(getComputedStyle(field))) return null;
+  var r = field.getBoundingClientRect();
+  if (r.width < 24 || r.height < 8 || r.bottom <= 0 || r.left >= window.innerWidth || r.right <= 0) return null;
+  var x = (Math.max(0, r.left) + Math.min(window.innerWidth, r.right)) / 2;
+  var y = (Math.max(0, r.top) + Math.min(window.innerHeight, r.bottom)) / 2;
+  return document.elementFromPoint(x, y) === field ? r : null;
+}
+
+function findSearchOverlay(I){
+  var fields = document.querySelectorAll(searchFieldSelector + (youtubePage
+    ? ',input#search,ytm-search-box-renderer input,yt-searchbox input' : ''));
+  var width = window.innerWidth, height = window.innerHeight;
+  for (var i = 0; i < Math.min(fields.length, 48); i++) {
+    var field = fields[i], rect = foregroundSearchField(field);
+    if (!rect || rect.top > I + 36) continue;
+    var mobileYouTube = youtubePage && (location.hostname === 'm.youtube.com' ||
+      field.closest('ytm-mobile-topbar-renderer,ytm-search-box,.mobile-topbar-header'));
+    var row = null, isOverlay = false, pinned = false;
+    for (var p = headerParent(field); p && p !== document.body && p !== document.documentElement; p = headerParent(p)) {
+      var cs = getComputedStyle(p), r = p.getBoundingClientRect();
+      if (!headerStyleVisible(cs)) { row = null; break; }
+      if (cs.position === 'fixed' || cs.position === 'sticky' ||
+          (mobileYouTube && cs.position === 'absolute')) pinned = true;
+      if (p.matches('dialog,[role~="dialog"],[aria-modal="true"],[popover]')) {
+        isOverlay = true;
+        if (cs.position === 'absolute') pinned = true;
+      }
+      if (r.top <= I + 1 && r.bottom >= rect.bottom - 1 &&
+          Math.min(width, r.right) - Math.max(0, r.left) >= width * 0.60 &&
+          r.height <= Math.min(height * 0.35, 160)) row = p;
+    }
+    if (row && pinned && (isOverlay || mobileYouTube)) return {el: row, field: field};
+  }
+  return null;
+}
+
+function releaseSearchOverlay(){
+  if (!searchOverlay) return;
+  var s = searchOverlay;
+  if (s.property && ownsInline(s.el, s.property, s.applied)) restoreInline(s.el, s.property, s.saved);
+  searchOverlay = null;
+  searchCheckedAt = 0;
+}
+
+function runSearchOverlay(I){
+  if (searchOverlay && (searchOverlay.inset !== I || !foregroundSearchField(searchOverlay.field) ||
+      !headerContains(searchOverlay.el, searchOverlay.field) || (searchOverlay.property &&
+      !ownsInline(searchOverlay.el, searchOverlay.property, searchOverlay.applied)))) releaseSearchOverlay();
+  if (searchOverlay) return searchOverlay.el;
+  var now = Date.now();
+  if (now - searchCheckedAt < 180) return null;
+  var search = findSearchOverlay(I);
+  if (!search) { searchCheckedAt = now; return null; }
+  releaseTopOverlay();
+  var el = search.el, r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+  searchOverlay = {el: el, field: search.field, inset: I};
+  if (r.top >= I - 0.5 || headerHasSafePadding({el: el, rect: r, cs: cs}, I)) return el;
+
+  // Chỉ dời hàng nhập liệu. Lớp phủ và cách website xử lý focus/đóng vẫn hoạt động bình thường.
+  var top = insetLength(cs.top, window.innerHeight);
+  var positioned = /^(absolute|fixed|sticky)$/.test(cs.position) && !isNaN(top);
+  var property = positioned ? 'top' : 'margin-top';
+  var base = positioned ? top : parseFloat(cs.marginTop) || 0;
+  searchOverlay.property = property;
+  searchOverlay.saved = saveInline(el, property);
+  el.style.setProperty(property, (base + I - r.top) + 'px', 'important');
+  searchOverlay.applied = el.style.getPropertyValue(property);
+  return el;
+}
 
 function releaseHeader(){
   if (!activeHeader) return;
@@ -881,6 +958,7 @@ function runEdge(){
   if (viewportZoomed()) return;
   var I = topReserveCss();
   if (!I || !document.elementsFromPoint) {
+    releaseSearchOverlay();
     releaseHeader();
     releaseTopOverlay();
     hdCache = null;
@@ -888,6 +966,12 @@ function runEdge(){
     return;
   }
   try {
+    var search = runSearchOverlay(I);
+    if (search) {
+      var searchColor = headerColor(search, false);
+      report(searchColor ? searchColor.slice(0, 3).join(',') : 'none');
+      return;
+    }
     var current = null;
     if (activeHeader) {
       if (activeHeader.inset === I && activeHeader.el.isConnected) {
@@ -932,6 +1016,7 @@ function run(){
   syncRootReserve();
   if (window.__edgeMode) { runEdge(); }
   else {
+    releaseSearchOverlay();
     releaseHeader();
     releaseTopOverlay();
     hdCache = null;
@@ -949,6 +1034,7 @@ var runLastAt = 0, runTimer = null;
 function inFs(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
 var wasFs = false;
 function edgeResetAll(){
+  releaseSearchOverlay();
   releaseHeader();
   releaseTopOverlay();
   invalidateHeader();
@@ -1435,6 +1521,7 @@ function schedLift(){
 
 function invalidateHeader(){
   hdCache = null;
+  searchCheckedAt = 0;
   headerLandmarkCache = new WeakMap();
 }
 
@@ -1505,6 +1592,16 @@ window.addEventListener('load', function(event){
   }
 }, true);
 window.addEventListener('pageshow', viewportChanged);
+document.addEventListener('focusin', function(event){
+  if (!window.__edgeMode || !event.target.matches || !event.target.matches(searchFieldSelector)) return;
+  searchCheckedAt = 0;
+  sched();
+}, {passive: true});
+if (youtubePage) document.addEventListener('click', function(){
+  if (!window.__edgeMode) return;
+  searchCheckedAt = 0;
+  sched();
+}, {capture: true, passive: true});
 function onHeaderMotionEnd(event){
   if (!window.__edgeMode || inFs()) return;
   var el = event.target;
@@ -1523,7 +1620,8 @@ var observedHeaderRoots = new WeakSet();
 function observeHeaderRoot(root){
   if (!observer || observedHeaderRoots.has(root)) return;
   observer.observe(root, {childList: true, subtree: true, attributes: true,
-    attributeFilter: ['class', 'style', 'id', 'role', 'hidden', 'open', 'popover', 'aria-modal']});
+    attributeFilter: ['class', 'style', 'id', 'role', 'hidden', 'open', 'popover', 'aria-modal', 'aria-hidden',
+      'search-mode', 'searching']});
   observedHeaderRoots.add(root);
 }
 

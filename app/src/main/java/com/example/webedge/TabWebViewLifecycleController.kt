@@ -44,6 +44,7 @@ class TabWebViewLifecycleController(
     /** Gỡ mọi callback do Activity gắn vào WebView; gọi trước khi hủy bất kỳ WebView nào. */
     fun detachCallbacks(view: WebView) {
         removeEdgeBridge(view)
+        if (view is SummitWebView) view.beforePageNavigation = null
         runCatching { view.webViewClient = WebViewClient() }
         runCatching { view.webChromeClient = WebChromeClient() }
         runCatching { view.setDownloadListener(null) }

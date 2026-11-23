@@ -265,6 +265,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override val isUrlBarFocused: Boolean get() = urlBar.hasFocus()
         override fun handleSpecialUrl(url: String, view: WebView): Boolean =
             this@MainActivity.handleSpecialUrl(url, view)
+        override fun preparePageNavigation(view: WebView, url: String, isRedirect: Boolean): String? =
+            tabConfigurator.prepareNavigation(view, url, isRedirect)
+        override fun applyDesktopViewportFallback(view: WebView, url: String) =
+            tabConfigurator.applyViewportFallback(view, url)
         override fun toast(msg: String) = this@MainActivity.toast(msg)
         override fun applyTextZoom(view: WebView, url: String) = textZoom.apply(view, url)
         override val webDarkMode: Boolean get() = store.webDarkMode

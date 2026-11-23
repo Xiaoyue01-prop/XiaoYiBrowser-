@@ -27,6 +27,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 
 
 /**
@@ -76,9 +78,12 @@ class PopupWindowController(
         val mainSettings = source.settings
         popup.settings.applyBrowserDefaults()
         popup.settings.apply {
-            userAgentString = mainSettings.userAgentString
             useWideViewPort = mainSettings.useWideViewPort
             loadWithOverviewMode = mainSettings.loadWithOverviewMode
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
+                runCatching { WebSettingsCompat.setUserAgentMetadata(this, WebSettingsCompat.getUserAgentMetadata(mainSettings)) }
+            }
+            userAgentString = mainSettings.userAgentString
         }
         popup.webChromeClient = chromeClient(source)
 
