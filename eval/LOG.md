@@ -82,3 +82,33 @@ Chạy `EVAL_CHROMIUM=/usr/bin/chromium node tools/check_edge_layout.cjs sticky`
 | **TOTAL** | **9,05** | **9,43** | **10,00** |
 
 Dừng khi vượt mục tiêu 9,5. Tất cả 26 ca công khai và cả hai phép kiểm hiệu năng đều đạt. Bộ biến thể riêng đạt 15/15, bộ kiểm tra Chromium cũ đạt 52/52. Tệp đính kèm chỉ cung cấp tập công khai. Điểm của bộ ẩn và hiệu năng trên WebView của điện thoại chưa được đo.
+
+## Trình xem ảnh và công cụ chụp đầu trang · ZIP 211429
+
+Bản người dùng gửi đạt TOTAL 10,00 với 107/107 phép kiểm công khai. Trong bộ Chromium riêng, 8/10 biến thể trình xem ảnh bị che hoặc mất vùng chạm. Ví dụ, mép trên của nút ở 8 px khi thanh trạng thái cần 38 px, và ở 13 px khi cần 45 px. URL Google Hình ảnh do người dùng cung cấp chuyển trình duyệt kiểm thử sang trang xác minh `/sorry/index`. Các số đo dưới đây đến từ bố cục tái hiện.
+
+**Giả thuyết.** Padding của lớp phủ bảo vệ nội dung trong luồng. Nút neo tuyệt đối vào lớp ảnh, hoặc neo cố định vào viewport, có thể bỏ qua padding này. Bộ dò cũng có thể chọn một header nằm sau trình xem ảnh. Một lỗi độc lập khiến khó xác định DOM trên máy thật. Đoạn chụp vùng 0–110 px chỉ có trong `summit-debug-dump.patch`, trong khi Gradle build trực tiếp các source set.
+
+**Các lần thử trên Chromium**
+
+- Nhận diện lớp phủ từ phần tử đang nhận chạm, kiểm tra các vùng chạm giao với inset rồi dời hàng neo phía trên. 5/5 biến thể dương ban đầu nhận được thao tác chạm sau khi sửa. Bài kiểm tra thẻ ảnh thường vẫn đạt.
+- Khi nút và khung cha đều có `position:absolute`, chỉ dời nút cho ra tọa độ an toàn nhưng khung cha có `overflow:hidden` vẫn cắt nút. Đã bỏ cách dời nút con riêng trong trường hợp này. Bản cuối dời hàng neo bao ngoài và kiểm tra trực tiếp phần tử nhận chạm ở tâm nút.
+- Đã thử cộng ngưỡng sticky riêng trong vùng cuộn của modal. Một tiêu đề bị dời tới 66 px khi inset là 33 px vì padding của modal đã chừa chỗ. Đã hoàn tác phần thử nghiệm này.
+- Ảnh tràn tới mép trên trong bố cục tái hiện. Công việc dò nút được thực hiện khi lớp phủ xuất hiện, đổi bố cục hoặc đổi inset. Các lần cuộn thông thường dùng kết quả đang có. Khi đóng hoặc tắt chế độ, app trả lại giá trị và độ ưu tiên CSS còn do app quản lý.
+
+**Chụp trên máy thật.** Trong APK debug, mở Menu trang trong thanh địa chỉ rồi bấm **[Debug] Chụp cấu trúc đầu trang**. Công cụ lấy mẫu theo chiều ngang từ y = 0 đến y = 110 CSS px, gồm cả mép inset. Bản chụp ghi phần tử nhận chạm, chuỗi tổ tiên xuyên Shadow DOM mở, các lớp nằm sau, tọa độ, CSS, DPR và mức zoom. Kết quả được chép vào clipboard theo yêu cầu. Bản release dùng cùng bản sửa bố cục, còn tài nguyên chẩn đoán chỉ được đóng gói vào bản debug.
+
+| Phép đo | ZIP 211429 ban đầu | Bản giao |
+| --- | ---: | ---: |
+| Fixed | 10,00 (16/16 ca) | 10,00 (16/16 ca) |
+| Sticky | 10,00 (7/7 ca) | 10,00 (7/7 ca) |
+| An toàn | 55/55 | 55/55 |
+| Hiệu năng | 2/2 | 2/2 |
+| TOTAL công khai | 10,00 | 10,00 |
+| `__edgeRun` trung bình, ngân sách 20 ms | 18,9 ms | 18,7 ms |
+| Khung cuộn trung bình, ngân sách 18 ms | 15,9 ms | 16,3 ms |
+| Biến thể trình xem ảnh | 2/10 | 10/10 |
+
+Scorer báo 0 hồi quy, mã kiểm tra toàn vẹn `93cf396d9ee534a3`. Bản giao giữ baseline gốc. Hai JS trích từ APK debug đạt 26/26 kịch bản trong `tools/check_edge_layout.cjs`, gồm 15 ca sticky/chuyển động, 10 ca trình xem ảnh và 1 ca chụp chồng lớp với Shadow DOM. Bộ Chromium trước đó đạt 52/52, gồm các ca tìm kiếm YouTube. Cả Gradle assembleDebug và assembleRelease đều thành công. Đã kiểm tra chữ ký, cờ debuggable, nội dung tài nguyên của hai APK, và chạy thử bộ cài patch hai lần trên một bản sạch. Lần thứ hai nhận ra phần chẩn đoán đã được tích hợp.
+
+Giới hạn xác minh còn lại là thao tác trên chính WebView của điện thoại ở ảnh người dùng. DOM của trình xem ảnh thực tế và kết quả clipboard Android cần một lần chụp từ thiết bị đó.

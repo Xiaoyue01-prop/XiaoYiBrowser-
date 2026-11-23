@@ -658,9 +658,10 @@ function layoutStickyRows(I, header, rows, sample){
   }
 }
 
-var headerLandmarkCache = new WeakMap();
+var headerLandmarkCache = new WeakMap(), foregroundOverlay = null;
 function findHeader(I){
   var w = window.innerWidth, h = window.innerHeight, best = null;
+  foregroundOverlay = null;
   var seen = new Set(), roots = new Set([document]), rows = new Map(), fixedBands = [], rowsOnly = false;
   function consider(el){
     for (; el && el !== document.body && el !== document.documentElement; el = headerParent(el)) {
@@ -681,9 +682,12 @@ function findHeader(I){
            (!headerContains(best.el, el) && hd.rect.top < best.rect.top - 2)))) best = hd;
     }
   }
-  function probe(root, x, y){
+  function probe(root, x, y, checkOverlay){
     if (!root.elementsFromPoint) return;
     var stack = root.elementsFromPoint(x, y);
+    if (checkOverlay && root === document && !foregroundOverlay) {
+      foregroundOverlay = overlayAt(deepestHit(stack[0], x, y), I, w, h);
+    }
     for (var j = 0; j < stack.length; j++) {
       var el = stack[j];
       if (root !== document && el.getRootNode() !== root) continue;
@@ -698,7 +702,7 @@ function findHeader(I){
   var ys = [1, Math.max(2, I * 0.5), I + 1, I + 7];
   for (var q = 0; q < ys.length; q++) {
     for (var i = 0; i < xs.length; i++) {
-      roots.forEach(function(root){ probe(root, w * xs[i], Math.min(h - 1, ys[q])); });
+      roots.forEach(function(root){ probe(root, w * xs[i], Math.min(h - 1, ys[q]), q === 2 && i < 3); });
     }
   }
   // elementsFromPoint bỏ qua phần tử có pointer-events:none. Dò thêm các landmark khi mẫu còn mơ hồ.
@@ -732,6 +736,11 @@ function findHeader(I){
       band.bandOnly = true;
       best = band;
     });
+  }
+  if (foregroundOverlay && (!best || !headerContains(foregroundOverlay.el, best.el))) {
+    // Padding của lớp phủ đã chừa mép trên cho vùng cuộn của nó.
+    resetStickyLayout();
+    return null;
   }
   rowsOnly = true;
   var sampled = new Set();
@@ -1093,9 +1102,90 @@ function alignHeader(hd, I){
   activeHeader.delta = Math.max(0, el.getBoundingClientRect().top - hd.rect.top);
 }
 
+function deepestHit(el, x, y){
+  while (el && el.shadowRoot) {
+    var child = el.shadowRoot.elementFromPoint(x, y);
+    if (!child || child.getRootNode() !== el.shadowRoot) break;
+    el = child;
+  }
+  return el;
+}
+
+// Chỉ xét chuỗi đang nhận chạm. Header phía sau lớp xem ảnh cũng có thể nằm trong elementsFromPoint.
+function overlayAt(front, I, w, h){
+  for (var el = front; el && el !== document.body && el !== document.documentElement; el = headerParent(el)) {
+    var cs = getComputedStyle(el);
+    if (cs.position !== 'fixed' && cs.position !== 'sticky' && cs.position !== 'absolute') continue;
+    var r = el.getBoundingClientRect();
+    if (r.top >= I || Math.min(w, r.right) - Math.max(0, r.left) <= w * 0.6 ||
+        Math.min(h, r.bottom) - Math.max(0, r.top) < h * 0.45 || !headerStyleVisible(cs)) continue;
+    if (cs.position === 'absolute' && !el.matches('dialog,[role~="dialog"],[role~="alertdialog"],[aria-modal="true"],[popover]')) {
+      // Một lớp absolute không có ngữ nghĩa chỉ được coi là modal khi phủ viewport và trang đã khóa cuộn.
+      if (r.bottom < h - 1 || r.top < -1 ||
+          ![document.documentElement, document.body].some(function(root){
+            return root && /^(hidden|clip)$/.test(getComputedStyle(root).overflowY);
+          })) continue;
+    }
+    return {el: el, front: front};
+  }
+  return null;
+}
+
+function releaseOverlayActions(rec){
+  rec.actions.forEach(function(saved, el){
+    if (ownsInline(el, 'margin-top', saved.applied)) restoreInline(el, 'margin-top', saved.margin);
+  });
+  rec.actions.clear();
+}
+
+function fitOverlayActions(rec, I){
+  releaseOverlayActions(rec);
+  var w = window.innerWidth, h = window.innerHeight, seen = new Set(), offsets = new Map();
+  var cols = Math.min(48, Math.ceil(w / 16)), rows = Math.min(6, Math.ceil(I / 12));
+  // Hỏi Chromium phần tử nào thực sự nhận chạm. Số mẫu có giới hạn, độc lập với số ảnh trong thư viện.
+  for (var row = 0; row < rows; row++) {
+    var y = Math.min(h - 1, (row + 0.5) * I / rows);
+    for (var col = 0; col < cols; col++) {
+      var x = (col + 0.5) * w / cols;
+      var hit = deepestHit(document.elementFromPoint(x, y), x, y);
+      if (!hit || seen.has(hit)) continue;
+      seen.add(hit);
+      if (!headerContains(rec.el, hit)) continue;
+      var action = null, anchor = null;
+      for (var p = hit; p && p !== rec.el; p = headerParent(p)) {
+        if (!action) {
+          if (!p.matches('button,a[href],input,select,[role~="button"],[role~="link"],[tabindex],[onclick]')) continue;
+          var ar = p.getBoundingClientRect();
+          if (ar.top >= I || ar.bottom <= 0 || ar.height > h * 0.25) break;
+          action = p;
+        }
+        var cs = getComputedStyle(p);
+        if (cs.position !== 'absolute' && cs.position !== 'fixed') continue;
+        var r = p.getBoundingClientRect();
+        if (r.height > h * 0.25 || r.top >= I - 0.5 || r.bottom <= 0 ||
+            (cs.top === 'auto' && cs.bottom !== 'auto')) break;
+        // Dời cả hàng bao ngoài để overflow:hidden của hàng không cắt mất vùng chạm.
+        anchor = p;
+        if (cs.position === 'fixed') break;
+      }
+      if (anchor && !offsets.has(anchor)) {
+        offsets.set(anchor, (parseFloat(getComputedStyle(anchor).marginTop) || 0) + I - anchor.getBoundingClientRect().top);
+      }
+    }
+  }
+  // Đo xong mới ghi. Các nút dùng chung một hàng chỉ dịch một lần.
+  offsets.forEach(function(margin, el){
+    var saved = saveInline(el, 'margin-top');
+    el.style.setProperty('margin-top', margin + 'px', 'important');
+    rec.actions.set(el, {margin: saved, applied: el.style.getPropertyValue('margin-top')});
+  });
+  rec.dirty = false;
+}
+
 function releaseTopOverlay(){
   if (!topOverlay) return;
   var rec = topOverlay;
+  releaseOverlayActions(rec);
   if (ownsInline(rec.el, 'padding-top', rec.applied)) restoreInline(rec.el, 'padding-top', rec.padding);
   if (ownsInline(rec.el, 'box-sizing', 'border-box')) restoreInline(rec.el, 'box-sizing', rec.box);
   rec.el.removeAttribute('data-edge-pad');
@@ -1103,33 +1193,22 @@ function releaseTopOverlay(){
 }
 
 function runTopOverlay(I){
-  var y = I + 2, w = window.innerWidth, hit = null, color = null;
-  var xs = [0.5, 0.15, 0.85];
-  for (var i = 0; i < xs.length && !hit; i++) {
-    var stack = document.elementsFromPoint(w * xs[i], y);
-    for (var j = 0; j < stack.length && !hit; j++) {
-      var f = pinned(stack[j]);
-      if (!f) continue;
-      var r = f.getBoundingClientRect();
-      if (r.top < I && r.width > w * 0.6 && r.height >= window.innerHeight * 0.45 &&
-          headerStyleVisible(getComputedStyle(f))) {
-        hit = f;
-        color = climb(stack[j]);
-      }
-    }
-  }
+  var hit = foregroundOverlay && foregroundOverlay.el;
   if (topOverlay && (topOverlay.el !== hit || topOverlay.inset !== I)) releaseTopOverlay();
   if (!hit) { report('none'); return; }
   if (!topOverlay) {
     var pad = parseFloat(getComputedStyle(hit).paddingTop) || 0;
     var padding = pad < I - hit.getBoundingClientRect().top - 0.5 ? pad + I : pad;
-    topOverlay = { el: hit, inset: I, padding: saveInline(hit, 'padding-top'), box: saveInline(hit, 'box-sizing') };
+    topOverlay = { el: hit, inset: I, padding: saveInline(hit, 'padding-top'), box: saveInline(hit, 'box-sizing'),
+      actions: new Map(), dirty: true };
     hit.setAttribute('data-edge-pad', '1');
     hit.style.setProperty('box-sizing', 'border-box', 'important');
     hit.style.setProperty('padding-top', padding + 'px', 'important');
     topOverlay.applied = hit.style.getPropertyValue('padding-top');
   }
-  report(color ? (color[0] + ',' + color[1] + ',' + color[2]) : 'none');
+  if (topOverlay.dirty) fitOverlayActions(topOverlay, I);
+  var color = climb(foregroundOverlay.front);
+  report(color ? color.slice(0, 3).join(',') : 'none');
 }
 
 function runEdge(){
@@ -1712,6 +1791,7 @@ function schedLift(){
 }
 
 function invalidateHeader(){
+  if (topOverlay) topOverlay.dirty = true;
   if (stickyInsets.size) syncStickyInsets(null);
   hdCache = null;
   searchCheckedAt = 0;

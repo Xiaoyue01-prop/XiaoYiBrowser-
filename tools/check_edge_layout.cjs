@@ -1,4 +1,4 @@
-// EVAL_CHROMIUM=/usr/bin/chromium node tools/check_edge_layout.cjs [motion|sticky]
+// EVAL_CHROMIUM=/usr/bin/chromium node tools/check_edge_layout.cjs [motion|sticky|viewer|dump]
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -208,6 +208,165 @@ scenario('sticky', 'three sibling levels in CSS order, reversed DOM', async page
   }
   await disable(page);
   assert.deepEqual(await inlineState(page), original);
+});
+
+function viewer(name, options = {}) {
+  scenario('viewer', name, async page => {
+    const inset = options.inset || 38;
+    const top = options.top || 6;
+    const rootTag = options.native ? 'dialog' : 'section';
+    const action = options.row ? '<div class="actions" data-check><button data-close>Close</button><a href="#options">More</a></div>' :
+      '<button data-close data-check style="margin-top:2px!important"><span>Close</span></button>' +
+      '<span role="button" tabindex="0" data-other data-check>More</span>';
+    const sheet = '<' + rootTag + ' hidden ' + (options.role ? 'role="dialog"' : '') +
+      ' class="viewer" data-check><div class="stage"><div class="photo"></div>' + action +
+      '<button class="safe" data-check>Save</button></div></' + rootTag + '>';
+    const background = options.header ? '<header data-check><button>Gallery</button></header>' : '';
+    await documentFor(page,
+      'header{position:fixed;inset:0 0 auto;height:53px;background:white}' +
+      '.viewer{position:' + (options.absolute ? 'absolute' : 'fixed') + ';inset:0;z-index:7;' +
+      'margin:0;border:0;max-width:none;max-height:none;width:100%;height:100%;padding:0;background:white}' +
+      '.stage{position:absolute;inset:0}.photo{height:62vh;background:#a42}' +
+      'button,[role=button],a{display:inline-grid;place-items:center;height:39px;min-width:36px}' +
+      '.actions,[data-close],[data-other]{position:' + (options.fixedControls ? 'fixed' : 'absolute') +
+      ';top:' + top + 'px;right:6px}.actions [data-close]{position:static}' +
+      '[data-other]{right:65px}.safe{position:absolute;top:140px}' +
+      '.under{position:fixed;inset:2px auto auto 2px}.long{height:200vh}',
+      (options.reverse ? sheet + background : background + sheet) +
+      '<button class="under" data-check>Outside</button><main class="long"></main>');
+    await enable(page, inset);
+    const outside = await rect(page, '.under');
+    await page.locator('.viewer').evaluate((panel, native) => {
+      panel.hidden = false;
+      if (native) panel.showModal();
+      window.hits = 0;
+      panel.addEventListener('click', e => { if (e.target.closest('[data-close]')) window.hits++; });
+    }, !!options.native);
+    await page.waitForTimeout(430);
+    const closeTop = (await rect(page, '[data-close]')).top;
+    assert.ok(closeTop >= inset - 0.5 && closeTop <= inset + top + 3,
+      'button top ' + closeTop + ' px, safe edge ' + inset + ' px');
+    if (!options.row) assert.ok((await rect(page, '[data-other]')).top >= inset - 0.5);
+    near((await rect(page, '.photo')).top, 0, 'photo');
+    near((await rect(page, '.safe')).top, 140, 'already safe action');
+    near((await rect(page, '.under')).top, outside.top, 'unrelated floating action');
+    await page.locator('[data-close]').tap({timeout:1800});
+    assert.equal(await page.evaluate(() => window.hits), 1);
+    await page.evaluate(n => { window.__edgeInset = n; window.__edgeRun(); window.__edgeRun(); }, inset + 11);
+    const resized = (await rect(page, '[data-close]')).top;
+    assert.ok(resized >= inset + 10.5 && resized <= inset + 11 + top + 3, 'inset update ' + resized);
+    await page.locator('.viewer').evaluate((panel, native) => {
+      if (native) panel.close();
+      panel.hidden = true;
+    }, !!options.native);
+    await page.waitForTimeout(360);
+    if (options.header) near((await rect(page, 'header')).top, inset + 11, 'restored background header');
+    const state = await page.locator('[data-close]').evaluate(e => [e.style.marginTop, e.style.getPropertyPriority('margin-top')]);
+    assert.deepEqual(state, options.row ? ['', ''] : ['2px', 'important']);
+    assert.deepEqual(await page.locator('.viewer').evaluate(e => e.style.cssText), '');
+  });
+}
+viewer('absolute controls in a full-bleed image stage');
+viewer('fixed actions, header behind viewer, panel first in DOM', {fixedControls:true,header:true,reverse:true,inset:45,top:11});
+viewer('one anchored wrapper containing two actions', {row:true,inset:27,top:3});
+viewer('absolute modal over a fixed background header', {absolute:true,role:true,header:true,top:12});
+viewer('top-layer dialog above the page header', {native:true,row:true,header:true,inset:31});
+
+scenario('viewer', 'ordinary image card retains its authored buttons', async page => {
+  await documentFor(page, '.card{position:relative;height:80vh;background:#c65}' +
+    'button{position:absolute;right:8px;top:3px;height:40px}',
+    '<main class="card"><button data-check>Bookmark</button></main>');
+  const original = await inlineState(page);
+  await enable(page, 34);
+  assert.deepEqual(await inlineState(page), original);
+});
+
+scenario('viewer', 'viewport-sized absolute panel on a scroll-locked page', async page => {
+  await documentFor(page, 'body{overflow:hidden}section{position:absolute;inset:0;background:#fafafa}' +
+    'button{position:absolute;top:9px;right:3px;height:42px}', '<section><button>Dismiss</button></section>');
+  await enable(page, 36);
+  near((await rect(page, 'button')).top, 36, 'scroll-locked panel action');
+  await disable(page);
+  near((await rect(page, 'button')).top, 9, 'original anchor');
+});
+
+scenario('viewer', 'replacement in open shadow root retains the latest author style', async page => {
+  await documentFor(page, '.panel{position:fixed;inset:0;background:#ddd}', '<div class="panel"><x-tools></x-tools></div>');
+  await page.locator('x-tools').evaluate(host => {
+    host.attachShadow({mode:'open'}).innerHTML = '<style>button{position:fixed;left:3px;top:4px;height:41px}</style><button>Initial</button>';
+  });
+  await enable(page, 32);
+  const button = page.locator('x-tools button');
+  near((await rect(page, 'x-tools button')).top, 32, 'shadow action');
+  await button.evaluate(el => {
+    window.oldAction = el;
+    const replacement = document.createElement('button');
+    replacement.textContent = 'New';
+    replacement.style.setProperty('margin-top', '7px', 'important');
+    el.replaceWith(replacement);
+  });
+  await page.waitForTimeout(410);
+  near((await rect(page, 'x-tools button')).top, 32, 'new action');
+  assert.equal(await page.evaluate(() => window.oldAction.style.marginTop), '');
+  await button.evaluate(el => el.style.setProperty('margin-top', '13px', 'important'));
+  await page.waitForTimeout(400);
+  near((await rect(page, 'x-tools button')).top, 32, 'after author update');
+  await disable(page);
+  assert.deepEqual(await button.evaluate(el => [el.style.marginTop, el.style.getPropertyPriority('margin-top')]), ['13px','important']);
+});
+
+scenario('viewer', 'nested absolute button remains tappable inside a clipping toolbar', async page => {
+  await documentFor(page, 'section{position:fixed;inset:0;background:#aaa}.clip{position:absolute;top:3px;right:5px;' +
+    'overflow:hidden;height:38px;width:90px}.clip button{position:absolute;top:1px;right:2px;height:34px}',
+    '<section><div class="clip"><button>Close</button></div></section>');
+  await enable(page, 43);
+  const top = (await rect(page, 'button')).top;
+  assert.ok(top >= 42.5, 'button beneath status bar ' + top);
+  assert.equal(await page.locator('button').evaluate(el => {
+    const r = el.getBoundingClientRect();
+    return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === el;
+  }), true, 'clipping toolbar must move with its action');
+  await disable(page);
+  near((await rect(page, 'button')).top, 4, 'restored nested button');
+});
+
+scenario('viewer', 'sticky labels in a fixed dialog keep their scroll threshold', async page => {
+  await documentFor(page, 'section{position:fixed;inset:0;background:#aaa;overflow:auto}article{height:2200px}' +
+    'header{position:fixed;inset:0 0 auto;height:54px;background:#fff}h3{position:sticky;top:0;margin:0;height:36px}',
+    '<header>Behind</header><section role="dialog"><article><h3>Photos</h3></article></section>');
+  await enable(page, 33);
+  await page.locator('section').evaluate(el => { el.scrollTop = 350; });
+  await page.waitForTimeout(450);
+  near((await rect(page, 'h3')).top, 33, 'scrolled dialog title');
+  await disable(page);
+  near((await rect(page, 'h3')).top, 0, 'original sticky threshold');
+});
+
+scenario('dump', 'read the paint stack and composed ancestry across the entire debug band', async page => {
+  await documentFor(page, '.under,x-tools{position:fixed;inset:0 auto auto 0;width:100%;height:115px}' +
+    '.under{background:#c34}x-tools{z-index:2}', '<aside class="under"></aside><x-tools></x-tools>');
+  await page.locator('x-tools').evaluate(host => {
+    host.attachShadow({mode:'open'}).innerHTML = '<button style="width:100%;height:115px">Action</button>';
+  });
+  await page.evaluate(() => { window.__edgeMode = true; window.__edgeInset = 37; });
+  const capture = fs.readFileSync(process.env.EDGE_DUMP_SCRIPT ||
+    path.join(__dirname, '../app/src/debug/assets/top_band_dump.js'), 'utf8');
+  const before = await page.content();
+  const output = await page.evaluate(capture);
+  const lines = output.split('\n');
+  const keyFor = name => {
+    const match = lines.find(l => new RegExp('^\\d+ ' + name + '(?: |$)').test(l));
+    assert.ok(match, 'missing ' + name);
+    return match.split(' ')[0];
+  };
+  const action = keyFor('button'), host = keyFor('x-tools'), under = keyFor('aside\\.under');
+  for (const y of [0, 37, 110]) {
+    const line = lines.find(l => l.startsWith('x=0 y=' + y + ' '));
+    assert.ok(line && line.includes('chain ' + action + ' > ' + host + ' > '));
+    assert.ok(line.split(' | stack ')[1].split(' ').includes(under));
+  }
+  assert.ok(lines.some(l => l.includes('dpr=') && l.endsWith('inset=37')));
+  assert.equal(await page.content(), before);
 });
 
 async function main() {

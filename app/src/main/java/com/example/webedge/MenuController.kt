@@ -795,6 +795,9 @@ class MenuController(
             item("Trang web máy tính", if (host.isDesktopMode()) Icons.CHECK else null, true) {
                 host.toggleDesktopMode()
             }
+            if (DebugDump.enabled(activity)) {
+                item("[Debug] Chụp cấu trúc đầu trang", null, true) { DebugDump.run(activity, host.web) }
+            }
         } else {
             item("Chế độ đọc", Icons.BOOK_OPEN, true) {
                 // Chờ thẻ menu thu về xong rồi mới đưa Reader Module lên trên Browser Module.
