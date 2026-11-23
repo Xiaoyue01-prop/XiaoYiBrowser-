@@ -112,3 +112,13 @@ Bản người dùng gửi đạt TOTAL 10,00 với 107/107 phép kiểm công k
 Scorer báo 0 hồi quy, mã kiểm tra toàn vẹn `93cf396d9ee534a3`. Bản giao giữ baseline gốc. Hai JS trích từ APK debug đạt 26/26 kịch bản trong `tools/check_edge_layout.cjs`, gồm 15 ca sticky/chuyển động, 10 ca trình xem ảnh và 1 ca chụp chồng lớp với Shadow DOM. Bộ Chromium trước đó đạt 52/52, gồm các ca tìm kiếm YouTube. Cả Gradle assembleDebug và assembleRelease đều thành công. Đã kiểm tra chữ ký, cờ debuggable, nội dung tài nguyên của hai APK, và chạy thử bộ cài patch hai lần trên một bản sạch. Lần thứ hai nhận ra phần chẩn đoán đã được tích hợp.
 
 Giới hạn xác minh còn lại là thao tác trên chính WebView của điện thoại ở ảnh người dùng. DOM của trình xem ảnh thực tế và kết quả clipboard Android cần một lần chụp từ thiết bị đó.
+
+## Nút menu trên trang kết quả tìm kiếm
+
+Bản chụp từ WebView của người dùng ghi nhận viewport rộng 365 CSS px với inset 40 px. Header trong luồng chiếm y = 40–147 px. Khung menu là con của header nhưng dùng `position: absolute; top: 0` và chiếm y = 0–63 px. Phần icon vì vậy nằm trong dải thanh trạng thái. Kích thước này khớp với bố cục đã thấy trên điện thoại. Phiên Chromium từ xa bị chuyển tới trang xác minh, nên kiểm thử dùng bố cục dựng lại dựa trên bản chụp.
+
+Đã xử lý nút nhỏ ở góc đang nhận chạm khi nó thuộc header rộng trong luồng đã được chừa inset. Chỉ bù lề cho khung neo còn giao với thanh trạng thái. Tính lại khi bố cục hoặc inset thay đổi ở đầu trang. Khi tắt Edge hoặc chuyển sang lớp phủ, khôi phục lề của trang nếu lề đó còn do Summit quản lý.
+
+Đã thử xác nhận ngữ cảnh bằng một ô tìm kiếm rộng gần mép trên. Sau khi có bản chụp, bỏ cách dò ô tìm kiếm và dùng trực tiếp quan hệ giữa nút với header cha. Bộ Chromium riêng tăng từ 1/3 lên 3/3. Gồm một menu absolute trong header tĩnh với inset 40 px, một nút fixed trong wrapper có `role="banner"` và inset 47 px, và một widget cố định độc lập. Kiểm tra được thao tác chạm, vị trí ô tìm kiếm, logo và nút đăng nhập, thay đổi inset, cuộn và hoàn tác CSS.
+
+Bộ công khai giữ TOTAL 10,00, Fixed 10,00, Sticky 10,00, an toàn 55/55 và 0 hồi quy. `__edgeRun` trước/sau là 15,9/17,2 ms với ngân sách 20 ms. Khung cuộn trước/sau là 15,9/16,1 ms với ngân sách 18 ms. Baseline giữ nguyên với mã kiểm tra toàn vẹn `93cf396d9ee534a3`.

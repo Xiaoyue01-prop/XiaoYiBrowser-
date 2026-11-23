@@ -1131,15 +1131,21 @@ function overlayAt(front, I, w, h){
   return null;
 }
 
-function releaseOverlayActions(rec){
-  rec.actions.forEach(function(saved, el){
+function restoreTopMargins(actions){
+  actions.forEach(function(saved, el){
     if (ownsInline(el, 'margin-top', saved.applied)) restoreInline(el, 'margin-top', saved.margin);
   });
-  rec.actions.clear();
+  actions.clear();
+}
+
+function offsetTopMargin(actions, el, margin){
+  var saved = saveInline(el, 'margin-top');
+  el.style.setProperty('margin-top', margin + 'px', 'important');
+  actions.set(el, {margin: saved, applied: el.style.getPropertyValue('margin-top')});
 }
 
 function fitOverlayActions(rec, I){
-  releaseOverlayActions(rec);
+  restoreTopMargins(rec.actions);
   var w = window.innerWidth, h = window.innerHeight, seen = new Set(), offsets = new Map();
   var cols = Math.min(48, Math.ceil(w / 16)), rows = Math.min(6, Math.ceil(I / 12));
   // Hỏi Chromium phần tử nào thực sự nhận chạm. Số mẫu có giới hạn, độc lập với số ảnh trong thư viện.
@@ -1175,9 +1181,7 @@ function fitOverlayActions(rec, I){
   }
   // Đo xong mới ghi. Các nút dùng chung một hàng chỉ dịch một lần.
   offsets.forEach(function(margin, el){
-    var saved = saveInline(el, 'margin-top');
-    el.style.setProperty('margin-top', margin + 'px', 'important');
-    rec.actions.set(el, {margin: saved, applied: el.style.getPropertyValue('margin-top')});
+    offsetTopMargin(rec.actions, el, margin);
   });
   rec.dirty = false;
 }
@@ -1185,7 +1189,7 @@ function fitOverlayActions(rec, I){
 function releaseTopOverlay(){
   if (!topOverlay) return;
   var rec = topOverlay;
-  releaseOverlayActions(rec);
+  restoreTopMargins(rec.actions);
   if (ownsInline(rec.el, 'padding-top', rec.applied)) restoreInline(rec.el, 'padding-top', rec.padding);
   if (ownsInline(rec.el, 'box-sizing', 'border-box')) restoreInline(rec.el, 'box-sizing', rec.box);
   rec.el.removeAttribute('data-edge-pad');
@@ -1211,6 +1215,59 @@ function runTopOverlay(I){
   report(color ? color.slice(0, 3).join(',') : 'none');
 }
 
+var mastheadMargins = new Map(), mastheadDirty = true;
+
+function releaseMastheadActions(){
+  restoreTopMargins(mastheadMargins);
+  mastheadDirty = true;
+}
+
+function fitMastheadActions(I){
+  mastheadDirty = false;
+  var w = window.innerWidth, seen = new Set(), offsets = new Map();
+  // Header trong luồng đã xuống dưới inset. Nút absolute vẫn có thể neo theo viewport.
+  for (var x of [w * 0.04, w * 0.09, w * 0.91, w * 0.96]) {
+    for (var y of [1, I * 0.35, I * 0.75]) {
+      var hit = deepestHit(document.elementFromPoint(x, y), x, y);
+      if (!hit || seen.has(hit)) continue;
+      seen.add(hit);
+      var control = null, anchor = null, anchorTop = 0, anchorFixed = false;
+      for (var el = hit; el && el !== document.body && el !== document.documentElement; el = headerParent(el)) {
+        if (el.matches(headerOverlays + ',[inert],[aria-hidden="true"]')) break;
+        if (!control) {
+          if (!el.matches('button,[role~="button"],a[href][aria-haspopup]')) continue;
+          if (el.matches(':disabled,[aria-disabled="true"]')) break;
+          control = el.getBoundingClientRect();
+          if (control.top < -1 || control.top >= I - 0.5 || control.width > control.height * 1.5 ||
+              control.height < 16 || control.height > 80 || control.width < 16) break;
+        }
+        if (anchor && el.matches('header,[role~="banner"]')) {
+          var mast = el.getBoundingClientRect();
+          if (mast.top >= I - 1 && mast.top < control.bottom && mast.width >= w * 0.6 &&
+              /^(static|relative)$/.test(getComputedStyle(el).position)) {
+            var delta = I - Math.min(control.top, anchorTop);
+            offsets.set(anchor, Math.max(offsets.get(anchor) || 0, delta));
+          }
+          break;
+        }
+        var cs = getComputedStyle(el);
+        if (cs.position !== 'fixed' && cs.position !== 'absolute') continue;
+        var box = el.getBoundingClientRect();
+        if (box.width > w * 0.22 || box.height > 85 || box.top < -1 ||
+            (cs.top === 'auto' && cs.bottom !== 'auto') || !headerStyleVisible(cs)) break;
+        if (!anchorFixed) {
+          anchor = el;
+          anchorTop = box.top;
+          anchorFixed = cs.position === 'fixed';
+        }
+      }
+    }
+  }
+  offsets.forEach(function(delta, el){
+    offsetTopMargin(mastheadMargins, el, (parseFloat(getComputedStyle(el).marginTop) || 0) + delta);
+  });
+}
+
 function runEdge(){
   if (viewportZoomed()) return;
   var I = topReserveCss();
@@ -1220,6 +1277,7 @@ function runEdge(){
     releaseSearchOverlay();
     releaseHeader();
     releaseTopOverlay();
+    releaseMastheadActions();
     hdCache = null;
     report('none');
     return;
@@ -1234,6 +1292,7 @@ function runEdge(){
     }
     var search = runSearchOverlay(I);
     if (search) {
+      if (mastheadMargins.size) releaseMastheadActions();
       var searchColor = headerColor(search, false);
       report(searchColor ? searchColor.slice(0, 3).join(',') : 'none');
       return;
@@ -1261,9 +1320,17 @@ function runEdge(){
       }
       hdCache = hd ? Date.now() : null;
     }
-    if (!hd) { runTopOverlay(I); return; }
+    var fitMasthead = mastheadDirty && window.scrollY <= 1 && !foregroundOverlay;
+    if (foregroundOverlay && mastheadMargins.size) releaseMastheadActions();
+    if (fitMasthead) restoreTopMargins(mastheadMargins);
+    if (!hd) {
+      runTopOverlay(I);
+      if (fitMasthead) fitMastheadActions(I);
+      return;
+    }
     releaseTopOverlay();
     alignHeader(hd, I);
+    if (fitMasthead) fitMastheadActions(I);
     var delta = activeHeader.delta;
     if (fresh && delta > 0.5) {
       shiftHeaderBackground(hd, delta);
@@ -1287,6 +1354,7 @@ function run(){
     releaseSearchOverlay();
     releaseHeader();
     releaseTopOverlay();
+    releaseMastheadActions();
     hdCache = null;
     runTop();
   }
@@ -1307,6 +1375,7 @@ function edgeResetAll(){
   releaseSearchOverlay();
   releaseHeader();
   releaseTopOverlay();
+  releaseMastheadActions();
   invalidateHeader();
   styleCache = new WeakMap();
   last = '';
@@ -1791,6 +1860,7 @@ function schedLift(){
 }
 
 function invalidateHeader(){
+  mastheadDirty = true;
   if (topOverlay) topOverlay.dirty = true;
   if (stickyInsets.size) syncStickyInsets(null);
   hdCache = null;

@@ -1,4 +1,4 @@
-// EVAL_CHROMIUM=/usr/bin/chromium node tools/check_edge_layout.cjs [motion|sticky|viewer|dump]
+// EVAL_CHROMIUM=/usr/bin/chromium node tools/check_edge_layout.cjs [motion|sticky|viewer|dump|masthead]
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -367,6 +367,65 @@ scenario('dump', 'read the paint stack and composed ancestry across the entire d
   }
   assert.ok(lines.some(l => l.includes('dpr=') && l.endsWith('inset=37')));
   assert.equal(await page.content(), before);
+});
+
+function masthead(name, {position = 'absolute', top = 0, inset = 37, depth = false, landmark = 'header'} = {}) {
+  scenario('masthead', name, async page => {
+    const tag = depth ? 'div' : 'button';
+    const trigger = '<' + tag + (depth ? ' role="button" tabindex="0"' : '') + ' data-trigger data-check>' +
+      '<svg width="24" height="24"><path d="M0 4H24M0 12H24M0 20H24" stroke="black"/></svg></' + tag + '>';
+    const menu = '<div class="control" data-check>' + (depth ? '<span>' + trigger + '</span>' : trigger) + '</div>';
+    const search = '<form><textarea name="q" aria-label="Search"></textarea></form>';
+    await documentFor(page, '.control{position:' + position + ';top:' + top + 'px;left:6px;z-index:2}' +
+      '[data-trigger]{width:60px;height:63px;display:grid;place-items:center;border:0;background:white}' +
+      '.mast{height:152px;padding:10px 15px;background:white}strong{display:block;text-align:center;height:54px}' +
+      'form{display:flex}textarea{height:44px;width:100%}' +
+      'main{height:2200px}.support{position:fixed;right:2px;top:2px;z-index:3;height:32px}' +
+      '.logo-row{position:relative}.login{position:absolute;right:0;top:4px}',
+      '<' + landmark + ' role="banner" class="mast">' + menu + '<div class="logo-row"><strong>Catalog</strong><a class="login" href="#login">Sign in</a></div>' + search + '</' + landmark + '>' +
+      '<main>Results</main><button class="support" data-check>Help</button>');
+    const authored = await inlineState(page);
+    const pageElements = ['textarea', 'strong', '.login'];
+    const before = await Promise.all(pageElements.map(sel => rect(page, sel)));
+    await page.locator('[data-trigger]').evaluate(el => {
+      window.menuClicks = 0;
+      el.addEventListener('click', () => window.menuClicks++);
+    });
+    await enable(page, inset);
+    await page.waitForTimeout(250);
+    near((await rect(page, '[data-trigger]')).top, inset, 'menu fits beneath status bar');
+    for (const [i, selector] of pageElements.entries()) {
+      near((await rect(page, selector)).top, before[i].top + inset, 'only base page inset affects ' + selector);
+    }
+    near((await rect(page, '.support')).top, 2, 'unrelated action');
+    await page.locator('[data-trigger]').tap();
+    assert.equal(await page.evaluate(() => window.menuClicks), 1);
+    await page.evaluate(n => { window.__edgeInset = n; window.__edgeRun(); window.__edgeRun(); }, inset + 9);
+    near((await rect(page, '[data-trigger]')).top, inset + 9, 'updated inset');
+    if (position === 'absolute') {
+      await page.evaluate(() => window.scrollTo(0, 80));
+      await page.waitForTimeout(380);
+      near((await rect(page, '[data-trigger]')).top, inset + 9 - 80, 'menu scrolls with the results');
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.waitForTimeout(280);
+      near((await rect(page, '[data-trigger]')).top, inset + 9, 'return to top');
+    }
+    await disable(page);
+    assert.deepEqual(await inlineState(page), authored);
+  });
+}
+
+masthead('viewport-anchored menu inside a static search header', {inset:40});
+masthead('fixed menu inside a wrapper with a taller system inset', {position:'fixed', depth:true, inset:47, top:7, landmark:'section'});
+
+scenario('masthead', 'standalone action outside a masthead stays put', async page => {
+  await documentFor(page, 'aside{position:fixed;top:5px;left:6px}aside button{width:42px;height:39px}' +
+    'article{height:600px}', '<aside data-check><button aria-label="Help topics">?</button></aside>' +
+    '<header>Product<form><input type="search"></form></header><article></article>');
+  const authored = await inlineState(page);
+  await enable(page, 38);
+  near((await rect(page, 'button')).top, 5, 'unrelated fixed widget');
+  assert.deepEqual(await inlineState(page), authored);
 });
 
 async function main() {
