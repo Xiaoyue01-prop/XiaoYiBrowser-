@@ -1,0 +1,52 @@
+diff -ruN a/app/src/main/java/com/example/webedge/DebugDump.kt b/app/src/main/java/com/example/webedge/DebugDump.kt
+--- a/app/src/main/java/com/example/webedge/DebugDump.kt	1970-01-01 08:00:00.000000000 +0800
++++ b/app/src/main/java/com/example/webedge/DebugDump.kt	2026-11-23 20:54:43.148577215 +0700
+@@ -0,0 +1,35 @@
++package com.example.webedge
++
++import android.app.Activity
++import android.content.ClipData
++import android.content.ClipboardManager
++import android.content.pm.ApplicationInfo
++import android.webkit.WebView
++import android.widget.Toast
++import org.json.JSONTokener
++
++/**
++ * Công cụ chẩn đoán CHỈ có trong bản debug (cờ FLAG_DEBUGGABLE). Bản release không hiện mục menu và không chạy gì.
++ * Chụp cấu trúc các phần tử ở vùng 0-110 px trên cùng của tab hiện tại (chuỗi tổ tiên: thẻ, position, top,
++ * transform, overflow, z-index, khung hình chữ nhật) rồi chép vào clipboard để dán gửi đi. Script chỉ đọc, không đổi DOM.
++ */
++internal object DebugDump {
++    private const val JS = """(function(){var out=[],W=innerWidth,ys=[8,30,55,80,110],xs=[W-30,W/2];function d(e){var c=getComputedStyle(e),r=e.getBoundingClientRect();return e.tagName.toLowerCase()+(e.id?String.fromCharCode(35)+e.id:'')+(typeof e.className==='string'&&e.className?'.'+e.className.trim().split(/\s+/).slice(0,3).join('.'):'')+' | pos='+c.position+' top='+c.top+' tf='+(c.transform==='none'?'-':c.transform.slice(0,30))+' ov='+c.overflowY+' z='+c.zIndex+' | y='+Math.round(r.top)+'..'+Math.round(r.bottom)+' h='+Math.round(r.height)+' x='+Math.round(r.left)+'..'+Math.round(r.right);}out.push('url '+location.href);out.push('inner '+innerWidth+'x'+innerHeight+' scrollY='+Math.round(scrollY)+' inset='+window.__edgeInset);xs.forEach(function(x){ys.forEach(function(y){var e=document.elementFromPoint(x,y);out.push('--- point x='+Math.round(x)+' y='+y);for(var i=0;e&&i<9;i++,e=e.parentElement)out.push((i?'  ^ ':'  ')+d(e));});});return out.join('\n');})()"""
++
++    fun enabled(activity: Activity): Boolean =
++        (activity.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
++
++    fun run(activity: Activity, web: WebView) {
++        if (!enabled(activity)) return
++        web.evaluateJavascript(JS) { raw ->
++            val text = try {
++                JSONTokener(raw ?: "null").nextValue()?.toString() ?: "(không có kết quả)"
++            } catch (e: Exception) {
++                "(lỗi đọc kết quả: ${e.message})\n$raw"
++            }
++            val cm = activity.getSystemService(ClipboardManager::class.java)
++            cm?.setPrimaryClip(ClipData.newPlainText("summit-dump", text))
++            Toast.makeText(activity, "Đã chép cấu trúc đầu trang (${text.length} ký tự)", Toast.LENGTH_LONG).show()
++        }
++    }
++}
+diff -ruN a/app/src/main/java/com/example/webedge/MenuController.kt b/app/src/main/java/com/example/webedge/MenuController.kt
+--- a/app/src/main/java/com/example/webedge/MenuController.kt	2026-11-23 20:54:43.134926201 +0700
++++ b/app/src/main/java/com/example/webedge/MenuController.kt	2026-11-23 20:54:43.210505498 +0700
+@@ -795,6 +795,9 @@
+             item("Trang web máy tính", if (host.isDesktopMode()) Icons.CHECK else null, true) {
+                 host.toggleDesktopMode()
+             }
++            if (DebugDump.enabled(activity)) {
++                item("[Debug] Chụp cấu trúc đầu trang", null, true) { DebugDump.run(activity, host.web) }
++            }
+         } else {
+             item("Chế độ đọc", Icons.BOOK_OPEN, true) {
+                 // Chờ thẻ menu thu về xong rồi mới đưa Reader Module lên trên Browser Module.
