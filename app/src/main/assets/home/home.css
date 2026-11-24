@@ -1,10 +1,3 @@
-/* Font đồng hồ: Nunito (OFL) ở độ dày 1000, chỉ giữ chữ số và dấu hai chấm, số 1 dùng kiểu không chân (ss01). */
-@font-face {
-  font-family: "SummitClock";
-  src: url("fonts/clock.ttf") format("truetype");
-  font-weight: 100 1000;
-}
-
 :root {
   color-scheme: light dark;
   --bg: #f6f6f8;
@@ -74,13 +67,6 @@ main {
   pointer-events: none;
 }
 
-/* Mèo = ảnh nền (đuôi vẽ lại bằng canvas) + 2 chân tách riêng để gãi má. */
-#cat { aspect-ratio: 900 / 457; }
-#cat .cb, #cat .cc { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-#cat .paw { position: absolute; height: auto; display: block; will-change: transform; }
-#pawL { left: 47.889%; top: 77.899%; width: 18.111%; transform-origin: 3.68% 82.22%; }
-#pawR { left: 84.222%; top: 83.807%; width: 15.556%; transform-origin: 87.14% 93.24%; }
-
 #clock {
   width: min(90vw, 440px);
   height: auto;
@@ -89,13 +75,10 @@ main {
 }
 
 #clockText, .glyph {
-  font: 900 160px "SummitClock", ui-rounded, "Roboto", system-ui, sans-serif;
-  letter-spacing: -10px;   /* sát như StandBy; số 1 được bù riêng trong home.js (KERN_* trong home.js) */
+  font: 900 160px ui-rounded, "Nunito", "Roboto", system-ui, sans-serif;
+  letter-spacing: -6px;
   text-anchor: middle;
 }
-
-/* Font đã rất dày và tròn nên bỏ viền phụ mà JS thêm (viền làm lấp lỗ số 4, 9). */
-#clockText tspan, .glyph { stroke-width: 0; }
 
 /* Chữ số lăn khi đổi phút: neo ở đầu ký tự để trùng đúng vị trí chữ số thật. */
 .glyph { text-anchor: start; pointer-events: none; }

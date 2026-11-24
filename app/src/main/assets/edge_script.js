@@ -991,7 +991,7 @@ function lateVideoHost(hd, I){
 
 // Nền của header đôi khi là một khối fixed riêng (YouTube: mobile-topbar-header-background, z-index -1)
 // nằm cùng vị trí và cao bằng header. Header đã hạ mà nền ở lại chỗ cũ thì chữ/icon trắng nằm trên nền trắng.
-function shiftHeaderBackground(hd, delta){
+function shiftHeaderBackground(hd, delta, watch){
   try {
     var w = window.innerWidth;
     var hr = hd.el.getBoundingClientRect();
@@ -1001,14 +1001,24 @@ function shiftHeaderBackground(hd, delta){
     for (var lvl = 0; par && lvl < 2; lvl++, par = par.parentElement) {
       for (i = 0; i < par.children.length && i < 30; i++) cands.push(par.children[i]);
     }
+    // Lớp trang trí của topbar có thể nằm trong nhánh khác và bỏ qua hit testing.
+    if (watch) {
+      var layers = document.getElementsByClassName('mobile-topbar-header-background');
+      for (i = 0; i < layers.length; i++) cands.push(layers[i]);
+      for (var child of hd.el.children) cands.push(child);
+    }
     var st = document.elementsFromPoint(w * 0.5, Math.max(1, oldTop + hH - 4));
     for (j = 0; j < st.length; j++) cands.push(st[j]);
     for (i = 0; i < cands.length; i++) {
       var el = cands[i];
-      if (headerContains(hd.el, el) || headerContains(el, hd.el)) continue;
+      if (headerContains(el, hd.el)) continue;
+      var inside = headerContains(hd.el, el);
+      if (inside && !watch) continue;
       if (el.hasAttribute('data-edge-shift') || el.hasAttribute('data-edge-hdbg')) continue;
       var cs = getComputedStyle(el);
-      if ((cs.position !== 'fixed' && cs.position !== 'sticky') || !headerStyleVisible(cs) ||
+      var namedLayer = watch && el.classList.contains('mobile-topbar-header-background');
+      var pinned = cs.position === 'fixed' || (!inside && cs.position === 'sticky');
+      if ((!pinned && !(namedLayer && cs.position === 'absolute')) || !headerStyleVisible(cs) ||
           el.matches(headerOverlays + ',' + headerLandmarks) || transientHeaderUI(el)) continue;
       var r = el.getBoundingClientRect(), top = parseFloat(cs.top);
       if (!isNaN(top) && r.width > w * 0.6 && Math.abs(r.top - oldTop) <= 2 && Math.abs(r.height - hH) <= 4 &&
@@ -1170,7 +1180,35 @@ function runSearchOverlay(I){
   return el;
 }
 
+// Header trong suốt có thể mượn nền của player. Sau khi hai hộp tách ra, giữ màu
+// bề mặt đó nếu nút sáng của trang rơi lên nền sáng.
+var watchToolbarPaint = null;
+function preserveWatchToolbarPaint(hd){
+  if (!hd.watchPlayer || !hd.watchPlayer.shift || watchToolbarPaint || headerPaint(hd.el) ||
+      getComputedStyle(hd.el).backgroundImage !== 'none') return;
+  var surface = climb(hd.watchPlayer.el);
+  if (!surface || Math.max(surface[0], surface[1], surface[2]) > 110) return;
+  var backdrop = headerColor(hd.el);
+  if (!backdrop || Math.min(backdrop[0], backdrop[1], backdrop[2]) < 200) return;
+  var controls = hd.el.querySelectorAll('button, a[href], [role~="button"]');
+  for (var i = 0; i < controls.length && i < 32; i++) {
+    var control = controls[i], r = control.getBoundingClientRect();
+    if (!r.width || !r.height || !headerStyleVisible(getComputedStyle(control))) continue;
+    var icon = control.querySelector('svg path, svg');
+    var cs = getComputedStyle(icon || control);
+    var ink = (icon && rgbOf(cs.fill)) || (icon && rgbOf(cs.stroke)) || rgbOf(cs.color);
+    if (!ink || Math.min(ink[0], ink[1], ink[2]) < 200) continue;
+    var el = hd.el, saved = saveInline(el, 'background-color');
+    el.style.setProperty('background-color', 'rgb(' + surface.slice(0, 3).join(',') + ')', 'important');
+    watchToolbarPaint = {el:el, saved:saved, applied:el.style.getPropertyValue('background-color')};
+    break;
+  }
+}
+
 function releaseShifts(){
+  var paint = watchToolbarPaint;
+  if (paint && ownsInline(paint.el, 'background-color', paint.applied)) restoreInline(paint.el, 'background-color', paint.saved);
+  watchToolbarPaint = null;
   restoreTopMargins(watchPlayerMargins);
   edgeShiftList.forEach(forgetShift);
   edgeShiftList = [];
@@ -1479,12 +1517,15 @@ function runEdge(){
     var delta = activeHeader.delta;
     var watch = mobileWatchPage();
     if (fresh && delta > 0.5) {
-      shiftHeaderBackground(hd, delta);
+      shiftHeaderBackground(hd, delta, watch);
       shiftCompanions(hd, delta);
       if (!watch) shiftVideoHost(hd, I);
     }
     edgeReassert();
-    if (fresh && watch && !search) alignWatchPlayer(hd);
+    if (fresh && watch && !search) {
+      alignWatchPlayer(hd);
+      preserveWatchToolbarPaint(hd);
+    }
     if (fresh) hd.layoutRows();
     if (!fresh && !watch && delta > 0.5) lateVideoHost(hd, I);
     reportHeaderColor(search || hd.el, !search);

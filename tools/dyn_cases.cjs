@@ -1,4 +1,4 @@
-// Ca test động (A-H) cho edge_script.js: trang đổi bố cục SAU khi script đã chạy.
+// Ca test động (A-I) cho edge_script.js: trang đổi bố cục SAU khi script đã chạy.
 // Chạy: node tools/dyn_cases.cjs <repo_root> [script]
 const fs = require('fs'), path = require('path');
 const { createRequire } = require('node:module');
@@ -243,6 +243,61 @@ for (const linked of [true, false]) {
     }}, {name:'search styles released on close', run:async p => ({
       ok:await p.evaluate(() => !document.querySelector('#query').style.cssText && !document.querySelector('#history').style.cssText)
     })}]
+  });
+}
+// Đọc một pixel đã vẽ ở khoảng trống giữa logo và nút tìm kiếm.
+async function toolbarPixel(p) {
+  const png = await p.screenshot({clip:{x:180, y:78, width:1, height:1}});
+  return p.evaluate(async bytes => {
+    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], {type:'image/png'}));
+    const ctx = new OffscreenCanvas(1, 1).getContext('2d');
+    ctx.drawImage(bitmap, 0, 0);
+    return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
+  }, Array.from(png));
+}
+
+for (const variant of ['fixed child', 'separate layer', 'video backdrop', 'light toolbar', 'dark theme']) {
+  const lightToolbar = variant === 'light toolbar';
+  const darkPage = variant === 'dark theme';
+  const layer = '<div class="mobile-topbar-header-background"></div>';
+  const ink = lightToolbar ? '#181818' : 'white';
+  cases.push({id:'I_watch_toolbar_paint_after_home_scroll [' + variant + ']', url:'/',
+    html:page('body{background:' + (darkPage ? '#181818' : 'white') + '}' +
+      'header{position:fixed;inset:0 0 auto;height:48px;background:white;color:#181818;z-index:5}' +
+      'main{position:relative;z-index:1}.watch header{background:transparent;color:' + ink + '}header button{float:right;color:inherit;background:transparent;border:0}' +
+      '.mobile-topbar-header-background{position:fixed;inset:0 0 auto;height:48px;background:#181818;pointer-events:none;z-index:-1}' +
+      '#movie{display:none;position:fixed;inset:48px 0 auto;height:200px;background:#181818}.watch #movie{display:block}video{width:100%;height:100%}',
+      '<header>YouTube<button>Search</button></header><main><button id="open" style="margin-top:900px">Video</button></main><div id="movie"><video></video></div>'),
+    act:async p => {
+      await p.locator('#open').evaluate((button, opts) => {
+        button.scrollIntoView();
+        button.onclick = () => {
+          history.pushState({}, '', '/watch?v=test');
+          if (opts.variant === 'fixed child') document.querySelector('header').insertAdjacentHTML('afterbegin', opts.layer);
+          if (opts.variant === 'separate layer') document.querySelector('main').insertAdjacentHTML('afterbegin', opts.layer);
+          document.body.classList.add('watch');
+          document.dispatchEvent(new Event('yt-navigate-finish'));
+        };
+      }, {variant,layer});
+      await p.locator('#open').click();
+    },
+    checks:[chk.adj('#movie','header'), {name:'painted toolbar and reported status color', run:async p => {
+      const pixel = await toolbarPixel(p);
+      const native = await p.evaluate(() => window.__calls.filter(c => c[0] === 'setTopColor').at(-1)?.slice(1));
+      const value = lightToolbar ? 255 : 24;
+      return {ok:[pixel,native].every(rgb => rgb && rgb.every(c => near(c,value,1))), detail:JSON.stringify({pixel,native})};
+    }}, {name:'home toolbar paint restored after return', run:async p => {
+      const restored = await p.evaluate(() => {
+        const layer = document.querySelector('.mobile-topbar-header-background');
+        if (layer) layer.remove();
+        history.pushState({}, '', '/');
+        document.body.classList.remove('watch');
+        document.dispatchEvent(new Event('yt-navigate-finish'));
+        return !document.querySelector('header').style.backgroundColor && (!layer || !layer.style.top);
+      });
+      const pixel = await toolbarPixel(p);
+      return {ok:restored && pixel.every(c => c === 255), detail:JSON.stringify(pixel)};
+    }}]
   });
 }
 (async () => {
