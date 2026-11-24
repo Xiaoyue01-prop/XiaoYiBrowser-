@@ -45,7 +45,7 @@ import eightbitlab.com.blurview.BlurView
  * BlurView needs a View and a BlurTarget, unlike the old Drawable-only helper.
  * Keep creation/configuration here so UI code does not need to know BlurView's API.
  * All glass surfaces share one adaptive material driven by the active webpage background.
- * Drawable helpers are the first-frame/fallback layer; BlurView is the primary renderer.
+ * A BlurView samples the page in the same window. Dialog sheets tint the window backdrop directly.
  */
 object GlassSystem {
     /** Allows an in-flight origin morph to keep a glass rim aligned with its animated clip radius. */
@@ -53,10 +53,10 @@ object GlassSystem {
         fun setMorphCornerRadiusPx(radiusPx: Float)
     }
 
-    private const val GLASS_BLUR_RADIUS_DP = 10f
-    // The neutral tint sets the surface color. A little of the blurred backdrop still shows through.
-    private const val LIGHT_GLASS_TINT = 0xE0F2F2F2.toInt()
-    private const val DARK_GLASS_TINT = 0xE6222222.toInt()
+    internal const val GLASS_BLUR_RADIUS_DP = 2f
+    // Preserve roughly a third of the backdrop so text and shapes remain visible through the tint.
+    private const val LIGHT_GLASS_TINT = 0xAAF2F2F2.toInt()
+    private const val DARK_GLASS_TINT = 0xA8222222.toInt()
 
     private val blurSurfaces = java.util.WeakHashMap<BlurView, Unit>()
     private val fallbackSurfaces = java.util.WeakHashMap<GradientDrawable, Unit>()
@@ -96,10 +96,6 @@ object GlassSystem {
         if (isDarkPage(color)) Color.argb(42, 255, 255, 255) else Color.argb(22, 0, 0, 0)
 
     fun pageScrimColor(): Int = Color.BLACK
-
-    /** Full-screen TabSwitcher canvas and status-bar fade, kept in the shared material palette. */
-    fun tabSwitcherBackgroundColor(color: Int? = pageBackgroundColor): Int =
-        if (isDarkPage(color)) Color.rgb(23, 24, 29) else Color.rgb(226, 225, 232)
 
     fun tabStatusFadeStartColor(color: Int? = pageBackgroundColor): Int =
         if (isDarkPage(color)) Color.argb(88, 18, 19, 24) else Color.argb(40, 249, 243, 248)
@@ -183,13 +179,6 @@ object GlassSystem {
     // Màu nền trang web mới nhất mà trang báo lên, giữ lại để khôi phục khi hết ghi đè tông.
     private var requestedPageBackground: Int? = null
     private var toneOverride: Int? = null
-
-    /**
-     * Màu đặc tương đương kính mờ: lớp tint chung của app đặt lên [base]. Dùng làm nền che cho thẻ kính
-     * trong lúc BlurView chưa vẽ khung đầu, để không lộ lớp kính trong chạy trước kính mờ.
-     */
-    fun frostedColor(base: Int): Int =
-        androidx.core.graphics.ColorUtils.compositeColors(currentOverlayColor, base)
 
     /**
      * Ghi đè tạm tông kính/chữ của cả app bằng một màu nền (Reader dùng màu giấy đọc: sáng, sepia, tối).
@@ -381,19 +370,15 @@ object GlassSystem {
         TABS_BUTTON(PILL_RADIUS_DP)
     }
 
-    /**
-     * Drawable fallback for surfaces that have not been converted to real blur yet.
-     * Uses the same shared adaptive tint as BlurView.
-     */
+    /** Rounded clipping shape. The child BlurView supplies the tint once. */
     fun create(preset: Preset, density: Float, isNight: Boolean): GradientDrawable =
         create(preset.radiusDp, density, isNight)
 
     fun create(radiusDp: Int, density: Float, isNight: Boolean): GradientDrawable =
-        registerFallbackSurface(
-            GradientDrawable().apply {
-                cornerRadius = radiusDp.coerceAtLeast(0) * density
-            }
-        )
+        roundedDrawable(radiusDp.coerceAtLeast(0) * density, Color.TRANSPARENT)
+
+    /** Dialog sheets see the Activity through their translucent window. */
+    fun createSheetTint(): GradientDrawable = registerFallbackSurface(GradientDrawable())
 
     /** Real blurred material for compact editable fields. */
     fun createInputBlurView(context: Context, target: BlurTarget, density: Float): BlurView {

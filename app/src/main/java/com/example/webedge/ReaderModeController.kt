@@ -641,9 +641,7 @@ internal class ReaderModeController(
         layer.addView(scrim, FrameLayout.LayoutParams(-1, -1))
 
         val card = FrameLayout(activity).apply {
-            // Nền ĐẶC cùng màu với kính mờ (tint chung đặt lên giấy đọc): khung hình nào BlurView chưa kịp vẽ
-            // thì thẻ vẫn trông như kính mờ, không lộ lớp kính trong và thanh công cụ phía dưới.
-            background = frostedBackground()
+            background = roundedDrawable(preset.radiusDp * density, Color.TRANSPARENT)
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
             clipChildren = true
@@ -1106,14 +1104,8 @@ internal class ReaderModeController(
         recolorSurface()
     }
 
-    private fun frostedBackground() = roundedDrawable(
-        GlassSystem.Preset.MENU_CARD.radiusDp * density,
-        GlassSystem.frostedColor(backgroundColor())
-    )
-
     private fun recolorSurface() {
         val state = surface ?: return
-        state.card.background = frostedBackground()
         recolorTree(state.content)
         surfaceDividers.forEach { it.setBackgroundColor(GlassSystem.pageDividerColor()) }
         refreshSettingsSelections()

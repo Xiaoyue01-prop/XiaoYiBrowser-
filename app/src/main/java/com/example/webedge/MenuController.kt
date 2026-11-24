@@ -359,8 +359,7 @@ class MenuController(
 
         val card = MenuCardLayout(activity).apply {
             maxHeightPx = (activity.resources.displayMetrics.heightPixels * Constants.MENU_MAX_HEIGHT_FRACTION).toInt()
-            // Nền kính dự phòng + outline bo góc để menu không thành trong suốt
-            // nếu BlurView chưa render kịp trong lần layout đầu tiên.
+            // Vỏ trong suốt cắt góc cho lớp kính bên trong.
             background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, isNight())
             clipToOutline = true
             clipChildren = true
@@ -392,7 +391,6 @@ class MenuController(
             )
         )
         // Keep the card almost invisible while BlurView draws its first real frame.
-        // This prevents the translucent fallback from flashing before the frosted layer.
         card.alpha = 0.01f
         card.scaleX = 0.8f
         card.scaleY = 0.8f

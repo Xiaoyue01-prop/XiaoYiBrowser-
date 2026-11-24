@@ -424,7 +424,7 @@ class OverlayBrowserActivity : ComponentActivity() {
         val layer = FrameLayout(this).apply { setOnClickListener { dismissMenu() } }
         val card = MenuCardLayout(this).apply {
             maxHeightPx = (resources.displayMetrics.heightPixels * Constants.MENU_MAX_HEIGHT_FRACTION).toInt()
-            // Nền kính dự phòng + outline bo góc để thẻ không trong suốt nếu BlurView chưa render kịp.
+            // Vỏ bo góc cho lớp kính bên trong.
             background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, night)
             clipToOutline = true
             clipChildren = true
