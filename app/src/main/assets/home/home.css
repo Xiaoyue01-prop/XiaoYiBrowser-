@@ -1,3 +1,10 @@
+/* Font đồng hồ: Nunito (OFL) ở độ dày 1000, chỉ giữ chữ số và dấu hai chấm, số 1 dùng kiểu không chân (ss01). */
+@font-face {
+  font-family: "SummitClock";
+  src: url("fonts/clock.ttf") format("truetype");
+  font-weight: 100 1000;
+}
+
 :root {
   color-scheme: light dark;
   --bg: #f6f6f8;
@@ -82,10 +89,13 @@ main {
 }
 
 #clockText, .glyph {
-  font: 900 160px ui-rounded, "Nunito", "Roboto", system-ui, sans-serif;
+  font: 900 160px "SummitClock", ui-rounded, "Roboto", system-ui, sans-serif;
   letter-spacing: -6px;
   text-anchor: middle;
 }
+
+/* Font đã rất dày và tròn nên bỏ viền phụ mà JS thêm (viền làm lấp lỗ số 4, 9). */
+#clockText tspan, .glyph { stroke-width: 0; }
 
 /* Chữ số lăn khi đổi phút: neo ở đầu ký tự để trùng đúng vị trí chữ số thật. */
 .glyph { text-anchor: start; pointer-events: none; }
