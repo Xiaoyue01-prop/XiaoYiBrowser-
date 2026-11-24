@@ -738,6 +738,95 @@
     if (!document.hidden) { renderClock(false); loadWeather(false); }
   });
 
+  // ---- Mèo: đuôi vẫy liên tục, thỉnh thoảng gãi má (luân phiên trái/phải) ----
+  (function catIdle() {
+    var box = $('cat');
+    if (!box || reduced) return;
+    var baseImg = box.querySelector('.cb');
+    var cv = box.querySelector('.cc');
+    var ctx = cv && cv.getContext && cv.getContext('2d');
+    var paws = { L: $('pawL'), R: $('pawR') };
+    if (!ctx || !paws.L || !paws.R) return;
+
+    var W = 900, H = 457, TAIL = 360, STEP = 4;
+    var MAXA = { L: -25, R: 33 };       // góc giơ chân tối đa (độ)
+    var DUR = 2.6;                      // một lần gãi: giơ 0.45s, cọ 1.65s, hạ 0.5s
+    var img = new Image();
+    var clock = 0, last = 0, rafId = 0;
+    var scratchAt = -1, nextAt = 2.2, side = 'L';
+    var onScreen = true;
+
+    function easeOut(x) { return 1 - Math.pow(1 - x, 3); }
+    function amount(t) {
+      if (t < 0.45) return easeOut(t / 0.45);
+      if (t < DUR - 0.5) return 1 + 0.15 * Math.sin((t - 0.45) / (DUR - 0.95) * Math.PI * 8);
+      return 1 - easeOut((t - (DUR - 0.5)) / 0.5);
+    }
+    function setPaw(s, v) { paws[s].style.transform = v ? 'rotate(' + (MAXA[s] * v).toFixed(2) + 'deg)' : ''; }
+
+    function size() {
+      var d = Math.min(window.devicePixelRatio || 1, 2.5);
+      cv.width = Math.round(box.clientWidth * d);
+      cv.height = Math.round(box.clientHeight * d);
+    }
+
+    function draw() {
+      var k = cv.width / W;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      // Đuôi: cắt ảnh thành cột mỏng, cột càng xa gốc đuôi càng lệch dọc nhiều.
+      for (var x = 0; x < TAIL; x += STEP) {
+        var f = (TAIL - x) / TAIL;
+        var dy = 17 * Math.pow(f, 1.6) * Math.sin(clock * 4.2 - f * 2.4);
+        ctx.drawImage(img, x, 0, STEP + 0.8, H, x * k, dy * k, (STEP + 0.8) * k, H * k);
+      }
+      ctx.drawImage(img, TAIL, 0, W - TAIL, H, TAIL * k, 0, (W - TAIL) * k, H * k);
+    }
+
+    function step(now) {
+      rafId = 0;
+      var dt = last ? Math.min((now - last) / 1000, 0.05) : 0;
+      last = now;
+      clock += dt;
+      draw();
+      if (scratchAt < 0 && clock >= nextAt) scratchAt = clock;
+      if (scratchAt >= 0) {
+        var t = clock - scratchAt;
+        if (t > DUR) {
+          setPaw(side, 0);
+          scratchAt = -1;
+          nextAt = clock + 4 + Math.random() * 4;
+          side = side === 'L' ? 'R' : 'L';
+        } else setPaw(side, amount(t));
+      }
+      run();
+    }
+    function run() {
+      if (!rafId && onScreen && !document.hidden) rafId = requestAnimationFrame(step);
+    }
+    function stop() {
+      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+      last = 0;
+    }
+
+    img.onload = function () {
+      size();
+      draw();
+      cv.hidden = false;
+      baseImg.style.visibility = 'hidden';
+      run();
+    };
+    img.src = baseImg.currentSrc || baseImg.src;
+
+    document.addEventListener('visibilitychange', function () { document.hidden ? stop() : run(); });
+    try {
+      new ResizeObserver(function () { if (img.complete) { size(); draw(); } }).observe(box);
+      new IntersectionObserver(function (es) {
+        onScreen = es[es.length - 1].isIntersecting;
+        onScreen ? run() : stop();
+      }).observe(box);
+    } catch (e) {}
+  })();
+
   store.del('summit.w2');
   renderClock(false);
   scheduleTick();

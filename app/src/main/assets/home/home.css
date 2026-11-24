@@ -67,6 +67,13 @@ main {
   pointer-events: none;
 }
 
+/* Mèo = ảnh nền (đuôi vẽ lại bằng canvas) + 2 chân tách riêng để gãi má. */
+#cat { aspect-ratio: 900 / 457; }
+#cat .cb, #cat .cc { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#cat .paw { position: absolute; height: auto; display: block; will-change: transform; }
+#pawL { left: 47.889%; top: 77.899%; width: 18.111%; transform-origin: 3.68% 82.22%; }
+#pawR { left: 84.222%; top: 83.807%; width: 15.556%; transform-origin: 87.14% 93.24%; }
+
 #clock {
   width: min(90vw, 440px);
   height: auto;
