@@ -226,7 +226,7 @@ object AnimationSystem {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun attachPress(touch: View, target: View = touch, scale: Float) {
-        touch.setOnTouchListener { v, ev ->
+        ElasticPull.bind(touch, target, standalone = scale == GLASS_PRESS_SCALE) { v, ev ->
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     // Chỉ áp dụng Spatial Awareness (bung từ điểm chạm) cho hiệu ứng co lại (scale < 1).
@@ -256,7 +256,6 @@ object AnimationSystem {
                     if (scale < 1f) resetPivotLater(target)
                 }
             }
-            false
         }
     }
 

@@ -454,6 +454,7 @@ class ContextMenuController(
             setOnClickListener { dismiss() }
         }
         val panel = FrameLayout(activity).apply {
+            ElasticPull.menu(this)
             background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, density, isNight())
             foreground = GlassSystem.createBorder(GlassSystem.Preset.MENU_CARD.radiusDp, density, isNight())
             clipToOutline = true

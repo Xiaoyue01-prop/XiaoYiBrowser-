@@ -58,6 +58,7 @@ internal class LiveActivityCard(
     val contentViews: List<View> = listOf(bottomGlow, glow, iconView, column, openBtn, dots)
 
     init {
+        ElasticPull.menu(this)
         clipChildren = true
         clipToPadding = true
         background = GlassSystem.create(surface, d, isNight)
@@ -135,7 +136,13 @@ internal class LiveActivityCard(
         })
     }
 
+    private var pageCount = 0
+
+    override fun canScrollVertically(direction: Int): Boolean =
+        if (direction < 0) index > 0 else index + 1 < pageCount
+
     private fun updatePages(count: Int) {
+        pageCount = count
         val showDots = count > 1
         val needsInsetUpdate = showDots != (dots.visibility == View.VISIBLE)
         dots.setPages(count, index)
@@ -239,7 +246,7 @@ internal class LiveActivityCard(
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> { downY = ev.y; swiped = false }
-            MotionEvent.ACTION_MOVE -> if (!swiped && Math.abs(ev.y - downY) > dp(24)) return true
+            MotionEvent.ACTION_MOVE -> if (pageCount > 1 && !swiped && Math.abs(ev.y - downY) > dp(24)) return true
         }
         return false
     }

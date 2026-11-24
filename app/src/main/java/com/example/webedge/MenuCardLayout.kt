@@ -9,6 +9,7 @@ import android.widget.FrameLayout
  * Khung đo theo nội dung trang rồi ép BlurView khớp chính xác toàn bộ kích thước thẻ.
  */
 class MenuCardLayout(context: Context) : FrameLayout(context) {
+    init { ElasticPull.menu(this) }
 
     /** Chiều cao tối đa của thẻ (px); nội dung dài hơn thì danh sách bên trong tự co lại và cuộn. */
     var maxHeightPx: Int = Int.MAX_VALUE

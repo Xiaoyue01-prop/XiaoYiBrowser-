@@ -131,7 +131,7 @@ class OrbMenuController internal constructor(
         mainBtn.setOnClickListener { toggle() }
         // Giữ đúng phản hồi nảy của các nút kính khác, nhưng chuyển quyền scale cho
         // OriginTransitionController khi long-press mở Live Session.
-        mainBtn.setOnTouchListener { v, ev ->
+        ElasticPull.bind(mainBtn, standalone = true, canPull = { !liveHoldConsumed }) { v, ev ->
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     liveHoldConsumed = false
@@ -158,7 +158,6 @@ class OrbMenuController internal constructor(
                     liveHoldConsumed = false
                 }
             }
-            false
         }
         mainBtn.setOnLongClickListener {
             if (!isAvailable()) return@setOnLongClickListener false
