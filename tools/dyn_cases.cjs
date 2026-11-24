@@ -1,4 +1,4 @@
-// Ca test động (A-E) cho edge_script.js: trang đổi bố cục SAU khi script đã chạy.
+// Ca test động (A-H) cho edge_script.js: trang đổi bố cục SAU khi script đã chạy.
 // Chạy: node tools/dyn_cases.cjs <repo_root> [script]
 const fs = require('fs'), path = require('path');
 const { createRequire } = require('node:module');
@@ -157,13 +157,105 @@ cases.push({ id: 'D_search_overlay_visible_at_load',
     '<header>Home</header><section class="sheet"><div class="bar"><a href="#">Back</a><input type="search"></div></section>'),
   checks: [chk.top('.bar', INSET), chk.band()]
 });
+// Dùng origin di động và HTML cục bộ để chạy đúng nhánh điều hướng YouTube.
+const mobileOrigin = 'https://m.youtube.com';
+const watchShell = page(HDR + 'header{height:48px}#shell{position:fixed;inset:0 0 auto;height:264px;pointer-events:none}' +
+  '#shell>*{pointer-events:auto}#frame{position:absolute;inset:48px 0 auto;height:216px}video{display:block;width:100%;height:100%}' +
+  '#old{position:absolute;top:1600px;width:100%;height:300px}body.shorts header{display:none}' +
+  'body.shorts #frame{position:fixed;top:50px;height:calc(100vh - 50px)}',
+  '<div id="shell"><header>Home <button>Search</button></header><div id="frame" hidden><video></video></div></div><video id="old"></video>');
+cases.push({id:'F_watch_SPA_reuses_shell_and_retains_feed_preview', url:'/', html:watchShell, settleMs:0,
+  act: async p => {
+    await p.evaluate(async () => {
+      window.gaps = [];
+      for (const route of ['/watch?v=first', '/shorts/control', '/watch?v=next']) {
+        history.pushState({}, '', route);
+        document.body.classList.toggle('shorts', route.startsWith('/shorts'));
+        document.querySelector('#frame').hidden = false;
+        document.dispatchEvent(new Event('yt-navigate-finish', {bubbles:true}));
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const top = document.querySelector('#frame video').getBoundingClientRect().top;
+        gaps.push(top - (route.startsWith('/shorts') ? 50 : document.querySelector('header').getBoundingClientRect().bottom));
+      }
+    });
+    await p.evaluate(() => document.querySelector('#frame').requestFullscreen());
+    await p.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+    await p.evaluate(() => {
+      document.addEventListener('fullscreenchange', () => {
+        const video = document.querySelector('#frame video').getBoundingClientRect();
+        gaps.push(video.top - document.querySelector('header').getBoundingClientRect().bottom);
+      }, {once:true});
+      return document.exitFullscreen();
+    });
+    await p.waitForFunction(() => gaps.length === 4);
+  }, checks:[{name:'watch player follows header after SPA and fullscreen, Shorts keeps its safe top', run:async p => {
+    const gaps = await p.evaluate(() => window.gaps);
+    return {ok:gaps.every(g => near(g, 0, 1.5)), detail:JSON.stringify(gaps)};
+  }}]
+});
+for (const [label, headerTop, playerTop] of [['shifted header', 0, 48], ['already safe header', 50, 48], ['player at zero', 50, 0]]) {
+  cases.push({id:'G_watch_scrolled_suggestions [' + label + ']',
+    url:'/watch?v=chips', html:page(HDR + 'header{height:48px;top:' + headerTop + 'px}' +
+      '#frame{position:fixed;top:' + playerTop + 'px;width:100%;height:206px;background:#111}video{width:100%;height:100%}' +
+      '#feed{position:absolute;inset:206px 0 0;overflow:auto}#chips{position:sticky;top:' + playerTop + 'px;height:44px;background:white}',
+      '<header>Watch</header><div id="frame"><video></video></div><main id="feed"><p style="height:400px">Description</p>' +
+      '<div id="chips"><button>All</button><button>Related</button></div><article style="height:2000px"></article></main>'),
+    act: async p => { await p.evaluate(() => { document.querySelector('#feed').scrollTop = 800; }); },
+    checks:[chk.adj('#frame','header'), chk.adj('#chips','#frame')]
+  });
+}
+for (const linked of [true, false]) {
+  const historyMarkup = linked
+    ? '<ul id="history" role="listbox"><li role="option">Recent one</li><li role="option">Recent two</li></ul>'
+    : '<div id="history"><div><button>Recent one</button></div><div><button>Recent two</button></div></div>';
+  cases.push({id:'H_compact_search_with_history [' + (linked ? 'linked listbox' : 'unlabelled late panel') + ']',
+    url:'/watch?v=search',
+    html:page(HDR + '#query,#history{position:fixed;inset-inline:0;background:white;z-index:11}' +
+      '#query{top:0;height:48px;display:flex;align-items:center}#query input{flex:1}' +
+      '#history{top:48px;margin:0;padding:0;list-style:none;z-index:12}#history>*{height:44px}',
+      '<header><button id="open">Search</button></header><main>Watch</main><section id="sheet" hidden>' +
+      '<div id="query"><button>Back</button><input type="search"' + (linked ? ' aria-controls="history"' : '') + '><button>Mic</button></div>' +
+      (linked ? historyMarkup : '') + '</section>' +
+      '<script>document.querySelector("#open").onclick=()=>{document.querySelector("#sheet").hidden=false;document.querySelector("input").focus()}</script>'),
+    act:async p => {
+      await p.locator('#open').click();
+      await p.evaluate(async markup => {
+        const row = document.querySelector('#query'), field = row.querySelector('input');
+        if (!document.querySelector('#history')) {
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          document.querySelector('#sheet').insertAdjacentHTML('beforeend', markup);
+        }
+        const historyList = document.querySelector('#history');
+        window.searchFrames = [];
+        for (let n = 0; n < 18; n++) {
+          if (n === 6) historyList.replaceChildren(...Array.from(historyList.children, el => el.cloneNode(true)));
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          const r = field.getBoundingClientRect(), bar = row.getBoundingClientRect();
+          searchFrames.push([bar.top, historyList.getBoundingClientRect().top - bar.bottom,
+            document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === field && document.activeElement === field]);
+        }
+        document.querySelector('#sheet').hidden = true;
+      }, historyMarkup);
+    }, checks:[{name:'search row stays visible and history follows on every frame', run:async p => {
+      const frames = await p.evaluate(() => window.searchFrames);
+      const bad = frames.filter(([top,gap,hit]) => !near(top,INSET,1.5) || !near(gap,0,1.5) || !hit);
+      return {ok:!bad.length, detail:JSON.stringify(bad.slice(0,3))};
+    }}, {name:'search styles released on close', run:async p => ({
+      ok:await p.evaluate(() => !document.querySelector('#query').style.cssText && !document.querySelector('#history').style.cssText)
+    })}]
+  });
+}
 (async () => {
   const browser = await chromium.launch(process.env.EVAL_CHROMIUM ? { executablePath: process.env.EVAL_CHROMIUM } : {});
   let pass = 0;
   for (const tc of cases) {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 800 }, isMobile: true, hasTouch: true });
     const p = await ctx.newPage(); const errs = []; p.on('pageerror', (e) => errs.push(String(e)));
-    await p.setContent(tc.html); await p.evaluate(MOCK); await p.evaluate(TAG);
+    if (tc.url) {
+      await p.route(mobileOrigin + '/**', route => route.fulfill({contentType:'text/html', body:tc.html}));
+      await p.goto(mobileOrigin + tc.url);
+    } else await p.setContent(tc.html);
+    await p.evaluate(MOCK); await p.evaluate(TAG);
     await p.evaluate(template()); await p.waitForTimeout(800);
     if (tc.act) await tc.act(p);
     if (tc.settleMs !== 0) await p.waitForTimeout(tc.settleMs ?? 900);

@@ -607,6 +607,8 @@ function layoutStickyRows(I, header, rows, sample){
       var e = edges[cursor++], upper = e.row;
       sample(e.before + 1, upper.rect);
       sample(e.after + 1, upper.rect);
+      var watchEdge = header && upper === header.watchPlayer;
+      if (watchEdge) sample(e.after - e.delta * 0.5, upper.rect);
       rows.forEach(function(row){
         if (row === header || targets.has(row.el) || row.pin.y >= e.after - 0.5 ||
             (upper.pin && upper.pin.port !== row.pin.port) || headerContains(row.el, upper.el)) return;
@@ -615,6 +617,12 @@ function layoutStickyRows(I, header, rows, sample){
         if (headerContains(upper.el, row.el)) {
           // Hai tầng lồng cùng khung cuộn dùng cùng độ dời. CSS giữ giới hạn của khối cha.
           if (upper.pin) place(row, row.pin.y + e.delta);
+          return;
+        }
+        if (watchEdge) {
+          // Chip có thể ghim trong khung cuộn của danh sách, còn video ghim theo viewport.
+          if (row.width >= upper.width * 0.6 && a.height < upper.rect.height * 0.5 &&
+              row.pin.y >= e.before - 2 && a.top <= e.after + 2) place(row, e.after);
           return;
         }
         if (upper.shiftedFixed) {
@@ -638,8 +646,13 @@ function layoutStickyRows(I, header, rows, sample){
     var placed = base + activeHeader.delta;
     if (header.pin && !headerHasSafePadding(header, I, header.rect.top - base)) placed = Math.max(I, base);
     var bottom = base + header.rect.height;
-    if (!rows.size && !stickyInsets.size && !edgeShiftList.length && emptyStickyLayout && emptyStickyLayout.el === header.el &&
+    if (!rows.size && !stickyInsets.size && !header.watchPlayer && !edgeShiftList.length && emptyStickyLayout && emptyStickyLayout.el === header.el &&
         emptyStickyLayout.bottom === bottom && emptyStickyLayout.placed === placed) return;
+    if (header.watchPlayer) {
+      var player = header.watchPlayer;
+      rows.delete(player.el);
+      edge(player, player.rect.top - Math.max(I, player.shift), player.rect.top);
+    }
     edge(header, base, placed);
     // Đáy trước/sau của từng khối fixed đã dời là hai ngưỡng tương ứng của hàng sticky kế tiếp.
     edgeShiftList.forEach(function(rec){
@@ -873,6 +886,54 @@ function shiftVideoHost(hd, I){
   } catch (e) {}
 }
 
+// Trang watch có thể giữ video xem trước của Home và dùng chung một vỏ ghim cho header/player.
+function mobileWatchPage(){
+  return youtubePage && location.pathname === '/watch' &&
+    (location.hostname === 'm.youtube.com' || !!document.querySelector('ytm-app'));
+}
+var watchPlayerMargins = new Map();
+function alignWatchPlayer(hd){
+  var bottom = hd.el.getBoundingClientRect().bottom, w = window.innerWidth;
+  var videos = document.getElementsByTagName('video'), video = null, area = 0;
+  for (var i = 0; i < videos.length; i++) {
+    var r = videos[i].getBoundingClientRect();
+    var width = Math.min(w, r.right) - Math.max(0, r.left);
+    if (r.top < -2 || r.top > bottom + 2 || r.bottom <= bottom + 16 || width < w * 0.6 ||
+        !headerStyleVisible(getComputedStyle(videos[i]))) continue;
+    if (videos[i].checkVisibility && !videos[i].checkVisibility({checkOpacity:true, checkVisibilityCSS:true})) continue;
+    var visibleArea = width * (Math.min(r.bottom, window.innerHeight) - r.top);
+    if (visibleArea > area) { area = visibleArea; video = videos[i]; }
+  }
+  if (!video || area < 20000) return;
+  var vr = video.getBoundingClientRect(), box = video, pinned = false;
+  for (var p = video; p && p !== document.body && p !== document.documentElement; p = headerParent(p)) {
+    var position = getComputedStyle(p).position;
+    if (position === 'fixed' || position === 'sticky') pinned = true;
+    if (headerContains(p, hd.el)) break;
+    var rect = p.getBoundingClientRect();
+    if (Math.abs(rect.top - vr.top) <= 3 && Math.abs(rect.bottom - vr.bottom) <= 8 && rect.width >= vr.width - 2) box = p;
+    if (position === 'fixed') break;
+  }
+  // Trong luồng, chỉ chừa chỗ ở đầu trang để video vẫn có thể cuộn khỏi màn hình.
+  if (!pinned && window.scrollY > 2) return;
+  var br = box.getBoundingClientRect(), overlap = bottom - br.top;
+  if (overlap > 0.5 && !box.hasAttribute('data-edge-shift') && !watchPlayerMargins.has(box)) {
+    var cs = getComputedStyle(box), top = insetLength(cs.top, window.innerHeight);
+    if (/^(fixed|absolute|sticky)$/.test(cs.position) && !isNaN(top)) edgeShiftTop(box, top, overlap);
+    else {
+      offsetTopMargin(watchPlayerMargins, box, (parseFloat(cs.marginTop) || 0) + overlap);
+      watchPlayerMargins.get(box).shift = box.getBoundingClientRect().top - br.top;
+    }
+    br = box.getBoundingClientRect();
+  }
+  if (Math.abs(br.top - bottom) > 2) return;
+  var margin = watchPlayerMargins.get(box), shift = margin ? margin.shift : 0;
+  edgeShiftList.forEach(function(rec){
+    if (headerContains(rec.el, box)) shift += rec.delta;
+  });
+  hd.watchPlayer = {el:box, rect:br, width:br.width, shift:shift};
+}
+
 // Player có thể xuất hiện/được dựng lại SAU lúc header được dò (trang xem video tải khi đã đăng nhập, chuyển video
 // kiểu SPA, YouTube thay khối player). Kiểm tra lại định kỳ (tối đa 4 lần/giây), chỉ làm việc khi có video lớn
 // đang bị header đè. Thử cách cũ (đổi top của khối sticky/fixed) trước; nếu sau đó vẫn bị đè thì dùng cách dự phòng
@@ -981,6 +1042,21 @@ var searchFieldSelector = 'input[type="search"],input[role="searchbox"],input[na
   'input[name="search"],input[enterkeyhint="search"],[role~="search"] input,ytm-search-box input,input.searchbox-input';
 var youtubePage = /(^|\.)youtube\.com$/i.test(location.hostname);
 
+var historyListSelector = '[role~="listbox"],[role~="option"],ul,ol,ytm-search-suggestions-renderer,' +
+  'ytm-search-suggestion-renderer,.searchbox-dropdown';
+function searchHistoryAnchor(hit, field, linked){
+  var list = linked || (hit && hit.closest(historyListSelector));
+  for (var el = list || hit; el && el !== document.body && !headerContains(el, field); el = headerParent(el)) {
+    if (el.matches('ul,ol,[role~="listbox"]')) list = el;
+    if (!/^(absolute|fixed|sticky)$/.test(getComputedStyle(el).position)) continue;
+    if (list) return el;
+    // Một số giao diện di động dùng các div và nút thay cho listbox.
+    var r = el.getBoundingClientRect();
+    if (youtubePage && r.top > 0 && r.width >= window.innerWidth * 0.6 && r.height <= window.innerHeight &&
+        el.querySelector('button,a[href],[role~="button"]') && !el.querySelector('video')) return el;
+  }
+  return list && !headerContains(list, field) ? list : null;
+}
 function foregroundSearchField(field){
   if (!field.isConnected || field.disabled || field.closest('[hidden],[inert],[aria-hidden="true"]') ||
       !headerStyleVisible(getComputedStyle(field))) return null;
@@ -988,7 +1064,10 @@ function foregroundSearchField(field){
   if (r.width < 24 || r.height < 8 || r.bottom <= 0 || r.left >= window.innerWidth || r.right <= 0) return null;
   var x = (Math.max(0, r.left) + Math.min(window.innerWidth, r.right)) / 2;
   var y = (Math.max(0, r.top) + Math.min(window.innerHeight, r.bottom)) / 2;
-  return document.elementFromPoint(x, y) === field ? r : null;
+  var hit = document.elementFromPoint(x, y);
+  if (hit === field) return r;
+  // Lịch sử có thể đang phủ lên chính ô vừa nhận focus trước khi hai hàng được căn lại.
+  return youtubePage && document.activeElement === field && searchHistoryAnchor(hit, field) ? r : null;
 }
 
 function findSearchOverlay(I){
@@ -1021,9 +1100,31 @@ function findSearchOverlay(I){
   return null;
 }
 
+function fitSearchHistory(s){
+  restoreTopMargins(s.historyMargins);
+  var row = s.el.getBoundingClientRect();
+  var x = (Math.max(0, row.left) + Math.min(window.innerWidth, row.right)) / 2;
+  var linked = document.getElementById(s.field.getAttribute('aria-controls') || '');
+  var anchor = linked && searchHistoryAnchor(linked, s.field, linked);
+  if (!anchor) {
+    for (var y of [row.bottom + 1, row.bottom - s.inset + 1]) {
+      var hit = document.elementFromPoint(x, Math.max(0, Math.min(window.innerHeight - 1, y)));
+      anchor = searchHistoryAnchor(hit, s.field);
+      if (anchor) break;
+    }
+  }
+  if (!anchor) return;
+  var rect = anchor.getBoundingClientRect(), overlap = row.bottom - rect.top;
+  if (overlap > 0.5 && overlap <= s.inset + 3 && rect.width >= row.width * 0.6 &&
+      rect.bottom > row.top && headerStyleVisible(getComputedStyle(anchor))) {
+    offsetTopMargin(s.historyMargins, anchor, (parseFloat(getComputedStyle(anchor).marginTop) || 0) + overlap);
+  }
+}
+
 function releaseSearchOverlay(){
   if (!searchOverlay) return;
   var s = searchOverlay;
+  restoreTopMargins(s.historyMargins);
   if (s.property && ownsInline(s.el, s.property, s.applied)) restoreInline(s.el, s.property, s.saved);
   searchOverlay = null;
   searchCheckedAt = 0;
@@ -1033,29 +1134,44 @@ function runSearchOverlay(I){
   if (searchOverlay && (searchOverlay.inset !== I || !foregroundSearchField(searchOverlay.field) ||
       !headerContains(searchOverlay.el, searchOverlay.field) || (searchOverlay.property &&
       !ownsInline(searchOverlay.el, searchOverlay.property, searchOverlay.applied)))) releaseSearchOverlay();
-  if (searchOverlay) return searchOverlay.el;
-  var now = Date.now();
-  if (now - searchCheckedAt < 180) return null;
-  var search = findSearchOverlay(I);
-  if (!search) { searchCheckedAt = now; return null; }
-  releaseTopOverlay();
-  var el = search.el, r = el.getBoundingClientRect(), cs = getComputedStyle(el);
-  searchOverlay = {el: el, field: search.field, panel: search.panel, inset: I};
-  if (r.top >= I - 0.5 || headerHasSafePadding({el: el, rect: r, cs: cs}, I)) return el;
+  if (!searchOverlay) {
+    var now = Date.now();
+    if (now - searchCheckedAt < 180) return null;
+    var search = findSearchOverlay(I);
+    if (!search) { searchCheckedAt = now; return null; }
+    releaseTopOverlay();
+    searchOverlay = {el:search.el, field:search.field, panel:search.panel, inset:I,
+      dirty:true, historyMargins:new Map()};
+  }
 
-  // Chỉ dời hàng nhập liệu. Lớp phủ và cách website xử lý focus/đóng vẫn hoạt động bình thường.
-  var top = insetLength(cs.top, window.innerHeight);
-  var positioned = /^(absolute|fixed|sticky)$/.test(cs.position) && !isNaN(top);
-  var property = positioned ? 'top' : 'margin-top';
-  var base = positioned ? top : parseFloat(cs.marginTop) || 0;
-  searchOverlay.property = property;
-  searchOverlay.saved = saveInline(el, property);
-  el.style.setProperty(property, (base + I - r.top) + 'px', 'important');
-  searchOverlay.applied = el.style.getPropertyValue(property);
+  var s = searchOverlay, el = s.el;
+  if (!s.dirty) return el;
+  s.dirty = false;
+  var r = el.getBoundingClientRect();
+  // Trang có thể đổi neo CSS khi lịch sử tới. Đo từ bố cục của trang để không cộng dồn.
+  if (s.property && Math.abs(r.top - I) > 0.5) {
+    restoreInline(el, s.property, s.saved);
+    s.property = null;
+    r = el.getBoundingClientRect();
+  }
+  if (!s.property && r.top < I - 0.5) {
+    var cs = getComputedStyle(el);
+    if (!headerHasSafePadding({el:el, rect:r, cs:cs}, I)) {
+      var sticky = cs.position === 'sticky' && cs.top !== 'auto';
+      var property = sticky ? 'top' : 'margin-top';
+      var base = sticky ? insetLength(cs.top, window.innerHeight) : parseFloat(cs.marginTop) || 0;
+      s.property = property;
+      s.saved = saveInline(el, property);
+      el.style.setProperty(property, (base + I - r.top) + 'px', 'important');
+      s.applied = el.style.getPropertyValue(property);
+    }
+  }
+  if (youtubePage || s.field.hasAttribute('aria-controls')) fitSearchHistory(s);
   return el;
 }
 
 function releaseShifts(){
+  restoreTopMargins(watchPlayerMargins);
   edgeShiftList.forEach(forgetShift);
   edgeShiftList = [];
   window.__edgeHdBg = null;
@@ -1306,6 +1422,13 @@ function runEdge(){
     return;
   }
   try {
+    var search = runSearchOverlay(I);
+    var searchPanel = search && searchOverlay.panel;
+    if (search && !searchPanel) {
+      if (mastheadMargins.size) releaseMastheadActions();
+      reportHeaderColor(search, false);
+      return;
+    }
     if (headerStateDirty) {
       headerStateDirty = false;
       if (activeHeader && activeHeader.sticky && activeHeader.applied) {
@@ -1317,13 +1440,6 @@ function runEdge(){
       layoutInvalidated = false;
       syncStickyInsets(null);
       releaseShifts();
-    }
-    var search = runSearchOverlay(I);
-    var searchPanel = search && searchOverlay.panel;
-    if (search && !searchPanel) {
-      if (mastheadMargins.size) releaseMastheadActions();
-      reportHeaderColor(search, false);
-      return;
     }
     var current = null;
     if (activeHeader) {
@@ -1361,14 +1477,16 @@ function runEdge(){
     alignHeader(hd, I);
     if (fitMasthead) fitMastheadActions(I);
     var delta = activeHeader.delta;
+    var watch = mobileWatchPage();
     if (fresh && delta > 0.5) {
       shiftHeaderBackground(hd, delta);
       shiftCompanions(hd, delta);
-      shiftVideoHost(hd, I);
+      if (!watch) shiftVideoHost(hd, I);
     }
     edgeReassert();
+    if (fresh && watch && !search) alignWatchPlayer(hd);
     if (fresh) hd.layoutRows();
-    if (!fresh && delta > 0.5) lateVideoHost(hd, I);
+    if (!fresh && !watch && delta > 0.5) lateVideoHost(hd, I);
     reportHeaderColor(search || hd.el, !search);
   } catch (e) { report('none'); }
 }
@@ -1892,6 +2010,7 @@ var layoutInvalidated = false;
 function invalidateHeader(){
   mastheadDirty = true;
   if (topOverlay) topOverlay.dirty = true;
+  if (searchOverlay) searchOverlay.dirty = true;
   layoutInvalidated = true;
   hdCache = null;
   searchCheckedAt = 0;
@@ -1920,6 +2039,7 @@ window.__edgePageBgRun = function(){ runPageBackground(); };
 window.__edgeForceTop = function(){ last = ''; invalidateHeader(); run(); drainSelf(); };
 window.__edgeLift = function(){ runLift(); };
 window.addEventListener('scroll', function(){
+  if (!searchOverlay && mobileWatchPage()) hdCache = null;
   sched();
   if (window.__edgeBottom > 0) schedLift();
   schedPageBackground(true);
@@ -1989,13 +2109,30 @@ window.addEventListener('pageshow', viewportChanged);
 document.addEventListener('focusin', function(event){
   if (!window.__edgeMode || !event.target.matches || !event.target.matches(searchFieldSelector)) return;
   searchCheckedAt = 0;
-  sched();
+  if (youtubePage && !inFs()) refreshLayout(true);
+  else sched();
 }, {passive: true});
-if (youtubePage) document.addEventListener('click', function(){
-  if (!window.__edgeMode) return;
-  searchCheckedAt = 0;
-  sched();
-}, {capture: true, passive: true});
+if (youtubePage) {
+  function watchNavigation(){
+    if (window.__edgeMode && !inFs()) {
+      releaseSearchOverlay();
+      refreshLayout(true);
+    }
+  }
+  document.addEventListener('yt-navigate-finish', watchNavigation);
+  window.addEventListener('popstate', watchNavigation);
+  function watchMediaChanged(event){
+    if (event.target.localName === 'video' && window.__edgeMode && mobileWatchPage() && !inFs()) refreshLayout(false);
+  }
+  document.addEventListener('loadedmetadata', watchMediaChanged, true);
+  document.addEventListener('resize', watchMediaChanged, true);
+  document.addEventListener('click', function(){
+    if (!window.__edgeMode) return;
+    searchCheckedAt = 0;
+    sched();
+  }, {capture:true, passive:true});
+}
+
 function onHeaderMotionEnd(event){
   if (!window.__edgeMode || inFs()) return;
   var el = event.target;
@@ -2061,7 +2198,11 @@ try {
     }
     if (treeChanged) {
       if (watchedHeader && !watchedHeader.isConnected) watchHeaderState(null);
-      refreshLayout(false);
+      var searchParent = searchOverlay && (searchOverlay.panel || headerParent(searchOverlay.el));
+      var searchChanged = youtubePage && searchParent && records.some(function(record){
+        return record.type === 'childList' && headerContains(searchParent, record.target);
+      });
+      refreshLayout(searchChanged);
       return;
     }
     // Đổi class/style ngay trên html/body (bật tắt chế độ tối...) mới làm nền trang đổi: báo lại màu ngay,
