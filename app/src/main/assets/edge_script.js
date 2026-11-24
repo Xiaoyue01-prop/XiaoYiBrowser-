@@ -1534,6 +1534,17 @@ function runEdge(){
 
 function run(){
   if (inFs()) return;
+  if (location.origin === 'https://appassets.androidplatform.net' &&
+      location.pathname === '/assets/home/index.html') {
+    // The local page owns its sticky switch and consumes the insets directly.
+    var style = document.documentElement.style;
+    var top = (window.__edgeMode ? topReserveCss() : 0) + 'px';
+    var bottom = ((window.__edgeScrollBottom || 0) / viewportScale()) + 'px';
+    if (style.getPropertyValue('--home-top') !== top) style.setProperty('--home-top', top);
+    if (style.getPropertyValue('--home-bottom') !== bottom) style.setProperty('--home-bottom', bottom);
+    runTop();
+    return;
+  }
   syncRootReserve();
   if (window.__edgeMode) { runEdge(); }
   else {

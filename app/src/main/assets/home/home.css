@@ -27,7 +27,7 @@
 }
 
 html, body {
-  height: 100%;
+  min-height: 100%;
   margin: 0;
   background: var(--bg);
   color: var(--fg);
@@ -36,7 +36,7 @@ html, body {
 body {
   font-family: system-ui, "Roboto", sans-serif;
   -webkit-tap-highlight-color: transparent;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 button {
@@ -49,14 +49,14 @@ button {
   text-align: left;
 }
 
-main {
-  min-height: 100%;
+#homePanel {
+  min-height: calc(100svh - var(--home-top) - 78px - var(--home-bottom));
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 16px 20px 6vh;
+  padding: 10px 20px 24px;
 }
 
 #cat, #clock, #greeting {
@@ -314,4 +314,106 @@ main {
 
 @media (prefers-reduced-motion: reduce) {
   #scene *, #scene { animation: none !important; transition: none !important; }
+}
+
+/* The native edge script supplies the part of the WebView covered by system bars. */
+:root {
+  --home-top: env(safe-area-inset-top, 0px);
+  --home-bottom: env(safe-area-inset-bottom, 0px);
+  --glass: rgba(248, 248, 252, .76);
+  --glass-edge: rgba(255, 255, 255, .78);
+  --thumb: rgba(255, 255, 255, .94);
+  --shadow: rgba(34, 30, 52, .11);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --glass: rgba(44, 44, 51, .78);
+    --glass-edge: rgba(255, 255, 255, .13);
+    --thumb: rgba(255, 255, 255, .16);
+    --shadow: rgba(0, 0, 0, .28);
+  }
+}
+.section-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: grid;
+  justify-content: center;
+  padding: calc(var(--home-top) + 8px) 0 12px;
+  pointer-events: none;
+  background: linear-gradient(var(--bg) 0 var(--home-top), transparent);
+}
+.section-switch, #refreshNews, .news-story {
+  border: 1px solid var(--glass-edge);
+  background: var(--glass);
+  backdrop-filter: blur(18px) saturate(145%);
+  box-shadow: 0 3px 14px var(--shadow), inset 0 1px 0 var(--glass-edge);
+}
+.section-switch {
+  position: relative;
+  isolation: isolate;
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+  border-radius: 99px;
+}
+.section-switch::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 3px auto 3px 3px;
+  width: calc(50% - 3px);
+  border-radius: inherit;
+  background: var(--thumb);
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 1px 4px var(--shadow);
+  transition: transform .32s cubic-bezier(.22,.8,.25,1);
+}
+.section-switch button {
+  min-width: 96px;
+  min-height: 40px;
+  padding: 4px 14px;
+  border-radius: 99px;
+  text-align: center;
+  color: var(--sub);
+  font-size: .94rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.section-switch button[aria-selected="true"] { color: var(--fg); }
+#sections { position: relative; overflow: clip; padding-bottom: var(--home-bottom); }
+#homePanel, #newsPanel {
+  box-sizing: border-box;
+  width: 100%;
+  transition: transform .34s cubic-bezier(.22,.8,.25,1);
+}
+#sections > [inert] { position: absolute; top: 0; left: 0; pointer-events: none; }
+#newsPanel { transform: translateX(100%); padding: 12px 20px 28px; }
+body.show-news #newsPanel { transform: translateX(0); }
+body.show-news #homePanel { transform: translateX(-100%); }
+body.show-news .section-switch::before { transform: translateX(100%); }
+.news-column { max-width: 580px; margin: auto; }
+.news-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.news-heading h1 { margin: 0; font-size: clamp(1.5rem, 6vw, 2rem); letter-spacing: -.03em; }
+#refreshNews { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; cursor: pointer; }
+#refreshNews:disabled { opacity: .55; }
+#newsStatus { margin: 0 0 14px; color: var(--sub); font-size: .9rem; }
+#newsStatus:empty { display: none; }
+#newsList { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.news-story {
+  display: block; border-radius: 20px; padding: 15px 18px; color: var(--fg);
+  text-decoration: none; overflow-wrap: anywhere;
+  background: linear-gradient(120deg, rgba(163,145,230,.08), transparent 65%), var(--glass);
+}
+#newsList li:first-child .news-story {
+  padding-block: 20px;
+  background: linear-gradient(130deg, rgba(163,145,230,.22), rgba(82,154,230,.08)), var(--glass);
+}
+.news-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; color: var(--sub); font-size: .8rem; }
+.news-meta strong { color: var(--fg); font-weight: 650; }
+.news-story h2 { margin: 7px 0 0; font-size: 1.05rem; line-height: 1.4; font-weight: 650; }
+#newsList li:first-child h2 { font-size: 1.25rem; }
+.news-story:active { opacity: .82; }
+@media (prefers-reduced-motion: reduce) {
+  #homePanel, #newsPanel, .section-switch::before { transition: none; }
 }
