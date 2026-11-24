@@ -176,13 +176,8 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(view, MEDIA_JS, setOf("*"))
             WebViewCompat.addDocumentStartJavaScript(view, LONG_PRESS_JS, setOf("*"))
-            // YouTube-only player-response filtering must run before Innertube requests begin.
-            WebViewCompat.addDocumentStartJavaScript(
-                view,
-                YouTubeAdBlocker.documentStartScript(host.youtubeAdBlockEnabled),
-                setOf("*")
-            )
         }
+        YouTubeAdBlocker.updateDocumentStart(view, host.youtubeAdBlockEnabled)
         view.setFindListener { active, total, _ ->
             if (view === host.web) host.setFindCount(if (total == 0) "0" else "${active + 1}/$total")
         }
