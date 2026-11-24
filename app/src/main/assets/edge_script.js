@@ -31,6 +31,31 @@ function viewportZoomed(){
   return vp && vp.width < document.documentElement.clientWidth * 0.94;
 }
 
+// Summit owns this document. Its header, background and bottom inset are known without hit-testing the feed.
+if (location.origin === 'https://appassets.androidplatform.net' && location.pathname === '/assets/home/index.html') {
+  function updateHomeChrome(){
+    var root = document.documentElement;
+    if (!root) return;
+    var top = (window.__edgeMode ? topReserveCss() : 0) + 'px';
+    var bottom = ((window.__edgeScrollBottom || 0) / viewportScale()) + 'px';
+    if (root.style.getPropertyValue('--home-top') !== top) root.style.setProperty('--home-top', top);
+    if (root.style.getPropertyValue('--home-bottom') !== bottom) root.style.setProperty('--home-bottom', bottom);
+    var color = rgbOf(getComputedStyle(document.body || root).backgroundColor);
+    report(color ? color.slice(0, 3).join(',') : 'none');
+    reportPageBackground(color);
+  }
+  window.__edgeRun = window.__edgePageBgRun = updateHomeChrome;
+  window.__edgeForceTop = function(){ last = ''; lastPageBg = ''; updateHomeChrome(); };
+  installPullGuard();
+  window.addEventListener('pageshow', updateHomeChrome);
+  window.addEventListener('load', updateHomeChrome, {once:true});
+  window.addEventListener('resize', updateHomeChrome);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', updateHomeChrome);
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateHomeChrome);
+  updateHomeChrome();
+  return;
+}
+
 var rootReserveStyle = null, rootReserveDirty = true, rootReserveKey = '';
 function syncRootReserve(){
   var root = document.documentElement;
@@ -1534,17 +1559,6 @@ function runEdge(){
 
 function run(){
   if (inFs()) return;
-  if (location.origin === 'https://appassets.androidplatform.net' &&
-      location.pathname === '/assets/home/index.html') {
-    // The local page owns its sticky switch and consumes the insets directly.
-    var style = document.documentElement.style;
-    var top = (window.__edgeMode ? topReserveCss() : 0) + 'px';
-    var bottom = ((window.__edgeScrollBottom || 0) / viewportScale()) + 'px';
-    if (style.getPropertyValue('--home-top') !== top) style.setProperty('--home-top', top);
-    if (style.getPropertyValue('--home-bottom') !== bottom) style.setProperty('--home-bottom', bottom);
-    runTop();
-    return;
-  }
   syncRootReserve();
   if (window.__edgeMode) { runEdge(); }
   else {
@@ -2111,7 +2125,7 @@ window.addEventListener('scrollend', function(){
 
 // Kéo-để-tải-lại của app chỉ nên chạy khi cử chỉ thuộc về trang cuộn gốc: báo về nếu chạm bắt đầu trong khung cuộn
 // đã cuộn xuống, trên trình phát video, hoặc nếu trang tự preventDefault khi kéo.
-(function(){
+function installPullGuard(){
   var guard = -1;
   function report(b){
     if (guard === b) return;
@@ -2148,7 +2162,8 @@ window.addEventListener('scrollend', function(){
   window.addEventListener('touchmove', function(e){
     if (e.defaultPrevented) report(1);
   }, {passive: true});
-})();
+}
+installPullGuard();
 window.addEventListener('resize', viewportChanged);
 if (window.visualViewport) window.visualViewport.addEventListener('resize', viewportChanged);
 window.addEventListener('load', function(event){

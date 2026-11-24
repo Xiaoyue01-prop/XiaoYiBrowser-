@@ -18,6 +18,7 @@
   let busy = false;
   let showingNews = false;
   const positions = { home: 0, news: 0 };
+  const track = document.querySelector('.section-switch');
 
   function articleLink(value) {
     try {
@@ -124,20 +125,73 @@
     newsTab.setAttribute('aria-selected', String(toNews));
     homeTab.tabIndex = toNews ? -1 : 0;
     newsTab.tabIndex = toNews ? 0 : -1;
-    if (toNews) loadNews(false);
+    if (toNews) {
+      // Let the selected thumb and the incoming panel paint before building a cold feed.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (showingNews) loadNews(false);
+      }));
+    }
     window.scrollTo(0, positions[toNews ? 'news' : 'home']);
     history.replaceState({ ...history.state, summitNews: toNews }, '');
   }
 
+  // Match SegmentedGlassThumb: preview under the finger, commit on release, cancel on a vertical pan.
+  let gesture = null;
+  let dropTimer;
+  function follow(x) {
+    const cell = gesture.cell;
+    const local = x - gesture.left;
+    const inset = Math.max(0, cell * .1 - 14);
+    const offset = Math.min(cell - inset, Math.max(inset, local - cell / 2));
+    track.style.setProperty('--thumb-x', offset + 'px');
+    track.dataset.hover = local >= cell ? 'news' : 'home';
+  }
+
+  track.addEventListener('pointerdown', event => {
+    if (!event.isPrimary || event.button !== 0 || gesture) return;
+    const rect = track.getBoundingClientRect();
+    gesture = { id: event.pointerId, left: rect.left + 4, cell: (rect.width - 8) / 2, start: performance.now() };
+    track.setPointerCapture(event.pointerId);
+    clearTimeout(dropTimer);
+    track.classList.add('lifted');
+    follow(event.clientX);
+  });
+  track.addEventListener('pointermove', event => {
+    if (gesture?.id !== event.pointerId) return;
+    if (performance.now() - gesture.start >= 140) track.classList.add('tracking');
+    follow(event.clientX);
+  });
+  function finish(event) {
+    if (gesture?.id !== event.pointerId) return;
+    if (event.type === 'pointerup') {
+      follow(event.clientX);
+      const toNews = track.dataset.hover === 'news';
+      select(toNews);
+      (toNews ? newsTab : homeTab).focus({ preventScroll: true });
+    }
+    const remaining = Math.max(0, 260 - (performance.now() - gesture.start));
+    gesture = null;
+    track.classList.remove('tracking');
+    track.style.removeProperty('--thumb-x');
+    delete track.dataset.hover;
+    dropTimer = setTimeout(() => track.classList.remove('lifted'), remaining);
+  }
+  track.addEventListener('pointerup', finish);
+  track.addEventListener('pointercancel', finish);
+  track.addEventListener('lostpointercapture', finish);
   homeTab.addEventListener('click', () => select(false));
   newsTab.addEventListener('click', () => select(true));
   refresh.addEventListener('click', () => loadNews(true));
-  document.querySelector('.section-switch').addEventListener('keydown', event => {
+  track.addEventListener('keydown', event => {
     if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
     const toNews = event.key === 'Home' ? false : event.key === 'End' ? true : !showingNews;
     select(toNews);
     (toNews ? newsTab : homeTab).focus({ preventScroll: true });
   });
-  if (history.state?.summitNews) select(true);
+  if (history.state?.summitNews) {
+    // Rebuild the previous feed before the browser restores its saved scroll position.
+    restoreNews();
+    select(true);
+  }
 })();

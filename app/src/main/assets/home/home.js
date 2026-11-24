@@ -749,6 +749,7 @@
 
   // ---- Mèo: đuôi vẫy liên tục, thỉnh thoảng gãi má (luân phiên trái/phải) ----
   (function catIdle() {
+    var panel = $('homePanel');
     var box = $('cat');
     if (!box || reduced) return;
     var baseImg = box.querySelector('.cb');
@@ -810,7 +811,7 @@
       run();
     }
     function run() {
-      if (!rafId && onScreen && !document.hidden) rafId = requestAnimationFrame(step);
+      if (!rafId && onScreen && !panel.inert && !document.hidden && img.naturalWidth) rafId = requestAnimationFrame(step);
     }
     function stop() {
       if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
@@ -826,6 +827,9 @@
     };
     img.src = baseImg.currentSrc || baseImg.src;
 
+    // Freeze the canvas on its last frame as soon as the home pane starts sliding away.
+    new MutationObserver(function () { panel.inert ? stop() : run(); })
+      .observe(panel, { attributes: true, attributeFilter: ['inert'] });
     document.addEventListener('visibilitychange', function () { document.hidden ? stop() : run(); });
     try {
       new ResizeObserver(function () { if (img.complete) { size(); draw(); } }).observe(box);
