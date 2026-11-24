@@ -13,6 +13,8 @@ internal interface BrowserJavascriptBridgeHost {
     fun onBridgePipRequest(owner: WebView): Boolean
     fun onBridgeLongPress(owner: WebView, linkUrl: String, imageUrl: String): Boolean
     fun onBridgePullGuard(owner: WebView, blocked: Boolean)
+    /** kind: 0 = chạm xuống, 1 = đổi ô khi kéo, 2 = nhả tay. Chỉ trang chủ của Summit được rung. */
+    fun onBridgeHaptic(owner: WebView, kind: Int)
 }
 
 /**
@@ -46,6 +48,10 @@ internal class BrowserJavascriptBridge(
 
     fun pullGuard(blocked: Boolean) {
         dispatch { host, owner -> host.onBridgePullGuard(owner, blocked) }
+    }
+
+    fun haptic(kind: Int) {
+        dispatch { host, owner -> host.onBridgeHaptic(owner, kind) }
     }
 
     fun mediaState(

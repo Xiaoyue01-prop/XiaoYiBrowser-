@@ -41,7 +41,9 @@ if (location.origin === 'https://appassets.androidplatform.net' && location.path
     if (root.style.getPropertyValue('--home-top') !== top) root.style.setProperty('--home-top', top);
     if (root.style.getPropertyValue('--home-bottom') !== bottom) root.style.setProperty('--home-bottom', bottom);
     var color = rgbOf(getComputedStyle(document.body || root).backgroundColor);
-    report(color ? color.slice(0, 3).join(',') : 'none');
+    // Trang chủ không có thanh menu cố định ở đỉnh: nội dung phải chạy dưới status bar (tràn viền),
+    // nên không báo màu nền thành "màu thanh trên" (app sẽ tô đặc status bar thành dải trắng).
+    report('none');
     reportPageBackground(color);
   }
   window.__edgeRun = window.__edgePageBgRun = updateHomeChrome;

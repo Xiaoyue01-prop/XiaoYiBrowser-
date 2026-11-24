@@ -347,7 +347,8 @@ button {
   justify-content: center;
   padding: calc(var(--home-top) + 8px) 0 12px;
   pointer-events: none;
-  background: linear-gradient(var(--bg) 0 var(--home-top), transparent);
+  /* Tràn viền: không tô nền đặc dưới status bar, nội dung cuộn xuyên qua; lớp mờ native lo phần dễ đọc. */
+  background: none;
 }
 /* Privacy Dashboard's permission control: 48px track, 4px inset, 40px thumb. */
 .section-switch {
@@ -368,9 +369,6 @@ button {
 }
 /* Frost the small track once. Both halves and the moving thumb share that backdrop. */
 @supports (backdrop-filter: blur(1px)) {
-  .section-bar {
-    background: linear-gradient(var(--bg) var(--home-top), transparent calc(var(--home-top) + 8px));
-  }
   .section-switch {
     background: rgba(235, 235, 243, .54);
     backdrop-filter: blur(10px) saturate(1.25);

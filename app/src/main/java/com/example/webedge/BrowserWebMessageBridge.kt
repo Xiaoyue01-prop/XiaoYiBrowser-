@@ -34,6 +34,8 @@ window.EdgeBridge = {
   setPageBackground: function(r, g, b){ s('pb', [r, g, b]); },
   clearPageBackground: function(){ s('cpb', []); },
   pullGuard: function(b){ s('pg', [!!b]); },
+  // 0 = chạm xuống, 1 = đổi ô, 2 = nhả tay. Native chỉ nhận từ trang chủ Summit.
+  haptic: function(k){ s('hp', [k | 0]); },
   // PiP chỉ được gửi khi Chromium báo frame hiện tại đang có transient user activation.
   // Native còn đối chiếu với thao tác chạm thực tế trước khi arm PiP.
   requestPip: function(cb){
@@ -113,6 +115,13 @@ internal class BrowserWebMessageBridge(
                 val blocked = args.booleanAt(1) ?: return
                 bridge.pullGuard(blocked)
             }
+            "hp" -> {
+                // Rung chỉ dành cho trang chủ nội bộ: website bên ngoài không được tự bật rung máy.
+                if (!isMainFrame || args.length() != 2 || !isSummitHome(sourceOrigin) || !canAccept(Op.HAPTIC)) return
+                val kind = args.intAt(1)?.takeIf { it in 0..2 } ?: return
+                recordAccepted(Op.HAPTIC)
+                bridge.haptic(kind)
+            }
             "pip" -> {
                 if (args.length() != 1 || pipRequestPending || !canAccept(Op.PIP)) return
                 pipRequestPending = true
@@ -163,7 +172,7 @@ internal class BrowserWebMessageBridge(
     }
 
     /** PiP và long-press là thao tác UI nhạy cảm: giới hạn tần suất, sau đó còn qua native gesture gate. */
-    private enum class Op(val minGapMs: Long) { PIP(500L), LONG_PRESS(500L) }
+    private enum class Op(val minGapMs: Long) { PIP(500L), LONG_PRESS(500L), HAPTIC(30L) }
     private val lastAcceptedAt = LongArray(Op.values().size)
     private var pipRequestPending = false
     private var longPressPending = false
@@ -208,6 +217,10 @@ internal class BrowserWebMessageBridge(
         val port = origin.port
         return port == -1 || port in 1..65535
     }
+
+    private fun isSummitHome(origin: Uri): Boolean =
+        origin.scheme.equals("https", ignoreCase = true) &&
+            origin.host.equals("appassets.androidplatform.net", ignoreCase = true)
 
     private fun isHttpUrl(raw: String): Boolean {
         if (raw.isBlank() || raw.length > MAX_URL_CHARS) return false

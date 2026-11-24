@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.HttpAuthHandler
@@ -232,6 +233,17 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     override fun onBridgePullGuard(owner: WebView, blocked: Boolean) {
         if (owner === web && !isActivityDestroyed) pullRefresh?.setPageHandlesTouch(blocked)
+    }
+
+    override fun onBridgeHaptic(owner: WebView, kind: Int) {
+        if (owner !== web || isActivityDestroyed || !HomePage.isHome(owner.url)) return
+        owner.performHapticFeedback(
+            when (kind) {
+                0 -> HapticFeedbackConstants.GESTURE_START
+                1 -> HapticFeedbackConstants.SEGMENT_FREQUENT_TICK
+                else -> HapticFeedbackConstants.GESTURE_END
+            }
+        )
     }
 
     private fun isFullscreenVideoShowing(): Boolean = fullscreenVideoController?.isShowing == true

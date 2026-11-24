@@ -138,13 +138,21 @@
   // Match SegmentedGlassThumb: preview under the finger, commit on release, cancel on a vertical pan.
   let gesture = null;
   let dropTimer;
+  // 0 = chạm xuống, 1 = đổi ô khi kéo, 2 = nhả tay (giống viên kính native). Native chỉ rung cho trang chủ Summit.
+  function haptic(kind) {
+    try { window.EdgeBridge && window.EdgeBridge.haptic(kind); } catch (_) {}
+  }
   function follow(x) {
     const cell = gesture.cell;
     const local = x - gesture.left;
     const inset = Math.max(0, cell * .1 - 14);
     const offset = Math.min(cell - inset, Math.max(inset, local - cell / 2));
     track.style.setProperty('--thumb-x', offset + 'px');
-    track.dataset.hover = local >= cell ? 'news' : 'home';
+    const hover = local >= cell ? 'news' : 'home';
+    if (track.dataset.hover !== hover) {
+      if (track.dataset.hover) haptic(1);
+      track.dataset.hover = hover;
+    }
   }
 
   track.addEventListener('pointerdown', event => {
@@ -154,6 +162,7 @@
     track.setPointerCapture(event.pointerId);
     clearTimeout(dropTimer);
     track.classList.add('lifted');
+    haptic(0);
     follow(event.clientX);
   });
   track.addEventListener('pointermove', event => {
@@ -165,6 +174,7 @@
     if (gesture?.id !== event.pointerId) return;
     if (event.type === 'pointerup') {
       follow(event.clientX);
+      haptic(2);
       const toNews = track.dataset.hover === 'news';
       select(toNews);
       (toNews ? newsTab : homeTab).focus({ preventScroll: true });
