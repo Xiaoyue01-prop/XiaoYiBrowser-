@@ -52,30 +52,26 @@ jobs:
       - name: Verify Gradle Wrapper
         run: ./gradlew --version
 
-      - name: Build debug and release APKs
-        run: ./gradlew --no-daemon --stacktrace clean assembleDebug assembleRelease
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-      - name: Package wrapper-ready full project
+      - name: Build trial APK
+        run: ./gradlew --no-daemon --stacktrace clean assembleRelease
+
+      - name: Verify packaged Edge script
         shell: bash
         run: |
           set -euo pipefail
-          zip -qr Summit-Wrapper-Ready-Project.zip . \
-            -x '.git/*' '.gradle/*' 'app/build/*' 'build/*' '*.apk' '*.zip'
+          node tools/edge-release/minify.cjs app/src/main/assets/edge_script.js "$RUNNER_TEMP/edge-release.js"
+          apk=app/build/outputs/apk/release/app-release.apk
+          unzip -p "$apk" assets/edge_script.js | cmp - "$RUNNER_TEMP/edge-release.js"
+          if cmp -s "$RUNNER_TEMP/edge-release.js" app/src/main/assets/edge_script.js; then exit 1; fi
 
-      - name: Upload APKs
+      - name: Upload trial APK
         uses: actions/upload-artifact@v4
         with:
-          name: Summit-APKs
-          path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/release/app-release.apk
+          name: Summit-Trial-APK
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
-
-      - name: Upload wrapper-ready full project
-        uses: actions/upload-artifact@v4
-        with:
-          name: Summit-Wrapper-Ready-Project
-          path: Summit-Wrapper-Ready-Project.zip
-          if-no-files-found: error
-          retention-days: 30

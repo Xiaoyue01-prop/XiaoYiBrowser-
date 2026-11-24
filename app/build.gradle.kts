@@ -5,6 +5,37 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+abstract class GenerateReleaseEdgeScript : Exec() {
+    @get:OutputDirectory
+    abstract val assetsDir: DirectoryProperty
+}
+
+val minifierDir = rootProject.layout.projectDirectory.dir("tools/edge-release")
+val installEdgeMinifier = tasks.register<Exec>("installEdgeMinifier") {
+    workingDir(minifierDir.asFile)
+    inputs.files(minifierDir.file("package.json"), minifierDir.file("package-lock.json"))
+    outputs.dir(minifierDir.dir("node_modules"))
+    val npm = if (System.getProperty("os.name").startsWith("Windows")) "npm.cmd" else "npm"
+    commandLine(npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund")
+}
+
+androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+    val generate = tasks.register<GenerateReleaseEdgeScript>("generate${variant.name.replaceFirstChar { it.uppercase() }}EdgeScript") {
+        dependsOn(installEdgeMinifier)
+        val template = layout.projectDirectory.file("src/main/assets/edge_script.js")
+        val script = minifierDir.file("minify.cjs")
+        inputs.files(template, script, minifierDir.file("package-lock.json"))
+        assetsDir.set(layout.buildDirectory.dir("generated/edge/${variant.name}"))
+        // AGP supplies the final output directory when registering this source.
+        argumentProviders.add(CommandLineArgumentProvider {
+            listOf(script.asFile.absolutePath, template.asFile.absolutePath,
+                assetsDir.file("edge_script.js").get().asFile.absolutePath)
+        })
+        executable = "node"
+    }
+    variant.sources.assets?.addGeneratedSourceDirectory(generate, GenerateReleaseEdgeScript::assetsDir)
+}
+
 android {
     namespace = "com.example.webedge"
     compileSdk = 37

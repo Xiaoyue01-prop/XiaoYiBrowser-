@@ -1,0 +1,7 @@
+{
+  "name": "summit-edge-release",
+  "private": true,
+  "dependencies": {
+    "terser": "5.44.1"
+  }
+}
