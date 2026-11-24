@@ -4,13 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src https://api.open-meteo.com https://geocoding-api.open-meteo.com">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self'; font-src 'self'; script-src 'self'; connect-src https://api.open-meteo.com https://geocoding-api.open-meteo.com">
 <title>Trang chủ</title>
 <link rel="stylesheet" href="home.css">
 </head>
 <body>
 <main>
-  <img id="cat" src="summit_cat.webp" alt="" draggable="false">
+  <div id="cat" aria-hidden="true">
+    <img class="cb" src="summit_cat.webp" alt="" draggable="false">
+    <canvas class="cc" hidden></canvas>
+    <img class="paw" id="pawL" src="cat_paw_l.webp" alt="" draggable="false">
+    <img class="paw" id="pawR" src="cat_paw_r.webp" alt="" draggable="false">
+  </div>
   <svg id="clock" viewBox="0 0 400 142" role="img" aria-label="Đồng hồ"><text id="clockText" x="0" y="0"></text></svg>
   <p id="greeting"></p>
 
