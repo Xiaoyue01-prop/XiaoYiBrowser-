@@ -107,6 +107,11 @@
 
   var lastClock = '';
 
+  // Font có lề rất rộng quanh số 1 (lề phải ~19px, lề trái ~12px ở cỡ 160px) nên cặp có số 1
+  // trông hở hơn hẳn các cặp khác. Kéo sát thêm bằng dx (đơn vị px của viewBox).
+  var KERN_BEFORE_ONE = -5;   // '1' đứng sau một ký tự
+  var KERN_AFTER_ONE = -9;    // ký tự đứng ngay sau '1'
+
   // Khi phút nhảy: chữ số nào đổi thì lăn lên (số cũ trượt lên rồi mờ, số mới trồi từ dưới lên),
   // dùng spring SETTLE như mọi bề mặt khác trong Summit. Chữ số không đổi đứng yên.
   var ROLL = 58;
@@ -210,6 +215,10 @@
         var ch = text.charAt(i);
         var span = document.createElementNS(SVGNS, 'tspan');
         span.textContent = ch;
+        var kern = 0;
+        if (i > 0 && ch === '1') kern += KERN_BEFORE_ONE;
+        if (i > 0 && text.charAt(i - 1) === '1') kern += KERN_AFTER_ONE;
+        if (kern) span.setAttribute('dx', kern);
         if (ch === ':') {
           span.setAttribute('fill', 'rgba(128,128,128,0.6)');
           span.setAttribute('stroke', 'none');

@@ -90,7 +90,7 @@ main {
 
 #clockText, .glyph {
   font: 900 160px "SummitClock", ui-rounded, "Roboto", system-ui, sans-serif;
-  letter-spacing: -6px;
+  letter-spacing: -10px;   /* sát như StandBy; số 1 được bù riêng trong home.js (KERN_* trong home.js) */
   text-anchor: middle;
 }
 
