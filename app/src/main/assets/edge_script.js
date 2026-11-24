@@ -617,6 +617,12 @@ function layoutStickyRows(I, header, rows, sample){
           if (upper.pin) place(row, row.pin.y + e.delta);
           return;
         }
+        if (upper.shiftedFixed) {
+          if (row.pin.port === document.documentElement && Math.abs(row.pin.y - e.before) <= 2) {
+            place(row, row.pin.y + e.delta);
+          }
+          return;
+        }
         var link = stickyLinks && stickyLinks.get(row.el);
         var remembered = link && link.above === upper.el && link.parent === headerParent(row.el) &&
           link.port === row.pin.port && a.top <= e.after + 2;
@@ -629,14 +635,19 @@ function layoutStickyRows(I, header, rows, sample){
   }
   if (header) {
     var base = header.pin ? header.pin.y : header.originalTop;
-    var placed = headerHasSafePadding(header, I, header.rect.top - base) ? base : Math.max(I, base);
+    var placed = base + activeHeader.delta;
+    if (header.pin && !headerHasSafePadding(header, I, header.rect.top - base)) placed = Math.max(I, base);
     var bottom = base + header.rect.height;
-    if (!rows.size && !stickyInsets.size && emptyStickyLayout && emptyStickyLayout.el === header.el &&
+    if (!rows.size && !stickyInsets.size && !edgeShiftList.length && emptyStickyLayout && emptyStickyLayout.el === header.el &&
         emptyStickyLayout.bottom === bottom && emptyStickyLayout.placed === placed) return;
     edge(header, base, placed);
-    for (var lower = header.fixedBelow; lower; lower = lower.fixedBelow) {
-      edge(lower, lower.originalTop, lower.originalTop + placed - base);
-    }
+    // Đáy trước/sau của từng khối fixed đã dời là hai ngưỡng tương ứng của hàng sticky kế tiếp.
+    edgeShiftList.forEach(function(rec){
+      var el = rec.el;
+      if (el.hasAttribute('data-edge-hdbg') || getComputedStyle(el).position !== 'fixed') return;
+      var rect = el.getBoundingClientRect();
+      edge({ el: el, rect: rect, width: rect.width, shiftedFixed: true }, rect.top - rec.delta, rect.top);
+    });
     followEdges();
     emptyStickyLayout = rows.size ? null : { el: header.el, bottom: bottom, placed: placed };
   }
@@ -652,18 +663,16 @@ function layoutStickyRows(I, header, rows, sample){
       followEdges();
     }
   });
-  if (targets.size || stickyInsets.size) {
-    syncStickyInsets(targets);
-    if (header) header.rect = header.el.getBoundingClientRect();
-  }
+  if (targets.size || stickyInsets.size) syncStickyInsets(targets);
 }
 
 var headerLandmarkCache = new WeakMap(), foregroundOverlay = null;
-function findHeader(I){
+function findHeader(I, searchPanel){
   var w = window.innerWidth, h = window.innerHeight, best = null;
   foregroundOverlay = null;
   var seen = new Set(), roots = new Set([document]), rows = new Map(), fixedBands = [], rowsOnly = false;
   function consider(el){
+    if (searchPanel && headerContains(searchPanel, el)) return;
     for (; el && el !== document.body && el !== document.documentElement; el = headerParent(el)) {
       if (seen.has(el)) break;
       seen.add(el);
@@ -737,14 +746,14 @@ function findHeader(I){
       best = band;
     });
   }
-  if (foregroundOverlay && (!best || !headerContains(foregroundOverlay.el, best.el))) {
+  if (foregroundOverlay && foregroundOverlay.el !== searchPanel && (!best || !headerContains(foregroundOverlay.el, best.el))) {
     // Padding của lớp phủ đã chừa mép trên cho vùng cuộn của nó.
     resetStickyLayout();
     return null;
   }
   rowsOnly = true;
   var sampled = new Set();
-  layoutStickyRows(I, best, rows, function(y, rect){
+  function sampleRows(y, rect){
     if (y < 0 || y >= h || sampled.size >= 24) return;
     var left = Math.max(0, rect.left), right = Math.min(w, rect.right);
     [0.25, 0.75].forEach(function(fraction){
@@ -753,7 +762,10 @@ function findHeader(I){
       sampled.add(key);
       roots.forEach(function(root){ probe(root, x, y); });
     });
-  });
+  }
+  // Các companion fixed phải được đo sau khi alignHeader/shiftCompanions hoàn tất.
+  if (best) best.layoutRows = function(){ layoutStickyRows(I, best, rows, sampleRows); };
+  else layoutStickyRows(I, null, rows, sampleRows);
   return best;
 }
 
@@ -988,12 +1000,14 @@ function findSearchOverlay(I){
     if (!rect || rect.top > I + 36) continue;
     var mobileYouTube = youtubePage && (location.hostname === 'm.youtube.com' ||
       field.closest('ytm-mobile-topbar-renderer,ytm-search-box,.mobile-topbar-header'));
-    var row = null, isOverlay = false, pinned = false;
+    var row = null, panel = null, isOverlay = false, pinned = false;
     for (var p = headerParent(field); p && p !== document.body && p !== document.documentElement; p = headerParent(p)) {
       var cs = getComputedStyle(p), r = p.getBoundingClientRect();
       if (!headerStyleVisible(cs)) { row = null; break; }
       if (cs.position === 'fixed' || cs.position === 'sticky' ||
           (mobileYouTube && cs.position === 'absolute')) pinned = true;
+      if (cs.position === 'fixed' && r.left <= 1 && r.right >= width - 1 &&
+          r.top >= -1 && r.top <= 1 && r.bottom >= height - 1) panel = p;
       if (p.matches('dialog,[role~="dialog"],[aria-modal="true"],[popover]')) {
         isOverlay = true;
         if (cs.position === 'absolute') pinned = true;
@@ -1002,7 +1016,7 @@ function findSearchOverlay(I){
           Math.min(width, r.right) - Math.max(0, r.left) >= width * 0.60 &&
           r.height <= Math.min(height * 0.35, 160)) row = p;
     }
-    if (row && pinned && (isOverlay || mobileYouTube)) return {el: row, field: field};
+    if (row && pinned && (panel || isOverlay || mobileYouTube)) return {el: row, field: field, panel: panel};
   }
   return null;
 }
@@ -1026,7 +1040,7 @@ function runSearchOverlay(I){
   if (!search) { searchCheckedAt = now; return null; }
   releaseTopOverlay();
   var el = search.el, r = el.getBoundingClientRect(), cs = getComputedStyle(el);
-  searchOverlay = {el: el, field: search.field, inset: I};
+  searchOverlay = {el: el, field: search.field, panel: search.panel, inset: I};
   if (r.top >= I - 0.5 || headerHasSafePadding({el: el, rect: r, cs: cs}, I)) return el;
 
   // Chỉ dời hàng nhập liệu. Lớp phủ và cách website xử lý focus/đóng vẫn hoạt động bình thường.
@@ -1041,14 +1055,19 @@ function runSearchOverlay(I){
   return el;
 }
 
+function releaseShifts(){
+  edgeShiftList.forEach(forgetShift);
+  edgeShiftList = [];
+  window.__edgeHdBg = null;
+}
+
 function releaseHeader(){
   if (!activeHeader) return;
   var el = activeHeader.el;
   if (ownsInline(el, activeHeader.property, activeHeader.applied)) restoreInline(el, activeHeader.property, activeHeader.saved);
   if (activeHeader.marked) el.removeAttribute('data-edge-hd');
   activeHeader = null;
-  edgeShiftList.forEach(forgetShift);
-  edgeShiftList = [];
+  releaseShifts();
   edgeVideoTransforms.forEach(function(rec, box){
     if (ownsInline(box, 'transform', rec.applied)) restoreInline(box, 'transform', rec.saved);
     box.removeAttribute('data-edge-xf');
@@ -1057,7 +1076,6 @@ function releaseHeader(){
   lateAt = 0;
   lateTries = 0;
   lateVideo = null;
-  window.__edgeHdBg = null;
 }
 
 function headerHasSafePadding(hd, inset, shift){
@@ -1268,6 +1286,11 @@ function fitMastheadActions(I){
   });
 }
 
+function reportHeaderColor(el, useHeaderBackground){
+  var color = headerColor(el, useHeaderBackground);
+  report(color ? color.slice(0, 3).join(',') : 'none');
+}
+
 function runEdge(){
   if (viewportZoomed()) return;
   var I = topReserveCss();
@@ -1290,11 +1313,16 @@ function runEdge(){
         hdCache = null;
       }
     }
+    if (layoutInvalidated) {
+      layoutInvalidated = false;
+      syncStickyInsets(null);
+      releaseShifts();
+    }
     var search = runSearchOverlay(I);
-    if (search) {
+    var searchPanel = search && searchOverlay.panel;
+    if (search && !searchPanel) {
       if (mastheadMargins.size) releaseMastheadActions();
-      var searchColor = headerColor(search, false);
-      report(searchColor ? searchColor.slice(0, 3).join(',') : 'none');
+      reportHeaderColor(search, false);
       return;
     }
     var current = null;
@@ -1311,12 +1339,12 @@ function runEdge(){
     var hd = hdCache && Date.now() - hdCache <= 1500 && current;
     var fresh = !hd;
     if (fresh) {
-      hd = findHeader(I);
+      hd = findHeader(I, searchPanel);
       var nowSafe = activeHeader && hd && hd.el === activeHeader.el && activeHeader.delta > 0.5 &&
         ownsInline(hd.el, activeHeader.property, activeHeader.applied) && headerHasSafePadding(hd, I, activeHeader.delta);
       if (activeHeader && (!hd || hd.el !== activeHeader.el || nowSafe)) {
         releaseHeader();
-        hd = findHeader(I);
+        hd = findHeader(I, searchPanel);
       }
       hdCache = hd ? Date.now() : null;
     }
@@ -1324,7 +1352,8 @@ function runEdge(){
     if (foregroundOverlay && mastheadMargins.size) releaseMastheadActions();
     if (fitMasthead) restoreTopMargins(mastheadMargins);
     if (!hd) {
-      runTopOverlay(I);
+      if (search) reportHeaderColor(search, false);
+      else runTopOverlay(I);
       if (fitMasthead) fitMastheadActions(I);
       return;
     }
@@ -1338,9 +1367,9 @@ function runEdge(){
       shiftVideoHost(hd, I);
     }
     edgeReassert();
+    if (fresh) hd.layoutRows();
     if (!fresh && delta > 0.5) lateVideoHost(hd, I);
-    var hc = headerColor(hd.el);
-    report(hc ? (hc[0] + ',' + hc[1] + ',' + hc[2]) : 'none');
+    reportHeaderColor(search || hd.el, !search);
   } catch (e) { report('none'); }
 }
 
@@ -1859,20 +1888,30 @@ function schedLift(){
   liftTimer = setTimeout(function(){ liftTimer = null; liftLast = Date.now(); runLift(); }, wait);
 }
 
+var layoutInvalidated = false;
 function invalidateHeader(){
   mastheadDirty = true;
   if (topOverlay) topOverlay.dirty = true;
-  if (stickyInsets.size) syncStickyInsets(null);
+  layoutInvalidated = true;
   hdCache = null;
   searchCheckedAt = 0;
   headerLandmarkCache = new WeakMap();
 }
 
-function schedAll(){ emptyStickyLayout = null; invalidateHeader(); sched(); schedLift(); schedPageBackground(); }
+function refreshLayout(immediate){
+  emptyStickyLayout = null;
+  invalidateHeader();
+  if (immediate) {
+    run();
+    drainSelf();
+  } else sched();
+  schedLift();
+  schedPageBackground();
+}
 
 function viewportChanged(){
   rootReserveDirty = true;
-  schedAll();
+  refreshLayout(true);
 }
 
 window.__edgeRun = function(){ rootReserveDirty = true; invalidateHeader(); run(); runLift(); schedPageBackground(); };
@@ -1964,12 +2003,26 @@ function onHeaderMotionEnd(event){
       el.getBoundingClientRect().top > topReserveCss() + 1)) return;
   var position = getComputedStyle(el).position;
   if (position === 'sticky' || position === 'fixed' || el.matches(headerLandmarks + ',' + headerHints)) {
-    hdCache = null;
+    invalidateHeader();
     sched();
   }
 }
 window.addEventListener('transitionend', onHeaderMotionEnd, true);
 window.addEventListener('animationend', onHeaderMotionEnd, true);
+
+// Class của tổ tiên có thể ghim một phần tử trong nhánh khác với header.
+function affectsPinnedBand(changed){
+  function hasChangedAncestor(el){
+    for (; el; el = headerParent(el)) if (changed.has(el)) return true;
+    return false;
+  }
+  if (changed.has(document.documentElement) || changed.has(document.body) || hasChangedAncestor(watchedHeader) ||
+      edgeShiftList.some(function(rec){ return hasChangedAncestor(rec.el); })) return true;
+  // Dò một lần cho cả đợt mutation, kể cả phần tử vừa ghim ở nhánh khác với header.
+  var y = watchedHeader ? watchedHeader.getBoundingClientRect().bottom : topReserveCss();
+  var stack = document.elementsFromPoint(window.innerWidth / 2, Math.min(window.innerHeight - 1, y + 1));
+  return stack.some(hasChangedAncestor);
+}
 
 var observedHeaderRoots = new WeakSet();
 function observeHeaderRoot(root){
@@ -1990,16 +2043,25 @@ try {
   var obsLast = 0, obsTimer = null;
   observer = new MutationObserver(function(records){
     if (inFs()) return;
-    var treeChanged = false;
+    var treeChanged = false, changedClasses = null;
     for (var i = 0; i < records.length; i++) {
       var target = records[i].target;
       if (target === document.documentElement || target === document.body ||
           target === document.head || target.localName === 'style') rootReserveDirty = true;
       if (records[i].type === 'childList') treeChanged = true;
+      if (records[i].attributeName === 'class' && window.__edgeMode) {
+        if (!changedClasses) changedClasses = new Set();
+        changedClasses.add(target);
+      }
+    }
+    if (changedClasses && affectsPinnedBand(changedClasses)) {
+      headerStateDirty = true;
+      refreshLayout(true);
+      return;
     }
     if (treeChanged) {
       if (watchedHeader && !watchedHeader.isConnected) watchHeaderState(null);
-      schedAll();
+      refreshLayout(false);
       return;
     }
     // Đổi class/style ngay trên html/body (bật tắt chế độ tối...) mới làm nền trang đổi: báo lại màu ngay,
