@@ -903,63 +903,122 @@ class MenuController(
         return row
     }
 
-    private fun showGoogleAccount(account: GoogleAccountProfile) {
-        val panel = makePanel("Tài khoản Google", null, 280) { showMainPage() }
+    private fun showGoogleAccount(account: GoogleAccountProfile, startSync: Boolean = false) {
+        val panel = makePanel("Tài khoản Google", null, 340) { showMainPage() }
         panel.body.addView(buildGoogleAccountRow(account))
+
+        val row = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(22), 0, dp(14), 0)
+            background = ripple()
+            clipChildren = false
+            clipToPadding = false
+        }
+        val label = TextView(activity).apply {
+            text = "Đồng bộ lịch sử và dấu trang"
+            textSize = 16f
+            stylePrimary(this, GlassSystem.pagePrimaryText())
+        }
+        row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        lateinit var syncSwitch: GlassSystem.GlassSwitch
+        syncSwitch = GlassSystem.GlassSwitch(activity, d, isNight(), accent, googleSync.enabled()) { enabled ->
+            // Công tắc chỉ phản ánh trạng thái thực; không bật khi người dùng hủy OAuth.
+            syncSwitch.setCheckedSilently(googleSync.enabled(), true)
+            if (googleSync.busy) host.toast("Đang đồng bộ")
+            else if (enabled != googleSync.enabled()) showGoogleSyncConfirmation(account, enabled)
+        }.apply { contentDescription = "Đồng bộ lịch sử và dấu trang" }
+        row.addView(syncSwitch, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        row.setOnClickListener { syncSwitch.performClick() }
+        AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
+        panel.body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+
         val status = TextView(activity).apply {
-            val last = store.syncLastSuccess
-            text = if (googleSync.enabled()) {
-                if (last > 0) "Đồng bộ đang bật • " + java.text.DateFormat.getDateTimeInstance().format(java.util.Date(last))
-                else "Đồng bộ đang bật • Chưa hoàn tất lần đầu"
-            } else "Đồng bộ lịch sử và dấu trang: Tắt"
             textSize = 12f
             styleSecondary(this)
-            setPadding(dp(18), dp(8), dp(18), dp(8))
+            setPadding(dp(22), 0, dp(22), dp(8))
         }
         panel.body.addView(status)
+        lateinit var syncNow: View
         fun refreshAccount() {
-            if (isOpen && !tabManager.isPrivateMode && panel.page.isAttachedToWindow && googleAccount.profile == account) {
-                showGoogleAccount(account)
+            val card = menuCard as? ViewGroup ?: return
+            if (!isOpen || tabManager.isPrivateMode || googleAccount.profile != account ||
+                card.childCount == 0 || card.getChildAt(card.childCount - 1) !== panel.page) return
+            val enabled = googleSync.enabled()
+            if (syncSwitch.isChecked != enabled) syncSwitch.setCheckedSilently(enabled, true)
+            val last = store.syncLastSuccess
+            status.text = when {
+                googleSync.busy -> "Đang đồng bộ…"
+                !enabled -> "Đồng bộ qua Google Drive đang tắt."
+                last > 0 -> "Lần đồng bộ cuối: " + java.text.DateFormat.getDateTimeInstance().format(java.util.Date(last))
+                else -> "Chưa hoàn tất lần đồng bộ đầu tiên."
+            }
+            syncNow.visibility = if (enabled) View.VISIBLE else View.GONE
+        }
+        syncNow = panelButton("Đồng bộ ngay", accent) {
+            if (googleSync.busy) host.toast("Đang đồng bộ")
+            else {
+                googleSync.start(true, ::refreshAccount)
+                refreshAccount()
             }
         }
-        panel.body.addView(panelButton(if (googleSync.enabled()) "Đồng bộ ngay" else "Bật đồng bộ", GlassSystem.pagePrimaryText()) {
-            if (googleSync.busy) { host.toast("Đang đồng bộ"); return@panelButton }
-            if (googleSync.enabled()) googleSync.start(true, ::refreshAccount)
-            else android.app.AlertDialog.Builder(activity)
-                .setTitle("Đồng bộ với Google Drive")
-                .setMessage("Summit sẽ hợp nhất lịch sử và dấu trang HTTP/HTTPS hiện có trên thiết bị này với tài khoản Google đang đăng nhập, kể cả dữ liệu cục bộ từ tài khoản trước. Chỉ bật nếu đây là dữ liệu của bạn. Không đồng bộ cookie hay mật khẩu.")
-                .setNegativeButton("Hủy", null)
-                .setPositiveButton("Bật đồng bộ") { _, _ -> googleSync.start(true, ::refreshAccount) }
-                .show()
-        })
-        if (googleSync.enabled()) panel.body.addView(panelButton("Tắt đồng bộ", GlassSystem.pagePrimaryText()) {
-            if (googleSync.busy) { host.toast("Đang đồng bộ"); return@panelButton }
-            android.app.AlertDialog.Builder(activity)
-                .setTitle("Tắt đồng bộ?")
-                .setMessage("Dữ liệu trên máy và Drive vẫn được giữ. Các thay đổi khi tắt đồng bộ (kể cả thao tác xóa) sẽ không được gửi sang thiết bị khác. Hãy đồng bộ ngay trước khi tắt nếu muốn giữ thay đổi mới nhất.")
-                .setNegativeButton("Hủy", null)
-                .setPositiveButton("Tắt") { _, _ ->
-                    if (googleSync.busy) host.toast("Đang đồng bộ") else {
-                        store.disableSync()
-                        showGoogleAccount(account)
-                    }
-                }.show()
-        })
-        addButtons(panel, null, panelButton("Đăng xuất", Theme.DANGER_RED) {
-            if (googleSync.busy) { host.toast("Đang đồng bộ"); return@panelButton }
-            fun signOut() {
-                if (googleSync.busy) { host.toast("Đang đồng bộ"); return }
+        addButtons(panel, syncNow, panelButton("Đăng xuất", Theme.DANGER_RED) {
+            if (googleSync.busy) host.toast("Đang đồng bộ")
+            else if (googleSync.enabled()) showGoogleSignOutConfirmation(account)
+            else {
                 store.disableSync()
                 googleAccount.signOut { showMainPage() }
             }
-            if (googleSync.enabled()) android.app.AlertDialog.Builder(activity)
-                .setTitle("Đăng xuất Google?")
-                .setMessage("Đồng bộ sẽ dừng. Dữ liệu trên máy và Drive vẫn được giữ; hãy đồng bộ ngay trước khi đăng xuất nếu muốn gửi các thay đổi mới nhất.")
-                .setNegativeButton("Hủy", null)
-                .setPositiveButton("Đăng xuất") { _, _ -> signOut() }.show()
-            else signOut()
         })
         showPanel(panel)
+        if (startSync) googleSync.start(true, ::refreshAccount)
+        refreshAccount()
+    }
+
+    private fun showGoogleSyncConfirmation(account: GoogleAccountProfile, enable: Boolean) {
+        fun back() = showGoogleAccount(account)
+        val p = makePanel(if (enable) "Bật đồng bộ?" else "Tắt đồng bộ?", null, 340) { back() }
+        val msg = TextView(activity).apply {
+            text = if (enable) {
+                "Lịch sử và dấu trang web hiện có trên máy sẽ được hợp nhất với Google Drive của tài khoản này, kể cả dữ liệu từ tài khoản trước. Chỉ bật nếu đây là dữ liệu của bạn. Cookie và mật khẩu không được đồng bộ."
+            } else {
+                "Dữ liệu trên máy và Drive vẫn được giữ. Thay đổi khi tắt đồng bộ, kể cả thao tác xóa, không được gửi sang thiết bị khác. Hãy đồng bộ ngay trước khi tắt nếu muốn gửi thay đổi mới nhất."
+            }
+            textSize = 14f
+            styleSecondary(this)
+            setPadding(dp(22), dp(4), dp(22), dp(12))
+        }
+        p.body.addView(msg)
+        addButtons(p, panelButton("Hủy", accent) { back() },
+            panelButton(if (enable) "Bật đồng bộ" else "Tắt đồng bộ", if (enable) accent else Theme.DANGER_RED) {
+                if (googleSync.busy) { host.toast("Đang đồng bộ"); return@panelButton }
+                if (googleAccount.profile != account || tabManager.isPrivateMode) { close(); return@panelButton }
+                if (enable) showGoogleAccount(account, startSync = true)
+                else {
+                    store.disableSync()
+                    back()
+                }
+            })
+        showPanel(p)
+    }
+
+    private fun showGoogleSignOutConfirmation(account: GoogleAccountProfile) {
+        fun back() = showGoogleAccount(account)
+        val p = makePanel("Đăng xuất Google?", null, 340) { back() }
+        val msg = TextView(activity).apply {
+            text = "Đồng bộ sẽ dừng. Dữ liệu trên máy và Drive vẫn được giữ. Hãy đồng bộ ngay trước khi đăng xuất nếu muốn gửi thay đổi mới nhất."
+            textSize = 14f
+            styleSecondary(this)
+            setPadding(dp(22), dp(4), dp(22), dp(12))
+        }
+        p.body.addView(msg)
+        addButtons(p, panelButton("Hủy", accent) { back() }, panelButton("Đăng xuất", Theme.DANGER_RED) {
+            if (googleSync.busy) { host.toast("Đang đồng bộ"); return@panelButton }
+            if (googleAccount.profile != account || tabManager.isPrivateMode) { close(); return@panelButton }
+            store.disableSync()
+            googleAccount.signOut { showMainPage() }
+        })
+        showPanel(p)
     }
 
     /**
