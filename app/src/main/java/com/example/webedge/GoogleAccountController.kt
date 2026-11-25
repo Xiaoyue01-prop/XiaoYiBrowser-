@@ -72,8 +72,9 @@ internal class GoogleAccountController(
                 preferences.edit().putString("name", account.name).putString("avatar_url", account.avatarUrl).apply()
                 profile = account
                 onSignedIn()
-            } catch (_: GetCredentialCancellationException) {
-                // The user dismissed the account picker.
+            } catch (e: GetCredentialCancellationException) {
+                Log.e("SummitGoogle", "Cancelled type=${e.type} msg=${e.message}", e)
+                showError("Cancelled (Google đóng hộp chọn tài khoản)\n${e.type}\n${e.message}")
             } catch (e: NoCredentialException) {
                 Log.e("SummitGoogle", "NoCredential type=${e.type} msg=${e.message}", e)
                 showError("NoCredentialException\n${e.type}\n${e.message}")
@@ -151,7 +152,7 @@ internal class GoogleAccountController(
     private fun showError(detail: String) {
         val text = "$detail\n\nClient ID: ${clientId.take(24)}…${clientId.takeLast(32)}"
         val dialog = android.app.AlertDialog.Builder(activity)
-            .setTitle("Lỗi đăng nhập Google")
+            .setTitle("Đăng nhập Google chưa hoàn tất")
             .setMessage(text)
             .setPositiveButton("Đóng", null)
             .show()
