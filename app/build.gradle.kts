@@ -6,8 +6,8 @@ plugins {
 }
 
 val googleWebClientId = providers.gradleProperty("summitGoogleWebClientId")
-    .orElse(providers.environmentVariable("SUMMIT_GOOGLE_WEB_CLIENT_ID"))
-    .orElse("")
+    .orElse(providers.environmentVariable("SUMMIT_GOOGLE_WEB_CLIENT_ID").filter { it.isNotBlank() })
+    .orElse("630194752242-s02r0s4kp7dl0uktp0iprkgac4i50nf4.apps.googleusercontent.com")
     .get()
     .trim()
 require(googleWebClientId.isEmpty() || googleWebClientId.matches(Regex("[A-Za-z0-9_-]+\\.apps\\.googleusercontent\\.com"))) {

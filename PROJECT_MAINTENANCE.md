@@ -51,10 +51,10 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 Mục tài khoản ở đầu menu ba chấm của tab thường. Summit lưu tên hiển thị và đường dẫn ảnh đại diện để hiện lại khi mở app. Nút **Đăng xuất** nằm trong trang tài khoản. Xem [hướng dẫn Google cho Android](https://codelabs.developers.google.com/sign-in-with-google-android) để tạo cấu hình OAuth.
 
 1. Trong cùng một dự án Google Cloud, cấu hình Google Auth Platform rồi tạo OAuth client loại **Android** với package `com.example.webedge` và SHA-1 của khóa ký APK sẽ cài. Dùng `./gradlew :app:signingReport` hoặc `gradle :app:signingReport` để xem SHA-1. Release thử nghiệm hiện dùng khóa debug.
-2. Tạo thêm OAuth client loại **Web application** trong cùng dự án. Đặt ID của client Web vào thuộc tính Gradle `summitGoogleWebClientId` hoặc biến môi trường `SUMMIT_GOOGLE_WEB_CLIENT_ID`. Ví dụ `gradle :app:assembleDebug -PsummitGoogleWebClientId=<ID-Web>`.
-3. Khi build bằng GitHub Actions, đặt `SUMMIT_GOOGLE_WEB_CLIENT_ID` trong **Actions variables**. Để build ký bằng cùng khóa đã đăng ký SHA-1, đặt bản mã hóa Base64 của `debug.keystore` hiện có trong **Actions secrets** với tên `SUMMIT_DEBUG_KEYSTORE_BASE64`. Nếu màn hình đồng ý ở chế độ Testing, thêm tài khoản thử nghiệm vào dự án Google Cloud.
+2. Bản này đã có OAuth Web Client ID mặc định của Summit. Khi dùng dự án Google Cloud khác, đặt ID từ OAuth client loại **Web application** của dự án đó vào thuộc tính Gradle `summitGoogleWebClientId` hoặc biến môi trường `SUMMIT_GOOGLE_WEB_CLIENT_ID`.
+3. Khi build bằng GitHub Actions, giữ một khóa ký cố định để SHA-1 của APK khớp với OAuth client Android. Với khóa debug, đặt bản mã hóa Base64 của `debug.keystore` vào **Actions secrets** với tên `SUMMIT_DEBUG_KEYSTORE_BASE64`. Có thể đặt `SUMMIT_GOOGLE_WEB_CLIENT_ID` trong **Actions variables** để dùng một Web Client ID khác.
 
-Thử trên thiết bị Android có Google Play services. Bấm đăng nhập, chọn tài khoản, kiểm tra ảnh và tên sau khi mở lại app, rồi đăng xuất và thử chọn tài khoản khác. Kiểm tra cả trường hợp đóng hộp chọn tài khoản và ảnh đại diện tải lỗi.
+Nếu màn hình đồng ý ở chế độ Testing, thêm tài khoản thử nghiệm vào dự án Google Cloud. Thử trên thiết bị Android có Google Play services. Bấm đăng nhập, chọn tài khoản, kiểm tra ảnh và tên sau khi mở lại app, rồi đăng xuất và thử chọn tài khoản khác. Kiểm tra cả trường hợp đóng hộp chọn tài khoản và ảnh đại diện tải lỗi.
 
 ## YouTube-only AdBlock MVP (2026-11-06)
 
