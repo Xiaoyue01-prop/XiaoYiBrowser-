@@ -51,8 +51,11 @@ internal object LiveEventHub {
     }
 
     fun post(event: LiveEvent) = onMain {
-        val started = events[event.key]?.startedAt ?: SystemClock.uptimeMillis()
-        events[event.key] = event.copy(startedAt = started)
+        val previous = events[event.key]
+        val updated = event.copy(startedAt = previous?.startedAt ?: SystemClock.uptimeMillis())
+        if (updated == previous) return@onMain false
+        events[event.key] = updated
+        true
     }
 
     fun remove(key: String) = onMain { events.remove(key) != null }
@@ -86,18 +89,19 @@ internal object LiveEventHub {
     /** Các sự kiện đang hiện được, mới nhất trước. Chỉ gọi trên luồng chính. */
     fun visible(): List<LiveEvent> =
         events.values
-            .filter { it.tabId == null || it.tabId == activeTabId }
+            .filter(::isVisible)
             .sortedByDescending { it.startedAt }
 
     /** Sự kiện nổi nhất để orb hiện: cái bắt đầu sau cùng. Chỉ gọi trên luồng chính. */
-    fun top(): LiveEvent? = visible().firstOrNull()
+    fun top(): LiveEvent? = events.values.asSequence().filter(::isVisible).maxByOrNull { it.startedAt }
 
-    /** Chạy [change] trên luồng chính rồi báo cho các listener nếu nó trả true (hoặc Unit). */
-    private fun onMain(change: () -> Any?) {
+    fun findVisible(key: String): LiveEvent? = events[key]?.takeIf(::isVisible)
+
+    private fun isVisible(event: LiveEvent): Boolean = event.tabId == null || event.tabId == activeTabId
+
+    private fun onMain(change: () -> Boolean) {
         main.post {
-            val result = change()
-            if (result == false) return@post
-            listeners.toList().forEach { it() }
+            if (change()) listeners.toList().forEach { it() }
         }
     }
 }

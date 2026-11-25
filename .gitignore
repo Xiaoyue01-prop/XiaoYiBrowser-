@@ -10,3 +10,5 @@ code_dump.txt
 *.bak.summit1
 *.b2
 *.b4
+
+node_modules/

@@ -1,3 +1,10 @@
+/* Font đồng hồ: Nunito (OFL) ở độ dày 1000, chỉ giữ chữ số và dấu hai chấm, số 1 dùng kiểu không chân (ss01). */
+@font-face {
+  font-family: "SummitClock";
+  src: url("fonts/clock.ttf") format("truetype");
+  font-weight: 100 1000;
+}
+
 :root {
   color-scheme: light dark;
   --bg: #f6f6f8;
@@ -20,7 +27,7 @@
 }
 
 html, body {
-  height: 100%;
+  min-height: 100%;
   margin: 0;
   background: var(--bg);
   color: var(--fg);
@@ -29,7 +36,7 @@ html, body {
 body {
   font-family: system-ui, "Roboto", sans-serif;
   -webkit-tap-highlight-color: transparent;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 button {
@@ -42,14 +49,14 @@ button {
   text-align: left;
 }
 
-main {
-  min-height: 100%;
+#homePanel {
+  min-height: calc(100svh - var(--home-top) - 78px - var(--home-bottom));
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 16px 20px 6vh;
+  padding: 10px 20px 24px;
 }
 
 #cat, #clock, #greeting {
@@ -67,6 +74,13 @@ main {
   pointer-events: none;
 }
 
+/* Mèo = ảnh nền (đuôi vẽ lại bằng canvas) + 2 chân tách riêng để gãi má. */
+#cat { aspect-ratio: 900 / 457; }
+#cat .cb, #cat .cc { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#cat .paw { position: absolute; height: auto; display: block; will-change: transform; }
+#pawL { left: 47.889%; top: 77.899%; width: 18.111%; transform-origin: 3.68% 82.22%; }
+#pawR { left: 84.222%; top: 83.807%; width: 15.556%; transform-origin: 87.14% 93.24%; }
+
 #clock {
   width: min(90vw, 440px);
   height: auto;
@@ -75,10 +89,13 @@ main {
 }
 
 #clockText, .glyph {
-  font: 900 160px ui-rounded, "Nunito", "Roboto", system-ui, sans-serif;
-  letter-spacing: -6px;
+  font: 900 160px "SummitClock", ui-rounded, "Roboto", system-ui, sans-serif;
+  letter-spacing: -10px;   /* sát như StandBy; số 1 được bù riêng trong home.js (KERN_* trong home.js) */
   text-anchor: middle;
 }
+
+/* Font đã rất dày và tròn nên bỏ viền phụ mà JS thêm (viền làm lấp lỗ số 4, 9). */
+#clockText tspan, .glyph { stroke-width: 0; }
 
 /* Chữ số lăn khi đổi phút: neo ở đầu ký tự để trùng đúng vị trí chữ số thật. */
 .glyph { text-anchor: start; pointer-events: none; }
@@ -297,4 +314,156 @@ main {
 
 @media (prefers-reduced-motion: reduce) {
   #scene *, #scene { animation: none !important; transition: none !important; }
+}
+
+/* The native edge script supplies the part of the WebView covered by system bars. */
+:root {
+  --home-top: env(safe-area-inset-top, 0px);
+  --home-bottom: env(safe-area-inset-bottom, 0px);
+  --glass: rgba(248, 248, 252, .76);
+  --glass-edge: rgba(255, 255, 255, .78);
+  --track: rgba(118, 118, 128, .12);
+  --thumb: #fff;
+  --thumb-edge: #dcdce2;
+  --segment-text: #525258;
+  --shadow: rgba(34, 30, 52, .11);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --glass: rgba(44, 44, 51, .78);
+    --glass-edge: rgba(255, 255, 255, .13);
+    --track: rgba(120, 120, 128, .28);
+    --thumb: #4c4c51;
+    --thumb-edge: #5c5c62;
+    --segment-text: #caccd4;
+    --shadow: rgba(0, 0, 0, .28);
+  }
+}
+.section-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: grid;
+  justify-content: center;
+  padding: calc(var(--home-top) + 8px) 0 12px;
+  pointer-events: none;
+  /* Tràn viền: không tô nền đặc dưới status bar, nội dung cuộn xuyên qua; lớp mờ native lo phần dễ đọc. */
+  background: none;
+}
+/* Privacy Dashboard's permission control: 48px track, 4px inset, 40px thumb. */
+.section-switch {
+  --thumb-x: 0%;
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  width: min(248px, 84vw);
+  padding: 4px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-radius: 99px;
+  pointer-events: auto;
+  touch-action: pan-y;
+  user-select: none;
+  background: linear-gradient(var(--track), var(--track)), var(--bg);
+  box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 0 0 1px var(--line);
+}
+/* Frost the small track once. Both halves and the moving thumb share that backdrop. */
+@supports (backdrop-filter: blur(1px)) {
+  .section-switch {
+    background: rgba(235, 235, 243, .54);
+    backdrop-filter: blur(10px) saturate(1.25);
+    --thumb: rgba(255, 255, 255, .58);
+    --glass: rgba(255, 255, 255, .32);
+  }
+  @media (prefers-color-scheme: dark) {
+    .section-switch {
+      background: rgba(34, 34, 41, .58);
+      --thumb: rgba(102, 102, 112, .48);
+      --glass: rgba(89, 89, 103, .32);
+    }
+  }
+}
+body.show-news .section-switch { --thumb-x: 100%; }
+.section-switch::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 4px auto 4px 4px;
+  width: calc(50% - 4px);
+  box-sizing: border-box;
+  border: 1px solid var(--thumb-edge);
+  border-radius: inherit;
+  background: var(--thumb);
+  box-shadow: 0 2px 4px var(--shadow);
+  transform: translateX(var(--thumb-x)) scale(var(--lift-x, 1), var(--lift-y, 1));
+  transition: transform .24s cubic-bezier(.22,.85,.28,1.12), background-color .14s;
+}
+.section-switch.lifted {
+  --lift-x: 1.2;
+  --lift-y: 1.44;
+}
+.section-switch.lifted::before {
+  background: linear-gradient(155deg, var(--glass-edge), transparent 60%), var(--glass);
+  box-shadow: inset 0 1px 1px var(--glass-edge), 0 3px 9px var(--shadow);
+}
+.section-switch.tracking::before { transition-duration: 0s; }
+.section-switch button {
+  min-height: 40px;
+  border-radius: inherit;
+  text-align: center;
+  font-size: max(12px, .75rem);
+  font-weight: 500;
+  color: var(--segment-text);
+  cursor: pointer;
+  transition: transform .18s ease-out;
+}
+.section-switch:not([data-hover]) [aria-selected="true"],
+.section-switch[data-hover="home"] #homeTab,
+.section-switch[data-hover="news"] #newsTab { color: #0a84ff; }
+.section-switch[data-hover="home"] #homeTab, .section-switch[data-hover="news"] #newsTab {
+  transform: scale(1.12);
+}
+#sections {
+  position: relative;
+  overflow: clip;
+  min-height: calc(100svh - var(--home-top) - 68px);
+  box-sizing: border-box;
+  padding-bottom: var(--home-bottom);
+}
+#homePanel, #newsPanel {
+  box-sizing: border-box;
+  width: 100%;
+  transition: transform .26s cubic-bezier(.22,.8,.25,1), visibility 0s;
+}
+#sections > [inert] { position: absolute; top: 0; left: 0; pointer-events: none; visibility: hidden; transition-delay: 0s, .26s; }
+#newsPanel { transform: translateX(100%); padding: 12px 20px 28px; }
+body.show-news #newsPanel { transform: translateX(0); }
+body.show-news #homePanel { transform: translateX(-100%); }
+body.show-news #scene, body.show-news #scene * { animation-play-state: paused !important; }
+.news-column { max-width: 580px; margin: auto; }
+.news-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.news-heading h1 { margin: 0; font-size: clamp(1.5rem, 6vw, 2rem); letter-spacing: -.03em; }
+#refreshNews { background: var(--glass); border: 1px solid var(--glass-edge); box-shadow: inset 0 1px 0 var(--glass-edge); width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; cursor: pointer; }
+#refreshNews:disabled { opacity: .55; }
+#newsStatus { margin: 0 0 14px; color: var(--sub); font-size: .9rem; }
+#newsStatus:empty { display: none; }
+#newsList { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.news-story {
+  border: 1px solid var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+  display: block; border-radius: 20px; padding: 15px 18px; color: var(--fg);
+  text-decoration: none; overflow-wrap: anywhere;
+  background: linear-gradient(120deg, rgba(163,145,230,.08), transparent 65%), var(--glass);
+}
+#newsList li:first-child .news-story {
+  padding-block: 20px;
+  background: linear-gradient(130deg, rgba(163,145,230,.22), rgba(82,154,230,.08)), var(--glass);
+}
+.news-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; color: var(--sub); font-size: .8rem; }
+.news-meta strong { color: var(--fg); font-weight: 650; }
+.news-story h2 { margin: 7px 0 0; font-size: 1.05rem; line-height: 1.4; font-weight: 650; }
+#newsList li:first-child h2 { font-size: 1.25rem; }
+.news-story:active { opacity: .82; }
+@media (prefers-reduced-motion: reduce) {
+  #sections > [role="tabpanel"], .section-switch::before, .section-switch button { transition: none; }
 }

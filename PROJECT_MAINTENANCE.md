@@ -46,6 +46,16 @@ GitHub Actions installs Android SDK Platform 37 / Build Tools 36.0.0 and uses Gr
 
 Gradle Wrapper files are not included in this ZIP because an authentic wrapper JAR could not be retrieved in the isolated editing environment. CI pins Gradle 9.7.0 through gradle/actions/setup-gradle. Generate and commit the wrapper from a trusted Gradle 9.7.0 installation before making local builds independent of a separately installed Gradle executable.
 
+## Đăng nhập Google trong Summit
+
+Mục tài khoản ở đầu menu ba chấm của tab thường. Summit lưu tên hiển thị và đường dẫn ảnh đại diện để hiện lại khi mở app. Nút **Đăng xuất** nằm trong trang tài khoản. Xem [hướng dẫn Google cho Android](https://codelabs.developers.google.com/sign-in-with-google-android) để tạo cấu hình OAuth.
+
+1. Trong cùng một dự án Google Cloud, cấu hình Google Auth Platform rồi tạo OAuth client loại **Android** với package `com.example.webedge` và SHA-1 của khóa ký APK sẽ cài. Dùng `./gradlew :app:signingReport` hoặc `gradle :app:signingReport` để xem SHA-1. Release thử nghiệm hiện dùng khóa debug.
+2. Bản này đã có OAuth Web Client ID mặc định của Summit. Khi dùng dự án Google Cloud khác, đặt ID từ OAuth client loại **Web application** của dự án đó vào thuộc tính Gradle `summitGoogleWebClientId` hoặc biến môi trường `SUMMIT_GOOGLE_WEB_CLIENT_ID`.
+3. Khi build bằng GitHub Actions, giữ một khóa ký cố định để SHA-1 của APK khớp với OAuth client Android. Với khóa debug, đặt bản mã hóa Base64 của `debug.keystore` vào **Actions secrets** với tên `SUMMIT_DEBUG_KEYSTORE_BASE64`. Có thể đặt `SUMMIT_GOOGLE_WEB_CLIENT_ID` trong **Actions variables** để dùng một Web Client ID khác.
+
+Nếu màn hình đồng ý ở chế độ Testing, thêm tài khoản thử nghiệm vào dự án Google Cloud. Thử trên thiết bị Android có Google Play services. Bấm đăng nhập, chọn tài khoản, kiểm tra ảnh và tên sau khi mở lại app, rồi đăng xuất và thử chọn tài khoản khác. Kiểm tra cả trường hợp đóng hộp chọn tài khoản và ảnh đại diện tải lỗi.
+
 ## YouTube-only AdBlock MVP (2026-11-06)
 
 - `YouTubeAdBlocker.kt` is a separate filter layer; it does not change the generic `AdBlocker.kt` domain list or its global toggle.
@@ -161,7 +171,7 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 
 ## Mật khẩu & tự điền (2026-11-17)
 
-- Summit dùng Android Autofill của hệ thống, không có kho mật khẩu riêng và không dùng Credential Manager (trình duyệt cần được Google cấp quyền "privileged app"). Dịch vụ do người dùng chọn: Google Password Manager, Bitwarden, 1Password...
+- Summit dùng Android Autofill của hệ thống cho mật khẩu website. Dịch vụ do người dùng chọn: Google Password Manager, Bitwarden, 1Password... Credential Manager được dùng riêng cho đăng nhập Google vào Summit.
 - `TabWebViewConfigurator.configure()`: tab thường `IMPORTANT_FOR_AUTOFILL_YES`, tab riêng tư `NO_EXCLUDE_DESCENDANTS` (giữ nguyên). Không đổi `importantForAutofill` của WebView ở chỗ khác.
 - Cài đặt có dòng "Mật khẩu & tự điền" (`MenuController.autofillServiceLabel()` / `openAutofillSettings()`): hiện tên dịch vụ đang chọn hoặc "Chưa bật"; bấm mở `Settings.ACTION_CREDENTIAL_PROVIDER` (API 34+), lỗi thì mở Cài đặt chung. Tên dịch vụ cần `<queries>` trong manifest (Android 11+). Trạng thái dòng này chỉ cập nhật khi mở lại màn Cài đặt.
 - Chưa biên dịch/chưa thử trên máy. Cần thử: đăng nhập một bước và hai bước, hỏi lưu mật khẩu sau đăng nhập, đổi mật khẩu, khung gợi ý không bị lớp kính che, tab riêng tư không hiện gợi ý, và với từng dịch vụ (Google, Bitwarden).

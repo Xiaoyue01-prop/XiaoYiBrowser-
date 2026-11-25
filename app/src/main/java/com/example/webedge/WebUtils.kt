@@ -69,10 +69,14 @@ fun Activity.webViewContext(dark: Boolean): android.content.Context =
 
 private val WV_MARKER = Regex(""";\s*wv""", RegexOption.IGNORE_CASE)
 private val VERSION_4_0 = Regex("""\s*Version/4\.0""", RegexOption.IGNORE_CASE)
+private val MOBILE_SAFARI = Regex("""\bSafari/""", RegexOption.IGNORE_CASE)
 
 /** UA mobile "giống Chrome": bỏ dấu hiệu WebView (wv, Version/4.0) để trang không phục vụ bản hạn chế. */
-fun cleanMobileUserAgent(raw: String): String =
-    raw.replace(WV_MARKER, "").replace(VERSION_4_0, "")
+fun cleanMobileUserAgent(raw: String): String {
+    val ua = raw.replace(WV_MARKER, "").replace(VERSION_4_0, "")
+    if (!ua.contains("Android", ignoreCase = true) || ua.contains(" Mobile ", ignoreCase = true)) return ua
+    return MOBILE_SAFARI.find(ua)?.let { ua.replaceRange(it.range, "Mobile ${it.value}") } ?: ua
+}
 
 /**
  * Tạo UA desktop từ phiên bản Chromium thực tế của WebView.
@@ -147,6 +151,27 @@ fun Activity.openExternalUrl(url: String, fallbackView: WebView, toast: (String)
  */
 class SummitWebView(context: android.content.Context) : WebView(context) {
     var onTopOverscroll: (() -> Unit)? = null
+    internal var beforePageNavigation: ((String) -> String?)? = null
+
+    override fun loadUrl(url: String) {
+        super.loadUrl(beforePageNavigation?.invoke(url) ?: url)
+    }
+
+    override fun goBack() {
+        val history = copyBackForwardList()
+        if (history.currentIndex > 0) history.getItemAtIndex(history.currentIndex - 1)?.url?.let {
+            beforePageNavigation?.invoke(it)
+        }
+        super.goBack()
+    }
+
+    override fun goForward() {
+        val history = copyBackForwardList()
+        if (history.currentIndex + 1 < history.size) history.getItemAtIndex(history.currentIndex + 1)?.url?.let {
+            beforePageNavigation?.invoke(it)
+        }
+        super.goForward()
+    }
 
     override fun overScrollBy(
         deltaX: Int, deltaY: Int, scrollX: Int, scrollY: Int,

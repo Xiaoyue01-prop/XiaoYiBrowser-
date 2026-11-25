@@ -211,7 +211,7 @@ internal class OrbGlyphDrawable(color: Int) : Drawable(), AdaptiveForegroundDraw
 
         ringPaint.strokeWidth = strokeWidth
 
-        // Vòng nhẫn nguyên: đúng như RingIcon cũ.
+        // Vòng nhẫn mặc định của Orb.
         if (t <= 0.001f) {
             ringPaint.alpha = baseAlpha
             canvas.drawCircle(cx, cy, radius, ringPaint)

@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.HttpAuthHandler
@@ -234,6 +235,17 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         if (owner === web && !isActivityDestroyed) pullRefresh?.setPageHandlesTouch(blocked)
     }
 
+    override fun onBridgeHaptic(owner: WebView, kind: Int) {
+        if (owner !== web || isActivityDestroyed || !HomePage.isHome(owner.url)) return
+        owner.performHapticFeedback(
+            when (kind) {
+                0 -> HapticFeedbackConstants.GESTURE_START
+                1 -> HapticFeedbackConstants.SEGMENT_FREQUENT_TICK
+                else -> HapticFeedbackConstants.GESTURE_END
+            }
+        )
+    }
+
     private fun isFullscreenVideoShowing(): Boolean = fullscreenVideoController?.isShowing == true
 
     // Báo trang gửi lại trạng thái media (sau khi đổi tab hoặc trang vừa nạp xong).
@@ -265,6 +277,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override val isUrlBarFocused: Boolean get() = urlBar.hasFocus()
         override fun handleSpecialUrl(url: String, view: WebView): Boolean =
             this@MainActivity.handleSpecialUrl(url, view)
+        override fun preparePageNavigation(view: WebView, url: String, isRedirect: Boolean): String? =
+            tabConfigurator.prepareNavigation(view, url, isRedirect)
+        override fun applyDesktopViewportFallback(view: WebView, url: String) =
+            tabConfigurator.applyViewportFallback(view, url)
         override fun toast(msg: String) = this@MainActivity.toast(msg)
         override fun applyTextZoom(view: WebView, url: String) = textZoom.apply(view, url)
         override val webDarkMode: Boolean get() = store.webDarkMode
@@ -978,7 +994,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             // Cử chỉ Back của hệ thống (vuốt từ cạnh trái/phải): trang trượt theo ngón tay như Safari.
             override fun handleOnBackStarted(backEvent: BackEventCompat) {
-                if (readerModeController?.isActive == true) return
+                if (orbController?.isLiveCardShowing == true || readerModeController?.isActive == true) return
                 if (pageSwipeAvailable()) {
                     val sign = if (backEvent.swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
                     pageTransition.beginSwipe(web, sign)
@@ -986,14 +1002,15 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             }
 
             override fun handleOnBackProgressed(backEvent: BackEventCompat) {
-                if (readerModeController?.isActive != true) pageTransition.updateSwipe(backEvent.progress)
+                if (orbController?.isLiveCardShowing != true && readerModeController?.isActive != true) pageTransition.updateSwipe(backEvent.progress)
             }
 
             override fun handleOnBackCancelled() {
-                if (readerModeController?.isActive != true) pageTransition.cancelSwipe()
+                pageTransition.cancelSwipe()
             }
 
             override fun handleOnBackPressed() {
+                if (orbController?.closeLiveCard() == true) return
                 if (readerModeController?.handleBack() == true) return
                 if (glassDialog.isShowing) glassDialog.cancelCurrent()
                 else if (::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) tabSwitcherController.close()
@@ -1528,6 +1545,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             }
             exitFullscreenView()
         }
+        orbController?.closeLiveCard(immediate = true)
         super.onStop()
     }
 
@@ -1695,7 +1713,18 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             BOTTOM_BAR_HEIGHT_DP = BOTTOM_BAR_HEIGHT_DP,
             onBack = { goBackAnimated() },
             onForward = { goForwardAnimated() },
-            onHome = { load(store.homeUrl) }
+            onHome = { load(store.homeUrl) },
+            onOpenLive = { event ->
+                when (event.kind) {
+                    LiveKind.DOWNLOAD -> menu.showLiveDownloads()
+                    LiveKind.FOOTBALL -> menu.showLiveFootball()
+                    LiveKind.READER -> openReader(null)
+                    LiveKind.VIDEO, LiveKind.MUSIC -> {
+                        if (event.paused) WebMediaHub.jsRunner?.invoke(mediaJs("play()"))
+                        // Media is tab-scoped in LiveEventHub, so its page is already in the foreground.
+                    }
+                }
+            }
         )
         orbController?.alignWith(backBtn)
         // Menu ba chấm mở: orb thu vào viên thuốc trước, rồi viên thuốc mới bị menu hút vào.

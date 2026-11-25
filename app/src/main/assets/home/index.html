@@ -4,13 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src https://api.open-meteo.com https://geocoding-api.open-meteo.com">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self'; font-src 'self'; script-src 'self'; connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com">
 <title>Trang chủ</title>
 <link rel="stylesheet" href="home.css">
 </head>
 <body>
-<main>
-  <img id="cat" src="summit_cat.webp" alt="" draggable="false">
+<header class="section-bar">
+  <div class="section-switch" role="tablist" aria-label="Nội dung trang">
+    <button type="button" role="tab" id="homeTab" aria-controls="homePanel" aria-selected="true">Trang chủ</button>
+    <button type="button" role="tab" id="newsTab" aria-controls="newsPanel" aria-selected="false" tabindex="-1">Tin tức</button>
+  </div>
+</header>
+<main id="sections">
+<section id="homePanel" role="tabpanel" aria-labelledby="homeTab">
+  <div id="cat" aria-hidden="true">
+    <img class="cb" src="summit_cat.webp" alt="" draggable="false">
+    <canvas class="cc" hidden></canvas>
+    <img class="paw" id="pawL" src="cat_paw_l.webp" alt="" draggable="false">
+    <img class="paw" id="pawR" src="cat_paw_r.webp" alt="" draggable="false">
+  </div>
   <svg id="clock" viewBox="0 0 400 142" role="img" aria-label="Đồng hồ"><text id="clockText" x="0" y="0"></text></svg>
   <p id="greeting"></p>
 
@@ -80,7 +92,21 @@
     </div>
     <div id="wDays"></div>
   </section>
+</section>
+<section id="newsPanel" role="tabpanel" aria-labelledby="newsTab" inert>
+  <div class="news-column">
+    <header class="news-heading">
+      <h1>Google Tin tức</h1>
+      <button id="refreshNews" type="button" aria-label="Làm mới tin tức" title="Làm mới tin tức">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10a8 8 0 1 0-1.8 7.6M20 4v6h-6"/></svg>
+      </button>
+    </header>
+    <p id="newsStatus" role="status"></p>
+    <ul id="newsList"></ul>
+  </div>
+</section>
 </main>
 <script src="home.js"></script>
+<script src="news.js"></script>
 </body>
 </html>

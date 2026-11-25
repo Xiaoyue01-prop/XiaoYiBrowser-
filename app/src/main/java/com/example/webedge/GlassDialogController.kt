@@ -157,7 +157,7 @@ class GlassDialogController(
             gapViews += this
         }
 
-        // Thẻ kính: nền dự phòng + BlurView + viền, giống thẻ menu ba chấm.
+        // Vỏ bo góc, BlurView và viền dùng chung với thẻ menu.
         val card = FrameLayout(activity).apply {
             background = GlassSystem.create(GlassSystem.Preset.MENU_CARD, d, night)
             clipToOutline = true
@@ -235,7 +235,7 @@ class GlassDialogController(
                 }
                 val inputGlass = FrameLayout(activity).apply {
                     clipToOutline = true
-                    background = GlassSystem.createInputField(12, d, night)
+                    background = GlassSystem.create(12, d, night)
                     addView(GlassSystem.createInputBlurView(activity, blurTarget, d), FrameLayout.LayoutParams(-1, -1))
                     addView(input, FrameLayout.LayoutParams(-1, -1))
                 }

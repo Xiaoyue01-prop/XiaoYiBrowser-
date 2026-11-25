@@ -441,7 +441,7 @@ class BrowserToolsController(
         val youtubeTexts = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         youtubeTexts.addView(text("YouTube AdBlock", 14f, foreground, true))
         youtubeTexts.addView(
-            text("Ẩn vị trí quảng cáo rõ ràng và lọc một số máy chủ quảng cáo khi trang cha là YouTube. Không can thiệp luồng video.", 11f, muted)
+            text("Ẩn thẻ quảng cáo, lọc dữ liệu quảng cáo của trình phát và tự nhấn Bỏ qua khi nút xuất hiện.", 11f, muted)
                 .apply { setPadding(0, dp(3), 0, 0) }
         )
         youtubeTexts.addView(
@@ -453,6 +453,7 @@ class BrowserToolsController(
         val youtubeEnabled = GlassSystem.GlassSwitch(activity, density, isNight(), accent, store.youtubeAdBlockEnabled) { checked ->
             store.youtubeAdBlockEnabled = checked
             allWebViews().forEach { page ->
+                YouTubeAdBlocker.updateDocumentStart(page, checked)
                 YouTubeAdBlocker.sync(page, page.url, checked)
             }
             toast(if (checked) "Đã bật YouTube AdBlock" else "Đã tắt YouTube AdBlock")

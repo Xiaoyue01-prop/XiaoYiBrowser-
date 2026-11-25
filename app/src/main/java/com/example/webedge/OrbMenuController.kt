@@ -1,12 +1,9 @@
 package com.example.webedge
 
-import android.graphics.Canvas
+import android.annotation.SuppressLint
 import android.graphics.Color
-import android.graphics.ColorFilter
-import android.graphics.Paint
-import android.graphics.PixelFormat
-import android.graphics.drawable.Drawable
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -16,41 +13,8 @@ import android.widget.ImageView
 import androidx.dynamicanimation.animation.DynamicAnimation
 import eightbitlab.com.blurview.BlurTarget
 
-/** Orb chính dạng vòng nhẫn, phong cách HarmonyOS. */
-class RingIcon(color: Int) : Drawable(), AdaptiveForegroundDrawable {
-    override val adaptiveBaseColor: Int = color
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        this.color = color
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-    }
-
-    override fun draw(canvas: Canvas) {
-        val b = bounds
-        if (b.width() <= 0 || b.height() <= 0) return
-
-        val strokeWidth = b.width() / 18f
-        paint.strokeWidth = strokeWidth
-        val cx = b.exactCenterX()
-        val cy = b.exactCenterY()
-        val radius = minOf(b.width(), b.height()) / 2f - strokeWidth
-        canvas.drawCircle(cx, cy, radius, paint)
-    }
-
-    override fun setAdaptiveForegroundColor(color: Int) {
-        if (paint.color != color) {
-            paint.color = color
-            invalidateSelf()
-        }
-    }
-    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
-    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
-
-    @Suppress("OVERRIDE_DEPRECATION")
-    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
-}
-
-class OrbMenuController(
+@SuppressLint("ClickableViewAccessibility")
+class OrbMenuController internal constructor(
     private val rootLayout: FrameLayout,
     private val blurTarget: BlurTarget,
     private val d: Float,
@@ -58,26 +22,41 @@ class OrbMenuController(
     private val BOTTOM_BAR_HEIGHT_DP: Int,
     private val onBack: () -> Unit,
     private val onForward: () -> Unit,
-    private val onHome: () -> Unit
+    private val onHome: () -> Unit,
+    private val onOpenLive: (LiveEvent) -> Unit
 ) {
     private val iconColor = if (isNight) Color.WHITE else Color.rgb(28, 28, 32)
 
     /** Biểu tượng giữa orb: vòng nhẫn, hoặc icon của sự kiện đang chạy (xem [LiveEventHub]). */
     private val glyph = OrbGlyphDrawable(iconColor)
     private val liveListener: () -> Unit = {
-        val top = LiveEventHub.top()
+        val card = liveCard?.takeUnless { liveCardClosing }
+        val events = card?.let { LiveEventHub.visible() }
+        val top = if (events == null) LiveEventHub.top() else events.firstOrNull()
         glyph.setLive(top?.kind, top?.progress)
+        if (card != null && events != null && !card.refresh(events)) dismissLiveCard(immediate = true)
     }
 
     private var toolbarAvailable = true
     private var temporarilyHidden = false
     private var isExpanded = false
+    private var liveCard: LiveActivityCard? = null
+    private var liveCardClosing = false
+    // Cùng kỹ thuật của PageMenu: ép BlurTarget và BlurView cập nhật mỗi frame
+    // trong lúc vỏ kính morph, không chụp lại chính thẻ (tránh đệ quy blur).
+    private var liveBlurSync: GlassSystem.BlurSync? = null
+    // Khi ấn giữ đã được nhận, ACTION_UP không được chạy PRESS_RELEASE đè lên
+    // MENU_POP đang điều khiển cùng scaleX/scaleY của nút nguồn.
+    private var liveHoldConsumed = false
+    /** Back gesture must dismiss this overlay before navigating the WebView. */
+    val isLiveCardShowing: Boolean get() = liveCard != null
     private var isCompacted = false
     private var restoringFromCompact = false
-    /** Translation đích gốc, giữ lại để đảo chiều morph giữa chừng không bị lệch khỏi anchor. */
-    private val compactBase = mutableMapOf<View, Pair<Float, Float>>()
+    private var compactedMain = false
     private var anchorView: View? = null
     private var preDrawListener: ViewTreeObserver.OnPreDrawListener? = null
+    private val anchorLocation = IntArray(2)
+    private val rootLocation = IntArray(2)
 
     private fun createGlass(preset: GlassSystem.Preset): View =
         GlassSystem.createBlurView(rootLayout.context, blurTarget, preset, d, isNight)
@@ -118,7 +97,9 @@ class OrbMenuController(
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         elevation = dp(2).toFloat() // trên mọi thứ có elevation thấp, vẫn dưới orb (3dp)
         setOnTouchListener { _, event ->
-            if (event.actionMasked == MotionEvent.ACTION_DOWN) collapse()
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                if (liveCard != null) dismissLiveCard() else collapse()
+            }
             true
         }
     }
@@ -131,7 +112,11 @@ class OrbMenuController(
 
     private fun hideScrim() {
         // Gỡ sau một nhịp: collapse() có thể được gọi ngay trong lúc scrim đang xử lý chính cú chạm của nó.
-        rootLayout.post { if (!isExpanded && scrim.parent === rootLayout) rootLayout.removeView(scrim) }
+        rootLayout.post {
+            if (!isExpanded && liveCard == null && !liveCardClosing && scrim.parent === rootLayout) {
+                rootLayout.removeView(scrim)
+            }
+        }
     }
 
     init {
@@ -144,7 +129,50 @@ class OrbMenuController(
             }
         )
         mainBtn.setOnClickListener { toggle() }
-        AnimationSystem.attachGlassPress(mainBtn)
+        // Giữ đúng phản hồi nảy của các nút kính khác, nhưng chuyển quyền scale cho
+        // OriginTransitionController khi long-press mở Live Session.
+        ElasticPull.bind(mainBtn, standalone = true, canPull = { !liveHoldConsumed }) { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    liveHoldConsumed = false
+                    AnimationSystem.unclipParents(v)
+                    AnimationSystem.pressDown(v, AnimationSystem.GLASS_PRESS_SCALE)
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!liveHoldConsumed) {
+                        // Cùng mức nhấn tối thiểu của AnimationSystem.attachGlassPress.
+                        val mid = 1f + (AnimationSystem.GLASS_PRESS_SCALE - 1f) * 0.7f
+                        if (kotlin.math.abs(v.scaleX - 1f) < kotlin.math.abs(mid - 1f)) {
+                            v.scaleX = mid
+                            v.scaleY = mid
+                        }
+                        AnimationSystem.pressUp(v)
+                        if (ev.x >= 0f && ev.x <= v.width && ev.y >= 0f && ev.y <= v.height) {
+                            v.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                        }
+                    }
+                    liveHoldConsumed = false
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    if (!liveHoldConsumed) AnimationSystem.pressUp(v)
+                    liveHoldConsumed = false
+                }
+            }
+        }
+        mainBtn.setOnLongClickListener {
+            if (!isAvailable()) return@setOnLongClickListener false
+            val events = LiveEventHub.visible()
+            if (events.isNotEmpty()) {
+                liveHoldConsumed = true
+                // Huỷ spring nhấn trước khi nút thực sự nảy ra. Không reset alpha,
+                // translation vì OriginTransitionController sẽ quản lý các thuộc tính đó.
+                AnimationSystem.cancel(mainBtn)
+                mainBtn.scaleX = 1f
+                mainBtn.scaleY = 1f
+                showLiveCard(events)
+            }
+            true
+        }
         LiveEventHub.addListener(liveListener)
         liveListener()
 
@@ -187,6 +215,147 @@ class OrbMenuController(
         applyAvailability()
     }
 
+    /** Long press opens the card; normal click still toggles Back / Forward / Home. */
+    private fun showLiveCard(events: List<LiveEvent>) {
+        if (!isAvailable()) return
+        if (liveCard != null) {
+            if (!liveCardClosing) dismissLiveCard()
+            return
+        }
+        if (rootLayout.width <= 0 || rootLayout.height <= 0) return
+        if (isExpanded) collapse()
+
+        val card = LiveActivityCard(rootLayout.context, blurTarget, d, isNight) { event ->
+            // Detach before opening a sheet/Reader so the old glass is never sampled by a new overlay.
+            dismissLiveCard(immediate = true)
+            onOpenLive(event)
+        }
+        if (!card.refresh(events)) return
+        val width = minOf(dp(420), (rootLayout.width - dp(24)).coerceAtLeast(1))
+        val height = dp(LiveActivityCard.CARD_HEIGHT_DP)
+        val rootWindow = IntArray(2)
+        val orbWindow = IntArray(2)
+        rootLayout.getLocationInWindow(rootWindow)
+        mainBtn.getLocationInWindow(orbWindow)
+        // Neo như PageMenu: nút gốc nằm trong dấu chân của thẻ, cùng một bề mặt
+        // lớn lên tại chỗ, không phải thẻ nằm giữa màn hình rồi "bay" từ Orb tới.
+        // PageMenu neo mép phải/đáy theo nút trong pill; Orb ở bên trái nên neo
+        // mép trái/đáy của Live Session theo chính nút Orb.
+        val margin = dp(12)
+        val maxLeft = (rootLayout.width - width - margin).coerceAtLeast(margin)
+        val maxTop = (rootLayout.height - height - margin).coerceAtLeast(margin)
+        val left = (orbWindow[0] - rootWindow[0] - dp(2)).coerceIn(margin, maxLeft)
+        val top = (orbWindow[1] - rootWindow[1] + mainBtn.height - height + dp(2))
+            .coerceIn(margin, maxTop)
+        card.elevation = dp(5).toFloat()
+        // PageMenu giữ kính gần như vô hình đến khi BlurView có frame đầu tiên.
+        card.alpha = 0.01f
+        card.scaleX = 0.8f
+        card.scaleY = 0.8f
+        card.isClickable = true
+        card.isFocusable = true
+        liveCard = card
+        liveBlurSync = GlassSystem.BlurSync(blurTarget, card.glassView)
+        rootLayout.addView(card, FrameLayout.LayoutParams(width, height).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = left
+            topMargin = top
+        })
+        showScrim()
+        applyAvailability()
+        liveBlurSync?.hold(1000L)
+        // Khớp PageMenu: đợi pre-draw của chính BlurView, thêm hai vsync để ảnh
+        // mờ kịp xuất hiện rồi mới cho nút pop -> vỏ kính morph -> nội dung hiện.
+        var animationStarted = false
+        fun startCardMorph() {
+            if (animationStarted || liveCard !== card || liveCardClosing) return
+            if (!isAvailable()) {
+                dismissLiveCard(immediate = true)
+                return
+            }
+            if (!card.isAttachedToWindow || card.width <= 0 || card.height <= 0) return
+            animationStarted = true
+            val started = OriginTransitionController.open(
+                view = card,
+                origin = mainBtn,
+                endCornerRadiusPx = card.cornerRadiusPx,
+                // Kính hiện như một bề mặt đặc, chữ/icon xuất hiện ngay khi vỏ bắt đầu bung.
+                fadeIn = false,
+                counterTransformView = card.glassView,
+                contentViews = { card.contentViews },
+                contentStart = 0f,
+                contentSpan = 0.25f,
+                springSpec = AnimationSystem.MENU_MORPH,
+                // Dùng đúng preset nảy của menu ba chấm: nút pop trước, thẻ morph sau.
+                popScale = Constants.MENU_POP_SCALE,
+                popTowardTarget = Constants.MENU_POP_TOWARD,
+                popDelayMs = Constants.MENU_POP_DELAY_MS
+            )
+            if (!started) {
+                // Cùng đường dự phòng của PageMenu nếu màn hình chưa có origin hợp lệ.
+                card.pivotX = 0f
+                card.pivotY = card.height.toFloat()
+                AnimationSystem.enter(card, spec = AnimationSystem.MENU_MORPH)
+            }
+            liveBlurSync?.hold(850L)
+        }
+        // PageMenu đợi pre-draw của BlurView, không phải của FrameLayout bên ngoài.
+        val glass = card.glassView
+        val observer = glass.viewTreeObserver
+        if (observer.isAlive) {
+            observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    if (glass.viewTreeObserver.isAlive) {
+                        glass.viewTreeObserver.removeOnPreDrawListener(this)
+                    }
+                    val choreographer = android.view.Choreographer.getInstance()
+                    choreographer.postFrameCallback {
+                        choreographer.postFrameCallback { startCardMorph() }
+                    }
+                    return true
+                }
+            })
+        }
+        // Như PageMenu: fallback duy nhất nếu thiết bị bỏ qua pre-draw.
+        card.postDelayed({ startCardMorph() }, 200L)
+    }
+
+    /** Keep one owner for the scrim and always release the source view's morph state. */
+    private fun dismissLiveCard(immediate: Boolean = false) {
+        val card = liveCard ?: return
+        if (liveCardClosing && !immediate) return
+        if (immediate || !card.isAttachedToWindow) {
+            detachLiveCard(card)
+            return
+        }
+        liveCardClosing = true
+        card.isClickable = false
+        // PageMenu dùng cùng nhịp blur 600ms lúc thu về nút gốc.
+        liveBlurSync?.hold(600L)
+        OriginTransitionController.close(card, AnimationSystem.MENU_MORPH_CLOSE) {
+            detachLiveCard(card)
+        }
+    }
+
+    private fun detachLiveCard(card: LiveActivityCard) {
+        if (liveCard !== card) return
+        liveBlurSync = null
+        OriginTransitionController.cancel(card)
+        AnimationSystem.cancel(card)
+        if (card.parent === rootLayout) rootLayout.removeView(card)
+        liveCard = null
+        liveCardClosing = false
+        hideScrim()
+        applyAvailability()
+    }
+
+    /** Returns true if Back was consumed by the Live Session overlay. */
+    fun closeLiveCard(immediate: Boolean = false): Boolean {
+        if (liveCard == null) return false
+        dismissLiveCard(immediate)
+        return true
+    }
+
     fun alignWith(backBtn: View) {
         anchorView?.viewTreeObserver?.let { oldObserver ->
             preDrawListener?.let { if (oldObserver.isAlive) oldObserver.removeOnPreDrawListener(it) }
@@ -213,14 +382,9 @@ class OrbMenuController(
         updatePosition()
     }
 
-    /**
-     * Remove OrbMenu views from the root while FindBar/IME overlays are active.
-     * This is stronger than visibility alone and prevents stale/animated views
-     * from remaining above the FindBar or receiving touches.
-     */
     /** Trả về tâm (toạ độ màn hình) của viên thuốc khi menu ba chấm mở (orb thu vào đó); null thì chỉ mờ đi như cũ. */
     var absorbTarget: (() -> android.graphics.PointF?)? = null
-    private var absorbedState: FloatArray? = null
+    private var isAbsorbed = false
 
     private fun absorbInto(target: android.graphics.PointF, onDone: () -> Unit) {
         val loc = IntArray(2)
@@ -228,13 +392,14 @@ class OrbMenuController(
         // Đoạn 1: orb thu hẳn vào tâm viên thuốc.
         val dx = target.x - (loc[0] + mainBtn.width / 2f)
         val dy = target.y - (loc[1] + mainBtn.height / 2f)
-        absorbedState = floatArrayOf(dx, dy)
+        isAbsorbed = true
         AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_X, dx, AnimationSystem.MENU_MORPH)
         AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_Y, dy, AnimationSystem.MENU_MORPH)
         AnimationSystem.scaleTo(mainBtn, Constants.ABSORB_SCALE, Constants.ABSORB_SCALE, AnimationSystem.MENU_MORPH)
         AnimationSystem.fade(mainBtn, 0f, AnimationSystem.MENU_MORPH) { onDone() }
     }
 
+    /** Gỡ các nút khi FindBar, bàn phím hoặc menu khác chiếm vùng tương tác. */
     fun setTemporarilyHidden(hidden: Boolean) {
         val was = temporarilyHidden
         val wasCompactBefore = isCompacted
@@ -243,20 +408,11 @@ class OrbMenuController(
             // Đã ẩn hẳn và gỡ khỏi root từ lần gọi trước: không làm lại.
             if (was && mainBtn.parent == null) return
             // Đang bị hút vào menu: để animation chạy tiếp, đừng reset giữa chừng.
-            if (was && absorbedState != null) return
+            if (was && isAbsorbed) return
             collapseImmediately()
             mainBtn.isClickable = false
             mainBtn.isEnabled = false
             mainBtn.isFocusable = false
-            subBtns.forEach { btn ->
-                AnimationSystem.cancel(btn)
-                btn.alpha = 0f
-                btn.scaleX = 0f
-                btn.scaleY = 0f
-                btn.isClickable = false
-                btn.isEnabled = false
-                btn.visibility = View.GONE
-            }
             // Detaching guarantees the menu cannot overlay FindBar or intercept touches.
             // Nút chính mờ đi trước rồi mới gỡ; nếu trong lúc đó được hiện lại thì việc gỡ bị bỏ qua.
             val detach = {
@@ -286,7 +442,7 @@ class OrbMenuController(
                 ).apply { gravity = Gravity.TOP or Gravity.START; leftMargin = dp(16); topMargin = dp(16) })
                 mainBtn.alpha = 0f
             }
-            subBtns.forEachIndexed { index, btn ->
+            subBtns.forEach { btn ->
                 if (btn.parent == null) {
                     val params = btn.layoutParams ?: FrameLayout.LayoutParams(dp(32), dp(32)).apply {
                         gravity = Gravity.TOP or Gravity.START
@@ -298,9 +454,9 @@ class OrbMenuController(
             }
             applyAvailability()
             updatePosition()
-            val absorbed = absorbedState
-            absorbedState = null
-            if (absorbed != null && mainBtn.visibility == View.VISIBLE) {
+            val wasAbsorbed = isAbsorbed
+            isAbsorbed = false
+            if (wasAbsorbed && mainBtn.visibility == View.VISIBLE) {
                 // Menu thu về: orb nảy ra từ trạng thái đã bị hút về đúng chỗ cũ.
                 AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_POP_BACK)
                 AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_POP_BACK)
@@ -321,21 +477,13 @@ class OrbMenuController(
         val visible = toolbarAvailable && !temporarilyHidden
         val interactive = visible && !isCompacted && !restoringFromCompact
         mainBtn.visibility = if (visible) View.VISIBLE else View.GONE
-        mainBtn.isClickable = interactive
-        mainBtn.isEnabled = interactive
-        mainBtn.isFocusable = interactive
+        // A morphing card owns all touch input until it is fully detached.
+        val canUseOrb = interactive && liveCard == null
+        mainBtn.isClickable = canUseOrb
+        mainBtn.isEnabled = canUseOrb
+        mainBtn.isFocusable = canUseOrb
         if (!visible) {
-            subBtns.forEach {
-                AnimationSystem.cancel(it)
-                it.visibility = View.GONE
-                it.isClickable = false
-                it.isEnabled = false
-                it.alpha = 0f
-                it.scaleX = 0f
-                it.scaleY = 0f
-                it.translationX = 0f
-                it.translationY = 0f
-            }
+            hideSubButtons()
         } else {
             subBtns.forEach {
                 it.isClickable = interactive && isExpanded
@@ -345,72 +493,45 @@ class OrbMenuController(
     }
 
     /**
-     * Thu toàn bộ Orb (kể cả các nút con đang mở) vào tâm URL Pill khi toolbar compact.
-     * Chiều ngược lại dùng cùng spring preset của app để bung về đúng vị trí cũ.
+     * Đóng các nút con rồi thu Orb vào tâm URL Pill khi toolbar compact.
      */
     fun setToolbarCompact(compact: Boolean, pillAnchor: View) {
         if (compact == isCompacted) return
         if (temporarilyHidden || !toolbarAvailable) return
         if (compact) {
-            // Phòng hờ (scrim đã chặn vuốt thu nhỏ viên thuốc): đang bung thì thu các nút con về trước,
-            // không để chúng kẹt lại ngoài viên thuốc rồi nằm yên khi viên thuốc mở rộng lại.
-            if (isExpanded) collapse()
+            dismissLiveCard(immediate = true)
+            collapse()
             isCompacted = true
             restoringFromCompact = false
-            // Nếu Orb vừa được thu gọn bởi thao tác người dùng, không giữ các nút con
-            // còn đang fade-out dở rồi vô tình bung chúng trở lại ở lần mở Pill sau.
-            if (!isExpanded) {
-                subBtns.forEach { btn ->
-                    AnimationSystem.cancel(btn)
-                    btn.visibility = View.GONE
-                    btn.alpha = 0f
-                    btn.scaleX = 0f
-                    btn.scaleY = 0f
-                    btn.translationX = 0f
-                    btn.translationY = 0f
-                }
-            }
-            val active = buildList {
-                if (mainBtn.visibility == View.VISIBLE) add(mainBtn)
-                subBtns.filterTo(this) { it.visibility == View.VISIBLE && isExpanded }
-            }
-            compactBase.clear()
-            active.forEach { compactBase[it] = restTranslation(it) }
-            active.forEach { btn ->
-                btn.isClickable = false
-                btn.isEnabled = false
-                val base = compactBase[btn] ?: (btn.translationX to btn.translationY)
-                val target = translationAtPill(btn, pillAnchor, base.first, base.second)
-                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, target.first, AnimationSystem.MENU_MORPH_CLOSE)
-                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, target.second, AnimationSystem.MENU_MORPH_CLOSE)
-                AnimationSystem.scaleTo(btn, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
-                AnimationSystem.fade(btn, 0f, AnimationSystem.MENU_MORPH_CLOSE)
+            hideSubButtons()
+            compactedMain = mainBtn.visibility == View.VISIBLE
+            if (compactedMain) {
+                val (x, y) = translationAtPill(pillAnchor)
+                AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_X, x, AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_Y, y, AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.scaleTo(mainBtn, AnimationSystem.COLLAPSE_SCALE, spec = AnimationSystem.MENU_MORPH_CLOSE)
+                AnimationSystem.fade(mainBtn, 0f, AnimationSystem.MENU_MORPH_CLOSE)
             }
         } else {
             isCompacted = false
             restoringFromCompact = true
-            if (compactBase.isEmpty()) {
+            if (!compactedMain) {
                 restoringFromCompact = false
                 applyAvailability()
                 return
             }
-            val active = compactBase.keys.toList()
-            active.forEach { btn ->
-                if (btn.parent == null) return@forEach
-                btn.visibility = View.VISIBLE
-                btn.isClickable = btn === mainBtn || isExpanded
-                btn.isEnabled = btn.isClickable
-                val base = compactBase[btn] ?: (0f to 0f)
-                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_X, base.first, AnimationSystem.MENU_MORPH)
-                AnimationSystem.spring(btn, DynamicAnimation.TRANSLATION_Y, base.second, AnimationSystem.MENU_MORPH)
-                AnimationSystem.scaleTo(btn, 1f, 1f, AnimationSystem.MENU_MORPH)
-                AnimationSystem.fade(btn, 1f, AnimationSystem.QUICK)
+            if (mainBtn.parent != null) {
+                mainBtn.visibility = View.VISIBLE
+                AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_X, 0f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.spring(mainBtn, DynamicAnimation.TRANSLATION_Y, 0f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.spring(mainBtn, DynamicAnimation.SCALE_X, 1f, AnimationSystem.MENU_MORPH)
+                AnimationSystem.fade(mainBtn, 1f, AnimationSystem.QUICK)
             }
             // Chỉ xoá vị trí gốc sau khi spring của nút chính đã thực sự về đích.
             AnimationSystem.spring(mainBtn, DynamicAnimation.SCALE_Y, 1f, AnimationSystem.MENU_MORPH) {
                 if (!isCompacted) {
                     restoringFromCompact = false
-                    compactBase.clear()
+                    compactedMain = false
                     applyAvailability()
                 }
             }
@@ -418,22 +539,9 @@ class OrbMenuController(
         applyAvailability()
     }
 
-    /**
-     * Translation "nghỉ" của một nút Orb: nơi nó sẽ đứng khi mọi spring đã dừng.
-     * Không đọc từ translation hiện tại vì lúc đó có thể đang spring giữa chừng
-     * (vd. orb vừa nảy ra từ tâm viên thuốc sau khi menu đóng), lưu nhầm sẽ làm orb kẹt giữa Pill.
-     */
-    private fun restTranslation(btn: View): Pair<Float, Float> {
-        if (btn === mainBtn || !isExpanded) return 0f to 0f
-        val i = subBtns.indexOf(btn)
-        if (i < 0) return 0f to 0f
-        val angle = Math.toRadians(SUB_ANGLES[i])
-        val radius = dp(60).toFloat()
-        return (radius * kotlin.math.cos(angle)).toFloat() to (radius * kotlin.math.sin(angle)).toFloat()
-    }
-
-    /** Tính translation cần thiết để tâm một Orb view trùng tâm Pill, không phụ thuộc vị trí Orb đang spring. */
-    private fun translationAtPill(view: View, pillAnchor: View, baseX: Float, baseY: Float): Pair<Float, Float> {
+    /** Tính độ dịch từ vị trí bố cục của Orb tới tâm Pill trong khi spring có thể đang chạy. */
+    private fun translationAtPill(pillAnchor: View): Pair<Float, Float> {
+        val view = mainBtn
         val oldX = view.translationX
         val oldY = view.translationY
         val oldSx = view.scaleX
@@ -466,51 +574,35 @@ class OrbMenuController(
         val targetY = pillLoc[1] + pillAnchor.height / 2f
         val layoutX = viewLoc[0] + view.width / 2f
         val layoutY = viewLoc[1] + view.height / 2f
-        return (baseX + targetX - layoutX) to (baseY + targetY - layoutY)
+        return (targetX - layoutX) to (targetY - layoutY)
     }
 
     private fun updatePosition() {
         val anchor = anchorView ?: return
-        if (anchor.width <= 0) {
-            applyAvailability()
-            return
-        }
+        if (anchor.width <= 0) return
 
-        val loc = IntArray(2)
-        val rootLoc = IntArray(2)
-        anchor.getLocationInWindow(loc)
-        rootLayout.getLocationInWindow(rootLoc)
-        val x = loc[0] - rootLoc[0]
-        val y = loc[1] - rootLoc[1]
+        anchor.getLocationInWindow(anchorLocation)
+        rootLayout.getLocationInWindow(rootLocation)
+        val x = anchorLocation[0] - rootLocation[0]
+        val y = anchorLocation[1] - rootLocation[1]
 
-        val mainParams = mainBtn.layoutParams as FrameLayout.LayoutParams
-        if (mainParams.leftMargin != x || mainParams.topMargin != y ||
-            mainParams.gravity != (Gravity.TOP or Gravity.START)
-        ) {
-            mainParams.leftMargin = x
-            mainParams.topMargin = y
-            mainParams.gravity = Gravity.TOP or Gravity.START
-            mainBtn.layoutParams = mainParams
-        }
+        positionButton(mainBtn, x, y)
+        val inset = dp(4)
+        subBtns.forEach { positionButton(it, x + inset, y + inset) }
+    }
 
-        subBtns.forEach { btn ->
-            val params = btn.layoutParams as FrameLayout.LayoutParams
-            val newX = x + dp(4)
-            val newY = y + dp(4)
-            if (params.leftMargin != newX || params.topMargin != newY ||
-                params.gravity != (Gravity.TOP or Gravity.START)
-            ) {
-                params.leftMargin = newX
-                params.topMargin = newY
-                params.gravity = Gravity.TOP or Gravity.START
-                btn.layoutParams = params
-            }
-        }
-        applyAvailability()
+    private fun positionButton(button: View, x: Int, y: Int) {
+        val params = button.layoutParams as FrameLayout.LayoutParams
+        val gravity = Gravity.TOP or Gravity.START
+        if (params.leftMargin == x && params.topMargin == y && params.gravity == gravity) return
+        params.leftMargin = x
+        params.topMargin = y
+        params.gravity = gravity
+        button.layoutParams = params
     }
 
     fun toggle() {
-        if (!isAvailable()) return
+        if (!isAvailable() || liveCard != null) return
         if (isExpanded) collapse() else expand()
     }
 
@@ -562,11 +654,12 @@ class OrbMenuController(
     }
 
     private fun collapseImmediately() {
+        dismissLiveCard(immediate = true)
         isExpanded = false
         hideScrim()
         isCompacted = false
         restoringFromCompact = false
-        compactBase.clear()
+        compactedMain = false
         AnimationSystem.cancel(mainBtn)
         mainBtn.rotation = 0f
         mainBtn.alpha = 1f
@@ -574,6 +667,10 @@ class OrbMenuController(
         mainBtn.scaleY = 1f
         mainBtn.translationX = 0f
         mainBtn.translationY = 0f
+        hideSubButtons()
+    }
+
+    private fun hideSubButtons() {
         subBtns.forEach { btn ->
             AnimationSystem.cancel(btn)
             btn.visibility = View.GONE
@@ -588,6 +685,7 @@ class OrbMenuController(
     }
 
     fun destroy() {
+        dismissLiveCard(immediate = true)
         LiveEventHub.removeListener(liveListener)
         glyph.release()
         anchorView?.viewTreeObserver?.let { observer ->
@@ -599,6 +697,7 @@ class OrbMenuController(
         if (scrim.parent === rootLayout) rootLayout.removeView(scrim)
         AnimationSystem.cancel(mainBtn)
         mainBtn.setOnClickListener(null)
+        mainBtn.setOnLongClickListener(null)
         subBtns.forEach {
             AnimationSystem.cancel(it)
             it.setOnClickListener(null)

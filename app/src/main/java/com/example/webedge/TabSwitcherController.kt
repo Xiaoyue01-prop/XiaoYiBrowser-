@@ -299,8 +299,6 @@ class TabSwitcherController(
             isFocusable = true
             // Overlay phải nổi trên Orb/toolbar; Orb được tháo khỏi root trong thời gian này.
             elevation = dp(12).toFloat()
-            // Nền dự phòng đặc: nếu BlurView chưa có frame đầu, trang web không xuyên qua.
-            setBackgroundColor(GlassSystem.tabSwitcherBackgroundColor())
         }
         var closing = false
         // Chế độ chọn (nhiều tab). Các hàm thật nằm ở khối "Chế độ chọn" phía dưới; khai báo hook ở đây vì
@@ -1676,7 +1674,6 @@ class TabSwitcherController(
             appliedDarkTone = dark
             WindowCompat.getInsetsController(activity.window, activity.window.decorView)
                 .isAppearanceLightStatusBars = !dark
-            container.setBackgroundColor(GlassSystem.tabSwitcherBackgroundColor(if (dark) Color.BLACK else Color.WHITE))
             statusFade.background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(

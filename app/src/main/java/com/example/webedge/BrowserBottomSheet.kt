@@ -3,12 +3,13 @@ package com.example.webedge
 import android.app.Activity
 import android.app.Dialog
 import android.graphics.Outline
-import android.graphics.drawable.ColorDrawable
+import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -74,7 +75,6 @@ class BrowserBottomSheet(
 
         // Native sheet surfaces follow the active webpage palette, not Android's system theme.
         val night = GlassSystem.isDarkPage()
-        val sheetColor = GlassSystem.pageSurfaceColor()
         val textColor = GlassSystem.pagePrimaryText()
         val grabberColor = GlassSystem.pageSheetGrabberColor()
         val buttonColor = GlassSystem.pageSheetButtonColor()
@@ -88,7 +88,7 @@ class BrowserBottomSheet(
         windowRoot.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
         val root: FrameLayout = blurTarget
         val scrim = View(activity).apply {
-            setBackgroundColor(GlassSystem.pageScrimColor())
+            setBackgroundColor(Color.argb(110, 0, 0, 0))
             alpha = 0f
             setOnClickListener { animateClose() }
         }
@@ -96,7 +96,7 @@ class BrowserBottomSheet(
 
         val corner = dp(36)
         val sheet = FrameLayout(activity).apply {
-            background = ColorDrawable(sheetColor)
+            background = GlassSystem.createSheetTint()
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
                     outline.setRoundRect(0, 0, view.width, view.height + corner, corner.toFloat())
@@ -166,7 +166,6 @@ class BrowserBottomSheet(
         // để phần nội dung sát mép tiêu đề bị mờ dần như header menu Tab.
         (content.parent as? ViewGroup)?.removeView(content)
         if (onChromeReady != null) {
-            contentTarget.background = ColorDrawable(sheetColor)
             contentTarget.addView(content, FrameLayout.LayoutParams(-1, -1))
             sheet.addView(contentTarget, FrameLayout.LayoutParams(-1, -1))
         } else {
@@ -236,7 +235,13 @@ class BrowserBottomSheet(
             }
         }
         dlg.setContentView(windowRoot)
-        dlg.window?.let { BrowserSheetMotion.configureWindow(it, windowRoot, night) }
+        dlg.window?.let { window ->
+            BrowserSheetMotion.configureWindow(window, windowRoot, night)
+            window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+            window.attributes = window.attributes.apply {
+                blurBehindRadius = (GlassSystem.GLASS_BLUR_RADIUS_DP * density).toInt()
+            }
+        }
         val gd = GlassDialogController(
             activity = activity,
             root = windowRoot,
@@ -276,8 +281,6 @@ class BrowserBottomSheet(
         GlassSystem.observePageTone(windowRoot) { color ->
             val dark = GlassSystem.isDarkPage(color)
             val foregroundColor = GlassSystem.pagePrimaryText(color)
-            sheet.background = ColorDrawable(GlassSystem.pageSurfaceColor(color))
-            if (onChromeReady != null) contentTarget.background = ColorDrawable(GlassSystem.pageSurfaceColor(color))
             titleView.setTextColor(foregroundColor)
             if (closeButton is ImageView) {
                 closeButton.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
