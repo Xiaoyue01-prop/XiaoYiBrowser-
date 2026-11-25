@@ -244,7 +244,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         HttpsFirst.onLoaded(view, url)
         host.tabManager.updateForWebView(view, url, view.title ?: url)
         // Private pages never enter the persisted browsing history.
-        if (host.tabManager.getForWebView(view)?.isPrivate != true && !isErrorPage(view, url)) {
+        if (host.tabManager.getForWebView(view)?.isPrivate == false && !isErrorPage(view, url)) {
             host.store.addHistory(view.title ?: "", url)
         }
         if (adBlockActiveFor(url)) view.evaluateJavascript(AdBlocker.HIDE_CSS, null)

@@ -93,6 +93,8 @@ dependencies {
     // API 36+ already provides the native Credential Manager.
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.2.0")
+    // Google Identity Services: authorization for the app-private Drive scope.
+    implementation("com.google.android.gms:play-services-auth:22.0.0")
     // Credential Manager's biometric library still requests Fragment 1.2.5.
     implementation("androidx.fragment:fragment:1.8.9")
     // Jetpack PiP: tự lo sourceRectHint, đổi cỡ liền mạch cho video, tự vào PiP khi rời app (alpha03 ra 07/2026)

@@ -88,6 +88,65 @@ class Store(context: Context) {
 
     // ✅ BƯỚC 2: cache trong RAM, không parse JSON lại mỗi lần đọc
     private val listCache = mutableMapOf<String, MutableList<Entry>>()
+    // Sync state belongs to exactly one explicitly authorized Google account.
+    internal val syncAccount: String? get() = sp.getString("sync_account_v1", null)
+    internal val syncLastSuccess: Long get() = sp.getLong("sync_success_v1", 0L)
+    private var syncLoaded = false
+    private var syncCache: SyncData? = null
+    internal fun syncSnapshot(): SyncData? {
+        if (syncAccount == null) return null
+        if (!syncLoaded) {
+            syncCache = SyncJson.decode(checkNotNull(sp.getString("sync_state_v1", null)))
+            syncLoaded = true
+        }
+        return syncCache
+    }
+    internal fun enableSync(account: String): SyncData {
+        check(syncAccount == null || syncAccount == account)
+        syncSnapshot()?.let { return it }
+        val data = SyncData.seed(list("history"), list("bookmarks"))
+        // Preserve the original local data until the first successful remote merge.
+        sp.edit().putString("sync_account_v1", account)
+            .putString("sync_state_v1", SyncJson.encode(data)).apply()
+        syncCache = data; syncLoaded = true
+        return data
+    }
+    internal fun disableSync() {
+        syncCache = null; syncLoaded = false
+        sp.edit().remove("sync_account_v1").remove("sync_state_v1").remove("sync_success_v1").remove("sync_failed_v1").apply()
+    }
+    private fun mutateSync(change: (SyncData) -> SyncData) {
+        if (syncAccount == null) return
+        try {
+            val old = syncSnapshot() ?: return
+            val next = change(old)
+            if (next != old) {
+                sp.edit().putString("sync_state_v1", SyncJson.encode(next)).apply()
+                syncCache = next
+            }
+        } catch (e: Exception) {
+            // Never silently upload an incomplete journal after a local mutation failed.
+            sp.edit().putBoolean("sync_failed_v1", true).apply()
+            Log.w(TAG, "Sync journal unavailable; local browsing remains available")
+        }
+    }
+    internal fun syncHealthy(): Boolean = !sp.getBoolean("sync_failed_v1", false)
+    internal fun applySync(account: String, received: SyncData) {
+        check(syncAccount == account && syncHealthy())
+        val data = checkNotNull(syncSnapshot()).merge(received)
+        val localHistory = list("history").filterNot { SyncData.allowed(it.url) }
+        val localBookmarks = list("bookmarks").filterNot { SyncData.allowed(it.url) }
+        val history = (data.historyEntries() + localHistory).sortedByDescending { it.time }.take(300)
+        val bookmarks = (data.bookmarkEntries() + localBookmarks).sortedByDescending { it.time }
+        historyDirty = false; handler.removeCallbacks(persistHistory)
+        // Publish the merged view and sync state in the same SharedPreferences transaction.
+        sp.edit().putString("history", encodeList(history)).putString("bookmarks", encodeList(bookmarks))
+            .putString("sync_state_v1", SyncJson.encode(data))
+            .putLong("sync_success_v1", System.currentTimeMillis()).apply()
+        syncCache = data; syncLoaded = true
+        listCache["history"] = history.toMutableList(); listCache["bookmarks"] = bookmarks.toMutableList()
+    }
+
     // Lịch sử đổi liên tục khi duyệt web: gom lại, ghi xuống ổ cứng một lần sau vài giây thay vì mỗi trang.
     private val handler = Handler(Looper.getMainLooper())
     private var historyDirty = false
@@ -305,13 +364,16 @@ class Store(context: Context) {
     }
     private fun writeList(key: String) {
         val items = listCache[key] ?: return
+        sp.edit().putString(key, encodeList(items)).apply()
+    }
+    private fun encodeList(items: List<Entry>): String {
         val arr = JSONArray()
         for (e in items) {
             val item = JSONObject().put("t", e.title).put("u", e.url).put("d", e.time)
             if (e.desktop) item.put("m", true)
             arr.put(item)
         }
-        sp.edit().putString(key, arr.toString()).apply()
+        return arr.toString()
     }
     fun addHistory(title: String, url: String) {
         if (url.isBlank() || url.startsWith("about:") || HomePage.isHome(url)) return
@@ -323,6 +385,7 @@ class Store(context: Context) {
             l.add(0, entry)
         }
         while (l.size > 300) l.removeAt(l.size - 1)
+        mutateSync { it.visit(entry, System.currentTimeMillis()) }
         historyDirty = true
         handler.removeCallbacks(persistHistory)
         handler.postDelayed(persistHistory, Constants.HISTORY_PERSIST_DELAY_MS)
@@ -330,11 +393,16 @@ class Store(context: Context) {
     fun remove(key: String, url: String) {
         val l = list(key)
         l.removeAll { it.url == url }
+        when (key) {
+            "history" -> mutateSync { it.removeHistory(url, System.currentTimeMillis()) }
+            "bookmarks" -> mutateSync { it.bookmark(null, url, System.currentTimeMillis()) }
+        }
         save(key, l)
     }
     fun clearHistory() {
         historyDirty = false
         handler.removeCallbacks(persistHistory)
+        mutateSync { it.clearHistory(System.currentTimeMillis()) }
         save("history", emptyList())
         // Tab đã đóng cũng là lịch sử duyệt web: xóa cùng lúc để không còn URL cũ nào sót lại.
         clearClosedTabs()
@@ -364,10 +432,13 @@ class Store(context: Context) {
         val idx = l.indexOfFirst { it.url == url }
         return if (idx >= 0) {
             l.removeAt(idx)
+            mutateSync { it.bookmark(null, url, System.currentTimeMillis()) }
             save("bookmarks", l)
             false
         } else {
-            l.add(0, Entry(title.ifBlank { url }, url, System.currentTimeMillis()))
+            val entry = Entry(title.ifBlank { url }, url, System.currentTimeMillis())
+            l.add(0, entry)
+            mutateSync { it.bookmark(entry, url, System.currentTimeMillis()) }
             save("bookmarks", l)
             true
         }

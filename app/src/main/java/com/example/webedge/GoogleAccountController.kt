@@ -26,7 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-internal data class GoogleAccountProfile(val name: String, val avatarUrl: String?)
+internal data class GoogleAccountProfile(val name: String, val avatarUrl: String?, val email: String?, val subject: String?)
 
 internal class GoogleAccountController(
     private val activity: ComponentActivity,
@@ -39,7 +39,8 @@ internal class GoogleAccountController(
     private var avatar: Bitmap? = null
 
     var profile: GoogleAccountProfile? = preferences.getString("name", null)?.let { name ->
-        GoogleAccountProfile(name, preferences.getString("avatar_url", null))
+        GoogleAccountProfile(name, preferences.getString("avatar_url", null),
+            preferences.getString("email", null), preferences.getString("subject", null))
     }
         private set
 
@@ -64,12 +65,13 @@ internal class GoogleAccountController(
                 }
 
                 val google = GoogleIdTokenCredential.createFrom(credential.data)
-                // Keep display metadata only. Summit has no server session or account-based authorization.
+                // Save account identifiers, not OAuth or ID tokens. Drive authorization is a separate user action.
                 val name = google.displayName?.takeIf { it.isNotBlank() }
                     ?: google.givenName?.takeIf { it.isNotBlank() }
                     ?: "Tài khoản Google"
-                val account = GoogleAccountProfile(name, google.profilePictureUri?.toString())
-                preferences.edit().putString("name", account.name).putString("avatar_url", account.avatarUrl).apply()
+                val account = GoogleAccountProfile(name, google.profilePictureUri?.toString(), google.email, google.uniqueId)
+                preferences.edit().putString("name", account.name).putString("avatar_url", account.avatarUrl)
+                    .putString("email", account.email).putString("subject", account.subject).apply()
                 profile = account
                 onSignedIn()
             } catch (e: GetCredentialCancellationException) {

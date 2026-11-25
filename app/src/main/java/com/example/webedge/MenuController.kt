@@ -113,7 +113,8 @@ class MenuController(
     private var toolbarCompact = false
     private var menuWasOpenBeforeCompact = false
     private var compactFallback: CompactFallback? = null
-    private val googleAccount by lazy { GoogleAccountController(activity, host::toast) }
+    private val googleAccount = GoogleAccountController(activity, host::toast)
+    private val googleSync = GoogleSyncController(activity, store, googleAccount, { tabManager.isPrivateMode }, host::toast)
 
     private val browserTools by lazy(LazyThreadSafetyMode.NONE) {
         BrowserToolsController(
@@ -905,8 +906,58 @@ class MenuController(
     private fun showGoogleAccount(account: GoogleAccountProfile) {
         val panel = makePanel("Tài khoản Google", null, 280) { showMainPage() }
         panel.body.addView(buildGoogleAccountRow(account))
+        val status = TextView(activity).apply {
+            val last = store.syncLastSuccess
+            text = if (googleSync.enabled()) {
+                if (last > 0) "Đồng bộ đang bật • " + java.text.DateFormat.getDateTimeInstance().format(java.util.Date(last))
+                else "Đồng bộ đang bật • Chưa hoàn tất lần đầu"
+            } else "Đồng bộ lịch sử và dấu trang: Tắt"
+            textSize = 12f
+            styleSecondary(this)
+            setPadding(dp(18), dp(8), dp(18), dp(8))
+        }
+        panel.body.addView(status)
+        fun refreshAccount() {
+            if (isOpen && !tabManager.isPrivateMode && panel.page.isAttachedToWindow && googleAccount.profile == account) {
+                showGoogleAccount(account)
+            }
+        }
+        panel.body.addView(panelButton(if (googleSync.enabled()) "Đồng bộ ngay" else "Bật đồng bộ", GlassSystem.pagePrimaryText()) {
+            if (googleSync.busy) { host.toast("Đang đồng bộ"); return@panelButton }
+            if (googleSync.enabled()) googleSync.start(true, ::refreshAccount)
+            else android.app.AlertDialog.Builder(activity)
+                .setTitle("Đồng bộ với Google Drive")
+                .setMessage("Summit sẽ hợp nhất lịch sử và dấu trang HTTP/HTTPS hiện có trên thiết bị này với tài khoản Google đang đăng nhập, kể cả dữ liệu cục bộ từ tài khoản trước. Chỉ bật nếu đây là dữ liệu của bạn. Không đồng bộ cookie hay mật khẩu.")
+                .setNegativeButton("Hủy", null)
+                .setPositiveButton("Bật đồng bộ") { _, _ -> googleSync.start(true, ::refreshAccount) }
+                .show()
+        })
+        if (googleSync.enabled()) panel.body.addView(panelButton("Tắt đồng bộ", GlassSystem.pagePrimaryText()) {
+            if (googleSync.busy) { host.toast("Đang đồng bộ"); return@panelButton }
+            android.app.AlertDialog.Builder(activity)
+                .setTitle("Tắt đồng bộ?")
+                .setMessage("Dữ liệu trên máy và Drive vẫn được giữ. Các thay đổi khi tắt đồng bộ (kể cả thao tác xóa) sẽ không được gửi sang thiết bị khác. Hãy đồng bộ ngay trước khi tắt nếu muốn giữ thay đổi mới nhất.")
+                .setNegativeButton("Hủy", null)
+                .setPositiveButton("Tắt") { _, _ ->
+                    if (googleSync.busy) host.toast("Đang đồng bộ") else {
+                        store.disableSync()
+                        showGoogleAccount(account)
+                    }
+                }.show()
+        })
         addButtons(panel, null, panelButton("Đăng xuất", Theme.DANGER_RED) {
-            googleAccount.signOut { showMainPage() }
+            if (googleSync.busy) { host.toast("Đang đồng bộ"); return@panelButton }
+            fun signOut() {
+                if (googleSync.busy) { host.toast("Đang đồng bộ"); return }
+                store.disableSync()
+                googleAccount.signOut { showMainPage() }
+            }
+            if (googleSync.enabled()) android.app.AlertDialog.Builder(activity)
+                .setTitle("Đăng xuất Google?")
+                .setMessage("Đồng bộ sẽ dừng. Dữ liệu trên máy và Drive vẫn được giữ; hãy đồng bộ ngay trước khi đăng xuất nếu muốn gửi các thay đổi mới nhất.")
+                .setNegativeButton("Hủy", null)
+                .setPositiveButton("Đăng xuất") { _, _ -> signOut() }.show()
+            else signOut()
         })
         showPanel(panel)
     }
@@ -961,6 +1012,7 @@ class MenuController(
     }
 
     private fun toggleBookmark() {
+        if (tabManager.isPrivateMode) { host.toast("Không lưu dấu trang từ tab riêng tư"); return }
         if (host.currentUrl.isBlank()) return
         val added = store.toggleBookmark(host.web.title ?: host.currentUrl, host.currentUrl)
         host.toast(if (added) "Đã thêm dấu trang" else "Đã bỏ dấu trang")
