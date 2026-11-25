@@ -56,7 +56,20 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Restore Summit debug signing key if configured
+        env:
+          SUMMIT_DEBUG_KEYSTORE_BASE64: ${{ secrets.SUMMIT_DEBUG_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          if [[ -n "$SUMMIT_DEBUG_KEYSTORE_BASE64" ]]; then
+            install -d -m 0700 "$HOME/.android"
+            umask 077
+            printf '%s' "$SUMMIT_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+          fi
+
       - name: Build trial APK
+        env:
+          SUMMIT_GOOGLE_WEB_CLIENT_ID: ${{ vars.SUMMIT_GOOGLE_WEB_CLIENT_ID }}
         run: ./gradlew --no-daemon --stacktrace clean assembleRelease
 
       - name: Verify packaged Edge script

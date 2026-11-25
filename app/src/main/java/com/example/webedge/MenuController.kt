@@ -1,13 +1,12 @@
 package com.example.webedge
 
-import android.app.Activity
-import android.graphics.Color
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.Typeface
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.Settings
 import android.view.autofill.AutofillManager
-import android.graphics.Typeface
 import android.text.InputType
 import android.text.TextUtils
 import android.view.Gravity
@@ -23,9 +22,14 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.activity.ComponentActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.doOnAttach
+import androidx.core.view.doOnDetach
+import androidx.lifecycle.lifecycleScope
 import eightbitlab.com.blurview.BlurTarget
+import kotlinx.coroutines.launch
 
 /** Những thứ menu cần hỏi lại Activity; luôn đọc giá trị mới nhất vì chúng đổi theo thời gian. */
 interface MenuHost {
@@ -69,7 +73,7 @@ interface MenuHost {
 private const val EDGE_ZONE_DP = 16
 
 class MenuController(
-    private val activity: Activity,
+    private val activity: ComponentActivity,
     private val root: FrameLayout,
     private val blurTarget: BlurTarget,
     private val store: Store,
@@ -109,6 +113,7 @@ class MenuController(
     private var toolbarCompact = false
     private var menuWasOpenBeforeCompact = false
     private var compactFallback: CompactFallback? = null
+    private val googleAccount by lazy { GoogleAccountController(activity, host::toast) }
 
     private val browserTools by lazy(LazyThreadSafetyMode.NONE) {
         BrowserToolsController(
@@ -797,6 +802,19 @@ class MenuController(
                 item("[Debug] Chụp cấu trúc đầu trang", null, true) { DebugDump.run(activity, host.web) }
             }
         } else {
+            if (!tabManager.isPrivateMode) {
+                val account = googleAccount.profile
+                box.addView(buildGoogleAccountRow(account) {
+                    if (account != null) {
+                        showGoogleAccount(account)
+                    } else {
+                        googleAccount.signIn {
+                            if (isOpen && kind == Kind.MAIN && menuBackAction == null) showMainPage(false)
+                        }
+                    }
+                })
+                gap()
+            }
             item("Chế độ đọc", Icons.BOOK_OPEN, true) {
                 // Chờ thẻ menu thu về xong rồi mới đưa Reader Module lên trên Browser Module.
                 root.postDelayed({ onOpenReader() }, 360L)
@@ -812,7 +830,85 @@ class MenuController(
         }
 
         menuBackAction = null
-        setMenuPage(box, 280, animate)
+        val page = if (kind == Kind.MAIN) {
+            ScrollView(activity).apply {
+                isVerticalScrollBarEnabled = false
+                addView(box, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+        } else box
+        setMenuPage(page, 280, animate)
+    }
+
+    private fun buildGoogleAccountRow(account: GoogleAccountProfile?, onClick: (() -> Unit)? = null): View {
+        val row = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(62)
+            setPadding(dp(18), dp(8), dp(18), dp(8))
+        }
+        val badge = FrameLayout(activity).apply {
+            background = ovalDrawable(if (account == null) Color.WHITE else Theme.gapColor(isNight()))
+            clipToOutline = true
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        }
+        val picture = ImageView(activity)
+        if (account == null) {
+            picture.setImageResource(R.drawable.google_sign_in_icon)
+            badge.addView(picture, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
+        } else {
+            val initial = TextView(activity).apply {
+                text = account.name.trim().take(1).uppercase()
+                textSize = 18f
+                gravity = Gravity.CENTER
+                stylePrimary(this, GlassSystem.pagePrimaryText())
+            }
+            badge.addView(initial, FrameLayout.LayoutParams(-1, -1))
+            picture.scaleType = ImageView.ScaleType.CENTER_CROP
+            badge.addView(picture, FrameLayout.LayoutParams(-1, -1))
+            picture.doOnAttach {
+                val load = activity.lifecycleScope.launch {
+                    val image = googleAccount.loadAvatar(account) ?: return@launch
+                    picture.setImageBitmap(image)
+                    initial.visibility = View.GONE
+                }
+                picture.doOnDetach { load.cancel() }
+            }
+        }
+        row.addView(badge, LinearLayout.LayoutParams(dp(42), dp(42)))
+
+        val name = TextView(activity).apply {
+            text = account?.name ?: "Đăng nhập bằng Google"
+            textSize = 16f
+            setSingleLine()
+            ellipsize = TextUtils.TruncateAt.END
+            stylePrimary(this, GlassSystem.pagePrimaryText())
+        }
+        row.addView(name, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = dp(12)
+        })
+        if (onClick != null) {
+            row.background = ripple()
+            row.setOnClickListener { onClick() }
+            row.isFocusable = true
+            AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
+            if (account != null) {
+                val chevron = ImageView(activity).apply {
+                    setImageDrawable(PathIcon(Icons.ARROW_FORWARD, GlassSystem.pageSecondaryText()))
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }
+                row.addView(chevron, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(10) })
+            }
+        }
+        return row
+    }
+
+    private fun showGoogleAccount(account: GoogleAccountProfile) {
+        val panel = makePanel("Tài khoản Google", null, 280) { showMainPage() }
+        panel.body.addView(buildGoogleAccountRow(account))
+        addButtons(panel, null, panelButton("Đăng xuất", Theme.DANGER_RED) {
+            googleAccount.signOut { showMainPage() }
+        })
+        showPanel(panel)
     }
 
     /**
