@@ -76,13 +76,13 @@ internal class GoogleAccountController(
                 // The user dismissed the account picker.
             } catch (e: NoCredentialException) {
                 Log.e("SummitGoogle", "NoCredential type=${e.type} msg=${e.message}", e)
-                toast("Không tìm thấy tài khoản (${e.type}): ${e.message}")
+                showError("NoCredentialException\n${e.type}\n${e.message}")
             } catch (e: GetCredentialException) {
                 Log.e("SummitGoogle", "GetCredential type=${e.type} msg=${e.message}", e)
-                toast("Lỗi Google (${e.javaClass.simpleName}): ${e.message}")
+                showError("${e.javaClass.simpleName}\n${e.type}\n${e.message}")
             } catch (e: GoogleIdTokenParsingException) {
                 Log.e("SummitGoogle", "Parse failed", e)
-                toast("Không đọc được thông tin tài khoản Google: ${e.message}")
+                showError("Parse: ${e.message}")
             } finally {
                 busy = false
             }
@@ -146,5 +146,15 @@ internal class GoogleAccountController(
         } catch (_: IOException) {
             null
         }
+    }
+
+    private fun showError(detail: String) {
+        val text = "$detail\n\nClient ID: ${clientId.take(24)}…${clientId.takeLast(32)}"
+        val dialog = android.app.AlertDialog.Builder(activity)
+            .setTitle("Lỗi đăng nhập Google")
+            .setMessage(text)
+            .setPositiveButton("Đóng", null)
+            .show()
+        dialog.findViewById<android.widget.TextView>(android.R.id.message)?.setTextIsSelectable(true)
     }
 }
