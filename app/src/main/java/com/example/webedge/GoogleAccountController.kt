@@ -3,6 +3,7 @@ package com.example.webedge
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
@@ -73,12 +74,15 @@ internal class GoogleAccountController(
                 onSignedIn()
             } catch (_: GetCredentialCancellationException) {
                 // The user dismissed the account picker.
-            } catch (_: NoCredentialException) {
-                toast("Không tìm thấy tài khoản Google để đăng nhập")
-            } catch (_: GetCredentialException) {
-                toast("Không đăng nhập được Google. Vui lòng thử lại")
-            } catch (_: GoogleIdTokenParsingException) {
-                toast("Không đọc được thông tin tài khoản Google")
+            } catch (e: NoCredentialException) {
+                Log.e("SummitGoogle", "NoCredential type=${e.type} msg=${e.message}", e)
+                toast("Không tìm thấy tài khoản (${e.type}): ${e.message}")
+            } catch (e: GetCredentialException) {
+                Log.e("SummitGoogle", "GetCredential type=${e.type} msg=${e.message}", e)
+                toast("Lỗi Google (${e.javaClass.simpleName}): ${e.message}")
+            } catch (e: GoogleIdTokenParsingException) {
+                Log.e("SummitGoogle", "Parse failed", e)
+                toast("Không đọc được thông tin tài khoản Google: ${e.message}")
             } finally {
                 busy = false
             }

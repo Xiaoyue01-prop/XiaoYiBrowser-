@@ -72,6 +72,19 @@ jobs:
           SUMMIT_GOOGLE_WEB_CLIENT_ID: ${{ vars.SUMMIT_GOOGLE_WEB_CLIENT_ID }}
         run: ./gradlew --no-daemon --stacktrace clean assembleRelease
 
+      - name: Print Google sign-in config (public values only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/release/app-release.apk
+          bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
+          echo "== Package =="
+          "$bt/aapt2" dump badging "$apk" | grep -m1 "^package:" || true
+          echo "== Web Client ID packaged in APK =="
+          "$bt/aapt2" dump resources "$apk" | grep -A2 "string/google_web_client_id" || echo "NOT FOUND"
+          echo "== Signing certificate SHA-1 =="
+          "$bt/apksigner" verify --print-certs "$apk" | grep -i "SHA-1" || true
+
       - name: Verify packaged Edge script
         shell: bash
         run: |
