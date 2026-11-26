@@ -568,6 +568,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         super.onResume()
         if (::pipController.isInitialized) pipController.trace("onResume")
         requestHighRefreshRate()
+        if (isLockUiActive()) return
         if (readerModeController?.isActive == true) {
             WindowCompat.getInsetsController(window, root).hide(WindowInsetsCompat.Type.statusBars())
         } else {
@@ -577,7 +578,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) {
+        if (hasFocus && !isLockUiActive()) {
             if (readerModeController?.isActive == true) {
                 WindowCompat.getInsetsController(window, root).hide(WindowInsetsCompat.Type.statusBars())
             } else {
@@ -642,7 +643,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
             activity = this,
             store = store,
             dialog = { glassDialog },
-            isActivityDestroyed = { isActivityDestroyed || browserLocked },
+            isActivityDestroyed = { isActivityDestroyed || isLockUiActive() },
             isPopupShowing = { popup.isShowing }
         )
         AdBlocker.init(this)
@@ -837,7 +838,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         setContentView(root)
         // Xin gộp quyền ở lần mở đầu tiên, đợi UI vẽ xong rồi mới hiện hộp thoại hệ thống.
         root.post {
-            firstRunPermissions.requestIfFirstRun()
+            if (!isLockUiActive()) firstRunPermissions.requestIfFirstRun()
             if (ProtectedRecords.failed) toast("Không đọc được dữ liệu bảo mật. Summit tạm dừng lưu; không xóa dữ liệu ứng dụng.")
         }
     }
@@ -1406,7 +1407,12 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         incomingLink(intent)?.let(::openLinkInNewTab)
     }
 
+    override fun unlockVisualWebView(): WebView? = if (::web.isInitialized) web else null
+
     override fun onBrowserUnlocked() {
+        if (::firstRunPermissions.isInitialized) root.post {
+            if (!isLockUiActive() && !isFinishing && !isDestroyed) firstRunPermissions.requestIfFirstRun()
+        }
         val link = pendingLockedLink
         pendingLockedLink = null
         if (browserStarted) link?.let(::openLinkInNewTab)
@@ -1498,7 +1504,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
     }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        if (browserLocked) return true
+        if (isLockUiActive()) return super.dispatchTouchEvent(ev)
         pullRefresh?.onTouch(ev)
         if (::tabSwipe.isInitialized) {
             when (tabSwipe.onTouch(ev)) {

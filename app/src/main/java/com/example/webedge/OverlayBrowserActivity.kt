@@ -93,6 +93,8 @@ class OverlayBrowserActivity : BiometricBrowserActivity() {
         startProtectedBrowser { initializeBrowser() }
     }
 
+    override fun unlockVisualWebView(): WebView? = web
+
     @SuppressLint("ClickableViewAccessibility", "SetJavaScriptEnabled")
     private fun initializeBrowser() {
         val startUrl = incomingUrl(intent)

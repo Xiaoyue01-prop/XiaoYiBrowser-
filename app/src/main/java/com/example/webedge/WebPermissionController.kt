@@ -93,7 +93,7 @@ class WebPermissionController(
     }
 
     private fun finishMediaRequest() {
-        if (gate?.browserLocked == true) { denyPending(); return }
+        if (gate?.isLockUiActive() == true) { denyPending(); return }
         val request = pendingRequest ?: return
         val resources = pendingResources
         pendingRequest = null; pendingResources = emptyArray(); pendingMediaIsPrivate = false
@@ -157,7 +157,7 @@ class WebPermissionController(
         val origin = pendingGeoOrigin ?: return
         val callback = pendingGeoCallback
         pendingGeoOrigin = null; pendingGeoCallback = null
-        val allowed = gate?.browserLocked != true && (hasRuntimePermission(Manifest.permission.ACCESS_FINE_LOCATION) || hasRuntimePermission(Manifest.permission.ACCESS_COARSE_LOCATION))
+        val allowed = gate?.isLockUiActive() != true && (hasRuntimePermission(Manifest.permission.ACCESS_FINE_LOCATION) || hasRuntimePermission(Manifest.permission.ACCESS_COARSE_LOCATION))
         callback?.invoke(origin, allowed, false)
     }
 
