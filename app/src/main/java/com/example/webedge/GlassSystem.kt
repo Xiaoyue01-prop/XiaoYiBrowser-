@@ -1,5 +1,8 @@
 package com.example.webedge
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Canvas
@@ -58,7 +61,11 @@ object GlassSystem {
     private const val LIGHT_GLASS_TINT = 0xAAF2F2F2.toInt()
     private const val DARK_GLASS_TINT = 0xA8222222.toInt()
 
-    private val blurSurfaces = java.util.WeakHashMap<BlurView, Unit>()
+    // Value indicates whether the BlurView's direct parent owns its foreground.
+    private val blurSurfaces = java.util.WeakHashMap<BlurView, Boolean>()
+    private val extraGlassHosts = java.util.WeakHashMap<View, Unit>()
+    private val animatedForegroundViews = java.util.WeakHashMap<View, Unit>()
+    private val explicitGlassText = java.util.WeakHashMap<TextView, Boolean>()
     private val fallbackSurfaces = java.util.WeakHashMap<GradientDrawable, Unit>()
     private val rimSurfaces = java.util.WeakHashMap<GlassRimDrawable, Unit>()
 
@@ -75,6 +82,9 @@ object GlassSystem {
 
     private var pageBackgroundColor: Int? = null
     private var currentOverlayColor: Int = LIGHT_GLASS_TINT
+    private var materialProgress = 0f
+    private var materialTarget = 0f
+    private var toneAnimator: ValueAnimator? = null
     private val pageToneObservers = java.util.WeakHashMap<View, (Int?) -> Unit>()
 
     /** The webpage's reported canvas tone; null means use Summit's neutral light fallback. */
@@ -140,40 +150,101 @@ object GlassSystem {
      * Update the shared glass material and the native foreground palette from the active webpage.
      * A null color restores the original light-page material and app colors.
      */
-    fun setPageBackground(color: Int?, foregroundRoot: View? = null) {
+    fun setPageBackground(color: Int?, foregroundRoot: View? = null, animate: Boolean = true) {
         requestedPageBackground = color
-        // Khi Reader đang mở, tông kính theo màu giấy đọc thay vì nền trang web bên dưới.
         val tone = toneOverride ?: color
-        val overlay = overlayForPage(tone)
         val pageToneChanged = pageBackgroundColor != tone
         pageBackgroundColor = tone
-
-        if (pageToneChanged) {
-            pageToneObservers.values.toList().forEach { observer ->
-                runCatching { observer(tone) }
-            }
-        }
-
-        if (currentOverlayColor != overlay || pageToneChanged) {
-            currentOverlayColor = overlay
-            // Snapshot weak-key sets before updating views; a view may detach during a redraw.
-            blurSurfaces.keys.toList().forEach { surface ->
-                surface.setOverlayColor(overlay)
-                surface.invalidate()
-            }
-            fallbackSurfaces.keys.toList().forEach { drawable ->
-                drawable.setColor(overlay)
-                drawable.invalidateSelf()
-            }
-            rimSurfaces.keys.toList().forEach { drawable -> drawable.invalidateSelf() }
-        }
+        val target = if (isDarkPage(tone)) 1f else 0f
 
         if (foregroundRoot != null) {
             foregroundRoots[foregroundRoot] = Unit
             observeForegroundChanges(foregroundRoot)
         }
-        // Keep every active native layer in sync, including sheets that live in their own Dialog window.
+        if (pageToneChanged) {
+            pageToneObservers.values.toList().forEach { observer ->
+                runCatching { observer(tone) }
+            }
+        }
+        // Page logic/opaque chrome still receive the target immediately. Glass foreground
+        // is discovered here (and on layout), not by walking the decor tree every frame.
         foregroundRoots.keys.toList().forEach { root -> applyForegroundContrast(root, tone) }
+        transitionMaterial(target, animate)
+    }
+
+    private fun transitionMaterial(target: Float, animate: Boolean) {
+        if (animate && target == materialTarget && toneAnimator != null) return
+        materialTarget = target
+        toneAnimator?.let { old ->
+            old.removeAllUpdateListeners()
+            old.removeAllListeners()
+            old.cancel()
+        }
+        toneAnimator = null
+        if (!animate || !ValueAnimator.areAnimatorsEnabled() || materialProgress == target ||
+            foregroundRoots.keys.none { it.isAttachedToWindow }) {
+            applyMaterialFrame(target)
+            return
+        }
+        // Reverse from the actual displayed material, never from the previous target.
+        val animator = AnimationSystem.glassToneAnimator(materialProgress, target)
+        toneAnimator = animator
+        animator.addUpdateListener { applyMaterialFrame(it.animatedValue as Float) }
+        animator.addListener(object : AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: Animator) {
+                if (toneAnimator !== animation) return
+                toneAnimator = null
+                applyMaterialFrame(materialTarget)
+            }
+        })
+        animator.start()
+    }
+
+    private fun applyMaterialFrame(progress: Float) {
+        val previous = materialProgress
+        materialProgress = progress.coerceIn(0f, 1f)
+        val overlay = GlassTonePalette.blend(LIGHT_GLASS_TINT, DARK_GLASS_TINT, materialProgress)
+        if (currentOverlayColor != overlay) {
+            currentOverlayColor = overlay
+            blurSurfaces.keys.toList().forEach { surface ->
+                surface.setOverlayColor(overlay)
+                surface.invalidate()
+            }
+            fallbackSurfaces.keys.toList().forEach { drawable -> drawable.setColor(overlay) }
+        }
+        if (previous != materialProgress) {
+            rimSurfaces.keys.toList().forEach { it.invalidateSelf() }
+            val foreground = GlassTonePalette.foregroundProgress(materialProgress)
+            if (foreground != GlassTonePalette.foregroundProgress(previous)) {
+                animatedForegroundViews.keys.toList().forEach { view ->
+                    if (view.isAttachedToWindow) updateForegroundView(view, foreground)
+                }
+            }
+        }
+    }
+
+    /** Suggestions are siblings of their blur layer rather than its children. */
+    fun bindGlassForegroundHost(root: View) {
+        extraGlassHosts[root] = Unit
+    }
+
+    /** Explicit page palette for glass labels that may be created while already on a dark page. */
+    fun setGlassTextPalette(view: TextView, secondary: Boolean = false) {
+        explicitGlassText[view] = secondary
+        val progress = GlassTonePalette.foregroundProgress(materialProgress)
+        updateTextColor(view, progress)
+        animatedForegroundViews[view] = Unit
+    }
+
+    /** Do not leave a material animator or a decor observer behind on Activity destruction. */
+    fun unbindForegroundRoot(root: View) {
+        foregroundRoots.remove(root)
+        foregroundObservers.remove(root)?.let { listener ->
+            if (root.viewTreeObserver.isAlive) root.viewTreeObserver.removeOnGlobalLayoutListener(listener)
+        }
+        if (foregroundRoots.keys.none { it.isAttachedToWindow }) {
+            transitionMaterial(materialTarget, animate = false)
+        }
     }
 
     // Màu nền trang web mới nhất mà trang báo lên, giữ lại để khôi phục khi hết ghi đè tông.
@@ -214,105 +285,117 @@ object GlassSystem {
         root.viewTreeObserver.addOnGlobalLayoutListener(listener)
     }
 
-    /** Recolors neutral dark app labels, editable text, hints and monochrome icons. */
+    /** Recolors neutral app foregrounds. Solid sheets retain their immediate target palette. */
     fun applyForegroundContrast(root: View, pageColor: Int?) {
-        val useLightForeground = isDarkPage(pageColor)
+        val immediate = if (isDarkPage(pageColor)) 1f else 0f
+        val animated = GlassTonePalette.foregroundProgress(materialProgress)
 
-        fun updateTextColor(view: TextView) {
-            val current = view.textColors
-            val state = textColorStates[view] ?: ForegroundColorState(current).also {
-                textColorStates[view] = it
-            }
-            // If another UI component deliberately changes this label's color, adopt that as
-            // the new base palette instead of fighting the component on the next layout pass.
-            if (state.applied != null && current != state.applied) {
-                state.original = current
-                state.applied = null
-            }
-            val original = state.original ?: current
-            val desired = if (useLightForeground && isNeutralDark(original.defaultColor)) {
-                ColorStateList.valueOf(Color.WHITE)
-            } else original
-            if (current != desired) view.setTextColor(desired)
-            state.applied = desired
-        }
-
-        fun updateHintColor(view: EditText) {
-            val current = view.hintTextColors
-            val state = hintColorStates[view] ?: ForegroundColorState(current).also {
-                hintColorStates[view] = it
-            }
-            if (state.applied != null && current != state.applied) {
-                state.original = current
-                state.applied = null
-            }
-            val original = state.original ?: current
-            val isMutedNeutral = isNeutralDark(original.defaultColor) ||
-                (isNeutral(original.defaultColor) && pageLuminance(original.defaultColor) < 0.72f)
-            val desired = if (useLightForeground && isMutedNeutral) {
-                ColorStateList.valueOf(Color.rgb(190, 194, 202))
-            } else original
-            if (current != desired) view.setHintTextColor(desired)
-            state.applied = desired
-        }
-
-        fun updateImageTint(view: ImageView) {
-            val current = view.imageTintList
-            var state = imageTintStates[view]
-            if (state == null) {
-                val initial = current ?: return
-                state = ForegroundColorState(initial)
-                imageTintStates[view] = state
-            }
-            val colorState = state ?: return
-            if (colorState.applied != null && current != colorState.applied) {
-                colorState.original = current
-                colorState.applied = null
-            }
-            val original = colorState.original ?: return
-            val desired = if (useLightForeground && isNeutralDark(original.defaultColor)) {
-                ColorStateList.valueOf(Color.WHITE)
-            } else original
-            if (current != desired) view.imageTintList = desired
-            colorState.applied = desired
-        }
-
-        fun visit(view: View) {
-            // The webpage owns its own palette; all native text (including editable fields)
-            // follows the page contrast, while input backgrounds and accent colors stay untouched.
+        fun visit(view: View, inheritedGlass: Boolean) {
             if (view is WebView) return
-
-            if (view is TextView) {
-                updateTextColor(view)
-                if (view is EditText) updateHintColor(view)
-                view.compoundDrawablesRelative.forEach { applyIconDrawable(it, useLightForeground) }
-                view.compoundDrawables.forEach { applyIconDrawable(it, useLightForeground) }
+            val fallback = (view.background as? GradientDrawable)?.let { fallbackSurfaces.containsKey(it) } == true
+            val inGlass = inheritedGlass || extraGlassHosts.containsKey(view) || fallback || ownsGlassForeground(view)
+            if (view is TextView || view is ImageView) {
+                val followsGlass = inGlass || (view is TextView && explicitGlassText.containsKey(view))
+                if (followsGlass) animatedForegroundViews[view] = Unit
+                else animatedForegroundViews.remove(view)
+                updateForegroundView(view, if (followsGlass) animated else immediate)
             }
-
-            if (view is ImageView) {
-                applyIconDrawable(view.drawable, useLightForeground)
-                updateImageTint(view)
-            }
-
             if (view is ViewGroup) {
-                for (index in 0 until view.childCount) visit(view.getChildAt(index))
+                for (index in 0 until view.childCount) {
+                    val child = view.getChildAt(index) ?: continue
+                    visit(child, inGlass)
+                }
             }
         }
-        visit(root)
+        visit(root, false)
     }
 
-    private fun applyIconDrawable(drawable: Drawable?, useLightForeground: Boolean) {
+    private fun ownsGlassForeground(view: View): Boolean {
+        if (view !is ViewGroup) return false
+        for (index in 0 until view.childCount) {
+            val child = view.getChildAt(index)
+            if (child is BlurView && blurSurfaces[child] == true) return true
+        }
+        return false
+    }
+
+    private fun adaptiveColor(original: ColorStateList, dark: Int, progress: Float): ColorStateList =
+        if (progress <= 0f) original
+        else ColorStateList.valueOf(GlassTonePalette.blend(original.defaultColor, dark, progress))
+
+    private fun updateTextColor(view: TextView, progress: Float) {
+        val current = view.textColors
+        val state = textColorStates[view] ?: ForegroundColorState(current).also { textColorStates[view] = it }
+        val role = explicitGlassText[view]
+        val desired = if (role != null) {
+            val light = if (role) pageSecondaryText(Color.WHITE) else pagePrimaryText(Color.WHITE)
+            val dark = if (role) pageSecondaryText(Color.BLACK) else pagePrimaryText(Color.BLACK)
+            ColorStateList.valueOf(GlassTonePalette.blend(light, dark, progress))
+        } else {
+            if (state.applied != null && current != state.applied) {
+                state.original = current
+                state.applied = null
+            }
+            val original = state.original ?: current
+            if (isNeutralDark(original.defaultColor)) adaptiveColor(original, Color.WHITE, progress) else original
+        }
+        if (current != desired) view.setTextColor(desired)
+        state.applied = desired
+    }
+
+    private fun updateHintColor(view: EditText, progress: Float) {
+        val current = view.hintTextColors
+        val state = hintColorStates[view] ?: ForegroundColorState(current).also { hintColorStates[view] = it }
+        if (state.applied != null && current != state.applied) {
+            state.original = current
+            state.applied = null
+        }
+        val original = state.original ?: current
+        val isMutedNeutral = isNeutralDark(original.defaultColor) ||
+            (isNeutral(original.defaultColor) && pageLuminance(original.defaultColor) < 0.72f)
+        val desired = if (isMutedNeutral) adaptiveColor(original, Color.rgb(190, 194, 202), progress) else original
+        if (current != desired) view.setHintTextColor(desired)
+        state.applied = desired
+    }
+
+    private fun updateImageTint(view: ImageView, progress: Float) {
+        val current = view.imageTintList
+        val state = imageTintStates[view] ?: ForegroundColorState(current ?: return).also { imageTintStates[view] = it }
+        if (state.applied != null && current != state.applied) {
+            state.original = current
+            state.applied = null
+        }
+        val original = state.original ?: return
+        val desired = if (isNeutralDark(original.defaultColor)) adaptiveColor(original, Color.WHITE, progress) else original
+        if (current != desired) view.imageTintList = desired
+        state.applied = desired
+    }
+
+    private fun updateForegroundView(view: View, progress: Float) {
+        if (view is TextView) {
+            updateTextColor(view, progress)
+            if (view is EditText) updateHintColor(view, progress)
+            view.compoundDrawablesRelative.forEach { applyIconDrawable(it, progress) }
+            view.compoundDrawables.forEach { applyIconDrawable(it, progress) }
+        }
+        if (view is ImageView) {
+            applyIconDrawable(view.drawable, progress)
+            updateImageTint(view, progress)
+        }
+    }
+
+    private fun applyIconDrawable(drawable: Drawable?, progress: Float) {
         when (drawable) {
             is AdaptiveForegroundDrawable -> drawable.setAdaptiveForegroundColor(
-                if (useLightForeground && isNeutralDark(drawable.adaptiveBaseColor)) {
-                    Color.WHITE
+                if (isNeutralDark(drawable.adaptiveBaseColor)) {
+                    GlassTonePalette.blend(drawable.adaptiveBaseColor, Color.WHITE, progress)
                 } else drawable.adaptiveBaseColor
             )
             is LayerDrawable -> for (index in 0 until drawable.numberOfLayers) {
-                applyIconDrawable(drawable.getDrawable(index), useLightForeground)
+                applyIconDrawable(drawable.getDrawable(index), progress)
             }
-            is InsetDrawable -> applyIconDrawable(drawable.drawable, useLightForeground)
-            is ScaleDrawable -> applyIconDrawable(drawable.drawable, useLightForeground)
+            is InsetDrawable -> applyIconDrawable(drawable.drawable, progress)
+            is ScaleDrawable -> applyIconDrawable(drawable.drawable, progress)
         }
     }
 
@@ -333,18 +416,15 @@ object GlassSystem {
     private fun isNeutralDark(color: Int): Boolean =
         isNeutral(color) && pageLuminance(color) < 0.48f
 
-    private fun overlayForPage(color: Int?): Int =
-        if (isDarkPage(color)) DARK_GLASS_TINT else LIGHT_GLASS_TINT
-
     private fun registerFallbackSurface(drawable: GradientDrawable): GradientDrawable {
         drawable.setColor(currentOverlayColor)
         fallbackSurfaces[drawable] = Unit
         return drawable
     }
 
-    private fun registerBlurSurface(view: BlurView): BlurView {
+    private fun registerBlurSurface(view: BlurView, ownsForeground: Boolean = true): BlurView {
         view.setOverlayColor(currentOverlayColor)
-        blurSurfaces[view] = Unit
+        blurSurfaces[view] = ownsForeground
         return view
     }
 
@@ -456,9 +536,9 @@ object GlassSystem {
         override fun draw(canvas: Canvas) {
             val b = bounds
             if (b.width() <= 0 || b.height() <= 0) return
-            val dark = GlassSystem.isDarkPage()
-            paint.color = if (dark) Color.WHITE else Color.BLACK
-            paint.alpha = (drawableAlpha * (if (dark) 34 else 29) + 127) / 255
+            val rim = GlassTonePalette.blend(0x1D000000, 0x22FFFFFF, materialProgress)
+            paint.color = rim
+            paint.alpha = (drawableAlpha * Color.alpha(rim) + 127) / 255
             val inset = paint.strokeWidth / 2f
             rect.set(b.left + inset, b.top + inset, b.right - inset, b.bottom - inset)
             val radius = (effectiveRadius() - inset).coerceAtLeast(0f)
@@ -807,7 +887,7 @@ half4 main(float2 coord) {
             clipToOutline = true
             setupWith(target).setBlurRadius(GLASS_BLUR_RADIUS_DP * density)
         }
-        return registerBlurSurface(view)
+        return registerBlurSurface(view, ownsForeground = preset != Preset.SUGGESTIONS && preset != Preset.TABS_DIALOG)
     }
 
     /**

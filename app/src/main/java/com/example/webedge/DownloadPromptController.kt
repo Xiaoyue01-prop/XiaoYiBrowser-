@@ -113,7 +113,7 @@ class DownloadPromptController(
         fileText.addView(TextView(activity).apply {
             text = prompt.fileName
             textSize = 14f
-            setTextColor(foregroundColor)
+            GlassSystem.setGlassTextPalette(this)
             setTypeface(typeface, Typeface.BOLD)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -121,7 +121,7 @@ class DownloadPromptController(
         val subtitleView = TextView(activity).apply {
             text = "Trang web muốn tải file xuống"
             textSize = 12f
-            setTextColor(GlassSystem.pageSecondaryText())
+            GlassSystem.setGlassTextPalette(this, secondary = true)
             setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
             maxLines = 1
         }
@@ -143,7 +143,7 @@ class DownloadPromptController(
                 textSize = 14f
                 setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.CENTER
-                setTextColor(if (primary) Color.WHITE else foregroundColor)
+                if (primary) setTextColor(Color.WHITE) else GlassSystem.setGlassTextPalette(this)
                 background = GradientDrawable().apply {
                     cornerRadius = pillRadiusPx()
                     setColor(
@@ -188,11 +188,7 @@ class DownloadPromptController(
         root.addView(card, params)
         activeView = card
         GlassSystem.observePageTone(card) { color ->
-            val foreground = GlassSystem.pagePrimaryText(color)
-            fileText.getChildAt(0).let { (it as? TextView)?.setTextColor(foreground) }
-            subtitleView.setTextColor(GlassSystem.pageSecondaryText(color))
             cancelSurface?.setColor(GlassSystem.pageSheetButtonColor(color))
-            cancelButton.setTextColor(foreground)
             cancelButton.invalidate()
         }
 

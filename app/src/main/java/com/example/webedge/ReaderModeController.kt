@@ -464,7 +464,7 @@ internal class ReaderModeController(
             gravity = Gravity.CENTER
             textSize = 15f
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            setTextColor(GlassSystem.pagePrimaryText())
+            GlassSystem.setGlassTextPalette(this)
             background = activity.roundedPressBackground(GlassSystem.isDarkPage(), PILL_RADIUS_DP.toFloat(), 2f, 3f)
             isClickable = true
             isFocusable = true
@@ -477,7 +477,7 @@ internal class ReaderModeController(
             text = value.source
             textSize = 13.5f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(GlassSystem.pagePrimaryText())
+            GlassSystem.setGlassTextPalette(this)
             gravity = Gravity.CENTER
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -1098,8 +1098,8 @@ internal class ReaderModeController(
         articleTitle?.setTextColor(primaryColor())
         articleBody?.setTextColor(primaryColor())
         articleMeta?.setTextColor(secondaryColor())
-        aaButton?.setTextColor(GlassSystem.pagePrimaryText())
-        pillHost?.setTextColor(GlassSystem.pagePrimaryText())
+        aaButton?.let { GlassSystem.setGlassTextPalette(it) }
+        pillHost?.let { GlassSystem.setGlassTextPalette(it) }
         menuThemeValue?.text = theme.label
         recolorSurface()
     }
@@ -1115,9 +1115,7 @@ internal class ReaderModeController(
         for (i in 0 until group.childCount) {
             val child = group.getChildAt(i)
             if (child is TextView) {
-                child.setTextColor(
-                    if (child.tag == TAG_SECONDARY) GlassSystem.pageSecondaryText() else GlassSystem.pagePrimaryText()
-                )
+                GlassSystem.setGlassTextPalette(child, secondary = child.tag == TAG_SECONDARY)
             }
             if (child is ViewGroup) recolorTree(child)
         }
@@ -1137,7 +1135,7 @@ internal class ReaderModeController(
             text = value
             textSize = size
             tag = if (secondary) TAG_SECONDARY else null
-            setTextColor(if (secondary) GlassSystem.pageSecondaryText() else GlassSystem.pagePrimaryText())
+            GlassSystem.setGlassTextPalette(this, secondary = secondary)
             typeface = Typeface.create("sans-serif", if (strong) Typeface.BOLD else Typeface.NORMAL)
             gravity = Gravity.CENTER_VERTICAL
         }
@@ -1174,7 +1172,7 @@ internal class ReaderModeController(
                 textSize = 12f
                 gravity = Gravity.CENTER
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                setTextColor(if (index == selected) GlassSystem.pagePrimaryText() else GlassSystem.pageSecondaryText())
+                GlassSystem.setGlassTextPalette(this, secondary = index != selected)
                 background = optionBackground(index == selected)
                 setOnClickListener { _ ->
                     onSelect(index)
@@ -1205,9 +1203,7 @@ internal class ReaderModeController(
             for (index in 0 until row.childCount) {
                 val option = row.getChildAt(index) as? TextView ?: continue
                 option.background = optionBackground(index == selected)
-                option.setTextColor(
-                    if (index == selected) GlassSystem.pagePrimaryText() else GlassSystem.pageSecondaryText()
-                )
+                GlassSystem.setGlassTextPalette(option, secondary = index != selected)
             }
         }
     }

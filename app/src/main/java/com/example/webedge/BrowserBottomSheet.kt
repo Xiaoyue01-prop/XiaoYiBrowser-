@@ -75,7 +75,7 @@ class BrowserBottomSheet(
 
         // Native sheet surfaces follow the active webpage palette, not Android's system theme.
         val night = GlassSystem.isDarkPage()
-        val textColor = GlassSystem.pagePrimaryText()
+        val textColor = GlassSystem.pagePrimaryText(Color.WHITE)
         val grabberColor = GlassSystem.pageSheetGrabberColor()
         val buttonColor = GlassSystem.pageSheetButtonColor()
 
@@ -148,7 +148,7 @@ class BrowserBottomSheet(
             text = title
             textSize = 17f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setTextColor(textColor)
+            GlassSystem.setGlassTextPalette(this)
             gravity = Gravity.CENTER
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -256,6 +256,7 @@ class BrowserBottomSheet(
             if (!released) {
                 released = true
                 GlassSystem.removePageToneObserver(windowRoot)
+                GlassSystem.unbindForegroundRoot(windowRoot)
                 // Hủy hộp thoại CỦA SHEET NÀY, không đọc field chung (có thể đã là sheet mới).
                 gd.cancelAll()
                 if (dialog === dlg) {
@@ -280,13 +281,8 @@ class BrowserBottomSheet(
         GlassSystem.bindForegroundRoot(windowRoot)
         GlassSystem.observePageTone(windowRoot) { color ->
             val dark = GlassSystem.isDarkPage(color)
-            val foregroundColor = GlassSystem.pagePrimaryText(color)
-            titleView.setTextColor(foregroundColor)
             if (closeButton is ImageView) {
-                closeButton.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
                 closeButton.background = ovalDrawable(GlassSystem.pageSheetButtonColor(color))
-            } else {
-                ((closeButton as? ViewGroup)?.getChildAt(1) as? ImageView)?.setImageDrawable(PathIcon(Icons.CLOSE, foregroundColor))
             }
             (grabber.background as? GradientDrawable)?.setColor(GlassSystem.pageSheetGrabberColor(color))
             dlg.window?.let { BrowserSheetMotion.configureWindow(it, windowRoot, dark) }

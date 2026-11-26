@@ -49,6 +49,15 @@ object AnimationSystem {
     /** Đóng lại, thu về nút, trả về vị trí cũ (scale/alpha được chặn ở 0 nên không bị lật): gần như không nảy, không chạy lố qua nút. */
     val DISMISS = SpringSpec(0.40f, 0.90f)
 
+    /** Material changes must not overshoot; respect Android's animator duration scale. */
+    const val GLASS_TONE_DURATION_MS = 360L
+
+    fun glassToneAnimator(from: Float, to: Float): android.animation.ValueAnimator =
+        android.animation.ValueAnimator.ofFloat(from, to).apply {
+            duration = GLASS_TONE_DURATION_MS
+            interpolator = android.view.animation.PathInterpolator(0.2f, 0f, 0.2f, 1f)
+        }
+
     // === Hằng số ===
     /** Nút kính phồng lên khi nhấn (như Liquid Glass của iOS 26). */
     const val GLASS_PRESS_SCALE = 1.12f

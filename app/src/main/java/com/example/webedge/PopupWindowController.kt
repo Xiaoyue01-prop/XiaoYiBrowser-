@@ -247,6 +247,7 @@ class PopupWindowController(
         dlg.window?.let { BrowserSheetMotion.configureWindow(it, root, night) }
         dlg.setOnDismissListener {
             GlassSystem.removePageToneObserver(root)
+            GlassSystem.unbindForegroundRoot(root)
             if (dialog === dlg) {
                 releasePopup()
                 dialog = null; sheet = null; scrim = null; closing = false

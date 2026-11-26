@@ -803,6 +803,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         }
         root.addView(suggestBlurView, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         root.addView(suggestBox, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        GlassSystem.bindGlassForegroundHost(suggestBox)
         suggestBox.elevation = dp(1).toFloat()
         // The BlurView has no intrinsic content height, so mirror the measured list height.
         suggestBox.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, _ ->
@@ -1741,7 +1742,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     override fun onDestroy() {
                 isActivityDestroyed = true
-        GlassSystem.setPageBackground(null, window.decorView)
+        GlassSystem.setPageBackground(null, window.decorView, animate = false)
         if (::menu.isInitialized) menu.destroy()
         contextMenuController?.dismiss(false)
         if (::tabSwitcherController.isInitialized) tabSwitcherController.destroy()
@@ -1784,6 +1785,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         tabWebViewLifecycle.destroyAll(tabManager)
         privateProfileManager.endSession()
 
+        GlassSystem.unbindForegroundRoot(window.decorView)
         super.onDestroy()
     }
 

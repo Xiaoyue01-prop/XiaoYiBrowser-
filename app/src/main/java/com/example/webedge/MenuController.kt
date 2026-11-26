@@ -861,7 +861,7 @@ class MenuController(
                 text = account.name.trim().take(1).uppercase()
                 textSize = 18f
                 gravity = Gravity.CENTER
-                stylePrimary(this, GlassSystem.pagePrimaryText())
+                stylePrimary(this, GlassSystem.pagePrimaryText(Color.WHITE))
             }
             badge.addView(initial, FrameLayout.LayoutParams(-1, -1))
             picture.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -882,7 +882,7 @@ class MenuController(
             textSize = 16f
             setSingleLine()
             ellipsize = TextUtils.TruncateAt.END
-            stylePrimary(this, GlassSystem.pagePrimaryText())
+            stylePrimary(this, GlassSystem.pagePrimaryText(Color.WHITE))
         }
         row.addView(name, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             marginStart = dp(12)
@@ -894,7 +894,7 @@ class MenuController(
             AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
             if (account != null) {
                 val chevron = ImageView(activity).apply {
-                    setImageDrawable(PathIcon(Icons.ARROW_FORWARD, GlassSystem.pageSecondaryText()))
+                    setImageDrawable(PathIcon(Icons.ARROW_FORWARD, GlassSystem.pageSecondaryText(Color.WHITE)))
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }
                 row.addView(chevron, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(10) })
@@ -918,7 +918,7 @@ class MenuController(
         val label = TextView(activity).apply {
             text = "Đồng bộ lịch sử và dấu trang"
             textSize = 16f
-            stylePrimary(this, GlassSystem.pagePrimaryText())
+            stylePrimary(this, GlassSystem.pagePrimaryText(Color.WHITE))
         }
         row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         lateinit var syncSwitch: GlassSystem.GlassSwitch
@@ -1124,7 +1124,7 @@ class MenuController(
         head.setPadding(if (onBack != null) dp(14) else dp(22), dp(12), dp(22), dp(2))
         if (onBack != null) {
             val back = GlassSystem.createGlassIconButton(
-                activity, blurTarget, PathIcon(backIcon, GlassSystem.pagePrimaryText()), d, isNight(), backDescription
+                activity, blurTarget, PathIcon(backIcon, GlassSystem.pagePrimaryText(Color.WHITE)), d, isNight(), backDescription
             )
             back.setOnClickListener { onBack() }
             AnimationSystem.press(back, Constants.PRESS_SCALE_PILL)
@@ -1206,7 +1206,7 @@ class MenuController(
         } else {
             makePanel(title, "Chạm để mở, giữ lâu để xóa", 340, headerFade = true) { showMainPage() }
         }
-        val iconColor = GlassSystem.pagePrimaryText()
+        val iconColor = GlassSystem.pagePrimaryText(Color.WHITE)
         p.head.setPadding(p.head.paddingLeft, p.head.paddingTop, dp(14), p.head.paddingBottom)
         p.head.addView(View(activity), LinearLayout.LayoutParams(0, 1, 1f))
 

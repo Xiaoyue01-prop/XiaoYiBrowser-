@@ -417,7 +417,7 @@ class TabSwitcherController(
         val groupText = TextView(activity).apply {
             textSize = 15f
             setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-            setTextColor(GlassSystem.pagePrimaryText())
+            GlassSystem.setGlassTextPalette(this)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             gravity = Gravity.CENTER
@@ -1682,7 +1682,7 @@ class TabSwitcherController(
                 )
             )
             val primary = GlassSystem.pagePrimaryText(if (dark) Color.BLACK else Color.WHITE)
-            groupText.setTextColor(primary)
+            GlassSystem.setGlassTextPalette(groupText)
             searchPill.applyIconColor(primary)
             modeControl?.applyPageTone(dark)
             val addFill = GlassSystem.tabAddButtonFillColor(if (dark) Color.BLACK else Color.WHITE)

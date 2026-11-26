@@ -183,7 +183,7 @@ class GlassDialogController(
                 text = req.title
                 textSize = 17f
                 setTypeface(null, Typeface.BOLD)
-                setTextColor(GlassSystem.pagePrimaryText())
+                GlassSystem.setGlassTextPalette(this)
                 gravity = Gravity.CENTER
                 setPadding(dp(22), dp(20), dp(22), 0)
             })
@@ -193,7 +193,7 @@ class GlassDialogController(
         val messageView = TextView(activity).apply {
             text = req.message
             textSize = 14f
-            setTextColor(GlassSystem.pagePrimaryText())
+            GlassSystem.setGlassTextPalette(this)
             setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
             gravity = Gravity.CENTER
             val top = if (req.title != null) dp(8) else dp(22)
@@ -214,10 +214,10 @@ class GlassDialogController(
                     if (password) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
                     setText(initial)
                     setSelectAllOnFocus(true)
-                    setTextColor(GlassSystem.pagePrimaryText())
+                    GlassSystem.setGlassTextPalette(this)
                     if (hintText != null) {
                         hint = hintText
-                        setHintTextColor(androidx.core.graphics.ColorUtils.setAlphaComponent(GlassSystem.pagePrimaryText(), 110))
+                        setHintTextColor(androidx.core.graphics.ColorUtils.setAlphaComponent(GlassSystem.pagePrimaryText(Color.WHITE), 110))
                     }
                     if (creds) {
                         importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO

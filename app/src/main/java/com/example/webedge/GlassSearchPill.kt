@@ -39,7 +39,7 @@ class GlassSearchPill(
     private val activity: Activity,
     blurTarget: BlurTarget,
     isNight: Boolean,
-    private var iconColor: Int,
+    iconColor: Int,
     hintText: String,
     initialQuery: String = "",
     /** Dựng lại ở dạng thanh tìm kiếm dù từ khóa còn trống (giữ ô tìm kiếm mở qua lần dựng lại trang). */
@@ -61,6 +61,8 @@ class GlassSearchPill(
      */
     private val mirrored: Boolean = false
 ) {
+    // All callers supply a neutral foreground; keep its light-page base even if born on dark.
+    private var baseIconColor = if (iconColor == Color.WHITE) GlassSystem.pagePrimaryText(Color.WHITE) else iconColor
     private val modeCircle = 0
     private val modePill = 1
     private val modeSearch = 2
@@ -82,19 +84,19 @@ class GlassSearchPill(
         activity, blurTarget, activity.resources.displayMetrics.density, isNight
     ).apply { contentDescription = "Tùy chọn" }
 
-    private val dots = glyph(PathIcon(Icons.MORE_HORIZ, iconColor), null, false)
-    private val searchGlyph = glyph(PathIcon(Icons.SEARCH, iconColor), "Tìm kiếm", true)
-    private var selectIcon = SelectGridIcon(iconColor)
+    private val dots = glyph(PathIcon(Icons.MORE_HORIZ, baseIconColor), null, false)
+    private val searchGlyph = glyph(PathIcon(Icons.SEARCH, baseIconColor), "Tìm kiếm", true)
+    private var selectIcon = SelectGridIcon(baseIconColor)
     private val selectGlyph = glyph(selectIcon, "Chọn", true)
-    private val closeGlyph = glyph(PathIcon(Icons.CLOSE, iconColor), "Đóng tìm kiếm", true)
+    private val closeGlyph = glyph(PathIcon(Icons.CLOSE, baseIconColor), "Đóng tìm kiếm", true)
 
     private val input = EditText(activity).apply {
         setSingleLine()
         inputType = InputType.TYPE_CLASS_TEXT
         imeOptions = EditorInfo.IME_ACTION_SEARCH
         hint = hintText
-        setHintTextColor(GlassSystem.pageSecondaryText())
-        setTextColor(iconColor)
+        setHintTextColor(GlassSystem.pageSecondaryText(Color.WHITE))
+        setTextColor(baseIconColor)
         setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
         textSize = 15f
         setPadding(dp(2), 0, dp(2), 0)
@@ -181,6 +183,7 @@ class GlassSearchPill(
         AnimationSystem.press(selectGlyph, Constants.PRESS_SCALE_CELL)
 
         render(curWidth)
+        GlassSystem.applyForegroundContrast(view, GlassSystem.currentPageBackground())
     }
 
     private fun glyph(drawable: Drawable, description: String?, clickable: Boolean) =
@@ -212,14 +215,17 @@ class GlassSearchPill(
 
     /** Đổi màu icon / chữ khi trang đổi sáng-tối. */
     fun applyIconColor(color: Int) {
-        iconColor = color
-        dots.setImageDrawable(PathIcon(Icons.MORE_HORIZ, color))
-        searchGlyph.setImageDrawable(PathIcon(Icons.SEARCH, color))
-        selectIcon = SelectGridIcon(color, selectIcon.isFilled)
-        selectGlyph.setImageDrawable(selectIcon)
-        closeGlyph.setImageDrawable(PathIcon(Icons.CLOSE, color))
-        input.setTextColor(color)
-        input.setHintTextColor(GlassSystem.pageSecondaryText())
+        val base = if (color == Color.WHITE) GlassSystem.pagePrimaryText(Color.WHITE) else color
+        if (baseIconColor != base) {
+            baseIconColor = base
+            dots.setImageDrawable(PathIcon(Icons.MORE_HORIZ, base))
+            searchGlyph.setImageDrawable(PathIcon(Icons.SEARCH, base))
+            selectIcon = SelectGridIcon(base, selectIcon.isFilled)
+            selectGlyph.setImageDrawable(selectIcon)
+            closeGlyph.setImageDrawable(PathIcon(Icons.CLOSE, base))
+            input.setTextColor(base)
+        }
+        GlassSystem.applyForegroundContrast(view, GlassSystem.currentPageBackground())
     }
 
     // Vẽ viên kính ở chiều rộng [w]; độ mờ của từng icon suy ra từ chiều rộng nên luôn khớp hình.
