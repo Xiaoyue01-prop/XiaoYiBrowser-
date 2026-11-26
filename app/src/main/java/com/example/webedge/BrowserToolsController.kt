@@ -477,6 +477,16 @@ class BrowserToolsController(
             enableButton.visibility = if (enabled || !status.healthy) View.GONE else View.VISIBLE
             if (!status.healthy) note.text = "Lưu trữ gặp lỗi. Summit giữ ciphertext cũ và tạm dừng ghi/đồng bộ; hãy khởi động lại để kiểm tra. Không xóa dữ liệu ứng dụng."
         }
+        fun showReport(report: AdaptiveSecurity.Report, refreshSecrets: Boolean = false) {
+            hardwareVerified = report.defaultProbe == "TEE · AES-GCM OK" || report.defaultProbe == "StrongBox · AES-GCM OK" || report.strongBoxProbe == "StrongBox · AES-GCM OK"
+            set(headline, if (hardwareVerified) "Đã xác minh khóa phần cứng" else "Chưa xác minh khóa phần cứng", hardwareVerified)
+            set(advertised, if (report.advertised) "Có" else "Không")
+            set(defaultProbe, report.defaultProbe, report.defaultProbe in setOf("TEE · AES-GCM OK", "StrongBox · AES-GCM OK"))
+            set(strongProbe, report.strongBoxProbe, report.strongBoxProbe == "StrongBox · AES-GCM OK")
+            set(football, if (refreshSecrets) "Đang đọc…" else report.secrets[AdaptiveSecurity.Secret.FOOTBALL] ?: "Không rõ")
+            set(gemini, if (refreshSecrets) "Đang đọc…" else report.secrets[AdaptiveSecurity.Secret.GEMINI] ?: "Không rõ")
+            tone()
+        }
         fun busy(value: Boolean) {
             running = value
             checkButton.isEnabled = !value
@@ -493,15 +503,8 @@ class BrowserToolsController(
                     val report = AdaptiveSecurity.diagnose(host)
                     val storage = ProtectedRecords.status(host)
                     if (security.isAttachedToWindow) {
-                        hardwareVerified = report.defaultProbe == "TEE · AES-GCM OK" || report.defaultProbe == "StrongBox · AES-GCM OK" || report.strongBoxProbe == "StrongBox · AES-GCM OK"
-                        set(headline, if (hardwareVerified) "Đã xác minh khóa phần cứng" else "Chưa xác minh khóa phần cứng", hardwareVerified)
-                        set(advertised, if (report.advertised) "Có" else "Không")
-                        set(defaultProbe, report.defaultProbe, report.defaultProbe in setOf("TEE · AES-GCM OK", "StrongBox · AES-GCM OK"))
-                        set(strongProbe, report.strongBoxProbe, report.strongBoxProbe == "StrongBox · AES-GCM OK")
-                        set(football, report.secrets[AdaptiveSecurity.Secret.FOOTBALL] ?: "Không rõ")
-                        set(gemini, report.secrets[AdaptiveSecurity.Secret.GEMINI] ?: "Không rõ")
+                        showReport(report)
                         showStorage(storage)
-                        tone()
                     }
                 } catch (e: CancellationException) { throw e }
                 catch (_: Exception) { if (security.isAttachedToWindow) set(headline, "Kiểm tra thất bại") }
@@ -554,12 +557,26 @@ class BrowserToolsController(
         activeToneUpdates += { next -> lockSwitch.setTone(next) }
         activeToneUpdates += { next -> dark = next; tone() }
         body.addView(security, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+        AdaptiveSecurity.lastDiagnosisSnapshot()?.let {
+            showReport(it, refreshSecrets = true)
+            checkButton.text = "Kiểm tra lại bảo mật"
+        }
         security.post {
             if (host != null && security.isAttachedToWindow && !running) {
                 busy(true)
                 host.lifecycleScope.launch {
-                    try { val status = ProtectedRecords.status(host); if (security.isAttachedToWindow) showStorage(status) }
-                    catch (e: CancellationException) { throw e }
+                    try {
+                        val report = AdaptiveSecurity.lastDiagnosis(host)
+                        val status = ProtectedRecords.status(host)
+                        if (security.isAttachedToWindow) {
+                            if (report != null) {
+                                showReport(report)
+                                checkButton.text = "Kiểm tra lại bảo mật"
+                            }
+                            showStorage(status)
+                        }
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { if (security.isAttachedToWindow) set(headline, "Không đọc được kết quả") }
                     finally { busy(false) }
                 }
             }

@@ -146,20 +146,33 @@ internal object AdaptiveSecurity {
     }
     internal data class Report(val advertised: Boolean, val defaultProbe: String,
                                val strongBoxProbe: String, val secrets: Map<Secret, String>)
+    // Process-local only: a completed hardware probe survives closing a sheet, not a restart.
+    // Guarded by lock, so reopening during a probe waits for its actual result.
+    @Volatile private var lastReport: Report? = null
+    // Immutable status strings only, never actual keys. For immediate UI rendering.
+    fun lastDiagnosisSnapshot(): Report? = lastReport
+
+    private fun currentSecretStatuses(context: Context): Map<Secret, String> =
+        Secret.entries.associateWith { secret ->
+            try {
+                val value = readLocked(context, secret)
+                if (value.isBlank()) "Chưa lưu key"
+                else "${level(checkNotNull(existing(store(), alias(secret))))} · Đã mã hóa"
+            } catch (_: Exception) { "Không đọc/mã hóa được" }
+        }
+
+    /** Reopening the dashboard does not generate new probe keys. Secret statuses are read anew. */
+    suspend fun lastDiagnosis(context: Context): Report? = withContext(Dispatchers.IO) {
+        synchronized(lock) { lastReport?.copy(secrets = currentSecretStatuses(context))?.also { lastReport = it } }
+    }
+
     /** Explicit diagnostic, off main thread; never reveals secret values. */
     suspend fun diagnose(context: Context): Report = withContext(Dispatchers.IO) {
         synchronized(lock) {
             val advertised = strongBox(context)
-            val defaultProbe = probe(false)
-            val strongProbe = if (advertised) probe(true) else "Không được công bố"
-            val secrets = Secret.entries.associateWith { secret ->
-                try {
-                    val value = readLocked(context, secret)
-                    if (value.isBlank()) "Chưa lưu key"
-                    else "${level(checkNotNull(existing(store(), alias(secret))))} · Đã mã hóa"
-                } catch (_: Exception) { "Không đọc/mã hóa được" }
-            }
-            Report(advertised, defaultProbe, strongProbe, secrets)
+            Report(advertised, probe(false),
+                if (advertised) probe(true) else "Không được công bố",
+                currentSecretStatuses(context)).also { lastReport = it }
         }
     }
 }

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Dialog
 import android.content.Context
 import android.graphics.Color
+import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
@@ -67,7 +68,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     internal var browserLocked = false
         private set
     private var resumed = false
-    internal fun deferBrowserAction(): Boolean = browserLocked ||
+    internal fun deferBrowserAction(): Boolean = browserLocked || revealPending ||
         (BrowserLockPolicy.enabled(this) && (!resumed || !lastPolicyEnabled))
     private var authSignal: CancellationSignal? = null
     private var pendingSuccess: (() -> Unit)? = null
@@ -81,6 +82,12 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
             unlockBrowser()
         }
     }
+    private var revealGeneration = 0L
+    private var revealPending = false
+    private var revealFallback: Runnable? = null
+    private var frameCommitObserver: android.view.ViewTreeObserver? = null
+    private var frameCommitCallback: Runnable? = null
+    private var lockSurface: View? = null
     private var lockGlyph: BiometricGlyphDrawable? = null
     private var lockDialog: Dialog? = null
     private var lockMessage: TextView? = null
@@ -132,6 +139,8 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
 
     private companion object {
         const val UNLOCK_HOLD_MS = 1500L
+        const val REVEAL_FADE_MS = 220L
+        const val FRAME_FALLBACK_MS = 300L
         const val LOCK_INSTRUCTION = "Xác thực bằng sinh trắc học hoặc mã khóa thiết bị."
         // Exact four digit colors from assets/home/home.js (COLORS), in order.
         val CLOCK_PALETTE = intArrayOf(0xFFD274B5.toInt(), 0xFFA99BFF.toInt(),
@@ -146,6 +155,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun lockBrowser() {
+        cancelReveal()
         if (!browserLocked) automaticPrompt = true
         browserLocked = true
         if (!concealed) {
@@ -162,13 +172,39 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         browserWindows.values.toList().forEach { it() }
     }
 
+    private fun dismissLockSurface() {
+        lockGlyph?.stop(); lockGlyph = null
+        lockDialog?.dismiss(); lockDialog = null; lockSurface = null
+        lockMessage = null; unlockButton = null
+    }
+
+    private fun clearFrameCommitCallback() {
+        val observer = frameCommitObserver
+        val callback = frameCommitCallback
+        if (observer?.isAlive == true && callback != null) observer.unregisterFrameCommitCallback(callback)
+        frameCommitObserver = null
+        frameCommitCallback = null
+    }
+
+    private fun cancelReveal() {
+        ++revealGeneration
+        revealPending = false
+        clearFrameCommitCallback()
+        revealFallback?.let { unlockHandler.removeCallbacks(it) }
+        revealFallback = null
+        lockSurface?.animate()?.cancel()
+        lockSurface?.alpha = 1f
+    }
+
     private fun unlockBrowser() {
         if (!resumed || isFinishing || isDestroyed) return
         cancelUnlockTransition()
+        cancelReveal()
+        val surface = lockSurface
+        val dialog = lockDialog
+        revealPending = BrowserLockPolicy.enabled(this) && surface != null && dialog?.isShowing == true
         browserLocked = false
         automaticPrompt = false
-        lockGlyph?.stop(); lockGlyph = null
-        lockDialog?.dismiss(); lockDialog = null; lockMessage = null; unlockButton = null
         if (concealed) {
             window.setBackgroundDrawable(originalBackground)
             window.decorView.findViewById<View>(android.R.id.content)?.let {
@@ -178,8 +214,50 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
             originalBackground = null
             concealed = false
         }
+        // Keep the opaque lock surface on top while cold-start initialization or
+        // warm restore makes the browser visible. No default Dialog exit animation.
         startOnce()
-        onBrowserUnlocked()
+        if (!revealPending || surface == null || dialog == null) {
+            dismissLockSurface()
+            onBrowserUnlocked()
+            return
+        }
+        val generation = revealGeneration
+        fun valid() = generation == revealGeneration && revealPending && resumed &&
+            !browserLocked && !isFinishing && !isDestroyed && lockDialog === dialog
+        fun finishReveal() {
+            if (!valid()) return
+            revealPending = false
+            dismissLockSurface()
+            onBrowserUnlocked()
+        }
+        var fadeStarted = false
+        fun fade() {
+            if (!valid() || fadeStarted) return
+            fadeStarted = true
+            clearFrameCommitCallback()
+            revealFallback?.let { unlockHandler.removeCallbacks(it) }
+            revealFallback = null
+            if (!android.animation.ValueAnimator.areAnimatorsEnabled()) { finishReveal(); return }
+            surface.animate().alpha(0f).setDuration(REVEAL_FADE_MS)
+                .setInterpolator(android.view.animation.DecelerateInterpolator())
+                .withEndAction { finishReveal() }.start()
+        }
+        // Prefer a committed frame, with a bounded fallback for occluded/OEM windows.
+        val decor = window.decorView
+        val fallback = Runnable { fade() }
+        revealFallback = fallback
+        unlockHandler.postDelayed(fallback, FRAME_FALLBACK_MS)
+        if (decor.isHardwareAccelerated && decor.viewTreeObserver.isAlive) {
+            val observer = decor.viewTreeObserver
+            val callback = Runnable { unlockHandler.post { fade() } }
+            frameCommitObserver = observer
+            frameCommitCallback = callback
+            observer.registerFrameCommitCallback(callback)
+            decor.invalidate()
+        } else {
+            decor.postOnAnimation { decor.postOnAnimation { fade() } }
+        }
     }
 
     override fun onPostResume() {
@@ -210,7 +288,8 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     override fun onPause() {
         resumed = false
         lockGlyph?.stop()
-        if (unlockPending) {
+        if (unlockPending || revealPending) {
+            cancelReveal()
             cancelUnlockTransition()
             automaticPrompt = true
             lockMessage?.text = LOCK_INSTRUCTION
@@ -222,7 +301,9 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         // Home/Recents is a real user departure, unlike a system credential dialog.
-        if (browserLocked) {
+        if (browserLocked || revealPending) {
+            if (revealPending && BrowserLockPolicy.enabled(this)) lockBrowser()
+            cancelReveal()
             cancelUnlockTransition()
             pendingSuccess = null
             val signal = authSignal
@@ -241,8 +322,8 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         authSignal = null; pendingSuccess = null; initialization = null; resumed = false
         signal?.cancel()
         cancelUnlockTransition()
-        lockGlyph?.stop(); lockGlyph = null
-        lockDialog?.dismiss(); lockDialog = null
+        cancelReveal()
+        dismissLockSurface()
         browserWindows.clear()
         mediaPermissionResult = null; geoPermissionResult = null; syncConsentResult = null
         super.onDestroy()
@@ -324,7 +405,12 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         dialog.setOnDismissListener { glyph.stop() }
         dialog.window?.apply {
             addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-            setBackgroundDrawable(lockBackground())
+            // The scroll surface is opaque until authenticated; a transparent
+            // window background permits its controlled exit fade.
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setFormat(PixelFormat.TRANSLUCENT)
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setWindowAnimations(0)
             WindowCompat.setDecorFitsSystemWindows(this, false)
             statusBarColor = Color.TRANSPARENT; navigationBarColor = Color.TRANSPARENT
             isStatusBarContrastEnforced = false; isNavigationBarContrastEnforced = false
@@ -332,6 +418,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
                 isAppearanceLightStatusBars = false; isAppearanceLightNavigationBars = false
             }
         }
+        lockSurface = scroll
         lockDialog = dialog
         dialog.show()
         dialog.window?.setLayout(-1, -1)

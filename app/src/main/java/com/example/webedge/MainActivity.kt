@@ -2,6 +2,8 @@ package com.example.webedge
 
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
+import android.content.res.Configuration
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -586,6 +588,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
+        updateSecureRecentsAppearance(BrowserLockPolicy.enabled(this))
         if (readerModeController?.isActive == true) {
             WindowCompat.getInsetsController(window, root).hide(WindowInsetsCompat.Type.statusBars())
             readerModeController?.updateInsets()
@@ -1409,7 +1412,54 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         if (browserStarted) link?.let(::openLinkInNewTab)
     }
 
+    private var secureRecentsAppearanceApplied = false
+
+    /** Only task-preview metadata, never the live WebView or its system-bar appearance.
+     * Keep all fallback snapshot regions opaque and identical so Android need not
+     * draw a contrasting status/navigation bar over the privacy placeholder.
+     * The OEM launcher still has final control over Recents rendering.
+     */
+    private fun updateSecureRecentsAppearance(secure: Boolean) {
+        if (!secure && !secureRecentsAppearanceApplied) return
+        val night = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        runCatching {
+            val builder = ActivityManager.TaskDescription.Builder()
+                .setLabel(applicationInfo.loadLabel(packageManager).toString())
+                .setIcon(R.mipmap.ic_launcher)
+            if (secure) {
+                val color = if (night) 0xFF141418.toInt() else Color.WHITE
+                builder.setBackgroundColor(color)
+                    .setStatusBarColor(color)
+                    .setNavigationBarColor(color)
+            } else {
+                // Restore theme-derived fallback colors after disabling the lock.
+                // An opaque fallback avoids leaving the previous secure color in task metadata.
+                val attrs = theme.obtainStyledAttributes(intArrayOf(
+                    android.R.attr.colorBackground,
+                    android.R.attr.statusBarColor,
+                    android.R.attr.navigationBarColor
+                ))
+                try {
+                    val background = attrs.getColor(0, Color.WHITE) or 0xFF000000.toInt()
+                    fun bar(index: Int): Int = attrs.getColor(index, background).let {
+                        if (Color.alpha(it) == 0) background else it
+                    }
+                    builder.setBackgroundColor(background)
+                        .setStatusBarColor(bar(1))
+                        .setNavigationBarColor(bar(2))
+                } finally {
+                    attrs.recycle()
+                }
+            }
+            setTaskDescription(builder.build())
+            secureRecentsAppearanceApplied = secure
+        }
+        // Cosmetic only: failure must never weaken FLAG_SECURE or the lock gate.
+    }
+
     override fun onBrowserLockPolicyChanged(enabled: Boolean) {
+        updateSecureRecentsAppearance(enabled)
         if (enabled && ::pipController.isInitialized) pipController.setAutoEnter(false)
         if (enabled) ReaderLiveUpdate.cancel(this)
     }
@@ -1592,6 +1642,8 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
             tabPersistence.saveActiveTabNow(web)
         }
         super.onPause()
+        // Reassert after the biometric gate conceals the content, before Recents takes its snapshot.
+        updateSecureRecentsAppearance(BrowserLockPolicy.enabled(this))
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
