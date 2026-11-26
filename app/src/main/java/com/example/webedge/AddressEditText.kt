@@ -22,6 +22,15 @@ internal class AddressEditText(context: Context) : EditText(context) {
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private var downX = 0f
     private var downY = 0f
+    private var lastRawX = 0f
+    private var lastViewportWidth = 0
+    private val selectedLongPress = Runnable {
+        if (gesture == Gesture.PENDING && hasFocus() && wholeAddressSelected) {
+            resetMotion()
+            gesture = Gesture.CONSUME
+            performLongClick()
+        }
+    }
     private var initialScroll = 0f
     private var lineLeft = 0
     private var lineRight = 0
@@ -99,10 +108,11 @@ internal class AddressEditText(context: Context) : EditText(context) {
     private fun resetMotion() {
         val custom = spring != null || gesture == Gesture.PAN || gesture == Gesture.CONSUME ||
             gesture == Gesture.PENDING
+        removeCallbacks(selectedLongPress)
         cancelSpring()
         if (custom && updateLineBounds()) drawScroll(boundedScroll(scrollX.toFloat()))
         if (gesture == Gesture.PAN || gesture == Gesture.CONSUME) gesture = Gesture.CONSUME
-        else if (gesture == Gesture.PENDING) gesture = Gesture.NATIVE
+        else if (gesture == Gesture.PENDING) gesture = Gesture.CONSUME
         velocity = 0f
     }
 
@@ -149,83 +159,103 @@ internal class AddressEditText(context: Context) : EditText(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                removeCallbacks(selectedLongPress)
                 val moving = spring != null
                 cancelSpring()
                 gesture = Gesture.NATIVE
                 if (event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER && hasFocus() &&
-                    wholeAddressSelected && updateLineBounds() && lineRight - lineLeft > viewportWidth
+                    wholeAddressSelected && updateLineBounds()
                 ) {
+                    // Own the selected-text gesture from DOWN: native Editor/IME must not
+                    // collapse selection or start its own scroll before direction is known.
+                    // Even a URL that fits the wider editing pill can rubber-band.
                     gesture = Gesture.PENDING
                     elastic = ValueAnimator.areAnimatorsEnabled()
                     downX = event.rawX
                     downY = event.rawY
+                    lastRawX = downX
+                    lastViewportWidth = viewportWidth
                     position = if (moving) position else scrollX.toFloat()
                     initialScroll = rawScroll(position)
                     velocity = 0f
                     lastMotionTime = event.eventTime
+                    keepPanPosition = true
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    postDelayed(selectedLongPress, ViewConfiguration.getLongPressTimeout().toLong())
+                    return true
                 } else if (moving && updateLineBounds()) {
                     drawScroll(boundedScroll(scrollX.toFloat()))
                 }
             }
             MotionEvent.ACTION_MOVE -> {
-                val dx = event.rawX - downX
-                if (gesture == Gesture.PENDING) {
-                    val dy = abs(event.rawY - downY)
-                    if (abs(dx) > slop && abs(dx) > dy) {
-                        // End native click, long-press and text-drag tracking before taking over.
-                        val cancel = MotionEvent.obtain(event)
-                        cancel.action = MotionEvent.ACTION_CANCEL
-                        super.onTouchEvent(cancel)
-                        cancel.recycle()
-                        gesture = Gesture.PAN
-                        parent?.requestDisallowInterceptTouchEvent(true)
-                        // A quick second DOWN can have started native word selection.
-                        if (!wholeAddressSelected) selectAll()
-                        if (elastic) boostFrames()
-                    } else if (dy > slop) {
+                if (gesture == Gesture.PENDING || gesture == Gesture.PAN) {
+                    val dx = event.rawX - downX
+                    if (gesture == Gesture.PENDING) {
+                        val dy = abs(event.rawY - downY)
+                        if (abs(dx) > slop && abs(dx) > dy) {
+                            removeCallbacks(selectedLongPress)
+                            gesture = Gesture.PAN
+                            if (elastic) boostFrames()
+                        } else if (dy > slop) {
+                            resetMotion()
+                            gesture = Gesture.CONSUME
+                            return true
+                        } else {
+                            return true
+                        }
+                    }
+                    if (!wholeAddressSelected || !updateLineBounds()) {
                         resetMotion()
-                    } else {
+                        gesture = Gesture.CONSUME
                         return true
                     }
-                }
-                if (gesture == Gesture.PAN) {
-                    keepPanPosition = true
+                    // Search morph/IME can resize the viewport while the finger is down.
+                    // Rebase against its latest bounds instead of cancelling the gesture.
+                    if (lastViewportWidth != viewportWidth) {
+                        position = position.coerceIn(
+                            lineLeft - rubberLimit + 1f,
+                            (lineRight - viewportWidth).coerceAtLeast(lineLeft) + rubberLimit - 1f
+                        )
+                        initialScroll = rawScroll(position) + (lastRawX - downX)
+                        lastViewportWidth = viewportWidth
+                    }
                     val next = rubber(initialScroll - dx)
                     val dt = (event.eventTime - lastMotionTime).coerceAtLeast(1L)
                     velocity = 0.5f * velocity + 0.5f * (next - position) * 1000f / dt
                     lastMotionTime = event.eventTime
+                    lastRawX = event.rawX
                     drawScroll(next)
                     return true
                 }
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
-                if (gesture == Gesture.PAN || gesture == Gesture.CONSUME) {
+                if (gesture != Gesture.NATIVE) {
                     resetMotion()
                     gesture = Gesture.CONSUME
-                } else {
-                    resetMotion()
-                    gesture = Gesture.NATIVE
+                    return true
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                val wasPan = gesture == Gesture.PAN
-                val consumed = wasPan || gesture == Gesture.CONSUME
-                if (gesture == Gesture.PENDING) resetMotion()
+                removeCallbacks(selectedLongPress)
+                val previous = gesture
                 gesture = Gesture.NATIVE
-                if (consumed) {
+                if (previous != Gesture.NATIVE) {
                     parent?.requestDisallowInterceptTouchEvent(false)
-                    if (wasPan) settle(event.eventTime, event.actionMasked == MotionEvent.ACTION_UP)
-                    else releaseFrames()
+                    when (previous) {
+                        Gesture.PAN -> settle(event.eventTime, event.actionMasked == MotionEvent.ACTION_UP)
+                        Gesture.PENDING -> {
+                            // A tap is still a real click (show keyboard / address menu).
+                            if (updateLineBounds()) drawScroll(boundedScroll(position))
+                            releaseFrames()
+                            if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
+                        }
+                        else -> releaseFrames()
+                    }
                     return true
                 }
             }
         }
         return gesture == Gesture.CONSUME || super.onTouchEvent(event)
-    }
-
-    override fun performLongClick(): Boolean {
-        if (gesture == Gesture.PENDING) resetMotion()
-        return super.performLongClick()
     }
 
     override fun bringPointIntoView(offset: Int): Boolean {
@@ -244,8 +274,7 @@ internal class AddressEditText(context: Context) : EditText(context) {
         super.onSelectionChanged(selStart, selEnd)
         if (keepPanPosition && !wholeAddressSelected) {
             keepPanPosition = false
-            // Pending native double-tap handling may temporarily select a word.
-            if (gesture != Gesture.PENDING) resetMotion()
+            resetMotion()
         }
     }
 
@@ -266,7 +295,7 @@ internal class AddressEditText(context: Context) : EditText(context) {
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (w != oldw && (spring != null || gesture == Gesture.PAN || gesture == Gesture.PENDING)) {
+        if (w != oldw && spring != null) {
             resetMotion()
         }
     }

@@ -21,6 +21,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import androidx.activity.ComponentActivity
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.dynamicanimation.animation.DynamicAnimation
@@ -147,7 +148,6 @@ internal class ToolbarController(
         AnimationSystem.press(tabBtn, Constants.PRESS_SCALE_SMALL)
 
         urlBar = AddressEditText(activity)
-        urlBar.setSingleLine()
         urlBar.ellipsize = TextUtils.TruncateAt.END
         urlBar.hint = "Tìm kiếm hoặc nhập địa chỉ"
         urlBar.setTextColor(host.foreground)
@@ -158,7 +158,9 @@ internal class ToolbarController(
         urlBar.minHeight = 0
         urlBar.minimumHeight = 0
         urlBar.setPadding(0, 0, 0, 0)
-        urlBar.inputType = InputType.TYPE_TEXT_VARIATION_URI
+        urlBar.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        urlBar.setSingleLine()
+        urlBar.showSoftInputOnFocus = true
         urlBar.imeOptions = EditorInfo.IME_ACTION_GO
         urlBar.setBackgroundColor(Color.TRANSPARENT)
         urlBar.setOnFocusChangeListener { _, hasFocus ->
@@ -174,6 +176,7 @@ internal class ToolbarController(
                     if (urlBar.hasFocus() && TextUtils.equals(urlBar.text, address)) {
                         urlBar.selectAddressFromStart()
                     }
+                    if (urlBar.hasFocus()) showAddressKeyboard()
                 }
                 updateBarVisibility()
             } else {
@@ -189,11 +192,25 @@ internal class ToolbarController(
         // Giống Safari: lần chạm đầu vào ô nhập chỉ bôi xanh địa chỉ; chạm lại vào địa chỉ đang bôi xanh
         // thì hiện menu Sao chép / Dán / Dán và đi. (EditText chưa có focus thì chạm đầu chỉ lấy focus, không gọi onClick.)
         var tapRawX = 0f
+        var tapHadFocus = false
+        var tapHadIme = false
         urlBar.setOnTouchListener { _, e ->
-            if (e.actionMasked == MotionEvent.ACTION_DOWN) tapRawX = e.rawX
+            if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                tapRawX = e.rawX
+                tapHadFocus = urlBar.hasFocus()
+                tapHadIme = addressKeyboardVisible()
+            }
             false
         }
-        urlBar.setOnClickListener { showAddressMenu(tapRawX) }
+        urlBar.setOnClickListener {
+            if (urlBar.hasFocus()) {
+                if (!tapHadFocus || !tapHadIme || !addressKeyboardVisible()) {
+                    showAddressKeyboard()
+                } else {
+                    showAddressMenu(tapRawX)
+                }
+            }
+        }
         // Giữ lâu: cùng menu kính (thay menu chọn chữ mặc định). Chưa ở chế độ nhập thì vào chế độ nhập trước,
         // đợi viên thuốc và bàn phím yên vị rồi mới bung menu để menu đứng đúng chỗ.
         urlBar.setOnLongClickListener {
@@ -245,6 +262,7 @@ internal class ToolbarController(
                 updateClearQueryVisibility()
                 host.hideSuggestions()
                 urlBar.requestFocus()
+                showAddressKeyboard()
             }
         }
 
@@ -573,6 +591,15 @@ internal class ToolbarController(
             null
         }
         setUrlText(domain?.removePrefix("www.") ?: "")
+    }
+
+    private fun addressKeyboardVisible(): Boolean =
+        ViewCompat.getRootWindowInsets(urlBar)?.isVisible(WindowInsetsCompat.Type.ime())
+            ?: (host.imeBottom > 0)
+
+    private fun showAddressKeyboard() {
+        if (!urlBar.hasFocus() || !urlBar.isAttachedToWindow) return
+        WindowCompat.getInsetsController(activity.window, urlBar).show(WindowInsetsCompat.Type.ime())
     }
 
     private fun showAddressMenu(rawX: Float) {

@@ -133,6 +133,10 @@ class TabSwipeController(
             }
             MotionEvent.ACTION_MOVE -> {
                 if (!tracking) return Touch.IGNORED
+                if (!swiping && !canStart()) {
+                    stopTracking()
+                    return Touch.IGNORED
+                }
                 velocity?.addMovement(ev)
                 val dx = ev.rawX - startX
                 val dy = ev.rawY - startY
