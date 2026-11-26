@@ -106,6 +106,7 @@ class MenuController(
 
     private var menuLayer: FrameLayout? = null
     private var menuCard: FrameLayout? = null
+    internal val openCard: View? get() = menuCard
     private var menuBackAction: (() -> Unit)? = null
     /** Bề rộng (px) của trang menu đang hiển thị; [relayout] dùng để thẻ không tràn ra ngoài lề trái. */
     private var pageWidthPx = 0

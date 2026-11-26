@@ -839,18 +839,22 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         )
         setContentView(root)
         pillBackdropSampler = PillBackdropSampler(
-            pageLayer = blurTarget,
+            window = window,
             toolbar = bar,
             pill = urlPillFrame,
             activePage = {
                 web.takeIf {
                     lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) &&
                         !isLockUiActive() && !isFullscreenVideoShowing() && !isInPictureInPictureMode &&
-                        readerModeController?.isActive != true &&
+                        readerModeController?.isActive != true && !findBarController.isShown &&
+                        contextMenuController?.isShowing != true && orbController?.isLiveCardShowing != true &&
+                        !(::glassDialog.isInitialized && glassDialog.isShowing) &&
+                        !(::tabSwitcherController.isInitialized && tabSwitcherController.isShowing) &&
                         !pageTransition.isRunning && !tabSwipe.isRunning && it.parent === blurTarget
                 }
             },
             pillIsAbsorbed = { ::menu.isInitialized && menu.isOpen && !menu.isPageMenu },
+            menuCard = { if (::menu.isInitialized) menu.openCard else null },
             onToneChanged = GlassSystem::setPillBackdropTone
         )
         // Xin gộp quyền ở lần mở đầu tiên, đợi UI vẽ xong rồi mới hiện hộp thoại hệ thống.
