@@ -38,7 +38,7 @@ class TopFadeController(
 
     /** Lớp mờ dần dưới thanh trạng thái, theo tông của trang chứ không theo theme hệ thống. */
     fun create() {
-        val pageIsDark = GlassSystem.isDarkPage()
+        val pageIsDark = isNight()
         fadeDrawable = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(Theme.fadeStart(pageIsDark), Theme.fadeEnd(pageIsDark))
@@ -49,7 +49,7 @@ class TopFadeController(
 
     fun refreshPalette() {
         if (!::fadeDrawable.isInitialized) return
-        val dark = GlassSystem.isDarkPage()
+        val dark = isNight()
         fadeDrawable.colors = intArrayOf(Theme.fadeStart(dark), Theme.fadeEnd(dark))
         if (::view.isInitialized) update()
     }
@@ -61,7 +61,7 @@ class TopFadeController(
         if (isEdgeMode() && c == null) {
             view.background = fadeDrawable
             lp.height = insetTop() + dp(16)
-            lightBar = !GlassSystem.isDarkPage()
+            lightBar = !isNight()
         } else {
             val col = c ?: pageBackground()
             view.setBackgroundColor(col)

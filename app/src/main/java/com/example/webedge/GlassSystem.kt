@@ -47,7 +47,7 @@ import eightbitlab.com.blurview.BlurView
  *
  * BlurView needs a View and a BlurTarget, unlike the old Drawable-only helper.
  * Keep creation/configuration here so UI code does not need to know BlurView's API.
- * All glass surfaces share one adaptive material driven by the active webpage background.
+ * All glass surfaces share one adaptive material driven by the address pill's backdrop.
  * A BlurView samples the page in the same window. Dialog sheets tint the window backdrop directly.
  */
 object GlassSystem {
@@ -82,18 +82,21 @@ object GlassSystem {
     private val foregroundObservers = java.util.WeakHashMap<View, ViewTreeObserver.OnGlobalLayoutListener>()
 
     private var pageBackgroundColor: Int? = null
+    private var pillBackdropDark: Boolean? = null
     private var currentOverlayColor: Int = LIGHT_GLASS_TINT
     private var materialProgress = 0f
     private var materialTarget = 0f
     private var toneAnimator: ValueAnimator? = null
     private val pageToneObservers = java.util.WeakHashMap<View, (Int?) -> Unit>()
 
-    /** The webpage's reported canvas tone; null means use Summit's neutral light fallback. */
+    /** Effective native palette, including Reader overrides and the latest confirmed pill tone. */
     fun currentPageBackground(): Int? = pageBackgroundColor
 
-    /** Page tone is independent from Android/system dark mode and never modifies webpage CSS. */
+    /** Native tone is independent from Android/system dark mode and never modifies webpage CSS. */
     fun isDarkPage(color: Int? = pageBackgroundColor): Boolean =
-        color != null && pageLuminance(color) < 0.42f
+        color != null && GlassTonePalette.brightness(color) < 0.42f
+
+    internal fun isDarkPageCanvas(): Boolean = isDarkPage(toneOverride ?: requestedPageBackground)
 
     /** Opaque surface for native sheets/windows. This is intentionally NOT a BlurView surface. */
     fun pageSurfaceColor(color: Int? = pageBackgroundColor): Int =
@@ -147,21 +150,33 @@ object GlassSystem {
         pageToneObservers.remove(owner)
     }
 
-    /**
-     * Update the shared glass material and the native foreground palette from the active webpage.
-     * A null color restores the original light-page material and app colors.
-     */
-    fun setPageBackground(color: Int?, foregroundRoot: View? = null, animate: Boolean = true) {
+    /** The page canvas supplies the initial palette while the pill has no usable sample. */
+    fun setPageBackground(
+        color: Int?,
+        foregroundRoot: View? = null,
+        animate: Boolean = true,
+        resetPillSample: Boolean = false
+    ) {
         requestedPageBackground = color
-        val tone = toneOverride ?: color
-        val pageToneChanged = pageBackgroundColor != tone
-        pageBackgroundColor = tone
-        val target = if (isDarkPage(tone)) 1f else 0f
-
+        if (resetPillSample) pillBackdropDark = null
         if (foregroundRoot != null) {
             foregroundRoots[foregroundRoot] = Unit
             observeForegroundChanges(foregroundRoot)
         }
+        updateResolvedTone(animate)
+    }
+
+    internal fun setPillBackdropTone(dark: Boolean?) {
+        if (pillBackdropDark == dark) return
+        pillBackdropDark = dark
+        updateResolvedTone(animate = true)
+    }
+
+    private fun updateResolvedTone(animate: Boolean) {
+        val tone = toneOverride ?: pillBackdropDark?.let { if (it) Color.BLACK else Color.WHITE }
+            ?: requestedPageBackground
+        val pageToneChanged = pageBackgroundColor != tone
+        pageBackgroundColor = tone
         if (pageToneChanged) {
             pageToneObservers.values.toList().forEach { observer ->
                 runCatching { observer(tone) }
@@ -170,7 +185,7 @@ object GlassSystem {
         // Page logic/opaque chrome still receive the target immediately. Glass foreground
         // is discovered here (and on layout), not by walking the decor tree every frame.
         foregroundRoots.keys.toList().forEach { root -> applyForegroundContrast(root, tone) }
-        transitionMaterial(target, animate)
+        transitionMaterial(if (isDarkPage(tone)) 1f else 0f, animate)
     }
 
     private fun transitionMaterial(target: Float, animate: Boolean) {
@@ -259,7 +274,7 @@ object GlassSystem {
     fun overrideTone(color: Int?) {
         if (toneOverride == color) return
         toneOverride = color
-        setPageBackground(requestedPageBackground)
+        updateResolvedTone(animate = true)
     }
 
     /** Register another native window/root (for example a bottom sheet Dialog) with the same page tone. */
@@ -359,7 +374,7 @@ object GlassSystem {
         }
         val original = state.original ?: current
         val isMutedNeutral = isNeutralDark(original.defaultColor) ||
-            (isNeutral(original.defaultColor) && pageLuminance(original.defaultColor) < 0.72f)
+            (isNeutral(original.defaultColor) && GlassTonePalette.brightness(original.defaultColor) < 0.72f)
         val desired = if (isMutedNeutral) adaptiveColor(original, Color.rgb(190, 194, 202), progress) else original
         if (current != desired) view.setHintTextColor(desired)
         state.applied = desired
@@ -406,13 +421,6 @@ object GlassSystem {
         }
     }
 
-    private fun pageLuminance(color: Int): Float {
-        val r = Color.red(color) / 255f
-        val g = Color.green(color) / 255f
-        val b = Color.blue(color) / 255f
-        return 0.2126f * r + 0.7152f * g + 0.0722f * b
-    }
-
     private fun isNeutral(color: Int): Boolean {
         val r = Color.red(color)
         val g = Color.green(color)
@@ -421,7 +429,7 @@ object GlassSystem {
     }
 
     private fun isNeutralDark(color: Int): Boolean =
-        isNeutral(color) && pageLuminance(color) < 0.48f
+        isNeutral(color) && GlassTonePalette.brightness(color) < 0.48f
 
     private fun registerFallbackSurface(drawable: GradientDrawable): GradientDrawable {
         drawable.setColor(currentOverlayColor)

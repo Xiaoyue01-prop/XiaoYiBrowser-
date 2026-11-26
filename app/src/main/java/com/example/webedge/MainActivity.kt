@@ -61,6 +61,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
     private lateinit var blurTarget: BlurTarget
     private val urlPillFrame: FrameLayout get() = toolbar.urlPillFrame
     private lateinit var urlPillBlur: BlurView
+    private var pillBackdropSampler: PillBackdropSampler? = null
     private val urlBar: EditText get() = toolbar.urlBar
     private val bar: LinearLayout get() = toolbar.bar
     private val backBtn: FrameLayout get() = toolbar.backBtn
@@ -288,7 +289,8 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         override val webDarkMode: Boolean get() = store.webDarkMode
         override fun forgetPageBackground(view: WebView) { pageBackgrounds.remove(view) }
         override fun clearWindowPageBackground(url: String?) {
-            GlassSystem.setPageBackground(initialPageTone(url), window.decorView)
+            pillBackdropSampler?.reset()
+            GlassSystem.setPageBackground(initialPageTone(url), window.decorView, resetPillSample = true)
         }
         override fun confirmHttpFallback(view: WebView, httpUrl: String) {
             val hostName = runCatching { Uri.parse(httpUrl).host }.getOrNull() ?: httpUrl
@@ -477,7 +479,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         isEdgeMode = { store.edgeMode },
         insetTop = { insetTop },
         pageBackground = { pageBg },
-        isNight = { isNight }
+        isNight = { GlassSystem.isDarkPageCanvas() }
     )
 
     private val pageEdge: PageEdgeController = PageEdgeController(
@@ -836,6 +838,21 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
             FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM)
         )
         setContentView(root)
+        pillBackdropSampler = PillBackdropSampler(
+            pageLayer = blurTarget,
+            toolbar = bar,
+            pill = urlPillFrame,
+            activePage = {
+                web.takeIf {
+                    lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) &&
+                        !isLockUiActive() && !isFullscreenVideoShowing() && !isInPictureInPictureMode &&
+                        readerModeController?.isActive != true &&
+                        !pageTransition.isRunning && !tabSwipe.isRunning && it.parent === blurTarget
+                }
+            },
+            pillIsAbsorbed = { ::menu.isInitialized && menu.isOpen && !menu.isPageMenu },
+            onToneChanged = GlassSystem::setPillBackdropTone
+        )
         // Xin gộp quyền ở lần mở đầu tiên, đợi UI vẽ xong rồi mới hiện hộp thoại hệ thống.
         root.post {
             if (!isLockUiActive()) firstRunPermissions.requestIfFirstRun()
@@ -1262,6 +1279,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         val previous = if (::web.isInitialized) web else null
         val target = tabWebViewLifecycle.attach(tab, blurTarget, previous)
         if (previous !== target) {
+            pillBackdropSampler?.reset()
             web = target
             // Media của tab cũ không còn điều khiển được; tab mới tự báo lại trạng thái của nó.
             webMedia.reset()
@@ -1291,7 +1309,8 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         // Apply the selected tab's page material independently from its status-bar/header color.
         GlassSystem.setPageBackground(
             pageBackgrounds[target]?.color ?: initialPageTone(target.url ?: tab.url.ifBlank { store.homeUrl }),
-            window.decorView
+            window.decorView,
+            resetPillSample = previous !== target
         )
         topFadeController.refreshPalette()
         // Dải thanh trạng thái theo tab mới ngay lúc đổi, rồi nhờ script báo lại để chắc chắn (script
@@ -1651,6 +1670,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
 
     override fun onPause() {
         if (::pipController.isInitialized) pipController.trace("onPause")
+        pillBackdropSampler?.pause()
         downloadPromptController?.dismissAll()
         if (::store.isInitialized) store.flush()
         if (::web.isInitialized) {
@@ -1834,8 +1854,10 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
 
     override fun onDestroy() {
         if (!browserStarted) { super.onDestroy(); return }
-                isActivityDestroyed = true
-        GlassSystem.setPageBackground(null, window.decorView, animate = false)
+        isActivityDestroyed = true
+        pillBackdropSampler?.destroy()
+        pillBackdropSampler = null
+        GlassSystem.setPageBackground(null, window.decorView, animate = false, resetPillSample = true)
         if (::menu.isInitialized) menu.destroy()
         contextMenuController?.dismiss(false)
         if (::tabSwitcherController.isInitialized) tabSwitcherController.destroy()
