@@ -14,6 +14,7 @@ import android.hardware.biometrics.BiometricPrompt
 import android.os.CancellationSignal
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -56,7 +57,8 @@ internal object BrowserLockPolicy {
 }
 
 /** Both exported browser activities use this gate; no auth result is taken from Intent/Bundle.
- *  Immediate relock on pause. The underlying browser remains alive to preserve tab state.
+ *  Relock after a 15-second foreground absence; incomplete unlocks relock immediately.
+ *  The underlying browser remains alive to preserve tab state.
  *  OS-managed authentication permits Class 3 biometrics or the device credential.
  */
 abstract class BiometricBrowserActivity : ComponentActivity() {
@@ -83,6 +85,14 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     // A successful prompt is not yet permission to reveal the browser: keep the
     // secure surface visible until the foreground-only transition finishes.
     private val unlockHandler = Handler(Looper.getMainLooper())
+    // Activity-local grace, never persisted or shared with a new browser window.
+    private var relockDeadlineElapsed: Long? = null
+    private val relockWhenAway = Runnable {
+        if (!resumed && BrowserLockPolicy.enabled(this) && graceExpired()) {
+            clearRelockGrace()
+            lockBrowser()
+        }
+    }
     private var unlockPending = false
     // An in-memory, foreground-only grant. Authentication alone must not reveal the browser.
     private var awaitingUnlockConfirmation = false
@@ -172,9 +182,9 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     protected open fun unlockVisualWebView(): WebView? = null
 
     private companion object {
-        const val UNLOCK_SETTLE_MS = 120L
+        const val RELOCK_GRACE_MS = 15_000L
         const val REVEAL_SLIDE_MS = 680L
-        const val FRAME_FALLBACK_MS = 650L
+        const val FRAME_FALLBACK_MS = 500L
         const val LOCK_INSTRUCTION = "Xác thực bằng sinh trắc học hoặc mã khóa thiết bị."
         // Exact four digit colors from assets/home/home.js (COLORS), in order.
         val CLOCK_PALETTE = intArrayOf(0xFFD274B5.toInt(), 0xFFA99BFF.toInt(),
@@ -197,7 +207,27 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(lockBackCallback)
     }
 
+    private fun graceExpired(): Boolean = relockDeadlineElapsed?.let {
+        SystemClock.elapsedRealtime() >= it
+    } ?: false
+
+    private fun clearRelockGrace() {
+        unlockHandler.removeCallbacks(relockWhenAway)
+        relockDeadlineElapsed = null
+    }
+
+    private fun beginRelockGrace() {
+        clearRelockGrace()
+        relockDeadlineElapsed = SystemClock.elapsedRealtime() + RELOCK_GRACE_MS
+        // Recents and background capture stay protected even during the grace period.
+        updateCapturePolicy()
+        browserWindows.keys.forEach { it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+        browserWindows.values.toList().forEach { it() }
+        unlockHandler.postDelayed(relockWhenAway, RELOCK_GRACE_MS)
+    }
+
     private fun lockBrowser() {
+        clearRelockGrace()
         val wasRevealing = revealPending
         cancelReveal()
         if (wasRevealing) restoreBrowserInteraction()
@@ -403,14 +433,28 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         requestUnlock()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Check elapsed time before subclass onResume or the next visible frame.
+        // Handler delays use uptime and may have been postponed by device sleep.
+        if (BrowserLockPolicy.enabled(this) && !browserLocked &&
+            (graceExpired() || !lastPolicyEnabled || !browserStarted)) {
+            lockBrowser()
+        }
+        unlockHandler.removeCallbacks(relockWhenAway)
+    }
+
     override fun onPostResume() {
         super.onPostResume()
+        val expired = graceExpired()
+        val returningWithinGrace = relockDeadlineElapsed != null && !expired && !browserLocked
+        clearRelockGrace()
         resumed = true
         if (BrowserLockPolicy.enabled(this)) {
             // Another Summit activity may have enabled the setting while this one was paused.
             val newlyEnabled = !lastPolicyEnabled
+            if (!browserLocked && (expired || newlyEnabled || !browserStarted)) lockBrowser()
             refreshWindowPolicy()
-            if (!browserLocked && (newlyEnabled || !browserStarted)) lockBrowser()
         } else {
             if (lastPolicyEnabled) refreshWindowPolicy()
             if (browserLocked && authSignal == null && pendingSuccess == null) unlockBrowser()
@@ -423,6 +467,9 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
             applyLockBars()
             startLockGlyph()
             unlockButton?.post { maybeRequestAutomaticUnlock() }
+        } else if (returningWithinGrace) {
+            // Deliver any deep link deferred while the Activity was not resumed.
+            onBrowserUnlocked()
         }
     }
 
@@ -432,8 +479,10 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         if (awaitingUnlockConfirmation || unlockPending || revealPending) {
             resetUnlockConfirmation()
         }
-        if (BrowserLockPolicy.enabled(this)) lockBrowser()
-        else if (revealPending) {
+        if (BrowserLockPolicy.enabled(this)) {
+            if (browserLocked || revealPending || !browserStarted) lockBrowser()
+            else beginRelockGrace()
+        } else if (revealPending) {
             cancelReveal()
             restoreBrowserInteraction()
             dismissLockSurface()
@@ -460,6 +509,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         // Ignore callbacks from a cancelled prompt or a previous Activity instance.
         val signal = authSignal
         authSignal = null; pendingSuccess = null; initialization = null; resumed = false
+        clearRelockGrace()
         signal?.cancel()
         awaitingUnlockConfirmation = false
         cancelUnlockTransition()
@@ -475,7 +525,8 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         if (resumed && browserLocked && !unlockPending &&
             lockSurface?.isAttachedToWindow == true &&
             android.animation.ValueAnimator.areAnimatorsEnabled()) {
-            if (awaitingUnlockConfirmation) lockGlyph?.startConfirmationSpin() else lockGlyph?.start()
+            // Keep the original Face ID → gyro → fingerprint cycle while awaiting a tap.
+            lockGlyph?.start()
         }
     }
 
@@ -513,13 +564,13 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         unlockButton?.isEnabled = false
         lockMessage?.text = "Đã xác thực · Đang mở khóa…"
         lockGlyph?.freeze()
-        // Let the system authentication prompt give focus back before preparing the reveal.
+        // The explicit tap already confirms the foreground grant. No fixed settle delay.
         scheduleUnlockWhenFocused()
     }
 
     private fun scheduleUnlockWhenFocused() {
         unlockHandler.removeCallbacks(finishUnlock)
-        if (hasWindowFocus()) unlockHandler.postDelayed(finishUnlock, UNLOCK_SETTLE_MS)
+        if (hasWindowFocus()) unlockHandler.post(finishUnlock)
     }
 
     private fun showLockScreen() {

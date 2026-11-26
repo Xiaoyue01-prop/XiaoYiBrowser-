@@ -538,7 +538,7 @@ class BrowserToolsController(
         val lockRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val lockText = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         lockText.addView(styled("Khóa Summit", 14f, true))
-        lockText.addView(styled("Khóa ngay khi rời màn hình. Dùng sinh trắc học mạnh hoặc mã khóa Android. PiP bị tắt khi khóa được bật.", 11f))
+        lockText.addView(styled("Tự khóa sau 15 giây rời ứng dụng. Dùng sinh trắc học mạnh hoặc mã khóa Android. PiP bị tắt khi khóa được bật.", 11f))
         lockRow.addView(lockText, LinearLayout.LayoutParams(0, -2, 1f))
         lateinit var lockSwitch: GlassSystem.GlassSwitch
         lockSwitch = GlassSystem.GlassSwitch(activity, density, dark, accent, BrowserLockPolicy.enabled(activity)) { desired ->

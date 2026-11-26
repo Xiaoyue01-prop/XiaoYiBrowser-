@@ -45,10 +45,6 @@ internal class BiometricGlyphDrawable(color: Int) : Drawable(), Animatable, Adap
     /** Thời gian trong vòng lặp, 0..[LOOP_MS]. 0 = Face ID tĩnh. */
     private var clockMs = 0f
     private var animator: ValueAnimator? = null
-    // While authenticated, enter the next ring phase smoothly and repeat only that phase.
-    private var confirmationSpin = false
-    private var spinHalfStart = 0f
-    private var spinLooping = false
 
     /** Nét bên trong khung (toạ độ đơn vị: tâm 0, cạnh khung = 1). [order] nhỏ hiện trước; [fill] = chấm đặc. */
     private class Elem(val path: Path, val fill: Boolean, val order: Int)
@@ -189,68 +185,12 @@ internal class BiometricGlyphDrawable(color: Int) : Drawable(), Animatable, Adap
                 val raw = it.animatedValue as Float
                 val delta = if (raw >= previous) raw - previous else LOOP_MS - previous + raw
                 previous = raw
-                advanceClock(delta)
+                clockMs = (clockMs + delta) % LOOP_MS
                 invalidateSelf()
             }
         }
         animator = anim
         anim.start()
-    }
-
-    /** Preserve the current icon/morph, then loop the existing three-ring motion without holds. */
-    fun startConfirmationSpin() {
-        if (!ValueAnimator.areAnimatorsEnabled()) return
-        if (!confirmationSpin) {
-            confirmationSpin = true
-            val half = if (clockMs >= HALF_MS) HALF_MS else 0f
-            val local = clockMs - half
-            val spinStart = HOLD_MS + CLOSE_MS
-            when {
-                local < HOLD_MS -> {
-                    // The whole hold is the same static icon; skip straight to its closing morph.
-                    clockMs = half + HOLD_MS
-                    spinHalfStart = half
-                }
-                local < spinStart -> spinHalfStart = half
-                local < spinStart + SPIN_MS -> {
-                    spinHalfStart = half
-                    spinLooping = true
-                }
-                // Finish an opening morph before closing the next icon (without its hold).
-                else -> spinHalfStart = if (half == 0f) HALF_MS else 0f
-            }
-            invalidateSelf()
-        }
-        start()
-    }
-
-    private fun advanceClock(delta: Float) {
-        if (!confirmationSpin) {
-            clockMs = (clockMs + delta) % LOOP_MS
-            return
-        }
-        val spinStart = spinHalfStart + HOLD_MS + CLOSE_MS
-        if (spinLooping) {
-            clockMs = spinStart + (clockMs - spinStart + delta) % SPIN_MS
-            return
-        }
-        val half = if (clockMs >= HALF_MS) HALF_MS else 0f
-        var next = clockMs + delta
-        if (half != spinHalfStart) {
-            // Finish the opening icon on this half, then skip the next static hold.
-            val halfEnd = half + HALF_MS
-            if (next < halfEnd) {
-                clockMs = next
-                return
-            }
-            next = spinHalfStart + HOLD_MS + (next - halfEnd)
-        }
-        if (next >= spinStart) {
-            spinLooping = true
-            clockMs = spinStart + (next - spinStart) % SPIN_MS
-        } else {
-            clockMs = next
-        }
     }
 
     /** Freeze the current frame while the entire lock surface slides away. */
@@ -264,9 +204,6 @@ internal class BiometricGlyphDrawable(color: Int) : Drawable(), Animatable, Adap
 
     override fun stop() {
         freeze()
-        confirmationSpin = false
-        spinLooping = false
-        spinHalfStart = 0f
         clockMs = 0f // dừng thì về Face ID tĩnh
         invalidateSelf()
     }
