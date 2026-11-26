@@ -3,24 +3,29 @@ package com.example.webedge
 import android.app.Activity
 import android.app.Dialog
 import android.content.Context
-import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricPrompt
 import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.view.WindowInsets
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.WindowCompat
 
 /** V3a: local UI access policy. NOT an authentication-bound encryption key. */
 internal object BrowserLockPolicy {
@@ -66,6 +71,17 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         (BrowserLockPolicy.enabled(this) && (!resumed || !lastPolicyEnabled))
     private var authSignal: CancellationSignal? = null
     private var pendingSuccess: (() -> Unit)? = null
+    // A successful prompt is not yet permission to reveal the browser: keep the
+    // secure surface visible until the foreground-only transition finishes.
+    private val unlockHandler = Handler(Looper.getMainLooper())
+    private var unlockPending = false
+    private val finishUnlock = Runnable {
+        if (unlockPending && resumed && browserLocked && !isFinishing && !isDestroyed) {
+            unlockPending = false
+            unlockBrowser()
+        }
+    }
+    private var lockGlyph: BiometricGlyphDrawable? = null
     private var lockDialog: Dialog? = null
     private var lockMessage: TextView? = null
     private var unlockButton: TextView? = null
@@ -114,8 +130,19 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     protected open fun onBrowserLockPolicyChanged(enabled: Boolean) {}
     protected open fun onBrowserUnlocked() {}
 
-    private fun dark() = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-    private fun surface() = if (dark()) Color.rgb(20, 20, 24) else Color.rgb(248, 248, 250)
+    private companion object {
+        const val UNLOCK_HOLD_MS = 1500L
+        const val LOCK_INSTRUCTION = "Xác thực bằng sinh trắc học hoặc mã khóa thiết bị."
+        // Exact four digit colors from assets/home/home.js (COLORS), in order.
+        val CLOCK_PALETTE = intArrayOf(0xFFD274B5.toInt(), 0xFFA99BFF.toInt(),
+            0xFF9B3BA8.toInt(), 0xFF4DA3FF.toInt())
+        const val LOCK_SCRIM = 0x73000000 // 45% black, stable contrast on every stop
+    }
+
+    private fun lockBackground(): Drawable = LayerDrawable(arrayOf<Drawable>(
+        GradientDrawable(GradientDrawable.Orientation.TL_BR, CLOCK_PALETTE.copyOf()),
+        ColorDrawable(LOCK_SCRIM)
+    ))
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun lockBrowser() {
@@ -128,7 +155,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
             originalAccessibility = content?.importantForAccessibility ?: View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
             content?.visibility = View.INVISIBLE
             content?.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-            window.setBackgroundDrawable(ColorDrawable(surface()))
+            window.setBackgroundDrawable(lockBackground())
             concealed = true
         }
         // Close website popups and independent sheet windows before displaying the gate.
@@ -137,8 +164,10 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
 
     private fun unlockBrowser() {
         if (!resumed || isFinishing || isDestroyed) return
+        cancelUnlockTransition()
         browserLocked = false
         automaticPrompt = false
+        lockGlyph?.stop(); lockGlyph = null
         lockDialog?.dismiss(); lockDialog = null; lockMessage = null; unlockButton = null
         if (concealed) {
             window.setBackgroundDrawable(originalBackground)
@@ -170,7 +199,8 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         success?.invoke()
         if (browserLocked) {
             showLockScreen()
-            if (automaticPrompt && authSignal == null) {
+            startLockGlyph()
+            if (automaticPrompt && authSignal == null && !unlockPending) {
                 automaticPrompt = false
                 unlockButton?.post { if (browserLocked && resumed) requestUnlock() }
             }
@@ -179,8 +209,30 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
 
     override fun onPause() {
         resumed = false
+        lockGlyph?.stop()
+        if (unlockPending) {
+            cancelUnlockTransition()
+            automaticPrompt = true
+            lockMessage?.text = LOCK_INSTRUCTION
+            unlockButton?.isEnabled = true
+        }
         if (BrowserLockPolicy.enabled(this)) lockBrowser()
         super.onPause()
+    }
+
+    override fun onUserLeaveHint() {
+        // Home/Recents is a real user departure, unlike a system credential dialog.
+        if (browserLocked) {
+            cancelUnlockTransition()
+            pendingSuccess = null
+            val signal = authSignal
+            authSignal = null
+            signal?.cancel()
+            automaticPrompt = true
+            lockMessage?.text = LOCK_INSTRUCTION
+            unlockButton?.isEnabled = true
+        }
+        super.onUserLeaveHint()
     }
 
     override fun onDestroy() {
@@ -188,60 +240,109 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         val signal = authSignal
         authSignal = null; pendingSuccess = null; initialization = null; resumed = false
         signal?.cancel()
+        cancelUnlockTransition()
+        lockGlyph?.stop(); lockGlyph = null
         lockDialog?.dismiss(); lockDialog = null
         browserWindows.clear()
         mediaPermissionResult = null; geoPermissionResult = null; syncConsentResult = null
         super.onDestroy()
     }
 
+    private fun startLockGlyph() {
+        if (resumed && browserLocked && lockDialog?.isShowing == true &&
+            android.animation.ValueAnimator.areAnimatorsEnabled()) lockGlyph?.start()
+    }
+
+    private fun cancelUnlockTransition() {
+        unlockHandler.removeCallbacks(finishUnlock)
+        unlockPending = false
+    }
+
+    private fun beginUnlockTransition() {
+        if (!resumed || !browserLocked || isFinishing || isDestroyed || unlockPending) return
+        showLockScreen()
+        automaticPrompt = false
+        unlockPending = true
+        unlockButton?.isEnabled = false
+        lockMessage?.text = "Đã xác thực · Đang mở khóa…"
+        // Keep browserLocked, invisible content and FLAG_SECURE intact for 1.5s.
+        // The callback is cancelled on pause, user departure, or destruction.
+        unlockHandler.postDelayed(finishUnlock, UNLOCK_HOLD_MS)
+    }
+
     private fun showLockScreen() {
         if (lockDialog?.isShowing == true || isFinishing || isDestroyed) return
-        val fg = if (dark()) Color.WHITE else Color.rgb(24, 24, 27)
-        val muted = if (dark()) Color.rgb(192, 192, 200) else Color.rgb(95, 95, 105)
+        val fg = Color.WHITE
+        val muted = 0xF2FFFFFF.toInt()
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(32), dp(36), dp(32), dp(36))
-            setBackgroundColor(surface())
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+            background = lockBackground()
+            addView(panel, ScrollView.LayoutParams(-1, -2))
+            setOnApplyWindowInsetsListener { view, insets ->
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                insets
+            }
         }
         fun label(value: String, size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
             text = value; textSize = size; setTextColor(color); gravity = Gravity.CENTER
             if (bold) setTypeface(typeface, Typeface.BOLD)
         }
+        val glyph = BiometricGlyphDrawable(fg)
+        lockGlyph = glyph
         panel.addView(ImageView(this).apply {
-            setImageDrawable(PathIcon(Icons.SHIELD, fg)); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }, LinearLayout.LayoutParams(dp(56), dp(56)).apply { bottomMargin = dp(20) })
+            setImageDrawable(glyph); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(88), dp(88)).apply { bottomMargin = dp(26) })
         panel.addView(label("Summit đã khóa", 26f, fg, true))
-        val message = label("Xác thực bằng sinh trắc học hoặc mã khóa thiết bị.", 14f, muted)
-        panel.addView(message, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12); bottomMargin = dp(24) })
+        val message = label(LOCK_INSTRUCTION, 14f, muted).apply {
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        panel.addView(message, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12); bottomMargin = dp(28) })
         lockMessage = message
-        val button = label("Mở khóa Summit", 16f, Color.WHITE, true).apply {
-            background = GradientDrawable().apply { cornerRadius = dp(24).toFloat(); setColor(0xFF0877D9.toInt()) }
+        val button = label("Mở khóa Summit", 16f, Color.rgb(34, 24, 58), true).apply {
+            background = GradientDrawable().apply { cornerRadius = dp(26).toFloat(); setColor(Color.WHITE) }
             isFocusable = true; setOnClickListener { requestUnlock() }
         }
         panel.addView(button, LinearLayout.LayoutParams(-1, dp(52)))
         unlockButton = button
-        panel.addView(label("Thoát", 15f, fg).apply {
-            isFocusable = true; setOnClickListener { finish() }
+        panel.addView(label("Thoát", 15f, fg, true).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(26).toFloat(); setColor(0x24000000); setStroke(dp(1), 0x80FFFFFF.toInt())
+            }
+            isFocusable = true; setOnClickListener { cancelUnlockTransition(); finish() }
         }, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(10) })
         val dialog = Dialog(this, android.R.style.Theme_Material_NoActionBar)
-        dialog.setContentView(panel)
+        dialog.setContentView(scroll)
         dialog.setCancelable(false)
         dialog.setCanceledOnTouchOutside(false)
+        dialog.setOnDismissListener { glyph.stop() }
         dialog.window?.apply {
             addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-            setBackgroundDrawable(ColorDrawable(surface()))
-            statusBarColor = surface(); navigationBarColor = surface()
+            setBackgroundDrawable(lockBackground())
+            WindowCompat.setDecorFitsSystemWindows(this, false)
+            statusBarColor = Color.TRANSPARENT; navigationBarColor = Color.TRANSPARENT
+            isStatusBarContrastEnforced = false; isNavigationBarContrastEnforced = false
+            WindowCompat.getInsetsController(this, decorView).apply {
+                isAppearanceLightStatusBars = false; isAppearanceLightNavigationBars = false
+            }
         }
         lockDialog = dialog
         dialog.show()
         dialog.window?.setLayout(-1, -1)
-        button.isEnabled = authSignal == null
+        scroll.requestApplyInsets()
+        button.isEnabled = authSignal == null && !unlockPending
+        startLockGlyph()
     }
 
     private fun requestUnlock() {
-        if (!browserLocked || !resumed) return
-        authenticate("Mở khóa Summit", { unlockBrowser() }) { message ->
+        if (!browserLocked || !resumed || unlockPending) return
+        authenticate("Mở khóa Summit", { beginUnlockTransition() }) { message ->
             lockMessage?.text = message
         }
     }
