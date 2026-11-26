@@ -960,29 +960,49 @@ internal class ReaderModeController(
             toast("Bài này đã là tiếng Việt")
             return
         }
-        val key = TranslateSettings.apiKey(activity)
-        if (key.isBlank()) {
-            askText(
-                "Dịch bằng Gemini",
-                "Dán API key lấy ở aistudio.google.com/apikey. Key chỉ lưu trên máy này.",
-                ""
-            ) { value ->
-                val clean = value?.trim().orEmpty()
-                if (clean.isNotBlank()) {
-                    TranslateSettings.setApiKey(activity, clean)
-                    if (article === current) beginTranslation()
+        translateJob = scope.launch {
+            val key = try { TranslateSettings.apiKey(activity) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) {
+                if (article === current) requestGeminiKey(current, replacing = true)
+                return@launch
+            }
+            if (article !== current) return@launch
+            if (key.isBlank()) {
+                requestGeminiKey(current, replacing = false)
+                return@launch
+            }
+            translateWithKey(current, key)
+        }
+    }
+
+    private fun requestGeminiKey(current: ReaderArticle, replacing: Boolean) {
+        askText(
+            "Dịch bằng Gemini",
+            if (replacing) "Không đọc được key bảo mật. Nhập key mới để thay thế; hủy để giữ key cũ."
+            else "Dán API key lấy ở aistudio.google.com/apikey. Key được mã hóa trên máy này.",
+            ""
+        ) { value ->
+            val clean = value?.trim().orEmpty()
+            if (clean.isNotBlank() && article === current) {
+                translateJob = scope.launch {
+                    try { TranslateSettings.setApiKey(activity, clean) }
+                    catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (_: Exception) { toast("Không lưu được key Gemini bảo mật"); return@launch }
+                    if (article === current) translateWithKey(current, clean)
                 }
             }
-            return
         }
+    }
 
+    private suspend fun translateWithKey(current: ReaderArticle, key: String) {
         val texts = listOf(current.title) + current.paragraphs
         val out = arrayOfNulls<String>(texts.size)
         translated = out
         showTranslated = true
         toast("Đang dịch…")
         val model = TranslateSettings.model(activity)
-        translateJob = scope.launch {
+        run {
             try {
                 TranslateApi.translateAll(key, model, texts) { indices, results ->
                     if (article !== current) return@translateAll
@@ -991,7 +1011,7 @@ internal class ReaderModeController(
                 }
                 if (article === current) toast("Đã dịch xong")
             } catch (e: TranslateApiException) {
-                if (article !== current) return@launch
+                if (article !== current) return@run
                 // Chưa có đoạn nào dịch được thì quay về bản gốc để lần sau thử lại từ đầu.
                 if (out.all { it == null }) {
                     translated = null
@@ -1000,8 +1020,9 @@ internal class ReaderModeController(
                 toast(
                     when (e.kind) {
                         TranslateApiException.Kind.AUTH -> {
-                            TranslateSettings.setApiKey(activity, "")
-                            "API key không hợp lệ, hãy nhập lại"
+                            try { TranslateSettings.setApiKey(activity, ""); "API key không hợp lệ, hãy nhập lại" }
+                            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (_: Exception) { "Không xóa được key Gemini; thử lại" }
                         }
                         TranslateApiException.Kind.QUOTA -> "Hết hạn mức dịch hôm nay"
                         TranslateApiException.Kind.RATE -> "Gemini đang giới hạn tốc độ, thử lại sau ít phút"

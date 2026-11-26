@@ -21,6 +21,10 @@ import android.widget.TextView
 import android.webkit.CookieManager
 import android.webkit.WebStorage
 import android.webkit.WebView
+import androidx.activity.ComponentActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import java.text.DecimalFormat
 import java.util.Date
 
@@ -390,9 +394,36 @@ class BrowserToolsController(
     private var blockedSummary: TextView? = null
     private var youtubeBlockedSummary: TextView? = null
 
+    private fun addAdaptiveSecurityCard(body: LinearLayout) {
+        val security = card()
+        security.addView(text("Adaptive Security", 14f, foreground, true))
+        val status = text("Android Keystore · AES-256-GCM\nKiểm tra phần cứng và mã hóa API key đang lưu trên máy.", 12f, muted)
+        status.setPadding(0, dp(5), 0, dp(5))
+        security.addView(status)
+        val host = activity as? ComponentActivity
+        var running = false
+        val button = actionButton("Kiểm tra bảo mật thiết bị", accent) {
+            if (running || host == null) return@actionButton
+            running = true
+            status.text = "Đang kiểm tra Keystore và phần cứng…"
+            host.lifecycleScope.launch {
+                try {
+                    val report = AdaptiveSecurity.diagnose(host)
+                    if (status.isAttachedToWindow) status.text = report
+                } catch (e: CancellationException) { throw e }
+                catch (_: Exception) {
+                    if (status.isAttachedToWindow) status.text = "Không kiểm tra được bảo mật thiết bị. Thử lại sau."
+                } finally { running = false }
+            }
+        }
+        security.addView(button, LinearLayout.LayoutParams(-2, dp(38)).apply { topMargin = dp(8) })
+        body.addView(security, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+    }
+
     private fun renderPrivacy(body: LinearLayout) {
         activeToneUpdates.clear()
         body.removeAllViews()
+        addAdaptiveSecurityCard(body)
         val stats = AdBlocker.stats()
         val statsCard = card()
         statsCard.addView(text("Bảo vệ trong phiên này", 14f, foreground, true))

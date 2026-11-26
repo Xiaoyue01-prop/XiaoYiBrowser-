@@ -18,6 +18,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,6 +45,9 @@ class FootballSheetController(
     private val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault())
 
     private var scope: CoroutineScope? = null
+    private var savedKey = ""
+    private var keyError = false
+    private var keyBusy = false
     private var showLive = true
     private var query = ""
     private var cache: List<FbMatch> = emptyList()
@@ -53,10 +57,12 @@ class FootballSheetController(
         fun dismiss() {
         scope?.cancel()
         scope = null
+        savedKey = ""
         sheet.dismiss(immediate = true)
     }
 
     fun show() {
+        dismiss()
         val s = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         scope = s
         val page = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
@@ -71,9 +77,19 @@ class FootballSheetController(
             addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         }
         cache = emptyList(); errorText = null; query = ""
-        buildPage(page)
-        sheet.show("Tỉ số bóng đá", content, onDismiss = { s.cancel(); if (scope === s) scope = null })
-        if (FootballPins.apiKey(activity).isNotBlank()) load(page)
+        savedKey = ""; keyError = false; keyBusy = true
+        page.addView(text("Đang đọc khóa bảo mật…", 13f, muted))
+        sheet.show("Tỉ số bóng đá", content, onDismiss = {
+            s.cancel(); if (scope === s) { scope = null; savedKey = "" }
+        })
+        s.launch {
+            try { savedKey = FootballPins.apiKey(activity) }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { keyError = true }
+            keyBusy = false
+            buildPage(page)
+            if (savedKey.isNotBlank()) load(page)
+        }
     }
 
     // ---------------------------------------------------------------- dựng giao diện
@@ -83,7 +99,7 @@ class FootballSheetController(
         page.addView(keyCard(page), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         page.addView(demoCard(page), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         page.addView(bannerCard(), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
-        if (FootballPins.apiKey(activity).isBlank()) return
+        if (savedKey.isBlank()) return
 
         val tabs = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         fun tab(label: String, live: Boolean) = button(label, if (showLive == live) accent else muted) {
@@ -123,7 +139,13 @@ class FootballSheetController(
 
     private fun keyCard(page: LinearLayout): LinearLayout {
         val card = card()
-        val key = FootballPins.apiKey(activity)
+        val key = savedKey
+        if (keyError) {
+            card.addView(text("Không đọc được key bảo mật. Key cũ chưa bị xóa.", 13f, ink, true))
+            card.addView(button("Xóa key cũ để nhập lại", muted) { saveKey(page, "") },
+                LinearLayout.LayoutParams(-2, dp(34)).apply { topMargin = dp(10) })
+            return card
+        }
         if (key.isNotBlank()) {
             card.addView(text("API-Football key: ••••${key.takeLast(4)}", 13f, ink, true))
             card.addView(
@@ -132,8 +154,7 @@ class FootballSheetController(
             )
             card.addView(
                 button("Đổi key", muted) {
-                    FootballPins.setApiKey(activity, "")
-                    buildPage(page)
+                    saveKey(page, "")
                 },
                 LinearLayout.LayoutParams(-2, dp(34)).apply { topMargin = dp(10) }
             )
@@ -147,6 +168,7 @@ class FootballSheetController(
                 hint = "Dán key vào đây"
                 textSize = 13f
                 setSingleLine()
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
                 setTextColor(ink)
                 setHintTextColor(muted)
                 setPadding(dp(12), 0, dp(12), 0)
@@ -162,13 +184,27 @@ class FootballSheetController(
             row.addView(button("Lưu", accent) {
                 val value = input.text.toString().trim()
                 if (value.isBlank()) { toast("Chưa nhập key"); return@button }
-                FootballPins.setApiKey(activity, value)
-                buildPage(page)
-                load(page)
+                saveKey(page, value)
             }, LinearLayout.LayoutParams(0, dp(34), 1f))
             card.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         }
         return card
+    }
+
+    private fun saveKey(page: LinearLayout, value: String) {
+        if (keyBusy) return
+        val s = scope ?: return
+        keyBusy = true
+        s.launch {
+            try {
+                FootballPins.setApiKey(activity, value)
+                savedKey = value.trim(); keyError = false
+                buildPage(page)
+                if (savedKey.isNotBlank()) load(page)
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { toast("Không lưu được key bảo mật; thử lại") }
+            finally { if (scope === s) keyBusy = false }
+        }
     }
 
     /** Trận ảo Arsenal vs Chelsea chạy nhanh (~3 phút) để test Live Update, không cần API key. */
@@ -255,7 +291,7 @@ class FootballSheetController(
     // ---------------------------------------------------------------- dữ liệu
 
     private fun load(page: LinearLayout) {
-        val key = FootballPins.apiKey(activity)
+        val key = savedKey
         if (key.isBlank()) return
         statusView(page)?.text = "Đang tải…"
         scope?.launch {

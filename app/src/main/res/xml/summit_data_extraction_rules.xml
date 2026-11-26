@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <!-- Device-bound secrets cannot be restored without their original Keystore keys.
+         Also exclude old plaintext values until first successful migration. -->
+    <cloud-backup>
+        <exclude domain="sharedpref" path="summit_football.xml" />
+        <exclude domain="sharedpref" path="summit_translate.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="summit_football.xml" />
+        <exclude domain="sharedpref" path="summit_translate.xml" />
+    </device-transfer>
+</data-extraction-rules>

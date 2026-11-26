@@ -40,6 +40,7 @@ import eightbitlab.com.blurview.BlurTarget
 import eightbitlab.com.blurview.BlurView
 import java.util.Locale
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 
 class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
@@ -619,6 +620,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lifecycleScope.launch { AdaptiveSecurity.migrateExisting(applicationContext) }
         enableEdgeToEdge()
         pipController = PictureInPictureController(this)
         WebMediaHub.jsRunner = { js -> runOnUiThread { if (::web.isInitialized) web.evaluateJavascript(js, null) } }

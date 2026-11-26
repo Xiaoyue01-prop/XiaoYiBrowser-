@@ -32,8 +32,8 @@ object TranslateSettings {
 
     private fun sp(c: Context) = c.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun apiKey(c: Context): String = sp(c).getString("api_key", "").orEmpty()
-    fun setApiKey(c: Context, value: String) { sp(c).edit().putString("api_key", value.trim()).apply() }
+    suspend fun apiKey(c: Context): String = AdaptiveSecurity.read(c, AdaptiveSecurity.Secret.GEMINI)
+    suspend fun setApiKey(c: Context, value: String) = AdaptiveSecurity.write(c, AdaptiveSecurity.Secret.GEMINI, value)
     fun model(c: Context): String = sp(c).getString("model", DEFAULT_MODEL).orEmpty().ifBlank { DEFAULT_MODEL }
 }
 

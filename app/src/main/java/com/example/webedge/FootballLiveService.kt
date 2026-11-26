@@ -32,11 +32,9 @@ object FootballPins {
     private fun sp(c: Context) =
         c.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun apiKey(c: Context): String = sp(c).getString("api_key", "").orEmpty()
+    suspend fun apiKey(c: Context): String = AdaptiveSecurity.read(c, AdaptiveSecurity.Secret.FOOTBALL)
 
-    fun setApiKey(c: Context, value: String) {
-        sp(c).edit().putString("api_key", value.trim()).apply()
-    }
+    suspend fun setApiKey(c: Context, value: String) = AdaptiveSecurity.write(c, AdaptiveSecurity.Secret.FOOTBALL, value)
 
     @Synchronized
     fun pins(c: Context): List<Long> =
@@ -205,7 +203,11 @@ class FootballLiveService : Service() {
             // Trận ảo (test) tính tại chỗ, không gọi API; chỉ trận thật mới cần API key.
             val realPins = pins.filterNot { FootballDemo.isDemo(it) }
             val demoOn = pins.any { FootballDemo.isDemo(it) }
-            val key = FootballPins.apiKey(this)
+            val key = if (realPins.isEmpty()) "" else try { FootballPins.apiKey(this) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) {
+                problem("Không đọc được API key bảo mật"); shutDown(); return
+            }
             if (realPins.isNotEmpty() && key.isBlank()) {
                 problem("Chưa có API key để cập nhật tỉ số"); shutDown(); return
             }
