@@ -78,6 +78,7 @@ object GlassSystem {
     private val hintColorStates = java.util.WeakHashMap<EditText, ForegroundColorState>()
     private val imageTintStates = java.util.WeakHashMap<ImageView, ForegroundColorState>()
     private val foregroundRoots = java.util.WeakHashMap<View, Unit>()
+    private val fixedForegroundRoots = java.util.WeakHashMap<View, Unit>()
     private val foregroundObservers = java.util.WeakHashMap<View, ViewTreeObserver.OnGlobalLayoutListener>()
 
     private var pageBackgroundColor: Int? = null
@@ -285,13 +286,19 @@ object GlassSystem {
         root.viewTreeObserver.addOnGlobalLayoutListener(listener)
     }
 
+    /** Register a self-contained, fixed-palette surface before attaching it to a decor root. */
+    internal fun preserveForegroundPalette(root: View) {
+        fixedForegroundRoots[root] = Unit
+    }
+
     /** Recolors neutral app foregrounds. Solid sheets retain their immediate target palette. */
     fun applyForegroundContrast(root: View, pageColor: Int?) {
         val immediate = if (isDarkPage(pageColor)) 1f else 0f
         val animated = GlassTonePalette.foregroundProgress(materialProgress)
 
         fun visit(view: View, inheritedGlass: Boolean) {
-            if (view is WebView) return
+            // Fixed-palette overlays own their contrast, independent of the webpage.
+            if (view is WebView || fixedForegroundRoots.containsKey(view)) return
             val fallback = (view.background as? GradientDrawable)?.let { fallbackSurfaces.containsKey(it) } == true
             val inGlass = inheritedGlass || extraGlassHosts.containsKey(view) || fallback || ownsGlassForeground(view)
             if (view is TextView || view is ImageView) {

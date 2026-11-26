@@ -472,9 +472,11 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     }
 
     private fun startLockGlyph() {
-        if (resumed && browserLocked && !unlockPending && !awaitingUnlockConfirmation &&
+        if (resumed && browserLocked && !unlockPending &&
             lockSurface?.isAttachedToWindow == true &&
-            android.animation.ValueAnimator.areAnimatorsEnabled()) lockGlyph?.start()
+            android.animation.ValueAnimator.areAnimatorsEnabled()) {
+            if (awaitingUnlockConfirmation) lockGlyph?.startConfirmationSpin() else lockGlyph?.start()
+        }
     }
 
     private fun cancelUnlockTransition() {
@@ -483,6 +485,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     }
 
     private fun resetUnlockConfirmation() {
+        lockGlyph?.stop()
         awaitingUnlockConfirmation = false
         cancelUnlockTransition()
         automaticPrompt = true
@@ -497,7 +500,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         showLockScreen()
         lockMessage?.text = "Đã xác thực · Nhấn Mở khóa Summit để tiếp tục."
         unlockButton?.isEnabled = true
-        lockGlyph?.stop()
+        startLockGlyph()
     }
 
     private fun beginUnlockTransition() {
@@ -509,7 +512,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         unlockPending = true
         unlockButton?.isEnabled = false
         lockMessage?.text = "Đã xác thực · Đang mở khóa…"
-        lockGlyph?.stop()
+        lockGlyph?.freeze()
         // Let the system authentication prompt give focus back before preparing the reveal.
         scheduleUnlockWhenFocused()
     }
@@ -579,6 +582,9 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         // Attach outside android.R.id.content so cold-start setContentView() cannot
         // remove the lock surface. Both layers now share the same Activity window.
         val decor = window.decorView as FrameLayout
+        // The lock screen is opaque and has its own palette. In particular, its
+        // white unlock button must never receive the dark-page white foreground.
+        GlassSystem.preserveForegroundPalette(scroll)
         lockSurface = scroll
         decor.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         scroll.requestedFrameRate = View.REQUESTED_FRAME_RATE_CATEGORY_HIGH
