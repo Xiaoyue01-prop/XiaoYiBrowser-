@@ -174,7 +174,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         // Recents privacy is independent of foreground screenshots and recording.
         setRecentsScreenshotEnabled(!enabled)
         // Lần mở sau: splash cùng màu màn khóa thay vì nền trắng (0 = theme mặc định của manifest).
-        runCatching { setSplashScreenTheme(if (enabled) R.style.AppTheme_LockSplash else 0) }
+        runCatching { splashScreen.setSplashScreenTheme(if (enabled) R.style.AppTheme_LockSplash else 0) }
         updateCapturePolicy()
         onBrowserLockPolicyChanged(enabled)
     }
