@@ -44,25 +44,24 @@ internal class BrowserChromeClient(
     }
 
     override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
-        return host.popup.create(resultMsg, view)
+        return host.popup.create(resultMsg, view, isUserGesture)
     }
 
     override fun onCloseWindow(window: WebView) {
-        if (window === host.popup.webView) host.popup.close()
-        else super.onCloseWindow(window)
+        if (!host.popup.closeWindow(window)) super.onCloseWindow(window)
     }
 
     // Hộp thoại JavaScript của trang: dùng chung hộp kính mờ. Trả lời JsResult là bắt buộc, nếu không trang sẽ đơ.
     // Trang trong cửa sổ popup trả false để hệ thống tự hiện (hộp kính nằm sau cửa sổ popup nên sẽ bị che).
     override fun onJsAlert(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-        if (view === host.popup.webView) return false
+        if (host.popup.owns(view)) return false
         if (host.isDestroyed) { result.cancel(); return true }
         host.glassDialog.show(jsTitle(url), message.orEmpty(), "OK") { _, _ -> result.confirm() }
         return true
     }
 
     override fun onJsConfirm(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-        if (view === host.popup.webView) return false
+        if (host.popup.owns(view)) return false
         if (host.isDestroyed) { result.cancel(); return true }
         host.glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy") { ok, _ ->
             if (ok) result.confirm() else result.cancel()
@@ -71,7 +70,7 @@ internal class BrowserChromeClient(
     }
 
     override fun onJsPrompt(view: WebView, url: String?, message: String?, defaultValue: String?, result: JsPromptResult): Boolean {
-        if (view === host.popup.webView) return false
+        if (host.popup.owns(view)) return false
         if (host.isDestroyed) { result.cancel(); return true }
         host.glassDialog.show(jsTitle(url), message.orEmpty(), "OK", "Hủy", defaultValue.orEmpty()) { ok, text ->
             if (ok) result.confirm(text.orEmpty()) else result.cancel()
@@ -80,7 +79,7 @@ internal class BrowserChromeClient(
     }
 
     override fun onJsBeforeUnload(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-        if (view === host.popup.webView) return false
+        if (host.popup.owns(view)) return false
         if (host.isDestroyed) { result.cancel(); return true }
         val text = message?.takeIf { it.isNotBlank() } ?: "Các thay đổi bạn đã thực hiện có thể chưa được lưu."
         host.glassDialog.show("Rời khỏi trang này?", text, "Rời khỏi", "Ở lại") { ok, _ ->

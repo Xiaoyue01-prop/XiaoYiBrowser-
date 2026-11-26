@@ -127,6 +127,14 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         isNight = { GlassSystem.isDarkPage() },
         configureWebViewForSource = { popupWebView, sourceWebView ->
             privateProfileManager.applyProfileFromSource(popupWebView, sourceWebView)
+        },
+        attachDownloads = { popupWebView, openerUrl, prompt ->
+            downloads.attach(
+                popupWebView,
+                cookieHeader = { url -> privateProfileManager.cookieHeaderForProfile(popupWebView, url) },
+                prompt = prompt,
+                openerUrl = openerUrl
+            )
         }
     )
 
@@ -1676,6 +1684,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         if (::pipController.isInitialized) pipController.trace("onPause")
         pillBackdropSampler?.pause()
         downloadPromptController?.dismissAll()
+        popup.dismissDownloadPrompts()
         if (::store.isInitialized) store.flush()
         if (::web.isInitialized) {
             tabPersistence.saveActiveTabNow(web)

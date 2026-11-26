@@ -181,21 +181,11 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
         view.setFindListener { active, total, _ ->
             if (view === host.web) host.setFindCount(if (total == 0) "0" else "${active + 1}/$total")
         }
-        view.setDownloadListener { dlUrl, userAgent, contentDisposition, mimetype, _ ->
-            try {
-                val request = host.downloads.buildRequest(
-                    dlUrl, userAgent, contentDisposition, mimetype,
-                    host.privateProfileManager.cookieHeader(view, tab.isPrivate, dlUrl),
-                    useCookieHeader = true,
-                    pageUrl = view.url
-                )
-                host.downloadPrompt?.show(request.fileName) {
-                    host.downloads.enqueue(request)
-                } ?: host.toast("Summit chưa sẵn sàng để tải xuống")
-            } catch (_: Exception) {
-                host.toast("Không tải được file này")
-            }
-        }
+        host.downloads.attach(
+            view,
+            cookieHeader = { url -> host.privateProfileManager.cookieHeader(view, tab.isPrivate, url) },
+            prompt = { host.downloadPrompt }
+        )
         host.contextMenu?.attach(view)
         view.setOnScrollChangeListener { _, _, y, _, oldY ->
             if (view !== host.web || host.isUrlBarFocused) return@setOnScrollChangeListener

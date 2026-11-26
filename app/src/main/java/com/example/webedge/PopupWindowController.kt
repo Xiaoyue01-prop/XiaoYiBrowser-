@@ -29,6 +29,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
+import eightbitlab.com.blurview.BlurTarget
 
 
 /**
@@ -36,7 +37,7 @@ import androidx.webkit.WebViewFeature
  * hộp thoại chữ nhật mặc định của Android. Sheet có tay nắm, nút ✕ tròn, tiêu đề ở giữa (tên trang, tự cập nhật),
  * trượt lên bằng spring, kéo tay nắm/thanh tiêu đề xuống để đóng, chạm vùng tối phía trên để đóng.
  * Vẫn là một Dialog riêng (cửa sổ riêng) nên hộp thoại JS của hệ thống và bàn phím hoạt động như trước.
- * Chỉ mở một popup tại một thời điểm.
+ * Cho phép thêm một popup con do người dùng thao tác; không mở chuỗi cửa sổ không giới hạn.
  */
 /** Tay nắm (13dp) + thanh tiêu đề (56dp). */
 
@@ -56,7 +57,9 @@ class PopupWindowController(
             setAcceptCookie(true)
             setAcceptThirdPartyCookies(popup, true)
         }
-    }
+    },
+    private val attachDownloads: (WebView, String?, () -> DownloadPromptController?) -> Unit,
+    private val allowNested: Boolean = true
 ) {
     var webView: WebView? = null
         private set
@@ -64,14 +67,52 @@ class PopupWindowController(
     private var sheet: View? = null
     private var scrim: View? = null
     private var closing = false
+    private var downloadPrompt: DownloadPromptController? = null
+    private var closeAfterDownloadPrompt = false
+    private var child: PopupWindowController? = null
 
-    val isShowing: Boolean get() = dialog?.isShowing == true
+    val isShowing: Boolean get() = dialog?.isShowing == true || child?.isShowing == true
+
+    fun owns(view: WebView): Boolean = webView === view || child?.owns(view) == true
+
+    fun closeWindow(view: WebView): Boolean {
+        if (webView === view) {
+            // A download-only window may call window.close() immediately after requesting the file.
+            // Keep its confirmation visible; explicit user dismissal still cancels it.
+            if (!closing && child?.isShowing != true && downloadPrompt?.hasPending() == true) {
+                closeAfterDownloadPrompt = true
+                return true
+            }
+            child?.close(immediate = true)
+            animateClose()
+            return true
+        }
+        return child?.closeWindow(view) == true
+    }
+
+    fun dismissDownloadPrompts() {
+        child?.dismissDownloadPrompts()
+        downloadPrompt?.dismissAll()
+        if (closeAfterDownloadPrompt) animateClose()
+    }
 
     @SuppressLint("ClickableViewAccessibility")
-    fun create(resultMsg: Message?, sourceView: WebView? = null): Boolean {
-        if (webView != null || !BrowserLockPolicy.allowBrowserWindow(activity)) return false
+    fun create(resultMsg: Message?, sourceView: WebView? = null, isUserGesture: Boolean = false): Boolean {
+        if (activity.isFinishing || activity.isDestroyed || closing || !BrowserLockPolicy.allowBrowserWindow(activity)) return false
+        if (webView != null) {
+            // Keep the opener alive for window.opener, redirects and authentication callbacks.
+            // Only a user-initiated request from the visible parent may open one child window.
+            if (!allowNested || !isUserGesture || sourceView !== webView || child?.webView != null) return false
+            val nested = child ?: PopupWindowController(
+                activity, mainWebView, chromeClient, openExternal, toast,
+                webViewContext, isNight, configureWebViewForSource, attachDownloads,
+                allowNested = false
+            ).also { child = it }
+            return nested.create(resultMsg, sourceView, isUserGesture)
+        }
         val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
         val source = sourceView ?: mainWebView()
+        val openerUrl = source.url
         val popup = WebView(webViewContext())
         // Profile must be selected before reading settings, attaching clients or navigating.
         configureWebViewForSource(popup, source)
@@ -98,12 +139,15 @@ class PopupWindowController(
 
         // --- Khung: lớp tối + sheet ---
         val root = FrameLayout(activity)
+        // Banner and its blur target must be siblings in this Dialog, never in the Activity behind it.
+        val blurTarget = BlurTarget(activity)
+        root.addView(blurTarget, FrameLayout.LayoutParams(-1, -1))
         val scrimView = View(activity).apply {
             setBackgroundColor(GlassSystem.pageScrimColor())
             alpha = 0f
             setOnClickListener { animateClose() }
         }
-        root.addView(scrimView, FrameLayout.LayoutParams(-1, -1))
+        blurTarget.addView(scrimView, FrameLayout.LayoutParams(-1, -1))
 
         val corner = dp(36)
         val sheetView = LinearLayout(activity).apply {
@@ -121,7 +165,7 @@ class PopupWindowController(
             translationY = activity.resources.displayMetrics.heightPixels.toFloat()
         }
         val sheetLp = FrameLayout.LayoutParams(-1, -1)
-        root.addView(sheetView, sheetLp)
+        blurTarget.addView(sheetView, sheetLp)
 
         // --- Tay nắm + thanh tiêu đề (vùng kéo để đóng) ---
         val dragZone = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
@@ -244,12 +288,31 @@ class PopupWindowController(
             }
         }
         dlg.setContentView(root)
+        val localPrompt = DownloadPromptController(
+            activity = activity,
+            root = root,
+            blurTarget = blurTarget,
+            density = activity.resources.displayMetrics.density,
+            isNight = { GlassSystem.isDarkPage() },
+            foregroundColor = textColor,
+            accentColor = Theme.ACCENT_BLUE,
+            topInset = { 0 },
+            onQueueDrained = {
+                if (dialog === dlg && closeAfterDownloadPrompt) animateClose()
+            }
+        )
+        downloadPrompt = localPrompt
+        attachDownloads(popup, openerUrl) {
+            localPrompt.takeIf { webView === popup && dialog === dlg && dlg.isShowing && !closing }
+        }
         dlg.window?.let { BrowserSheetMotion.configureWindow(it, root, night) }
         dlg.setOnDismissListener {
             (activity as? BiometricBrowserActivity)?.unregisterBrowserWindow(dlg)
+            localPrompt.dismissAll()
             GlassSystem.removePageToneObserver(root)
             GlassSystem.unbindForegroundRoot(root)
             if (dialog === dlg) {
+                child?.close(immediate = true)
                 releasePopup()
                 dialog = null; sheet = null; scrim = null; closing = false
             }
@@ -291,6 +354,10 @@ class PopupWindowController(
         val dlg = dialog ?: return
         if (closing) return
         closing = true
+        closeAfterDownloadPrompt = false
+        webView?.setDownloadListener(null)
+        child?.close(immediate = true)
+        downloadPrompt?.dismissAll()
         BrowserSheetMotion.close(dlg, sheet, scrim, ::dp, velocity)
     }
 
@@ -299,6 +366,10 @@ class PopupWindowController(
     private fun releasePopup() {
         val popup = webView ?: return
         webView = null
+        closeAfterDownloadPrompt = false
+        downloadPrompt?.dismissAll()
+        downloadPrompt = null
+        popup.setDownloadListener(null)
         runCatching { popup.stopLoading() }
         (popup.parent as? ViewGroup)?.removeView(popup)
         popup.webChromeClient = WebChromeClient()
@@ -308,7 +379,12 @@ class PopupWindowController(
 
     /** [immediate] = true: đóng ngay không animation (khi Activity đang bị huỷ). */
     fun close(immediate: Boolean = false) {
-        if (!immediate) { animateClose(); return }
+        if (!immediate) {
+            if (child?.isShowing == true) child?.close() else animateClose()
+            return
+        }
+        child?.close(immediate = true)
+        child = null
         val dlg = dialog
         // Dialog.dismiss() post OnDismissListener qua Handler -> chạy SAU hàm này.
         // Nếu để listener hủy WebView thì PrivateProfileManager.endSession() sẽ xóa profile

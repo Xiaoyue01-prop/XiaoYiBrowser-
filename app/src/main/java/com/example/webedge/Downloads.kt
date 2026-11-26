@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Environment
 import android.webkit.CookieManager
 import android.webkit.URLUtil
+import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -45,6 +46,37 @@ class DownloadController(
                 toast("Tải xuống vẫn tiếp tục; thông báo tiến trình đang bị tắt.")
             }
         }
+
+    /** Use the same confirmation and DownloadManager pipeline for every browser window. */
+    fun attach(
+        view: WebView,
+        cookieHeader: (String) -> String?,
+        prompt: () -> DownloadPromptController?,
+        openerUrl: String? = null
+    ) {
+        view.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+            try {
+                val scheme = Uri.parse(url).scheme
+                if (scheme != "http" && scheme != "https") {
+                    toast("Chưa hỗ trợ tải file từ loại liên kết này")
+                    return@setDownloadListener
+                }
+                val pageUrl = view.url?.takeUnless { it.isBlank() || it == "about:blank" } ?: openerUrl
+                val request = buildRequest(
+                    url, userAgent, contentDisposition, mimeType,
+                    cookieHeader(url), useCookieHeader = true, pageUrl = pageUrl
+                )
+                val controller = prompt()
+                if (controller == null) {
+                    toast("Summit chưa sẵn sàng để tải xuống")
+                } else {
+                    controller.show(request.fileName) { enqueue(request) }
+                }
+            } catch (_: Exception) {
+                toast("Không tải được file này")
+            }
+        }
+    }
 
     /** Gói thông tin WebView đưa cho DownloadListener thành một yêu cầu tải. */
     fun buildRequest(

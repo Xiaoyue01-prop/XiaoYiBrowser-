@@ -131,6 +131,11 @@ class PrivateProfileManager {
     fun cookieHeader(view: WebView, isPrivate: Boolean, url: String): String? =
         cookieManagerFor(view, isPrivate).getCookie(url)
 
+    /** Resolve the actual WebView profile; never fall back to normal cookies on a profile lookup failure. */
+    fun cookieHeaderForProfile(view: WebView, url: String): String? =
+        if (isSupported) WebViewCompat.getProfile(view).cookieManager.getCookie(url)
+        else CookieManager.getInstance().getCookie(url)
+
     /** Call only after every WebView (including an authentication popup) has been destroyed. */
     fun endSession() {
         val name = currentProfileName ?: return

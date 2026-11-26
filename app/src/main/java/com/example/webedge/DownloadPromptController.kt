@@ -24,7 +24,8 @@ class DownloadPromptController(
     private val isNight: () -> Boolean,
     private val foregroundColor: Int,
     private val accentColor: Int,
-    private val topInset: () -> Int
+    private val topInset: () -> Int,
+    private val onQueueDrained: () -> Unit = {}
 ) {
     private data class Prompt(
         val fileName: String,
@@ -47,6 +48,8 @@ class DownloadPromptController(
         val h = if (view.height > 0) view.height else view.measuredHeight
         return if (h > 0) h + dp(8) else 0
     }
+
+    fun hasPending(): Boolean = active != null || queue.isNotEmpty()
 
     fun show(fileName: String, onConfirm: () -> Unit) {
         queue.addLast(Prompt(fileName, onConfirm))
@@ -213,6 +216,7 @@ class DownloadPromptController(
                     root.removeView(view)
                 }
                 showNext()
+                if (!hasPending()) onQueueDrained()
             } else {
                 if (view != null) {
                     GlassSystem.removePageToneObserver(view)
