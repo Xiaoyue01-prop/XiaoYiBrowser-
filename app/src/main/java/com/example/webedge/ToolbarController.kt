@@ -17,7 +17,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.webkit.WebView
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -78,7 +77,7 @@ internal class ToolbarController(
         private set
     lateinit var urlPillFrame: FrameLayout
         private set
-    lateinit var urlBar: EditText
+    lateinit var urlBar: AddressEditText
         private set
     lateinit var backBtn: FrameLayout
         private set
@@ -147,7 +146,7 @@ internal class ToolbarController(
         tabBtn.setOnClickListener { host.openTabSwitcher() }
         AnimationSystem.press(tabBtn, Constants.PRESS_SCALE_SMALL)
 
-        urlBar = EditText(activity)
+        urlBar = AddressEditText(activity)
         urlBar.setSingleLine()
         urlBar.ellipsize = TextUtils.TruncateAt.END
         urlBar.hint = "Tìm kiếm hoặc nhập địa chỉ"
@@ -167,13 +166,20 @@ internal class ToolbarController(
                 setBarHidden(false)
                 setSearchMode(true)
                 urlBar.gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                setUrlText(host.currentUrl)
+                urlBar.ellipsize = null
+                val address = host.currentUrl
+                setUrlText(address)
                 updateClearQueryVisibility()
-                urlBar.post { urlBar.selectAll() }
+                urlBar.post {
+                    if (urlBar.hasFocus() && TextUtils.equals(urlBar.text, address)) {
+                        urlBar.selectAddressFromStart()
+                    }
+                }
                 updateBarVisibility()
             } else {
                 host.dismissAddressMenu()
                 setSearchMode(false)
+                urlBar.ellipsize = TextUtils.TruncateAt.END
                 urlBar.gravity = Gravity.CENTER
                 host.hideSuggestions()
                 showDomain()
