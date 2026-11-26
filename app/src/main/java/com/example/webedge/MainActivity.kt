@@ -1409,7 +1409,16 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
 
     override fun unlockVisualWebView(): WebView? = if (::web.isInitialized) web else null
 
+    /** Tab dựng sớm sau màn khóa không được tự phát tiếng/video trước khi người dùng thấy trang. */
+    private fun setLockedAutoplayGuard(on: Boolean) {
+        if (!::tabManager.isInitialized) return
+        tabManager.getAll().forEach { it.webView?.settings?.mediaPlaybackRequiresUserGesture = on }
+    }
+
+    override fun onBrowserStartedWhileLocked() = setLockedAutoplayGuard(true)
+
     override fun onBrowserUnlocked() {
+        setLockedAutoplayGuard(false)
         if (::firstRunPermissions.isInitialized) root.post {
             if (!isLockUiActive() && !isFinishing && !isDestroyed) firstRunPermissions.requestIfFirstRun()
         }

@@ -179,12 +179,14 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
 
     protected open fun onBrowserLockPolicyChanged(enabled: Boolean) {}
     protected open fun onBrowserUnlocked() {}
+    /** Trình duyệt vừa được dựng sớm khi màn khóa còn phủ: lớp con chặn tự phát media tới khi mở khóa. */
+    protected open fun onBrowserStartedWhileLocked() {}
     protected open fun unlockVisualWebView(): WebView? = null
 
     private companion object {
         const val RELOCK_GRACE_MS = 15_000L
         const val REVEAL_SLIDE_MS = 680L
-        const val FRAME_FALLBACK_MS = 500L
+        const val FRAME_FALLBACK_MS = 300L
         const val LOCK_INSTRUCTION = "Xác thực bằng sinh trắc học hoặc mã khóa thiết bị."
         // Exact four digit colors from assets/home/home.js (COLORS), in order.
         val CLOCK_PALETTE = intArrayOf(0xFFD274B5.toInt(), 0xFFA99BFF.toInt(),
@@ -552,6 +554,34 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         lockMessage?.text = "Đã xác thực · Nhấn Mở khóa Summit để tiếp tục."
         unlockButton?.isEnabled = true
         startLockGlyph()
+        // Dựng trình duyệt trong lúc người dùng chưa bấm nút: khi bấm chỉ còn chạy animation.
+        // Đợi frame này vẽ xong để chữ "Đã xác thực" hiện trước khi main thread bận.
+        unlockHandler.post { prewarmBrowser() }
+    }
+
+    /**
+     * Chỉ chạy sau khi xác thực thành công (không phải trước đó). Nội dung vẫn bị che
+     * (INVISIBLE + FLAG_SECURE + lớp khóa phủ trên cùng) và chặn chạm/phím, nên không lộ gì.
+     */
+    private fun prewarmBrowser() {
+        if (initialization == null || !browserLocked || !resumed || isFinishing || isDestroyed) return
+        if (!awaitingUnlockConfirmation && !unlockPending) return
+        startOnce()
+        if (concealed) {
+            // enableEdgeToEdge()/nền cửa sổ do initializeBrowser đặt phải được giữ cho lúc mở khóa,
+            // nếu không unlockBrowser sẽ khôi phục giá trị cũ từ trước khi trình duyệt tồn tại.
+            val controller = WindowCompat.getInsetsController(window, window.decorView)
+            originalBackground = window.decorView.background
+            originalLightStatusBars = controller.isAppearanceLightStatusBars
+            originalLightNavigationBars = controller.isAppearanceLightNavigationBars
+            originalNavContrast = window.isNavigationBarContrastEnforced
+            window.setBackgroundDrawable(lockBackground())
+            applyLockBars()
+        }
+        // startOnce() có thể thêm back callback / view mới: lớp khóa vẫn phải ở trên cùng.
+        prioritizeLockBack()
+        lockSurface?.bringToFront()
+        onBrowserStartedWhileLocked()
     }
 
     private fun beginUnlockTransition() {
