@@ -4,6 +4,7 @@ import android.accounts.Account
 import android.app.Activity
 import androidx.activity.ComponentActivity
 import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -33,7 +34,7 @@ internal class GoogleSyncController(
     private var pending: GoogleAccountProfile? = null
     private var manual = false
     private var onDone: (() -> Unit)? = null
-    private val consent = activity.registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+    private fun onConsent(result: ActivityResult) {
         val profile = pending
         if (profile == null || result.resultCode != Activity.RESULT_OK) {
             finish("Đã hủy cấp quyền đồng bộ")
@@ -42,7 +43,11 @@ internal class GoogleSyncController(
             catch (_: Exception) { finish("Không lấy được quyền truy cập Google Drive") }
         }
     }
+    private val gate = activity as? BiometricBrowserActivity
+    private val consent = gate?.syncConsentLauncher
+        ?: activity.registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { onConsent(it) }
     init {
+        gate?.syncConsentResult = ::onConsent
         activity.lifecycleScope.launch {
             activity.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 while (isActive) {

@@ -70,7 +70,7 @@ class BrowserBottomSheet(
         /** Chạm nút X hoặc bấm Back: trả true nếu đã tự xử lý (vd. thoát chế độ chọn) thì sheet không đóng. */
         onCloseRequest: (() -> Boolean)? = null
     ) {
-        if (activity.isFinishing || activity.isDestroyed) return
+        if (activity.isFinishing || activity.isDestroyed || !BrowserLockPolicy.allowBrowserWindow(activity)) return
         dismiss(immediate = true)
 
         // Native sheet surfaces follow the active webpage palette, not Android's system theme.
@@ -270,13 +270,17 @@ class BrowserBottomSheet(
                 onDismiss()
             }
         }
-        dlg.setOnDismissListener { release() }
+        dlg.setOnDismissListener {
+            (activity as? BiometricBrowserActivity)?.unregisterBrowserWindow(dlg)
+            release()
+        }
         glassDialog = gd
         releaseNow = release
         dialog = dlg
         sheetView = sheet
         scrimView = scrim
         closing = false
+        (activity as? BiometricBrowserActivity)?.registerBrowserWindow(dlg) { dismiss(immediate = true) }
         dlg.show()
         GlassSystem.bindForegroundRoot(windowRoot)
         GlassSystem.observePageTone(windowRoot) { color ->
@@ -318,6 +322,7 @@ class BrowserBottomSheet(
         if (immediate) {
             val release = releaseNow
             // Dọn NGAY, trước khi show() dựng sheet mới; listener được post sẽ thành no-op.
+            (activity as? BiometricBrowserActivity)?.unregisterBrowserWindow(dlg)
             dlg.dismiss()
             release?.invoke()
         } else animateClose()

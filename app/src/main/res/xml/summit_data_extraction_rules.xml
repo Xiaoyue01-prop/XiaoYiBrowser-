@@ -6,10 +6,12 @@
         <exclude domain="sharedpref" path="summit_football.xml" />
         <exclude domain="sharedpref" path="summit_translate.xml" />
         <exclude domain="sharedpref" path="edge.xml" />
+        <exclude domain="sharedpref" path="summit_biometric.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="summit_football.xml" />
         <exclude domain="sharedpref" path="summit_translate.xml" />
         <exclude domain="sharedpref" path="edge.xml" />
+        <exclude domain="sharedpref" path="summit_biometric.xml" />
     </device-transfer>
 </data-extraction-rules>

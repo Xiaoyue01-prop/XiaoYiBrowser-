@@ -61,10 +61,10 @@ class PictureInPictureController(
         videoView = if (active) view else null
         try {
             pip.setPlayerView(if (active) view else null)
-            pip.setEnabled(active)
+            pip.setEnabled(active && !BrowserLockPolicy.enabled(activity))
             if (active) pip.setAspectRatio(Rational((aspect * RATIO_BASE).toInt(), RATIO_BASE))
             pip.commit()
-            if (!active) disableAutoEnter()
+            if (!active || BrowserLockPolicy.enabled(activity)) disableAutoEnter()
         } catch (e: Exception) {
             Log.w(TAG, "Cập nhật trạng thái PiP thất bại", e)
         }
@@ -96,8 +96,9 @@ class PictureInPictureController(
     /** Bật/tắt tự vào PiP khi vuốt về home (tắt khi app đang xoay ngang để tự xử lý trong onUserLeaveHint). */
     fun setAutoEnter(enabled: Boolean) {
         try {
-            pip.setEnabled(videoActive && enabled)
+            pip.setEnabled(videoActive && enabled && !BrowserLockPolicy.enabled(activity))
             pip.commit()
+            if (BrowserLockPolicy.enabled(activity)) disableAutoEnter()
         } catch (e: Exception) {
             Log.w(TAG, "Đổi tự vào PiP thất bại", e)
         }
@@ -105,7 +106,7 @@ class PictureInPictureController(
 
     /** [useSourceRect] = false khi hướng màn hình sắp đổi (vùng video tính theo hướng cũ sẽ sai). */
     fun enterNow(useSourceRect: Boolean = true) {
-        if (!videoActive || activity.isInPictureInPictureMode) return
+        if (!videoActive || activity.isInPictureInPictureMode || BrowserLockPolicy.enabled(activity)) return
         markEntering()
         try {
             val rect = if (useSourceRect) videoSourceRect() else null

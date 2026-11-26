@@ -27,7 +27,6 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import androidx.activity.ComponentActivity
 import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
@@ -43,7 +42,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
 
-class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
+class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
 
     private lateinit var store: Store
     private lateinit var firstRunPermissions: FirstRunPermissions
@@ -620,6 +619,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        startProtectedBrowser { initializeBrowser(if (BrowserLockPolicy.enabled(this)) null else savedInstanceState) }
+    }
+
+    private fun initializeBrowser(savedInstanceState: Bundle?) {
         lifecycleScope.launch { AdaptiveSecurity.migrateExisting(applicationContext) }
         enableEdgeToEdge()
         pipController = PictureInPictureController(this)
@@ -636,7 +639,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             activity = this,
             store = store,
             dialog = { glassDialog },
-            isActivityDestroyed = { isActivityDestroyed },
+            isActivityDestroyed = { isActivityDestroyed || browserLocked },
             isPopupShowing = { popup.isShowing }
         )
         AdBlocker.init(this)
@@ -698,6 +701,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         createControllers()
         installWindowHandlers()
         loadStartPage(savedInstanceState)
+        requestHighRefreshRate()
     }
 
     /** Dải mờ dần dưới thanh trạng thái và trên thanh địa chỉ. */
@@ -1390,10 +1394,24 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     // launchMode=singleTask: link mới tới khi app đang chạy sẽ vào đây thay vì mở thêm một cửa sổ.
+    private var pendingLockedLink: String? = null
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (!browserStarted) return // initializeBrowser consumes the most recent Intent.
+        if (deferBrowserAction()) { pendingLockedLink = incomingLink(intent); return }
         incomingLink(intent)?.let(::openLinkInNewTab)
+    }
+
+    override fun onBrowserUnlocked() {
+        val link = pendingLockedLink
+        pendingLockedLink = null
+        if (browserStarted) link?.let(::openLinkInNewTab)
+    }
+
+    override fun onBrowserLockPolicyChanged(enabled: Boolean) {
+        if (enabled && ::pipController.isInitialized) pipController.setAutoEnter(false)
+        if (enabled) ReaderLiveUpdate.cancel(this)
     }
 
     private fun closeBrowserTab(tab: TabManager.Tab) {
@@ -1430,6 +1448,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (browserLocked) return true
         pullRefresh?.onTouch(ev)
         if (::tabSwipe.isInitialized) {
             when (tabSwipe.onTouch(ev)) {
@@ -1464,6 +1483,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         newConfig: android.content.res.Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (!browserStarted) return
         if (::pipController.isInitialized) pipController.trace("modeChanged pip=$isInPictureInPictureMode state=${lifecycle.currentState}")
         if (!isInPictureInPictureMode && ::pipController.isInitialized) pipController.flushTrace()
         WebMediaHub.jsRunner?.invoke(mediaJs("pip($isInPictureInPictureMode)"))
@@ -1540,7 +1560,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onStop() {
         if (::pipController.isInitialized) pipController.trace("onStop inPip=$isInPictureInPictureMode entering=${pipController.isEntering}")
         // Đang ở Reader mà vuốt ra màn hình chính: hiện % đã đọc dưới dạng Live Update (chỉ hiển thị, không có nút).
-        if (!isChangingConfigurations && !isActiveTabPrivate()) {
+        if (!BrowserLockPolicy.enabled(this) && !isChangingConfigurations && !isActiveTabPrivate()) {
             readerModeController?.readingSnapshot()?.let { snapshot ->
                 ReaderLiveUpdate.post(this, snapshot.title, snapshot.host, snapshot.percent)
             }
@@ -1556,7 +1576,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     override fun onUserLeaveHint() {
-        if (isFullscreenVideoShowing()) {
+        if (!BrowserLockPolicy.enabled(this) && isFullscreenVideoShowing()) {
             pipController.markEntering()
             // Sắp tự vào PiP: chặn trang tự thoát toàn màn hình trong lúc cửa sổ mất focus/đổi cỡ (tự hết hạn sau 4s nếu không vào PiP).
             WebMediaHub.jsRunner?.invoke(mediaJs("guard(true, 4000)"))
@@ -1577,7 +1597,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     override fun onSaveInstanceState(outState: Bundle) {
         if (::web.isInitialized) {
             tabPersistence.saveActiveTabNow(web)
-            if (tabManager.getForWebView(web)?.isPrivate != true) {
+            if (!BrowserLockPolicy.enabled(this) && tabManager.getForWebView(web)?.isPrivate != true) {
                 web.saveState(outState)
             }
         }
@@ -1746,6 +1766,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
     }
 
     override fun onDestroy() {
+        if (!browserStarted) { super.onDestroy(); return }
                 isActivityDestroyed = true
         GlassSystem.setPageBackground(null, window.decorView, animate = false)
         if (::menu.isInitialized) menu.destroy()

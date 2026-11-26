@@ -18,9 +18,8 @@ class FirstRunPermissions(
     private val activity: ComponentActivity,
     private val store: Store
 ) {
-    private val launcher = activity.registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { }
+    private val launcher = (activity as? BiometricBrowserActivity)?.firstRunLauncher
+        ?: activity.registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
 
     /** Gọi sau khi UI đã dựng xong. Chỉ hỏi một lần; từ lần sau trở đi không làm gì. */
     fun requestIfFirstRun() {

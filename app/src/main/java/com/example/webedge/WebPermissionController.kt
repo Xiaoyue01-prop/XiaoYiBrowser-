@@ -22,13 +22,15 @@ class WebPermissionController(
     private var pendingGeoOrigin: String? = null
     private var pendingGeoCallback: GeolocationPermissions.Callback? = null
 
-    private val mediaLauncher = activity.registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ -> finishMediaRequest() }
-
-    private val geoLauncher = activity.registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ -> finishGeoRequest() }
+    private val gate = activity as? BiometricBrowserActivity
+    private val mediaLauncher = gate?.mediaPermissionLauncher
+        ?: activity.registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { finishMediaRequest() }
+    private val geoLauncher = gate?.geoPermissionLauncher
+        ?: activity.registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { finishGeoRequest() }
+    init {
+        gate?.mediaPermissionResult = ::finishMediaRequest
+        gate?.geoPermissionResult = ::finishGeoRequest
+    }
 
     private fun hasRuntimePermission(permission: String): Boolean =
         ContextCompat.checkSelfPermission(activity, permission) == PackageManager.PERMISSION_GRANTED
@@ -91,6 +93,7 @@ class WebPermissionController(
     }
 
     private fun finishMediaRequest() {
+        if (gate?.browserLocked == true) { denyPending(); return }
         val request = pendingRequest ?: return
         val resources = pendingResources
         pendingRequest = null; pendingResources = emptyArray(); pendingMediaIsPrivate = false
@@ -154,7 +157,7 @@ class WebPermissionController(
         val origin = pendingGeoOrigin ?: return
         val callback = pendingGeoCallback
         pendingGeoOrigin = null; pendingGeoCallback = null
-        val allowed = hasRuntimePermission(Manifest.permission.ACCESS_FINE_LOCATION) || hasRuntimePermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+        val allowed = gate?.browserLocked != true && (hasRuntimePermission(Manifest.permission.ACCESS_FINE_LOCATION) || hasRuntimePermission(Manifest.permission.ACCESS_COARSE_LOCATION))
         callback?.invoke(origin, allowed, false)
     }
 

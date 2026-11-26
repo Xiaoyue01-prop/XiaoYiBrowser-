@@ -450,7 +450,7 @@ class BrowserToolsController(
         val recordState = row("Lịch sử, bookmark, tab, nhóm tab", "Đang đọc…")
         val journalState = row("Nhật ký đồng bộ trên máy", "Đang đọc…")
         val keyState = row("Khóa bảo vệ dữ liệu", "Đang đọc…")
-        val note = styled("Không mã hóa ảnh xem trước tab, cookie, dữ liệu WebView hoặc bản sao trên Drive. Không phải khóa sinh trắc học.", 11f)
+        val note = styled("Không mã hóa ảnh xem trước tab, cookie, dữ liệu WebView hoặc bản sao trên Drive. Khóa ứng dụng bên dưới là kiểm soát giao diện, chưa ràng buộc khóa mã hóa.", 11f)
         security.addView(note, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         var running = false
         var enabled = false
@@ -527,6 +527,31 @@ class BrowserToolsController(
         }.apply { visibility = View.GONE }
         security.addView(checkButton, LinearLayout.LayoutParams(-1, dp(42)).apply { topMargin = dp(12) })
         security.addView(enableButton, LinearLayout.LayoutParams(-1, dp(42)).apply { topMargin = dp(8) })
+        line()
+        section("KHÓA SINH TRẮC HỌC")
+        val gateHost = activity as? BiometricBrowserActivity
+        val available = BrowserLockPolicy.availability(activity) == android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS
+        row("Xác thực hệ thống", if (available) "Khả dụng" else "Chưa khả dụng")
+        val lockRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val lockText = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        lockText.addView(styled("Khóa Summit", 14f, true))
+        lockText.addView(styled("Khóa ngay khi rời màn hình. Dùng sinh trắc học mạnh hoặc mã khóa Android. PiP bị tắt khi khóa được bật.", 11f))
+        lockRow.addView(lockText, LinearLayout.LayoutParams(0, -2, 1f))
+        lateinit var lockSwitch: GlassSystem.GlassSwitch
+        lockSwitch = GlassSystem.GlassSwitch(activity, density, dark, accent, BrowserLockPolicy.enabled(activity)) { desired ->
+            lockSwitch.setCheckedSilently(BrowserLockPolicy.enabled(activity))
+            val gate = gateHost ?: return@GlassSwitch
+            lockSwitch.isEnabled = false
+            gate.configureBrowserLock(desired) { _, message ->
+                lockSwitch.setCheckedSilently(BrowserLockPolicy.enabled(activity), animate = true)
+                lockSwitch.isEnabled = true
+                toast(message)
+            }
+        }.apply { contentDescription = "Khóa Summit"; isEnabled = available && gateHost != null }
+        lockRow.addView(lockSwitch, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+        security.addView(lockRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        security.addView(styled("Không thay đổi khóa AES hoặc dữ liệu Drive. Tab riêng tư dùng cùng khóa ứng dụng; chưa có khóa riêng độc lập.", 11f))
+        activeToneUpdates += { next -> lockSwitch.setTone(next) }
         activeToneUpdates += { next -> dark = next; tone() }
         body.addView(security, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         security.post {

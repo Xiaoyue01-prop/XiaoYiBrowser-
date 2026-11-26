@@ -69,7 +69,7 @@ class PopupWindowController(
 
     @SuppressLint("ClickableViewAccessibility")
     fun create(resultMsg: Message?, sourceView: WebView? = null): Boolean {
-        if (webView != null) return false
+        if (webView != null || !BrowserLockPolicy.allowBrowserWindow(activity)) return false
         val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
         val source = sourceView ?: mainWebView()
         val popup = WebView(webViewContext())
@@ -246,6 +246,7 @@ class PopupWindowController(
         dlg.setContentView(root)
         dlg.window?.let { BrowserSheetMotion.configureWindow(it, root, night) }
         dlg.setOnDismissListener {
+            (activity as? BiometricBrowserActivity)?.unregisterBrowserWindow(dlg)
             GlassSystem.removePageToneObserver(root)
             GlassSystem.unbindForegroundRoot(root)
             if (dialog === dlg) {
@@ -258,6 +259,7 @@ class PopupWindowController(
         sheet = sheetView
         scrim = scrimView
         closing = false
+        (activity as? BiometricBrowserActivity)?.registerBrowserWindow(dlg) { close(immediate = true) }
         dlg.show()
         GlassSystem.bindForegroundRoot(root)
         GlassSystem.observePageTone(root) { color ->
@@ -313,7 +315,7 @@ class PopupWindowController(
         // khi vẫn còn WebView sống trên đó -> deleteProfile fail, cookie riêng tư nằm lại trên đĩa.
         releasePopup()
         dialog = null; sheet = null; scrim = null; closing = false
-        dlg?.dismiss()
+        dlg?.let { (activity as? BiometricBrowserActivity)?.unregisterBrowserWindow(it); it.dismiss() }
     }
 
 }

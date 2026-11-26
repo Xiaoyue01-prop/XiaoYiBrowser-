@@ -29,7 +29,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
@@ -50,7 +49,7 @@ import java.util.Locale
  * Bản v1 chưa có: xin quyền camera/mic/vị trí của trang, toàn màn hình video, tải xuống ngay trong sheet (tải xuống
  * và popup mới sẽ chuyển sang Summit / mở cùng cửa sổ).
  */
-class OverlayBrowserActivity : ComponentActivity() {
+class OverlayBrowserActivity : BiometricBrowserActivity() {
 
     private lateinit var store: Store
     private var web: WebView? = null
@@ -91,6 +90,11 @@ class OverlayBrowserActivity : ComponentActivity() {
     @SuppressLint("ClickableViewAccessibility", "SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        startProtectedBrowser { initializeBrowser() }
+    }
+
+    @SuppressLint("ClickableViewAccessibility", "SetJavaScriptEnabled")
+    private fun initializeBrowser() {
         val startUrl = incomingUrl(intent)
         if (startUrl == null) {
             finish()
@@ -623,6 +627,7 @@ class OverlayBrowserActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        if (!browserStarted) { super.onDestroy(); return }
         dismissMenu(false)
         GlassSystem.overrideTone(null)
         web?.let { view ->
