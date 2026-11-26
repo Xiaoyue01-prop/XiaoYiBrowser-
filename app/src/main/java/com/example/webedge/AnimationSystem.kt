@@ -147,9 +147,23 @@ object AnimationSystem {
         minimumVisibleChange: Float = DynamicAnimation.MIN_VISIBLE_CHANGE_PIXELS,
         onUpdate: (Float) -> Unit,
         onEnd: ((canceled: Boolean, value: Float, velocity: Float) -> Unit)? = null
+    ): FloatSpringHandle = springFloat(
+        from, to, spec, minimumVisibleChange, velocity = 0f, onUpdate = onUpdate, onEnd = onEnd
+    )
+
+    /** Same spring engine, with optional gesture momentum supplied by the caller. */
+    fun springFloat(
+        from: Float,
+        to: Float,
+        spec: SpringSpec = SETTLE,
+        minimumVisibleChange: Float = DynamicAnimation.MIN_VISIBLE_CHANGE_PIXELS,
+        velocity: Float,
+        onUpdate: (Float) -> Unit,
+        onEnd: ((canceled: Boolean, value: Float, velocity: Float) -> Unit)? = null
     ): FloatSpringHandle {
         val animation = SpringAnimation(FloatValueHolder(from)).apply {
             spring = springForce(to, spec)
+            setStartVelocity(velocity)
             setMinimumVisibleChange(minimumVisibleChange)
             addUpdateListener { _, value, _ -> onUpdate(value) }
             addEndListener { _, canceled, value, velocity ->
