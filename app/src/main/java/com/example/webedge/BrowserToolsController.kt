@@ -396,28 +396,149 @@ class BrowserToolsController(
 
     private fun addAdaptiveSecurityCard(body: LinearLayout) {
         val security = card()
-        security.addView(text("Adaptive Security", 14f, foreground, true))
-        val status = text("Android Keystore · AES-256-GCM\nKiểm tra phần cứng và mã hóa API key đang lưu trên máy.", 12f, muted)
-        status.setPadding(0, dp(5), 0, dp(5))
-        security.addView(status)
         val host = activity as? ComponentActivity
+        val greenLight = Color.rgb(0, 112, 66)
+        val greenDark = Color.rgb(86, 214, 148)
+        var dark = GlassSystem.isDarkPage()
+        val toneViews = mutableListOf<Pair<TextView, Boolean>>()
+        val verified = mutableSetOf<TextView>()
+        val dividers = mutableListOf<View>()
+        fun primary() = if (dark) Color.WHITE else Color.rgb(20, 20, 22)
+        fun secondary() = if (dark) Color.rgb(202, 204, 212) else Color.rgb(95, 95, 104)
+        fun green() = if (dark) greenDark else greenLight
+        fun styled(value: String, size: Float, strong: Boolean = false): TextView =
+            text(value, size, if (strong) primary() else secondary(), strong).also { toneViews += it to strong }
+        fun line() {
+            val v = View(activity).apply { setBackgroundColor(if (dark) 0x38FFFFFF else 0x22000000) }
+            dividers += v
+            security.addView(v, LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(12); bottomMargin = dp(10) })
+        }
+        fun section(label: String) {
+            security.addView(styled(label, 11f, true), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(5) })
+        }
+        fun row(label: String, initial: String): TextView {
+            val r = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.TOP; setPadding(0, dp(5), 0, dp(5)) }
+            r.addView(styled(label, 13f), LinearLayout.LayoutParams(0, -2, 0.9f).apply { marginEnd = dp(12) })
+            val v = styled(initial, 13f, true).apply { gravity = Gravity.END }
+            r.addView(v, LinearLayout.LayoutParams(0, -2, 1.1f))
+            security.addView(r)
+            return v
+        }
+        val header = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val shield = PathIcon(Icons.SHIELD, secondary())
+        val image = android.widget.ImageView(activity).apply { setImageDrawable(shield); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        header.addView(image, LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginEnd = dp(12) })
+        val heading = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        heading.addView(styled("Device Security", 20f, true))
+        val headline = styled("Chưa kiểm tra phần cứng", 12f)
+        heading.addView(headline)
+        header.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
+        security.addView(header)
+        line()
+        section("THIẾT BỊ")
+        for ((label, value) in DeviceSecurityInfo.rows()) row(label, value)
+        line()
+        section("BẢO MẬT PHẦN CỨNG")
+        row("Nhà cung cấp", "Android Keystore")
+        val advertised = row("StrongBox (hệ thống)", "Chưa kiểm tra")
+        val defaultProbe = row("Keystore mặc định", "Chưa kiểm tra")
+        val strongProbe = row("StrongBox", "Chưa kiểm tra")
+        line()
+        section("DỮ LIỆU CỤC BỘ")
+        val football = row("API-Football", "Chưa kiểm tra")
+        val gemini = row("Gemini", "Chưa kiểm tra")
+        val recordState = row("Lịch sử, bookmark, tab, nhóm tab", "Đang đọc…")
+        val journalState = row("Nhật ký đồng bộ trên máy", "Đang đọc…")
+        val keyState = row("Khóa bảo vệ dữ liệu", "Đang đọc…")
+        val note = styled("Không mã hóa ảnh xem trước tab, cookie, dữ liệu WebView hoặc bản sao trên Drive. Không phải khóa sinh trắc học.", 11f)
+        security.addView(note, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         var running = false
-        val button = actionButton("Kiểm tra bảo mật thiết bị", accent) {
+        var enabled = false
+        var hardwareVerified = false
+        fun tone() {
+            for ((v, strong) in toneViews) v.setTextColor(if (v in verified) green() else if (strong) primary() else secondary())
+            shield.setAdaptiveForegroundColor(if (hardwareVerified) green() else secondary())
+            dividers.forEach { it.setBackgroundColor(if (dark) 0x38FFFFFF else 0x22000000) }
+        }
+        fun set(v: TextView, value: String, ok: Boolean = false) {
+            v.text = value
+            if (ok) verified.add(v) else verified.remove(v)
+            v.setTextColor(if (ok) green() else primary())
+        }
+        lateinit var enableButton: TextView
+        lateinit var checkButton: TextView
+        fun showStorage(status: ProtectedRecords.Status) {
+            enabled = status.enabled
+            val label = when { !status.healthy -> "Lỗi · tạm ngừng ghi"; enabled -> "AES-256-GCM"; else -> "Chưa bật mã hóa" }
+            set(recordState, label, enabled && status.healthy)
+            set(journalState, label, enabled && status.healthy)
+            set(keyState, if (enabled && status.healthy) "${status.protection} · ${status.encryptedCount} bản ghi" else status.protection,
+                enabled && status.healthy && status.protection in setOf("TEE", "StrongBox"))
+            enableButton.visibility = if (enabled || !status.healthy) View.GONE else View.VISIBLE
+            if (!status.healthy) note.text = "Lưu trữ gặp lỗi. Summit giữ ciphertext cũ và tạm dừng ghi/đồng bộ; hãy khởi động lại để kiểm tra. Không xóa dữ liệu ứng dụng."
+        }
+        fun busy(value: Boolean) {
+            running = value
+            checkButton.isEnabled = !value
+            enableButton.isEnabled = !value
+            checkButton.alpha = if (value) 0.6f else 1f
+            enableButton.alpha = if (value) 0.6f else 1f
+        }
+        checkButton = actionButton("Kiểm tra bảo mật thiết bị", accent) {
             if (running || host == null) return@actionButton
-            running = true
-            status.text = "Đang kiểm tra Keystore và phần cứng…"
+            busy(true)
+            checkButton.text = "Đang kiểm tra…"
             host.lifecycleScope.launch {
                 try {
                     val report = AdaptiveSecurity.diagnose(host)
-                    if (status.isAttachedToWindow) status.text = report
+                    val storage = ProtectedRecords.status(host)
+                    if (security.isAttachedToWindow) {
+                        hardwareVerified = report.defaultProbe == "TEE · AES-GCM OK" || report.defaultProbe == "StrongBox · AES-GCM OK" || report.strongBoxProbe == "StrongBox · AES-GCM OK"
+                        set(headline, if (hardwareVerified) "Đã xác minh khóa phần cứng" else "Chưa xác minh khóa phần cứng", hardwareVerified)
+                        set(advertised, if (report.advertised) "Có" else "Không")
+                        set(defaultProbe, report.defaultProbe, report.defaultProbe in setOf("TEE · AES-GCM OK", "StrongBox · AES-GCM OK"))
+                        set(strongProbe, report.strongBoxProbe, report.strongBoxProbe == "StrongBox · AES-GCM OK")
+                        set(football, report.secrets[AdaptiveSecurity.Secret.FOOTBALL] ?: "Không rõ")
+                        set(gemini, report.secrets[AdaptiveSecurity.Secret.GEMINI] ?: "Không rõ")
+                        showStorage(storage)
+                        tone()
+                    }
                 } catch (e: CancellationException) { throw e }
-                catch (_: Exception) {
-                    if (status.isAttachedToWindow) status.text = "Không kiểm tra được bảo mật thiết bị. Thử lại sau."
-                } finally { running = false }
+                catch (_: Exception) { if (security.isAttachedToWindow) set(headline, "Kiểm tra thất bại") }
+                finally { busy(false); checkButton.text = "Kiểm tra lại bảo mật" }
             }
         }
-        security.addView(button, LinearLayout.LayoutParams(-2, dp(38)).apply { topMargin = dp(8) })
+        enableButton = actionButton("Bật mã hóa dữ liệu trên máy", accent) {
+            if (running || enabled || host == null) return@actionButton
+            sheet.confirm("Bật mã hóa dữ liệu?", "Lịch sử, dấu trang, tab, nhóm tab và nhật ký đồng bộ sẽ được mã hóa bằng khóa gắn với thiết bị. Không thể khôi phục bằng Android Backup hoặc đọc bằng bản Summit cũ. Hãy đồng bộ/sao lưu dữ liệu cần giữ trước. Không mã hóa dữ liệu trên Drive hay ảnh tab.", "Bật mã hóa") {
+                if (running || enabled) return@confirm
+                busy(true)
+                enableButton.text = "Đang mã hóa…"
+                host.lifecycleScope.launch {
+                    try {
+                        val status = ProtectedRecords.enable(host)
+                        if (security.isAttachedToWindow) showStorage(status)
+                        toast(if (status.enabled && status.healthy) "Đã bật mã hóa dữ liệu cục bộ" else "Chưa hoàn tất mã hóa; không xóa dữ liệu ứng dụng")
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { toast("Không bật được mã hóa") }
+                    finally { busy(false); enableButton.text = "Bật mã hóa dữ liệu trên máy" }
+                }
+            }
+        }.apply { visibility = View.GONE }
+        security.addView(checkButton, LinearLayout.LayoutParams(-1, dp(42)).apply { topMargin = dp(12) })
+        security.addView(enableButton, LinearLayout.LayoutParams(-1, dp(42)).apply { topMargin = dp(8) })
+        activeToneUpdates += { next -> dark = next; tone() }
         body.addView(security, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+        security.post {
+            if (host != null && security.isAttachedToWindow && !running) {
+                busy(true)
+                host.lifecycleScope.launch {
+                    try { val status = ProtectedRecords.status(host); if (security.isAttachedToWindow) showStorage(status) }
+                    catch (e: CancellationException) { throw e }
+                    finally { busy(false) }
+                }
+            }
+        }
     }
 
     private fun renderPrivacy(body: LinearLayout) {

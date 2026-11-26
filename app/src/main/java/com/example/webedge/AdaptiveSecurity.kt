@@ -60,6 +60,21 @@ internal object AdaptiveSecurity {
         }
         return generate(alias, false).also { level(it) }
     }
+    // V2: the hardware key wraps a random 256-bit data key, not large JSON records.
+    internal fun wrapRecordsKey(context: Context, encodedKey: String): String = synchronized(lock) {
+        val name = ProtectedRecords.ALIAS
+        val key = existing(store(), name) ?: create(context, name)
+        SecurityEnvelope.seal(key, name, encodedKey)
+    }
+    internal fun unwrapRecordsKey(envelope: String): String = synchronized(lock) {
+        val name = ProtectedRecords.ALIAS
+        val key = checkNotNull(existing(store(), name))
+        SecurityEnvelope.open(key, name, envelope)
+    }
+    internal fun recordsKeyLevel(): String = synchronized(lock) {
+        level(checkNotNull(existing(store(), ProtectedRecords.ALIAS)))
+    }
+
     private fun readLocked(context: Context, secret: Secret): String {
         val prefs = preferences(context, secret)
         val name = alias(secret)
@@ -129,24 +144,22 @@ internal object AdaptiveSecurity {
             runCatching { store().deleteEntry(name) }
         }
     }
+    internal data class Report(val advertised: Boolean, val defaultProbe: String,
+                               val strongBoxProbe: String, val secrets: Map<Secret, String>)
     /** Explicit diagnostic, off main thread; never reveals secret values. */
-    suspend fun diagnose(context: Context): String = withContext(Dispatchers.IO) {
+    suspend fun diagnose(context: Context): Report = withContext(Dispatchers.IO) {
         synchronized(lock) {
             val advertised = strongBox(context)
-            buildString {
-                appendLine("StrongBox (hệ thống báo): ${if (advertised) "Có" else "Không"}")
-                appendLine("Keystore mặc định: ${probe(false)}")
-                appendLine("StrongBox: ${if (advertised) probe(true) else "Không được công bố"}")
-                for (secret in Secret.entries) {
-                    val status = try {
-                        val value = readLocked(context, secret)
-                        if (value.isBlank()) "Chưa lưu key"
-                        else "${level(checkNotNull(existing(store(), alias(secret))))} · Đã mã hóa"
-                    } catch (_: Exception) { "Không đọc/mã hóa được; kiểm tra lại" }
-                    appendLine("${secret.title}: $status")
-                }
-                append("Không kiểm tra hoặc thay đổi cookie, token Google hay dữ liệu WebView.")
+            val defaultProbe = probe(false)
+            val strongProbe = if (advertised) probe(true) else "Không được công bố"
+            val secrets = Secret.entries.associateWith { secret ->
+                try {
+                    val value = readLocked(context, secret)
+                    if (value.isBlank()) "Chưa lưu key"
+                    else "${level(checkNotNull(existing(store(), alias(secret))))} · Đã mã hóa"
+                } catch (_: Exception) { "Không đọc/mã hóa được" }
             }
+            Report(advertised, defaultProbe, strongProbe, secrets)
         }
     }
 }

@@ -96,7 +96,7 @@ class Store(context: Context) {
     internal fun syncSnapshot(): SyncData? {
         if (syncAccount == null) return null
         if (!syncLoaded) {
-            syncCache = SyncJson.decode(checkNotNull(sp.getString("sync_state_v1", null)))
+            syncCache = SyncJson.decode(checkNotNull(ProtectedRecords.read(sp, "sync_state_v1")))
             syncLoaded = true
         }
         return syncCache
@@ -106,14 +106,17 @@ class Store(context: Context) {
         syncSnapshot()?.let { return it }
         val data = SyncData.seed(list("history"), list("bookmarks"))
         // Preserve the original local data until the first successful remote merge.
-        sp.edit().putString("sync_account_v1", account)
-            .putString("sync_state_v1", SyncJson.encode(data)).apply()
+        check(ProtectedRecords.write(sp, mapOf("sync_state_v1" to SyncJson.encode(data))) {
+            it.putString("sync_account_v1", account)
+        })
         syncCache = data; syncLoaded = true
         return data
     }
     internal fun disableSync() {
-        syncCache = null; syncLoaded = false
-        sp.edit().remove("sync_account_v1").remove("sync_state_v1").remove("sync_success_v1").remove("sync_failed_v1").apply()
+        // Disconnect metadata even if the encrypted journal is unreadable; explicit user action.
+        if (ProtectedRecords.write(sp, emptyMap(), setOf("sync_state_v1")) {
+            it.remove("sync_account_v1").remove("sync_success_v1").remove("sync_failed_v1")
+        }) { syncCache = null; syncLoaded = false }
     }
     private fun mutateSync(change: (SyncData) -> SyncData) {
         if (syncAccount == null) return
@@ -121,7 +124,7 @@ class Store(context: Context) {
             val old = syncSnapshot() ?: return
             val next = change(old)
             if (next != old) {
-                sp.edit().putString("sync_state_v1", SyncJson.encode(next)).apply()
+                check(ProtectedRecords.write(sp, mapOf("sync_state_v1" to SyncJson.encode(next))))
                 syncCache = next
             }
         } catch (e: Exception) {
@@ -130,7 +133,7 @@ class Store(context: Context) {
             Log.w(TAG, "Sync journal unavailable; local browsing remains available")
         }
     }
-    internal fun syncHealthy(): Boolean = !sp.getBoolean("sync_failed_v1", false)
+    internal fun syncHealthy(): Boolean = !ProtectedRecords.failed && !sp.getBoolean("sync_failed_v1", false)
     internal fun applySync(account: String, received: SyncData) {
         check(syncAccount == account && syncHealthy())
         val data = checkNotNull(syncSnapshot()).merge(received)
@@ -138,11 +141,12 @@ class Store(context: Context) {
         val localBookmarks = list("bookmarks").filterNot { SyncData.allowed(it.url) }
         val history = (data.historyEntries() + localHistory).sortedByDescending { it.time }.take(300)
         val bookmarks = (data.bookmarkEntries() + localBookmarks).sortedByDescending { it.time }
-        historyDirty = false; handler.removeCallbacks(persistHistory)
         // Publish the merged view and sync state in the same SharedPreferences transaction.
-        sp.edit().putString("history", encodeList(history)).putString("bookmarks", encodeList(bookmarks))
-            .putString("sync_state_v1", SyncJson.encode(data))
-            .putLong("sync_success_v1", System.currentTimeMillis()).apply()
+        check(ProtectedRecords.write(sp, mapOf("history" to encodeList(history),
+            "bookmarks" to encodeList(bookmarks), "sync_state_v1" to SyncJson.encode(data))) {
+            it.putLong("sync_success_v1", System.currentTimeMillis())
+        })
+        historyDirty = false; handler.removeCallbacks(persistHistory)
         syncCache = data; syncLoaded = true
         listCache["history"] = history.toMutableList(); listCache["bookmarks"] = bookmarks.toMutableList()
     }
@@ -155,8 +159,7 @@ class Store(context: Context) {
     fun flush() {
         handler.removeCallbacks(persistHistory)
         if (!historyDirty) return
-        historyDirty = false
-        writeList("history")
+        historyDirty = !writeList("history")
     }
     var homeUrl: String
     get() = sp.getString("home", HomePage.URL) ?: HomePage.URL
@@ -241,9 +244,10 @@ class Store(context: Context) {
     set(v) { sp.edit().putBoolean("autohide", v).apply() }
     @Synchronized
     fun saveTabs(tabs: List<PersistedTab>) {
+        if (ProtectedRecords.failed || !ProtectedRecords.readable(sp, "saved_tabs")) return
         val savedTabs = tabs.takeLast(100)
         val previousVersions = runCatching {
-            val old = JSONArray(sp.getString("saved_tabs", "[]") ?: "[]")
+            val old = JSONArray(ProtectedRecords.read(sp, "saved_tabs") ?: "[]")
             buildMap<Long, Long> {
                 for (i in 0 until old.length()) {
                     val item = old.optJSONObject(i) ?: continue
@@ -281,7 +285,7 @@ class Store(context: Context) {
                     .put("group", tab.groupId)
             )
         }
-        sp.edit().putString("saved_tabs", arr.toString()).apply()
+        if (!ProtectedRecords.write(sp, mapOf("saved_tabs" to arr.toString()))) return
 
         // Dọn thumbnail của những tab đã đóng, tránh thư mục ảnh phình to theo thời gian.
         val activeIds = savedTabs.mapTo(mutableSetOf()) { it.id }
@@ -292,7 +296,7 @@ class Store(context: Context) {
     }
     fun loadTabs(): List<PersistedTab> {
         val arr = try {
-            JSONArray(sp.getString("saved_tabs", "[]") ?: "[]")
+            JSONArray(ProtectedRecords.read(sp, "saved_tabs") ?: "[]")
         } catch (_: Exception) {
             JSONArray()
         }
@@ -321,12 +325,12 @@ class Store(context: Context) {
     fun saveTabGroups(groups: List<TabManager.Group>) {
         val arr = JSONArray()
         for (g in groups) arr.put(JSONObject().put("id", g.id).put("name", g.name))
-        sp.edit().putString("tab_groups", arr.toString()).apply()
+        ProtectedRecords.write(sp, mapOf("tab_groups" to arr.toString()))
     }
 
     fun loadTabGroups(): List<TabManager.Group> {
         val arr = try {
-            JSONArray(sp.getString("tab_groups", "[]") ?: "[]")
+            JSONArray(ProtectedRecords.read(sp, "tab_groups") ?: "[]")
         } catch (_: Exception) {
             JSONArray()
         }
@@ -343,7 +347,7 @@ class Store(context: Context) {
         // ✅ Có trong cache thì lấy luôn, khỏi đọc lại từ ổ cứng
         listCache[key]?.let { return it }
         val arr = try {
-            JSONArray(sp.getString(key, "[]") ?: "[]")
+            JSONArray(ProtectedRecords.read(sp, key) ?: "[]")
         } catch (_: Exception) {
             JSONArray()
         }
@@ -353,18 +357,19 @@ class Store(context: Context) {
             val o = arr.optJSONObject(i) ?: continue
             out.add(Entry(o.optString("t"), o.optString("u"), o.optLong("d"), o.optBoolean("m", false)))
         }
-        // ✅ Ghi vào cache để lần sau khỏi đọc lại
-        listCache[key] = out
+        // Do not cache an empty view over unreadable encrypted data.
+        if (!ProtectedRecords.failed) listCache[key] = out
         return out
     }
     private fun save(key: String, items: List<Entry>) {
+        if (ProtectedRecords.failed) return
         // Cache là nguồn dữ liệu chính; chỉ sao chép khi nhận một danh sách khác với danh sách đang cache.
         if (listCache[key] !== items) listCache[key] = items.toMutableList()
         writeList(key)
     }
-    private fun writeList(key: String) {
-        val items = listCache[key] ?: return
-        sp.edit().putString(key, encodeList(items)).apply()
+    private fun writeList(key: String): Boolean {
+        val items = listCache[key] ?: return !ProtectedRecords.failed
+        return ProtectedRecords.write(sp, mapOf(key to encodeList(items)))
     }
     private fun encodeList(items: List<Entry>): String {
         val arr = JSONArray()
@@ -378,6 +383,7 @@ class Store(context: Context) {
     fun addHistory(title: String, url: String) {
         if (url.isBlank() || url.startsWith("about:") || HomePage.isHome(url)) return
         val l = list("history")
+        if (ProtectedRecords.failed) return
         val entry = Entry(title.ifBlank { url }, url, System.currentTimeMillis())
         if (l.isNotEmpty() && l[0].url == url) {
             l[0] = entry
@@ -392,6 +398,7 @@ class Store(context: Context) {
     }
     fun remove(key: String, url: String) {
         val l = list(key)
+        if (ProtectedRecords.failed) return
         l.removeAll { it.url == url }
         when (key) {
             "history" -> mutateSync { it.removeHistory(url, System.currentTimeMillis()) }
@@ -413,6 +420,7 @@ class Store(context: Context) {
     fun addClosedTab(title: String, url: String, desktop: Boolean) {
         if (url.isBlank() || url.startsWith("about:") || HomePage.isHome(url)) return
         val l = list(CLOSED_TABS_KEY)
+        if (ProtectedRecords.failed) return
         l.removeAll { it.url == url }
         l.add(0, Entry(title.ifBlank { url }, url, System.currentTimeMillis(), desktop))
         while (l.size > Constants.CLOSED_TABS_MAX) l.removeAt(l.size - 1)
@@ -429,6 +437,7 @@ class Store(context: Context) {
     // Trả về true nếu sau khi bấm thì trang đã được thêm vào dấu trang
     fun toggleBookmark(title: String, url: String): Boolean {
         val l = list("bookmarks")
+        if (ProtectedRecords.failed) return l.any { it.url == url }
         val idx = l.indexOfFirst { it.url == url }
         return if (idx >= 0) {
             l.removeAt(idx)

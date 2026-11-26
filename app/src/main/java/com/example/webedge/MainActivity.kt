@@ -829,7 +829,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         )
         setContentView(root)
         // Xin gộp quyền ở lần mở đầu tiên, đợi UI vẽ xong rồi mới hiện hộp thoại hệ thống.
-        root.post { firstRunPermissions.requestIfFirstRun() }
+        root.post {
+            firstRunPermissions.requestIfFirstRun()
+            if (ProtectedRecords.failed) toast("Không đọc được dữ liệu bảo mật. Summit tạm dừng lưu; không xóa dữ liệu ứng dụng.")
+        }
     }
 
     /** Các controller dùng chung BlurTarget (tải xuống, menu, hộp thoại, tab, Orb). */
