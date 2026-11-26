@@ -578,7 +578,7 @@ class MenuController(
         footballSheet.dismiss()
     }
 
-    /** Deep links from the in-app Live Session card (not from Android notifications). */
+    /** Deep links from the in-app Live Activity card (not from Android notifications). */
     fun showLiveDownloads() = browserTools.showDownloads()
     fun showLiveFootball() = footballSheet.show()
 

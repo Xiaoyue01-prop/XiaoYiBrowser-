@@ -130,7 +130,7 @@ class OrbMenuController internal constructor(
         )
         mainBtn.setOnClickListener { toggle() }
         // Giữ đúng phản hồi nảy của các nút kính khác, nhưng chuyển quyền scale cho
-        // OriginTransitionController khi long-press mở Live Session.
+        // OriginTransitionController khi long-press mở Live Activity.
         ElasticPull.bind(mainBtn, standalone = true, canPull = { !liveHoldConsumed }) { v, ev ->
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -240,7 +240,7 @@ class OrbMenuController internal constructor(
         // Neo như PageMenu: nút gốc nằm trong dấu chân của thẻ, cùng một bề mặt
         // lớn lên tại chỗ, không phải thẻ nằm giữa màn hình rồi "bay" từ Orb tới.
         // PageMenu neo mép phải/đáy theo nút trong pill; Orb ở bên trái nên neo
-        // mép trái/đáy của Live Session theo chính nút Orb.
+        // mép trái/đáy của Live Activity theo chính nút Orb.
         val margin = dp(12)
         val maxLeft = (rootLayout.width - width - margin).coerceAtLeast(margin)
         val maxTop = (rootLayout.height - height - margin).coerceAtLeast(margin)
@@ -349,7 +349,7 @@ class OrbMenuController internal constructor(
         applyAvailability()
     }
 
-    /** Returns true if Back was consumed by the Live Session overlay. */
+    /** Returns true if Back was consumed by the Live Activity overlay. */
     fun closeLiveCard(immediate: Boolean = false): Boolean {
         if (liveCard == null) return false
         dismissLiveCard(immediate)
