@@ -283,7 +283,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
             background = lockBackground()
-            addView(panel, ScrollView.LayoutParams(-1, -2))
+            addView(panel, android.widget.FrameLayout.LayoutParams(-1, -2))
             setOnApplyWindowInsetsListener { view, insets ->
                 val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
                 view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
