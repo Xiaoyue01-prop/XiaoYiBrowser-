@@ -84,6 +84,9 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     // secure surface visible until the foreground-only transition finishes.
     private val unlockHandler = Handler(Looper.getMainLooper())
     private var unlockPending = false
+    // An in-memory, foreground-only grant. Authentication alone must not reveal the browser.
+    private var awaitingUnlockConfirmation = false
+    private var captureBlockedByGate = false
     private val finishUnlock = Runnable {
         if (unlockPending && resumed && browserLocked && hasWindowFocus() && !isFinishing && !isDestroyed) {
             unlockPending = false
@@ -131,23 +134,37 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
 
     internal fun registerBrowserWindow(dialog: Dialog, close: () -> Unit) {
         browserWindows[dialog] = close
-        if (BrowserLockPolicy.enabled(this)) dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        // Browser windows are normally only created while unlocked. Fail closed if
+        // a late registration races the lock; these windows are closed on locking.
+        if (isLockUiActive() || (BrowserLockPolicy.enabled(this) && !resumed)) {
+            dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
     }
 
     internal fun unregisterBrowserWindow(dialog: Dialog) { browserWindows.remove(dialog) }
 
-    private fun refreshWindowPolicy() {
-        val secure = BrowserLockPolicy.enabled(this)
-        val wasSecure = lastPolicyEnabled
-        lastPolicyEnabled = secure
-        val windows = listOf(window) + browserWindows.keys.mapNotNull { it.window }
-        for (w in windows) {
-            if (secure) w.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-            // Do not clear FLAG_SECURE on child windows: other policies may have set it.
-            else if (w === window && wasSecure) w.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    private fun updateCapturePolicy() {
+        val blocked = isLockUiActive() || (BrowserLockPolicy.enabled(this) && !resumed)
+        val flag = WindowManager.LayoutParams.FLAG_SECURE
+        if (blocked) {
+            if ((window.attributes.flags and flag) == 0) {
+                window.addFlags(flag)
+                captureBlockedByGate = true
+            }
+        } else if (captureBlockedByGate) {
+            // Only release the flag owned by this gate, not an independent policy.
+            window.clearFlags(flag)
+            captureBlockedByGate = false
         }
-        setRecentsScreenshotEnabled(!secure)
-        onBrowserLockPolicyChanged(secure)
+    }
+
+    private fun refreshWindowPolicy() {
+        val enabled = BrowserLockPolicy.enabled(this)
+        lastPolicyEnabled = enabled
+        // Recents privacy is independent of foreground screenshots and recording.
+        setRecentsScreenshotEnabled(!enabled)
+        updateCapturePolicy()
+        onBrowserLockPolicyChanged(enabled)
     }
 
     protected open fun onBrowserLockPolicyChanged(enabled: Boolean) {}
@@ -156,7 +173,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
 
     private companion object {
         const val UNLOCK_SETTLE_MS = 120L
-        const val REVEAL_SLIDE_MS = 460L
+        const val REVEAL_SLIDE_MS = 680L
         const val FRAME_FALLBACK_MS = 650L
         const val LOCK_INSTRUCTION = "Xác thực bằng sinh trắc học hoặc mã khóa thiết bị."
         // Exact four digit colors from assets/home/home.js (COLORS), in order.
@@ -186,6 +203,9 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         if (wasRevealing) restoreBrowserInteraction()
         if (!browserLocked) automaticPrompt = true
         browserLocked = true
+        updateCapturePolicy()
+        // Secure independent windows before dismissing them on the lock path.
+        browserWindows.keys.forEach { it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE) }
         if (!concealed) {
             val content = browserContent()
             val controller = WindowCompat.getInsetsController(window, window.decorView)
@@ -277,6 +297,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     private fun unlockBrowser() {
         if (!resumed || isFinishing || isDestroyed) return
         cancelUnlockTransition()
+        awaitingUnlockConfirmation = false
         cancelReveal()
         val surface = lockSurface
         revealPending = BrowserLockPolicy.enabled(this) && surface?.isAttachedToWindow == true
@@ -296,6 +317,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         if (wasConcealed && !revealPending) restoreBrowserInteraction()
         if (!revealPending || surface == null) {
             dismissLockSurface()
+            updateCapturePolicy()
             onBrowserUnlocked()
             return
         }
@@ -309,6 +331,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
             revealPending = false
             restoreBrowserInteraction()
             dismissLockSurface()
+            updateCapturePolicy()
             onBrowserUnlocked()
         }
         var slideStarted = false
@@ -324,7 +347,8 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
             // A single compositor transform: the opaque background, glyph and buttons
             // move as one surface. No crossfade, window dismissal, or per-frame relayout.
             surface.animate().translationY(-surface.height.toFloat()).setDuration(REVEAL_SLIDE_MS)
-                .setInterpolator(PathInterpolator(0.22f, 1f, 0.36f, 1f))
+                // Softer launch and a longer deceleration tail; no spring overshoot.
+                .setInterpolator(PathInterpolator(0.30f, 0.35f, 0.32f, 1f))
                 .withEndAction { finishReveal() }.start()
         }
         val decor = window.decorView
@@ -374,7 +398,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
 
     private fun maybeRequestAutomaticUnlock() {
         if (!resumed || !hasWindowFocus() || !browserLocked || !automaticPrompt ||
-            authSignal != null || unlockPending) return
+            authSignal != null || unlockPending || awaitingUnlockConfirmation) return
         automaticPrompt = false
         requestUnlock()
     }
@@ -405,17 +429,15 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     override fun onPause() {
         resumed = false
         lockGlyph?.stop()
-        if (unlockPending || revealPending) {
-            cancelUnlockTransition()
-            automaticPrompt = true
-            lockMessage?.text = LOCK_INSTRUCTION
-            unlockButton?.isEnabled = true
+        if (awaitingUnlockConfirmation || unlockPending || revealPending) {
+            resetUnlockConfirmation()
         }
         if (BrowserLockPolicy.enabled(this)) lockBrowser()
         else if (revealPending) {
             cancelReveal()
             restoreBrowserInteraction()
             dismissLockSurface()
+            updateCapturePolicy()
         }
         super.onPause()
     }
@@ -425,14 +447,11 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         if (browserLocked || revealPending) {
             if (revealPending && BrowserLockPolicy.enabled(this)) lockBrowser()
             cancelReveal()
-            cancelUnlockTransition()
             pendingSuccess = null
             val signal = authSignal
             authSignal = null
             signal?.cancel()
-            automaticPrompt = true
-            lockMessage?.text = LOCK_INSTRUCTION
-            unlockButton?.isEnabled = true
+            resetUnlockConfirmation()
         }
         super.onUserLeaveHint()
     }
@@ -442,6 +461,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         val signal = authSignal
         authSignal = null; pendingSuccess = null; initialization = null; resumed = false
         signal?.cancel()
+        awaitingUnlockConfirmation = false
         cancelUnlockTransition()
         cancelReveal()
         dismissLockSurface()
@@ -452,7 +472,8 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     }
 
     private fun startLockGlyph() {
-        if (resumed && browserLocked && !unlockPending && lockSurface?.isAttachedToWindow == true &&
+        if (resumed && browserLocked && !unlockPending && !awaitingUnlockConfirmation &&
+            lockSurface?.isAttachedToWindow == true &&
             android.animation.ValueAnimator.areAnimatorsEnabled()) lockGlyph?.start()
     }
 
@@ -461,8 +482,28 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         unlockPending = false
     }
 
-    private fun beginUnlockTransition() {
+    private fun resetUnlockConfirmation() {
+        awaitingUnlockConfirmation = false
+        cancelUnlockTransition()
+        automaticPrompt = true
+        lockMessage?.text = LOCK_INSTRUCTION
+        unlockButton?.isEnabled = authSignal == null
+    }
+
+    private fun markUnlockAuthenticated() {
         if (!resumed || !browserLocked || isFinishing || isDestroyed || unlockPending) return
+        awaitingUnlockConfirmation = true
+        automaticPrompt = false
+        showLockScreen()
+        lockMessage?.text = "Đã xác thực · Nhấn Mở khóa Summit để tiếp tục."
+        unlockButton?.isEnabled = true
+        lockGlyph?.stop()
+    }
+
+    private fun beginUnlockTransition() {
+        if (!awaitingUnlockConfirmation || !resumed || !hasWindowFocus() || !browserLocked ||
+            isFinishing || isDestroyed || unlockPending) return
+        awaitingUnlockConfirmation = false
         showLockScreen()
         automaticPrompt = false
         unlockPending = true
@@ -522,7 +563,10 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         lockMessage = message
         val button = label("Mở khóa Summit", 16f, Color.rgb(34, 24, 58), true).apply {
             background = GradientDrawable().apply { cornerRadius = dp(26).toFloat(); setColor(Color.WHITE) }
-            isFocusable = true; setOnClickListener { requestUnlock() }
+            isFocusable = true
+            setOnClickListener {
+                if (awaitingUnlockConfirmation) beginUnlockTransition() else requestUnlock()
+            }
         }
         panel.addView(button, LinearLayout.LayoutParams(-1, dp(52)))
         unlockButton = button
@@ -547,8 +591,8 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     }
 
     private fun requestUnlock() {
-        if (!browserLocked || !resumed || unlockPending) return
-        authenticate("Mở khóa Summit", { beginUnlockTransition() }) { message ->
+        if (!browserLocked || !resumed || unlockPending || awaitingUnlockConfirmation) return
+        authenticate("Mở khóa Summit", { markUnlockAuthenticated() }) { message ->
             lockMessage?.text = message
         }
     }
@@ -562,7 +606,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         authenticate(if (enable) "Bật khóa Summit" else "Tắt khóa Summit", {
             val persisted = BrowserLockPolicy.persist(this, enable)
             refreshWindowPolicy()
-            if (persisted && browserLocked) unlockBrowser()
+            if (persisted && !enable && browserLocked) unlockBrowser()
             result(persisted, if (persisted) {
                 if (enable) "Đã bật khóa Summit" else "Đã tắt khóa Summit"
             } else "Không lưu được cài đặt khóa")
