@@ -12,7 +12,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Bundle
@@ -580,18 +579,13 @@ object DownloadLiveUpdate {
             c.drawCircle(cx, cy, 46f, p)
             p.color = if (kind == Kind.DONE) doneColor else failColor
             c.drawCircle(cx, cy, 36f, p)
-            val w = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                this.color = Color.WHITE; style = Paint.Style.STROKE
-                strokeWidth = 9f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
-            }
-            val path = Path()
-            if (kind == Kind.DONE) {
-                path.moveTo(cx - 15f, cy + 1f); path.lineTo(cx - 4f, cy + 12f); path.lineTo(cx + 16f, cy - 11f)
-            } else {
-                path.moveTo(cx, cy - 16f); path.lineTo(cx, cy + 3f)
-                path.moveTo(cx, cy + 14f); path.lineTo(cx, cy + 14.5f)
-            }
-            c.drawPath(path, w)
+            val symbol = StrokeGlyph(
+                if (kind == Kind.DONE) StrokeGlyph.Kind.CHECK else StrokeGlyph.Kind.WARNING,
+                Color.WHITE, 9f
+            )
+            val half = 25
+            symbol.setBounds(cx.toInt() - half, cy.toInt() - half, cx.toInt() + half, cy.toInt() + half)
+            symbol.draw(c)
         }
         return bmp
     }

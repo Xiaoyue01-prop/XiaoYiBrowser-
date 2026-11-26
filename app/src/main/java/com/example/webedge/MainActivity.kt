@@ -313,7 +313,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
         override fun updateNav() = this@MainActivity.updateNav()
         override fun injectInsets() = pageEdge.injectInsets()
-        override fun updateTabBadge() = this@MainActivity.updateTabBadge()
+        override fun updateTabDescription() = this@MainActivity.updateTabDescription()
         override fun activateTab(tab: TabManager.Tab) = this@MainActivity.activateTab(tab)
         override fun checkReaderHint(view: WebView, url: String) {
             if (HomePage.isHome(url)) return
@@ -643,7 +643,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
         tabPersistence.restore()
         tabManager.setOnChangeListener {
             tabPersistence.scheduleSave()
-            updateTabBadge()
+            updateTabDescription()
         }
         tabWebViewLifecycle = TabWebViewLifecycleController(
             createWebView = { tab ->
@@ -1300,7 +1300,7 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
             if (!urlBar.hasFocus()) showDomain()
             updateNav()
         }
-        updateTabBadge()
+        updateTabDescription()
         trimBackgroundTabs()
     }
 
@@ -1791,23 +1791,10 @@ class MainActivity : ComponentActivity(), BrowserJavascriptBridgeHost {
 
 
     // ==========================================
-    // MULTI-TAB: Badge + Tab Switcher
+    // MULTI-TAB: accessibility + Tab Switcher
     // ==========================================
-    private fun updateTabBadge() {
-        val count = tabManager.count()
-        val base = PathIcon(Icons.TABS, fg)
-        if (count <= 1) {
-            tabBtn.setImageDrawable(base)
-            return
-        }
-        val badgeColor = Theme.badgeColor(isNight)
-        val textColor = Theme.badgeTextColor(isNight)
-        val layer = android.graphics.drawable.LayerDrawable(arrayOf(
-            base,
-            BadgeDrawable(count, badgeColor, textColor, d)
-        ))
-        layer.setLayerInset(1, dp(14), 0, 0, dp(14))
-        tabBtn.setImageDrawable(layer)
+    private fun updateTabDescription() {
+        tabBtn.contentDescription = "Thẻ (${tabManager.count()} đang mở)"
     }
 
 

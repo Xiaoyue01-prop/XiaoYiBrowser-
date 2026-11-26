@@ -98,8 +98,7 @@ class DownloadPromptController(
         }
 
         val downloadIcon = ImageView(activity).apply {
-            setImageResource(android.R.drawable.stat_sys_download)
-            setColorFilter(accentColor)
+            setImageDrawable(PathIcon(Icons.DOWNLOAD, accentColor))
             scaleType = ImageView.ScaleType.FIT_CENTER
             contentDescription = "Tải xuống"
         }

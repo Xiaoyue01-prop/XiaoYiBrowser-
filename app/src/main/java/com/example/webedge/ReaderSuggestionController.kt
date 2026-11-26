@@ -7,6 +7,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
+import android.widget.ImageView
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -112,11 +113,9 @@ internal class ReaderSuggestionController(
             setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD))
             setPadding(dp(12), dp(10), dp(8), dp(10))
         }
-        val close = TextView(context).apply {
-            text = "×"
-            textSize = 20f
-            gravity = Gravity.CENTER
-            setTextColor(fg)
+        val close = ImageView(context).apply {
+            setImageDrawable(PathIcon(Icons.CLOSE, fg))
+            scaleType = ImageView.ScaleType.FIT_CENTER
             alpha = 0.6f
             setPadding(dp(12), dp(4), dp(12), dp(4))
             contentDescription = "Đóng gợi ý"
@@ -127,7 +126,7 @@ internal class ReaderSuggestionController(
             setPadding(dp(16), dp(6), dp(4), dp(6))
             addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(openLabel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            addView(close, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(close, LinearLayout.LayoutParams(dp(44), dp(36)))
         }
 
         val c = GlassSystem.createBannerCard(context, blurTarget(), density(), isNight())

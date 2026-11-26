@@ -178,7 +178,7 @@ internal class LiveActivityCard(
 
     private fun bindKind(kind: LiveKind) {
         val accent = accentOf(kind)
-        iconView.setImageDrawable(PathIcon(iconPathOf(kind), Color.WHITE))
+        iconView.setImageDrawable(PathIcon(Icons.live(kind), Color.WHITE))
         glow.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0, 0)).apply {
             gradientType = GradientDrawable.RADIAL_GRADIENT
             gradientRadius = dp(56).toFloat()
@@ -274,13 +274,6 @@ internal class LiveActivityCard(
         LiveKind.MUSIC -> Color.rgb(175, 116, 255)
     }
 
-    private fun iconPathOf(kind: LiveKind): String = when (kind) {
-        LiveKind.DOWNLOAD -> Icons.DOWNLOAD
-        LiveKind.READER -> Icons.BOOK_OPEN
-        LiveKind.FOOTBALL -> Icons.FOOTBALL
-        LiveKind.VIDEO -> "M10 5H14C15 5 16 6 16 7V10L21 7V17L16 14V17C16 18 15 19 14 19H5C4 19 3 18 3 17V7C3 6 4 5 5 5Z"
-        LiveKind.MUSIC -> "M11 4L14.5 5.5C15.2 8 17.8 9 18 12C16.5 10.5 14.8 10.2 13 9.8V17.5C13 19.6 11 21 8.7 21C6.5 21 5 19.8 5 18.3C5 16.7 6.8 15.5 9 15.5C9.7 15.5 10.4 15.7 11 16Z"
-    }
 
     /** Vẽ các chấm trong vùng giữa để hai đầu cong của thẻ luôn chừa đủ chỗ. */
     private class PageDots(context: Context, color: Int, private val density: Float) : View(context) {

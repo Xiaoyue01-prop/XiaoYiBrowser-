@@ -142,6 +142,7 @@ internal class ToolbarController(
         // === Nút Multi-tab (đối xứng với pageMenuBtn) ===
         tabBtn = ImageView(activity)
         tabBtn.setImageDrawable(PathIcon(Icons.TABS, host.foreground))
+        tabBtn.contentDescription = "Thẻ"
         tabBtn.setPadding(dp(6), dp(6), dp(6), dp(6))
         tabBtn.setOnClickListener { host.openTabSwitcher() }
         AnimationSystem.press(tabBtn, Constants.PRESS_SCALE_SMALL)

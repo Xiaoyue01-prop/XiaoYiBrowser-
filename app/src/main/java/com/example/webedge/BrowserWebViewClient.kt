@@ -46,7 +46,7 @@ internal interface BrowserWebViewHost {
     fun setBarHidden(hide: Boolean)
     fun updateNav()
     fun injectInsets()
-    fun updateTabBadge()
+    fun updateTabDescription()
     fun activateTab(tab: TabManager.Tab)
     /** Trang chính vừa tải xong: xem có nên gợi ý Chế độ đọc không. */
     fun checkReaderHint(view: WebView, url: String)
@@ -257,7 +257,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
         host.pageTransition.onPageReady()
         host.tabSwipe.onPageReady()
         host.currentUrl = url
-        host.updateTabBadge()
+        host.updateTabDescription()
         host.checkReaderHint(view, url)
     }
 

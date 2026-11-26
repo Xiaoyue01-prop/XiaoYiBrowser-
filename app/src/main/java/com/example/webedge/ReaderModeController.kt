@@ -768,12 +768,12 @@ internal class ReaderModeController(
                 sizeLabel.text = "${fontSizeSp.toInt()}"
                 articleBody?.textSize = fontSizeSp
             }
-            sizeRow.addView(chip("−") {
+            sizeRow.addView(chip(Icons.MINUS, "Giảm cỡ chữ") {
                 fontSizeSp = (fontSizeSp - 1f).coerceAtLeast(14f)
                 updateSize()
             }, LinearLayout.LayoutParams(dp(36), dp(34)))
             sizeRow.addView(sizeLabel, LinearLayout.LayoutParams(dp(54), -2))
-            sizeRow.addView(chip("+") {
+            sizeRow.addView(chip(Icons.PLUS, "Tăng cỡ chữ") {
                 fontSizeSp = (fontSizeSp + 1f).coerceAtMost(28f)
                 updateSize()
             }, LinearLayout.LayoutParams(dp(36), dp(34)))
@@ -845,7 +845,7 @@ internal class ReaderModeController(
             body.addView(quick, LinearLayout.LayoutParams(-1, -2))
 
             addDivider(body)
-            body.addView(menuRow(TRANSLATE_ICON, translateLabel(), null) {
+            body.addView(menuRow(Icons.TRANSLATE, translateLabel(), null) {
                 closeSurface()
                 onTranslateClicked()
             }, LinearLayout.LayoutParams(-1, dp(48)))
@@ -1144,8 +1144,11 @@ internal class ReaderModeController(
         parent.addView(View(activity), LinearLayout.LayoutParams(-1, dp(heightDp)))
     }
 
-    private fun chip(label: String, onClick: () -> Unit): TextView = panelText(label, 16f, true).apply {
-        gravity = Gravity.CENTER
+    private fun chip(path: String, description: String, onClick: () -> Unit): ImageView = ImageView(activity).apply {
+        setImageDrawable(PathIcon(path, ICON_BASE))
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        setPadding(dp(10), dp(9), dp(10), dp(9))
+        contentDescription = description
         background = activity.roundedPressBackground(GlassSystem.isDarkPage(), PILL_RADIUS_DP.toFloat(), 1f, 1f)
         setOnClickListener { _ -> onClick() }
         AnimationSystem.press(this, Constants.PRESS_SCALE_ROW)
@@ -1212,9 +1215,6 @@ internal class ReaderModeController(
 
     companion object {
         private const val TAG_SECONDARY = "reader_secondary"
-        // Biểu tượng "translate" của Material (24x24), giống các icon còn lại trong Icons.
-        private const val TRANSLATE_ICON =
-            "M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"
         // Màu gốc của icon kính: tối trung tính, hệ kính tự đổi sang trắng khi tông là tối.
         private val ICON_BASE = Color.rgb(18, 18, 20)
 

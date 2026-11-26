@@ -1,11 +1,6 @@
 package com.example.webedge
 
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.ColorFilter
-import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.text.TextUtils
 import android.graphics.drawable.Drawable
@@ -1840,78 +1835,6 @@ class TabSwitcherController(
 
     }
 
-}
-
-/** Dấu ✓ / × vẽ bằng nét tròn đầu, đậm đều như SF Symbols; halo tuỳ chọn để nổi trên nền ảnh. */
-private class StrokeGlyph(
-    private val kind: Kind,
-    glyphColor: Int,
-    strokePx: Float,
-    haloColor: Int = Color.TRANSPARENT
-) : Drawable(), AdaptiveForegroundDrawable {
-    enum class Kind { CHECK, CROSS, PLUS }
-
-    override val adaptiveBaseColor: Int = glyphColor
-    private val baseHaloColor = haloColor
-
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-        color = glyphColor
-        strokeWidth = strokePx
-    }
-    private val halo = Paint(paint).apply {
-        this.color = haloColor
-        strokeWidth = strokePx * 2.4f
-    }
-    private val hasHalo = Color.alpha(haloColor) > 0
-    private val path = Path()
-
-    override fun setAdaptiveForegroundColor(color: Int) {
-        if (paint.color == color) return
-        paint.color = color
-        if (hasHalo) {
-            halo.color = if (Color.luminance(color) > 0.5f) {
-                Color.argb(190, 18, 18, 22)
-            } else baseHaloColor
-        }
-        invalidateSelf()
-    }
-
-    override fun draw(canvas: Canvas) {
-        val b = bounds
-        if (b.width() <= 0 || b.height() <= 0) return
-        val w = b.width().toFloat()
-        val h = b.height().toFloat()
-        path.reset()
-        when (kind) {
-            Kind.CHECK -> {
-                path.moveTo(b.left + w * 0.16f, b.top + h * 0.54f)
-                path.lineTo(b.left + w * 0.40f, b.top + h * 0.76f)
-                path.lineTo(b.left + w * 0.84f, b.top + h * 0.26f)
-            }
-            Kind.PLUS -> {
-                path.moveTo(b.left + w * 0.10f, b.top + h * 0.50f)
-                path.lineTo(b.left + w * 0.90f, b.top + h * 0.50f)
-                path.moveTo(b.left + w * 0.50f, b.top + h * 0.10f)
-                path.lineTo(b.left + w * 0.50f, b.top + h * 0.90f)
-            }
-            Kind.CROSS -> {
-                path.moveTo(b.left + w * 0.14f, b.top + h * 0.14f)
-                path.lineTo(b.left + w * 0.86f, b.top + h * 0.86f)
-                path.moveTo(b.left + w * 0.86f, b.top + h * 0.14f)
-                path.lineTo(b.left + w * 0.14f, b.top + h * 0.86f)
-            }
-        }
-        if (hasHalo) canvas.drawPath(path, halo)
-        canvas.drawPath(path, paint)
-    }
-
-    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
-    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
-    @Suppress("OVERRIDE_DEPRECATION")
-    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
 /** Một hàng trong menu kính nổi của bảng tab (menu ⋯ và danh sách "Chuyển nhóm thẻ"). */

@@ -531,7 +531,7 @@ class EntryListSheet(
         more.rotation = 90f
         applySheetSolid(more)
         more.setOnClickListener { showRowMenu(entry, more, row) }
-        val delete = circleButton(TRASH, Color.TRANSPARENT, Color.WHITE, "Xóa").apply {
+        val delete = circleButton(Icons.TRASH, Color.TRANSPARENT, Color.WHITE, "Xóa").apply {
             setImageDrawable(TrashIcon(GlassSystem.pagePrimaryText()))
         }
         applySheetSolid(delete)
@@ -986,6 +986,5 @@ class EntryListSheet(
         const val EXPAND_SCALE = 1.03f
         const val FLING_VELOCITY = 900f
         const val DELETE_COLLAPSE_DELAY_MS = 130L
-        const val TRASH = "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
     }
 }
