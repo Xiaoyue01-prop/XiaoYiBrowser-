@@ -6,6 +6,13 @@
         <item name="android:colorAccent">#0A84FF</item>
     </style>
 
+    <!-- Splash lúc mở app khi đã bật khóa: cùng màu trung bình của màn khóa (gradient đồng hồ + scrim 45%)
+         và không icon, để không nháy trắng trước khi màn khóa hiện. Được chọn qua setSplashScreenTheme. -->
+    <style name="AppTheme.LockSplash" parent="AppTheme">
+        <item name="android:windowSplashScreenBackground">#544476</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+    </style>
+
     <!-- Chỉ dùng làm context cho WebView khi bật "Chế độ tối": WebView đọc isLightTheme=false để báo
          prefers-color-scheme: dark cho trang. Giao diện app và việc darkening thuật toán không đổi. -->
     <style name="WebDarkTheme" parent="@android:style/Theme.Material.NoActionBar">
