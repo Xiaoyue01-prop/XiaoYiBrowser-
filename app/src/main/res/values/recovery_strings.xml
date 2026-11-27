@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="recovery_restore_intro">Chỉ phục hồi vào Summit chưa có dữ liệu. Bản sao được xác thực bằng khóa riêng rồi lưu lại dưới dạng mã hóa trên thiết bị mới. Không nhập đè dữ liệu hiện có. Hãy giữ cả file và khóa gốc. Nếu Android đã tự khôi phục hồ sơ Google, bản có nhật ký đồng bộ sẽ bị từ chối để tránh tự tải dữ liệu cũ lên Drive.</string>
+    <string name="recovery_export_intro">Bản sao chứa lịch sử, dấu trang, tab thường, nhóm tab và nhật ký đồng bộ đã lưu. Không chứa cookie, ảnh tab, dữ liệu web hay API key. Chỉ khôi phục được đến thời điểm sao lưu.</string>
+    <string name="recovery_key_warning">Khóa phục hồi — lưu riêng với file. Summit không lưu khóa này và không thể cấp lại nếu mất:</string>
+    <string name="recovery_select_file">Chọn file .summit</string>
+    <string name="recovery_copy_key">Sao chép khóa phục hồi</string>
+    <string name="recovery_create_file">Đã lưu khóa — tạo file</string>
+    <string name="recovery_invalid_key">Cần nhập đúng khóa phục hồi.</string>
+    <string name="recovery_picker_error">Không mở được trình chọn file.</string>
+    <string name="recovery_key_copied">Đã sao chép. Hãy lưu vào nơi an toàn, không lưu chung với file và xóa khóa khỏi clipboard sau khi lưu.</string>
+    <string name="recovery_session_expired">Phiên đã kết thúc. Hãy chọn lại file.</string>
+    <string name="recovery_restore_success">Đã phục hồi và kiểm tra bản ghi. Hãy mở Summit; đăng nhập lại đúng tài khoản nếu dùng Drive.</string>
+    <string name="recovery_export_success">Đã tạo và đọc lại bản sao thành công. Giữ file và khóa riêng ở nơi an toàn.</string>
+    <string name="recovery_setup_error">Không lưu được trạng thái thiết lập. Hãy giữ file và khóa rồi mở lại Summit.</string>
+    <string name="recovery_open_browser">Mở Summit</string>
+    <string name="recovery_key_hint">Khóa phục hồi (43 ký tự)</string>
+    <string name="recovery_restore_title">Khôi phục Summit</string>
+    <string name="recovery_export_title">Bản sao phục hồi Summit</string>
+    <string name="recovery_skip">Tiếp tục không phục hồi</string>
+    <string name="recovery_close">Đóng</string>
+    <string name="recovery_restoring">Đang kiểm tra và phục hồi…</string>
+    <string name="recovery_exporting">Đang tạo và đọc lại bản sao…</string>
+    <string name="recovery_restore_error">Chưa xác nhận được phục hồi: khóa/file sai, dữ liệu không hợp lệ, máy không trống hoặc lỗi lưu trữ. Giữ nguyên file và khóa; không xóa dữ liệu ứng dụng.</string>
+    <string name="recovery_export_error">Chưa xác nhận được bản sao. Có thể file ghi chưa hoàn chỉnh; giữ bản sao cũ và thử lại với tên file mới.</string>
+    <string name="recovery_export_button">Tạo bản sao phục hồi</string>
+    <string name="recovery_export_blocked">Hãy mở tab thường và đợi kiểm tra bảo mật hoàn tất</string>
+    <string name="recovery_dashboard_description">Sao lưu mã hóa bằng khóa phục hồi riêng. Chỉ nhập vào Summit chưa có dữ liệu; không khôi phục đè lên bản đang dùng.</string>
+    <string name="recovery_copy_error">Không sao chép được khóa. Hãy ghi lại khóa hiển thị hoặc thử lại.</string>
+</resources>

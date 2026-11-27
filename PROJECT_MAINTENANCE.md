@@ -242,3 +242,12 @@ CI chỉ giải mã nếu đủ cả bốn secret, vào thư mục quyền riên
 - Cache key is now `summit.w3` (7 days of hourly data plus sunrise/sunset); `summit.w2` is removed on load.
 - CSP is unchanged: no inline styles in markup, images only from `'self'`. Style changes from JS use CSSOM.
 - Not tested on-device: only Chromium with mocked API responses.
+
+## Recovery Archive (bản sao phục hồi cục bộ)
+
+- Từ tab thường: Privacy Dashboard → Device Security → **Tạo bản sao phục hồi**. Lưu khóa 43 ký tự vào nơi an toàn độc lập với file; sau đó chọn nơi tạo file `.summit`. Chỉ xem bản sao là đã tạo khi Summit thông báo đã đọc lại thành công. Không ghi đè bản sao cũ; tạo file tên mới và giữ ít nhất một bản ở ngoài thiết bị. Không gửi khóa hay file qua issue/log.
+- Khi mở Summit mới, chưa có bất kỳ record, wrapper hoặc metadata đồng bộ và chưa tạo Store trong process, màn hình Khôi phục Summit cho phép nhập khóa và chọn file. Chỉ thử trên thiết bị/emulator trống. Không gỡ Summit đang có dữ liệu để thử tính năng. Nếu đã bỏ qua màn hình và bắt đầu dùng app, không có đường nhập đè. Dùng bản cùng chữ ký khi nâng cấp.
+- Archive R1: AES-256-GCM, nonce ngẫu nhiên 96 bit, tag 128 bit; khóa 256 bit sinh ngẫu nhiên (Base64URL không padding); magic `SUMMIT-R1` được xác thực bằng AAD. Payload nhị phân có độ dài giới hạn 16 MiB, gồm sáu record JSON và tài khoản gắn với journal nếu có. Chỉ dữ liệu đã lưu; không chứa cookie, WebView, ảnh tab, dữ liệu tab riêng tư, thông tin đăng nhập Google, API key, khóa bọc hay DEK thiết bị.
+- Phục hồi kiểm tra khóa/tag, cấu trúc/schema, binding và nhóm tab; không ghi nếu nơi đến đã có dữ liệu. Tạo DEK mới và dùng Android Keystore/alias hiện hành, ghi `s2:` và wrapper trong một commit. Nếu archive có journal nhưng hệ thống đã khôi phục hồ sơ Google, từ chối nhập để tránh tự đồng bộ một snapshot cũ. Đăng nhập đúng tài khoản sau khi kiểm tra dữ liệu phục hồi. Không thay đổi thuật toán Drive sync.
+- Đây là snapshot thủ công; không bảo vệ phần dữ liệu thay đổi sau lần sao lưu, không thể cứu nếu mất cả file hoặc mất khóa. Không có đường tắt mã hóa. Mã hóa vẫn opt-in (việc phục hồi là hành động bật mã hóa có chủ đích). Không coi đây là lý do đủ để bật mặc định.
+- Kiểm thử host: `bash security-eval/run-recovery.sh`. Build/lint Android, Keystore thật, SAF, khóa UI, process death và phục hồi sang thiết bị thật cần kiểm chứng riêng; xem `SECURITY_CHANGES_RECOVERY.md`.

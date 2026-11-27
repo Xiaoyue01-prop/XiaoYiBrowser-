@@ -148,6 +148,62 @@ internal object ProtectedRecords {
             } catch (e: Exception) { markFailure(e); Status(sp.contains(WRAPPED), false, "Lỗi lưu trữ", 0) }
         }
     }
+    /** Read a point-in-time preferences snapshot under the same lock as record writers. */
+    internal fun snapshotForRecovery(context: Context, syncHealthy: () -> Boolean): Map<String, String> = synchronized(lock) {
+        val sp = prefs(context)
+        check(!failed && syncHealthy())
+        try {
+            validateSyncBinding(sp)
+            if (active(sp)) key(sp, verifyWrapper = true)
+            val records = names.mapNotNull { name -> readLocked(sp, name)?.let { name to it } }.toMap()
+            records.forEach { (name, value) -> RecordSchema.validate(name, value) }
+            val account = sp.getString("sync_account_v1", null)
+            if (account == null) records else records + ("sync_account_v1" to account)
+        } catch (e: Exception) { markFailure(e); throw IllegalStateException("Dữ liệu cục bộ không đọc được") }
+    }
+
+    private fun emptyForRecovery(sp: SharedPreferences): Boolean = !failed && !sp.contains(WRAPPED) &&
+        names.none { sp.contains(it) } &&
+        setOf("sync_account_v1", "sync_success_v1", "sync_failed_v1").none { sp.contains(it) }
+
+    internal fun canRestoreArchive(context: Context): Boolean = synchronized(lock) {
+        emptyForRecovery(prefs(context))
+    }
+
+    /** Only invoked before any Store has been constructed. Never replace existing records, even broken ones. */
+    internal fun restoreArchive(context: Context, entries: Map<String, String>) = synchronized(lock) {
+        val sp = prefs(context)
+        check(emptyForRecovery(sp))
+        require(entries.keys.all { it in names || it == "sync_account_v1" })
+        val account = entries["sync_account_v1"]
+        require((account != null) == entries.containsKey("sync_state_v1"))
+        require(account == null || account.isNotBlank())
+        val records = entries.filterKeys { it in names }
+        records.forEach { (name, value) -> RecordSchema.validate(name, value) }
+        val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        try {
+            val dataKey = SecretKeySpec(bytes, "AES")
+            val encoded = Base64.getEncoder().encodeToString(bytes)
+            val envelope = AdaptiveSecurity.wrapRecordsKey(context, encoded)
+            check(AdaptiveSecurity.unwrapRecordsKey(envelope) == encoded)
+            val sealed = records.mapValues { (name, value) -> RecordWritePolicy.sealVerified(dataKey, name, value) }
+            val editor = sp.edit().putString(WRAPPED, envelope)
+            sealed.forEach { (name, value) -> editor.putString(name, value) }
+            if (account != null) editor.putString("sync_account_v1", account)
+            try {
+                check(editor.commit())
+                check(wrapped(sp) == envelope)
+                key(sp, verifyWrapper = true)
+                for ((name, value) in records) check(readLocked(sp, name) == value)
+                validateSyncBinding(sp)
+            } catch (e: Exception) {
+                // Android commit(false) may have published to RAM. Never try to roll back or retry over it.
+                markFailure(e)
+                throw IllegalStateException("Chưa xác nhận được việc phục hồi")
+            }
+        } finally { bytes.fill(0) }
+    }
+
     private fun statusLocked(sp: SharedPreferences): Status {
         validateSyncBinding(sp)
         if (!active(sp)) {

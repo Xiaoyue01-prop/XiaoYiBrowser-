@@ -32,6 +32,19 @@ class Store private constructor(context: Context) {
         @Synchronized
         fun get(context: Context): Store = instance ?: Store(context.applicationContext).also { instance = it }
 
+        @Synchronized
+        internal fun unusedForRecovery(): Boolean = instance == null
+
+        /** Keep Store construction and cache population out of the restore transaction. */
+        @Synchronized
+        internal fun restoreBeforeStore(context: Context, entries: Map<String, String>) {
+            check(instance == null)
+            // Android backup may have restored a Google profile. Do not auto-upload an old journal.
+            check(!entries.containsKey("sync_account_v1") ||
+                !context.getSharedPreferences("google_account", Context.MODE_PRIVATE).contains("name"))
+            ProtectedRecords.restoreArchive(context, entries)
+        }
+
         private const val TAG = "Store"
         private const val CLOSED_TABS_KEY = "closed_tabs"
         // Tab preview chỉ cần đủ nét để hiển thị trong lưới, không cần giữ ảnh gần full-resolution.

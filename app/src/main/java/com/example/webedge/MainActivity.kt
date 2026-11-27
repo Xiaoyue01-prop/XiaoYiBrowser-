@@ -637,6 +637,12 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Fresh launcher only; never bypass an enabled biometric policy or initialize Store before restore.
+        if (intent.action == Intent.ACTION_MAIN && !BrowserLockPolicy.enabled(this) && RecoveryArchiveActivity.shouldOffer(this)) {
+            startActivity(Intent(this, RecoveryArchiveActivity::class.java).putExtra(RecoveryArchiveActivity.EXTRA_RESTORE, true))
+            finish()
+            return
+        }
         startProtectedBrowser { initializeBrowser(if (BrowserLockPolicy.enabled(this)) null else savedInstanceState) }
     }
 

@@ -54,6 +54,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".RecoveryArchiveActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="portrait" />
+
         <!--
             Link từ app khác (Facebook, Telegram...): hiện thành sheet ngay trên app đó, kiểu Chrome Custom Tabs.
             Đây cũng là nơi khai báo http/https để máy nhận Summit là trình duyệt. Không đặt launchMode:
