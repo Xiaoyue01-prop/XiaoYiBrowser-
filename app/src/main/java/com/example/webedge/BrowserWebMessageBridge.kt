@@ -210,17 +210,12 @@ internal class BrowserWebMessageBridge(
         return true
     }
 
-    private fun isWebOrigin(origin: Uri): Boolean {
-        val scheme = origin.scheme?.lowercase(java.util.Locale.ROOT)
-        if (scheme != "http" && scheme != "https") return false
-        if (origin.host.isNullOrBlank() || origin.userInfo != null) return false
-        val port = origin.port
-        return port == -1 || port in 1..65535
-    }
+    private fun isWebOrigin(origin: Uri): Boolean = WebOrigin.accepts(origin.toString())
 
     private fun isSummitHome(origin: Uri): Boolean =
         origin.scheme.equals("https", ignoreCase = true) &&
-            origin.host.equals("appassets.androidplatform.net", ignoreCase = true)
+            origin.host.equals("appassets.androidplatform.net", ignoreCase = true) &&
+            (origin.port == -1 || origin.port == 443)
 
     private fun isHttpUrl(raw: String): Boolean {
         if (raw.isBlank() || raw.length > MAX_URL_CHARS) return false

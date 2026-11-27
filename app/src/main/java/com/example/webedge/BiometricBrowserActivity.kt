@@ -21,6 +21,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.PathInterpolator
+import android.view.Window
 import android.view.WindowManager
 import android.view.WindowInsets
 import android.webkit.WebView
@@ -108,6 +109,7 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
     private var revealFallback: Runnable? = null
     private var frameCommitObserver: android.view.ViewTreeObserver? = null
     private var frameCommitCallback: Runnable? = null
+    private var lockKeyCallback: LockKeyCallback? = null
     private var lockSurface: View? = null
     private var lockGlyph: BiometricGlyphDrawable? = null
     private var lockMessage: TextView? = null
@@ -237,6 +239,9 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         if (wasRevealing) restoreBrowserInteraction()
         if (!browserLocked) automaticPrompt = true
         browserLocked = true
+        if (lockKeyCallback == null) {
+            lockKeyCallback = LockKeyCallback(window.callback).also { window.callback = it }
+        }
         updateCapturePolicy()
         // Secure independent windows before dismissing them on the lock path.
         browserWindows.keys.forEach { it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE) }
@@ -294,6 +299,8 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         lockGlyph?.stop(); lockGlyph = null
         lockSurface?.let { surface -> (surface.parent as? ViewGroup)?.removeView(surface) }
         lockSurface = null
+        lockKeyCallback?.let { if (window.callback === it) window.callback = it.previous }
+        lockKeyCallback = null
         lockMessage = null; unlockButton = null
         lockBackCallback.isEnabled = false
     }
@@ -303,10 +310,12 @@ abstract class BiometricBrowserActivity : ComponentActivity() {
         return super.dispatchTouchEvent(ev)
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        // Never let keyboard shortcuts reach the browser behind the moving surface.
-        if (revealPending || (browserLocked && (unlockPending || lockSurface == null))) return true
-        return super.dispatchKeyEvent(event)
+    // Intercept at the window before Android routes keys to the focused view.
+    private inner class LockKeyCallback(val previous: Window.Callback) : Window.Callback by previous {
+        override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+            if (revealPending || (browserLocked && (unlockPending || lockSurface == null))) return true
+            return previous.dispatchKeyEvent(event)
+        }
     }
 
     private fun clearFrameCommitCallback() {

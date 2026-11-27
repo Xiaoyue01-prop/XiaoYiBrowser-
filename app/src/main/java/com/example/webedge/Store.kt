@@ -295,11 +295,7 @@ class Store(context: Context) {
         }
     }
     fun loadTabs(): List<PersistedTab> {
-        val arr = try {
-            JSONArray(ProtectedRecords.read(sp, "saved_tabs") ?: "[]")
-        } catch (_: Exception) {
-            JSONArray()
-        }
+        val arr = ProtectedRecords.readArray(sp, "saved_tabs")
         val result = mutableListOf<PersistedTab>()
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
@@ -329,11 +325,7 @@ class Store(context: Context) {
     }
 
     fun loadTabGroups(): List<TabManager.Group> {
-        val arr = try {
-            JSONArray(ProtectedRecords.read(sp, "tab_groups") ?: "[]")
-        } catch (_: Exception) {
-            JSONArray()
-        }
+        val arr = ProtectedRecords.readArray(sp, "tab_groups")
         val out = mutableListOf<TabManager.Group>()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
@@ -346,11 +338,7 @@ class Store(context: Context) {
     fun list(key: String): MutableList<Entry> {
         // ✅ Có trong cache thì lấy luôn, khỏi đọc lại từ ổ cứng
         listCache[key]?.let { return it }
-        val arr = try {
-            JSONArray(ProtectedRecords.read(sp, key) ?: "[]")
-        } catch (_: Exception) {
-            JSONArray()
-        }
+        val arr = ProtectedRecords.readArray(sp, key)
         val out = mutableListOf<Entry>()
         for (i in 0 until arr.length()) {
             // ✅ optJSONObject thay getJSONObject: gặp item lỗi thì bỏ qua, không crash

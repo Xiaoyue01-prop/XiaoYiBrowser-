@@ -67,10 +67,18 @@ jobs:
             printf '%s' "$SUMMIT_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
           fi
 
+      - name: Run Summit Security Eval
+        run: bash security-eval/run.sh
+
+      - name: Build debug APK and run Android lint
+        env:
+          SUMMIT_GOOGLE_WEB_CLIENT_ID: ${{ vars.SUMMIT_GOOGLE_WEB_CLIENT_ID }}
+        run: ./gradlew --no-daemon --stacktrace assembleDebug assembleDebugAndroidTest lintDebug
+
       - name: Build trial APK
         env:
           SUMMIT_GOOGLE_WEB_CLIENT_ID: ${{ vars.SUMMIT_GOOGLE_WEB_CLIENT_ID }}
-        run: ./gradlew --no-daemon --stacktrace clean assembleRelease
+        run: ./gradlew --no-daemon --stacktrace assembleRelease
 
       - name: Print Google sign-in config (public values only)
         shell: bash

@@ -27,7 +27,7 @@ internal interface TabWebViewConfigHost {
     val downloadPrompt: DownloadPromptController?
     val contextMenu: ContextMenuController?
     val isUrlBarFocused: Boolean
-    fun createChromeClient(isPrivateSource: () -> Boolean): WebChromeClient
+    fun createChromeClient(owner: WebView?, isPrivateSource: () -> Boolean): WebChromeClient
     fun setBarHidden(hide: Boolean)
     fun setFindCount(text: String)
     fun toast(msg: String)
@@ -165,7 +165,7 @@ internal class TabWebViewConfigurator(private val host: TabWebViewConfigHost) {
         if (mobileUa.isBlank()) mobileUa = cleanMobileUserAgent(settings.userAgentString)
         host.privateProfileManager.configureCookies(view, tab.isPrivate)
         view.webViewClient = host.webViewClient
-        view.webChromeClient = host.createChromeClient { tab.isPrivate }
+        view.webChromeClient = host.createChromeClient(view) { tab.isPrivate }
         // Cầu nối EdgeBridge phải gắn trước các script đầu tài liệu bên dưới (WebMessageListener + shim, thiếu hỗ trợ
         // thì cầu nối tắt hẳn, không còn đường dự phòng addJavascriptInterface).
         installEdgeBridge(view, BrowserJavascriptBridge(view, host.bridgeHost))

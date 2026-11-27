@@ -1552,7 +1552,7 @@ class MenuController(
             v.text = value
             v.textSize = 14f
             styleSecondary(v)
-        v.gravity = Gravity.END
+            v.gravity = Gravity.END
             v.setSingleLine()
             v.ellipsize = TextUtils.TruncateAt.END
             v.maxWidth = dp(120)

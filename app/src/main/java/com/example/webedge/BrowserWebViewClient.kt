@@ -35,8 +35,6 @@ internal interface BrowserWebViewHost {
     fun forgetPageBackground(view: WebView)
     /** Bản https của một trang http không mở được: hỏi người dùng có muốn mở bằng http không. */
     fun confirmHttpFallback(view: WebView, httpUrl: String)
-    /** Chứng chỉ SSL của trang chính có vấn đề: hỏi người dùng, rồi trả lời [handler] đúng một lần. */
-    fun confirmSslError(view: WebView, handler: SslErrorHandler, error: SslError)
     /** Máy chủ yêu cầu HTTP Auth: hỏi tên người dùng và mật khẩu, rồi trả lời [handler] đúng một lần. */
     fun requestHttpAuth(view: WebView, handler: HttpAuthHandler, host: String?, realm: String?)
     /** Bỏ nền trang đang áp lên cửa sổ (khi điều hướng hoặc renderer chết). */
@@ -56,9 +54,6 @@ internal interface BrowserWebViewHost {
 
 /** WebViewClient dùng chung cho mọi tab của trình duyệt. */
 internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebViewClient() {
-
-    /** URL khung chính đang tải của mỗi WebView (từ onPageStarted): để biết lỗi SSL thuộc trang chính hay tài nguyên con. */
-    private val mainUrls = WeakHashMap<WebView, String>()
 
     /** Lần tải lỗi gần nhất của mỗi WebView: để các onPageFinished sau lỗi không ghi lịch sử. */
     private class FailedLoad(val url: String, val at: Long)
@@ -113,7 +108,8 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
             if (view === host.web) host.toast("Không mở được liên kết này")
             return
         }
-        if (view === host.web && error.errorCode != ERROR_HOST_LOOKUP) {
+        if (view === host.web && error.errorCode != ERROR_HOST_LOOKUP &&
+            error.errorCode != ERROR_FAILED_SSL_HANDSHAKE) {
             HttpsFirst.fallbackFor(view, failedUrl)?.let { httpUrl ->
                 host.confirmHttpFallback(view, httpUrl)
                 return
@@ -131,17 +127,7 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
     }
 
     override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
-        // Đã được người dùng cho phép (cùng host, cùng loại lỗi) trong phiên này: tài nguyên con cũng đi tiếp.
-        if (PageErrors.isSslAllowed(error)) {
-            handler.proceed()
-            return
-        }
-        // Chỉ hỏi khi lỗi thuộc trang chính đang xem; tài nguyên con của host khác bị chặn im lặng.
-        if (host.isDestroyed || view !== host.web || !isMainFrameHost(view, error.url)) {
-            handler.cancel()
-            return
-        }
-        host.confirmSslError(view, handler, error)
+        handler.cancel()
     }
 
     override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, authHost: String?, realm: String?) {
@@ -150,13 +136,6 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
             return
         }
         host.requestHttpAuth(view, handler, authHost, realm)
-    }
-
-    private fun isMainFrameHost(view: WebView, errorUrl: String?): Boolean {
-        val errorHost = PageErrors.hostOf(errorUrl) ?: return false
-        return errorHost == PageErrors.hostOf(mainUrls[view]) ||
-            errorHost == PageErrors.hostOf(view.url) ||
-            errorHost == PageErrors.hostOf(view.originalUrl)
     }
 
     /** Trang vừa tải xong là trang lỗi (hoặc lượt tải lỗi ngay trước đó): không đưa vào lịch sử. */
@@ -173,7 +152,6 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
     }
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-        mainUrls[view] = url
         // Trang chủ: nền tối ngay khi bắt đầu tải (hết nháy trắng); trang khác: về nền mặc định.
         view.setBackgroundColor(
             if (host.webDarkMode && HomePage.isHome(url)) 0xFF141416.toInt() else android.graphics.Color.WHITE

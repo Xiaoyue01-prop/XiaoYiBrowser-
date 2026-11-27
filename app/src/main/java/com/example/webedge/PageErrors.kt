@@ -4,9 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
-import android.net.http.SslError
 import android.webkit.HttpAuthHandler
-import android.webkit.SslErrorHandler
 import android.webkit.WebViewClient
 import org.json.JSONObject
 import java.util.Locale
@@ -15,7 +13,6 @@ import java.util.Locale
  * Mọi thứ liên quan đến "trang không vào được" của khung chính:
  *
  * - Trang lỗi riêng (thay cho trang lỗi mặc định của WebView), có nút Thử lại.
- * - Hỏi người dùng khi chứng chỉ SSL có vấn đề ([confirmSsl]); chỉ ngoại lệ trong phiên chạy, không lưu xuống đĩa.
  * - Hỏi tên người dùng và mật khẩu khi máy chủ yêu cầu HTTP Auth ([promptHttpAuth]); không lưu mật khẩu.
  *
  * Mọi hàm gọi trên luồng UI (các callback của WebViewClient vốn đã chạy ở đó).
@@ -127,55 +124,8 @@ try{var n=performance.getEntriesByType('navigation')[0];if(n&&n.type==='reload')
     fun hostOf(url: String?): String? =
         runCatching { Uri.parse(url.orEmpty()).host }.getOrNull()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() }
 
-    // ---- Chứng chỉ SSL ---------------------------------------------------------------------------------------
-
-    private val allowedSsl = HashSet<String>()
-    private val pendingSsl = HashMap<String, MutableList<SslErrorHandler>>()
-
-    private fun sslKey(error: SslError) = "${hostOf(error.url)}|${error.primaryError}"
-
-    /** Người dùng đã chọn "Vẫn tiếp tục" cho đúng host và loại lỗi này trong phiên chạy hiện tại. */
-    fun isSslAllowed(error: SslError): Boolean = sslKey(error) in allowedSsl
-
-    private fun sslReason(error: SslError, host: String): String = when (error.primaryError) {
-        SslError.SSL_EXPIRED -> "Chứng chỉ bảo mật của $host đã hết hạn."
-        SslError.SSL_NOTYETVALID -> "Chứng chỉ của $host chưa có hiệu lực. Hãy kiểm tra ngày giờ trên thiết bị."
-        SslError.SSL_DATE_INVALID -> "Ngày hiệu lực của chứng chỉ không hợp lệ. Hãy kiểm tra ngày giờ trên thiết bị."
-        SslError.SSL_IDMISMATCH -> "Chứng chỉ không được cấp cho $host. Có thể bạn đang kết nối tới một máy chủ khác."
-        SslError.SSL_UNTRUSTED -> "Chứng chỉ của $host không do tổ chức đáng tin cậy cấp."
-        else -> "Chứng chỉ bảo mật của $host không hợp lệ."
-    }
-
-    /**
-     * Hỏi người dùng có tiếp tục dù chứng chỉ lỗi không. Nhiều lỗi cùng host và cùng loại chỉ hiện một hộp thoại;
-     * [handler] nào cũng được trả lời đúng một lần (đóng hộp, chạm ra ngoài, Back đều tính là chặn).
-     */
-    fun confirmSsl(dialog: GlassDialogController, handler: SslErrorHandler, error: SslError) {
-        val key = sslKey(error)
-        pendingSsl[key]?.let { it.add(handler); return }
-        pendingSsl[key] = mutableListOf(handler)
-        val host = hostOf(error.url) ?: "Trang web"
-
-        fun resolve(proceed: Boolean) {
-            if (proceed) allowedSsl.add(key)
-            pendingSsl.remove(key)?.forEach { h ->
-                runCatching { if (proceed) h.proceed() else h.cancel() }
-            }
-        }
-        dialog.show(
-            title = "Kết nối không an toàn",
-            message = sslReason(error, host) +
-                "\n\nNếu tiếp tục, người khác trên cùng mạng có thể xem hoặc sửa thông tin bạn gửi tới trang này.",
-            positive = "Quay lại",
-            negative = null,
-            neutral = "Vẫn tiếp tục",
-            onNeutral = { resolve(true) }
-        ) { _, _ -> resolve(false) }
-    }
-
     // ---- HTTP Auth -------------------------------------------------------------------------------------------
 
-    private val pendingAuth = HashMap<String, MutableList<HttpAuthHandler>>()
     private val lastAuthTry = HashMap<String, Long>()
     private const val WRONG_PASSWORD_WINDOW_MS = 30_000L
 
@@ -192,8 +142,6 @@ try{var n=performance.getEntriesByType('navigation')[0];if(n&&n.type==='reload')
     ) {
         val name = host?.takeIf { it.isNotBlank() } ?: "Máy chủ"
         val key = "$name|${realm.orEmpty()}"
-        pendingAuth[key]?.let { it.add(handler); return }
-        pendingAuth[key] = mutableListOf(handler)
 
         val retry = System.currentTimeMillis() - (lastAuthTry[key] ?: 0L) < WRONG_PASSWORD_WINDOW_MS
         val message = buildString {
@@ -205,9 +153,7 @@ try{var n=performance.getEntriesByType('navigation')[0];if(n&&n.type==='reload')
         }
         dialog.showCredentials("Đăng nhập", message, "Đăng nhập", "Hủy") { ok, user, pass ->
             if (ok) lastAuthTry[key] = System.currentTimeMillis()
-            pendingAuth.remove(key)?.forEach { h ->
-                runCatching { if (ok) h.proceed(user, pass) else h.cancel() }
-            }
+            if (ok) handler.proceed(user, pass) else handler.cancel()
         }
     }
 }

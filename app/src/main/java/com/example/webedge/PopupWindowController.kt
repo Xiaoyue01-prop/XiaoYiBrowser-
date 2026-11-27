@@ -3,6 +3,8 @@ package com.example.webedge
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.Dialog
+import androidx.activity.ComponentDialog
+import androidx.activity.addCallback
 import android.graphics.Bitmap
 import android.graphics.Outline
 import android.graphics.Typeface
@@ -281,11 +283,9 @@ class PopupWindowController(
             detents.onInsets(ime.bottom)
             insets
         }
-        val dlg = object : Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar) {
-            @Deprecated("Deprecated in Java")
-            override fun onBackPressed() {
-                if (popup.canGoBack()) popup.goBack() else animateClose()
-            }
+        val dlg = ComponentDialog(activity, android.R.style.Theme_Translucent_NoTitleBar)
+        dlg.onBackPressedDispatcher.addCallback(dlg) {
+            if (popup.canGoBack()) popup.goBack() else animateClose()
         }
         dlg.setContentView(root)
         val localPrompt = DownloadPromptController(

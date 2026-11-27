@@ -22,14 +22,18 @@ class WebPermissionController(
     private var pendingGeoOrigin: String? = null
     private var pendingGeoCallback: GeolocationPermissions.Callback? = null
 
+    private var mediaRuntimePending = false
+    private var geoRuntimePending = false
+    private var geoOwner: Any? = null
+
     private val gate = activity as? BiometricBrowserActivity
     private val mediaLauncher = gate?.mediaPermissionLauncher
-        ?: activity.registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { finishMediaRequest() }
+        ?: activity.registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { onMediaRuntimeResult() }
     private val geoLauncher = gate?.geoPermissionLauncher
-        ?: activity.registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { finishGeoRequest() }
+        ?: activity.registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { onGeoRuntimeResult() }
     init {
-        gate?.mediaPermissionResult = ::finishMediaRequest
-        gate?.geoPermissionResult = ::finishGeoRequest
+        gate?.mediaPermissionResult = ::onMediaRuntimeResult
+        gate?.geoPermissionResult = ::onGeoRuntimeResult
     }
 
     private fun hasRuntimePermission(permission: String): Boolean =
@@ -39,13 +43,13 @@ class WebPermissionController(
         "${origin.scheme}://${origin.host}${if (origin.port != -1) ":${origin.port}" else ""}"
 
     fun requestMedia(request: PermissionRequest, isPrivate: Boolean = false) {
-        if (isActivityDestroyed()) { request.deny(); return }
+        if (isActivityDestroyed() || !WebOrigin.accepts(request.origin.toString())) { request.deny(); return }
         val supported = request.resources.filter {
             it == PermissionRequest.RESOURCE_VIDEO_CAPTURE || it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
         }.toTypedArray()
         if (supported.isEmpty()) { request.deny(); return }
 
-                if (pendingRequest != null) { request.deny(); return }
+        if (pendingRequest != null || mediaRuntimePending) { request.deny(); return }
         pendingRequest = request
         pendingResources = supported
         pendingMediaIsPrivate = isPrivate
@@ -56,25 +60,25 @@ class WebPermissionController(
         when (savedPermission) {
             PermissionState.ALLOW -> ensureRuntimeAndGrantMedia()
             PermissionState.DENY  -> denyPending()
-            PermissionState.ASK   -> askMedia(origin)
+            PermissionState.ASK   -> askMedia(origin, request)
         }
     }
 
-    private fun askMedia(origin: String) {
+    private fun askMedia(origin: String, request: PermissionRequest) {
         val requestedLabels = buildList {
             if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in pendingResources) add("camera")
             if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in pendingResources) add("micro")
         }.joinToString(" và ")
-        val displayOrigin = runCatching { Uri.parse(origin).host }.getOrNull() ?: origin.substringAfter("://")
 
         dialog().show(
             title = "Quyền trang web",
-            message = "$displayOrigin muốn sử dụng $requestedLabels. Chỉ cho phép nếu bạn tin tưởng trang này.",
+            message = "$origin muốn sử dụng $requestedLabels. Chỉ cho phép nếu bạn tin tưởng trang này.",
             positive = "Cho phép", negative = "Từ chối",
             // Chỉ lần này: cấp cho yêu cầu hiện tại, không ghi vào Store nên trang vẫn ở trạng thái "Hỏi" trong Privacy Dashboard.
             neutral = "Chỉ lần này",
-            onNeutral = { ensureRuntimeAndGrantMedia() }
+            onNeutral = { if (pendingRequest === request) ensureRuntimeAndGrantMedia() }
         ) { allowed, _ ->
+            if (pendingRequest !== request) return@show
             if (!allowed) {
                 if (!pendingMediaIsPrivate) store.setMediaPermission(origin, PermissionState.DENY)
                 denyPending()
@@ -89,7 +93,10 @@ class WebPermissionController(
         val missing = mutableListOf<String>()
         if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in pendingResources && !hasRuntimePermission(Manifest.permission.CAMERA)) missing.add(Manifest.permission.CAMERA)
         if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in pendingResources && !hasRuntimePermission(Manifest.permission.RECORD_AUDIO)) missing.add(Manifest.permission.RECORD_AUDIO)
-        if (missing.isEmpty()) finishMediaRequest() else mediaLauncher.launch(missing.toTypedArray())
+        if (missing.isEmpty()) finishMediaRequest() else {
+            mediaRuntimePending = true
+            mediaLauncher.launch(missing.toTypedArray())
+        }
     }
 
     private fun finishMediaRequest() {
@@ -113,33 +120,34 @@ class WebPermissionController(
         runCatching { request.deny() }
     }
 
-        fun requestGeolocation(origin: String, callback: GeolocationPermissions.Callback, isPrivate: Boolean = false) {
-        if (isActivityDestroyed() || isPopupShowing()) { callback.invoke(origin, false, false); return }
-        if (pendingGeoCallback != null) { callback.invoke(origin, false, false); return }
+    fun requestGeolocation(origin: String, callback: GeolocationPermissions.Callback, isPrivate: Boolean = false, owner: Any = callback) {
+        if (isActivityDestroyed() || isPopupShowing() || !WebOrigin.accepts(origin)) { callback.invoke(origin, false, false); return }
+        if (pendingGeoCallback != null || geoRuntimePending) { callback.invoke(origin, false, false); return }
+        geoOwner = owner
         pendingGeoOrigin = origin; pendingGeoCallback = callback
-        val host = runCatching { Uri.parse(origin).host }.getOrNull() ?: origin
         val savedPermission = if (isPrivate) PermissionState.ASK else store.getGeoPermission(origin)
         when (savedPermission) {
             PermissionState.ALLOW -> ensureRuntimeAndGrantGeo()
             PermissionState.DENY -> {
-                pendingGeoOrigin = null; pendingGeoCallback = null
+                pendingGeoOrigin = null; pendingGeoCallback = null; geoOwner = null
                 callback.invoke(origin, false, false)
             }
             PermissionState.ASK -> {
                 dialog().show(
                     title = "Vị trí của bạn",
-                    message = "$host muốn truy cập vị trí của bạn.",
+                    message = "$origin muốn truy cập vị trí của bạn.",
                     positive = "Cho phép", negative = "Từ chối",
                     neutral = "Chỉ lần này",
-                    onNeutral = { ensureRuntimeAndGrantGeo() }
+                    onNeutral = { if (pendingGeoCallback === callback) ensureRuntimeAndGrantGeo() }
                 ) { allowed, _ ->
+                    if (pendingGeoCallback !== callback) return@show
                     if (!isPrivate) {
                         store.setGeoPermission(origin, if (allowed) PermissionState.ALLOW else PermissionState.DENY)
                     }
                     if (allowed) {
                         ensureRuntimeAndGrantGeo()
                     } else {
-                        pendingGeoOrigin = null; pendingGeoCallback = null
+                        pendingGeoOrigin = null; pendingGeoCallback = null; geoOwner = null
                         callback.invoke(origin, false, false)
                     }
                 }
@@ -150,20 +158,52 @@ class WebPermissionController(
     private fun ensureRuntimeAndGrantGeo() {
         val origin = pendingGeoOrigin ?: return
         val missing = listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION).filterNot(::hasRuntimePermission)
-        if (missing.isEmpty()) finishGeoRequest() else geoLauncher.launch(missing.toTypedArray())
+        if (missing.isEmpty()) finishGeoRequest() else {
+            geoRuntimePending = true
+            geoLauncher.launch(missing.toTypedArray())
+        }
     }
 
     private fun finishGeoRequest() {
         val origin = pendingGeoOrigin ?: return
         val callback = pendingGeoCallback
-        pendingGeoOrigin = null; pendingGeoCallback = null
+        pendingGeoOrigin = null; pendingGeoCallback = null; geoOwner = null
         val allowed = gate?.isLockUiActive() != true && (hasRuntimePermission(Manifest.permission.ACCESS_FINE_LOCATION) || hasRuntimePermission(Manifest.permission.ACCESS_COARSE_LOCATION))
         callback?.invoke(origin, allowed, false)
+    }
+
+    private fun onMediaRuntimeResult() {
+        if (!mediaRuntimePending) return
+        mediaRuntimePending = false
+        finishMediaRequest()
+    }
+
+    private fun onGeoRuntimeResult() {
+        if (!geoRuntimePending) return
+        geoRuntimePending = false
+        finishGeoRequest()
+    }
+
+    fun cancelMedia(request: PermissionRequest) {
+        if (pendingRequest === request) {
+            pendingRequest = null
+            pendingResources = emptyArray()
+            pendingMediaIsPrivate = false
+        }
+    }
+
+    fun hideGeoPrompt(owner: Any) {
+        if (geoOwner === owner) {
+            // WebView withdrew the prompt. Ignore late dialog and platform results.
+            pendingGeoOrigin = null
+            pendingGeoCallback = null
+            geoOwner = null
+        }
     }
 
     fun cancelAll() {
         denyPending()
         pendingGeoCallback?.invoke(pendingGeoOrigin.orEmpty(), false, false)
-        pendingGeoCallback = null; pendingGeoOrigin = null
+        pendingGeoCallback = null; pendingGeoOrigin = null; geoOwner = null
     }
 }

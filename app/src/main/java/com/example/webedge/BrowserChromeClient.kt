@@ -28,6 +28,7 @@ internal interface BrowserChromeHost {
 /** ChromeClient gắn với profile của WebView nguồn, kể cả popup đăng nhập. */
 internal class BrowserChromeClient(
     private val host: BrowserChromeHost,
+    private val owner: WebView?,
     private val isPrivateSource: () -> Boolean
 ) : WebChromeClient() {
 
@@ -89,11 +90,25 @@ internal class BrowserChromeClient(
     }
 
     override fun onPermissionRequest(request: PermissionRequest) {
-        host.runOnUi { host.webPermissions.requestMedia(request, isPrivateSource()) }
+        host.runOnUi {
+            if (owner == null || owner !== host.web) request.deny()
+            else host.webPermissions.requestMedia(request, isPrivateSource())
+        }
+    }
+
+    override fun onPermissionRequestCanceled(request: PermissionRequest) {
+        host.runOnUi { host.webPermissions.cancelMedia(request) }
     }
 
     override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
-        host.runOnUi { host.webPermissions.requestGeolocation(origin, callback, isPrivateSource()) }
+        host.runOnUi {
+            if (owner == null || owner !== host.web) callback.invoke(origin, false, false)
+            else host.webPermissions.requestGeolocation(origin, callback, isPrivateSource(), this)
+        }
+    }
+
+    override fun onGeolocationPermissionsHidePrompt() {
+        host.runOnUi { host.webPermissions.hideGeoPrompt(this) }
     }
 
     override fun onProgressChanged(view: WebView, newProgress: Int) {

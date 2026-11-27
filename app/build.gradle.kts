@@ -53,6 +53,7 @@ android {
         applicationId = "com.example.webedge"
         minSdk = 36
         targetSdk = 36
+        testInstrumentationRunner = "com.example.webedge.SecurityInstrumentation"
         versionCode = 3
         versionName = "1.1"
         resValue("string", "google_web_client_id", googleWebClientId)

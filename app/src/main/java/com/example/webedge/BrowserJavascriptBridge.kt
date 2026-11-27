@@ -18,7 +18,7 @@ internal interface BrowserJavascriptBridgeHost {
 }
 
 /**
- * Cầu nối dữ liệu tách khỏi Activity. Chỉ giữ weak reference; callback được chuyển về UI thread.
+ * Cầu nối dữ liệu tách khỏi Activity. Chỉ giữ weak reference; WebMessageListener gọi trên UI thread.
  * Không có @JavascriptInterface: trang không được nắm trực tiếp một object có phương thức native.
  */
 internal class BrowserJavascriptBridge(
@@ -30,28 +30,28 @@ internal class BrowserJavascriptBridge(
 
     fun setTopColor(r: Int, g: Int, b: Int) {
         val color = android.graphics.Color.rgb(r, g, b)
-        dispatch { host, owner -> host.onBridgeTopColor(owner, color) }
+        withOwner { host, owner -> host.onBridgeTopColor(owner, color) }
     }
 
     fun clearTopColor() {
-        dispatch { host, owner -> host.onBridgeTopColor(owner, null) }
+        withOwner { host, owner -> host.onBridgeTopColor(owner, null) }
     }
 
     fun setPageBackground(r: Int, g: Int, b: Int) {
         val color = android.graphics.Color.rgb(r, g, b)
-        dispatch { host, owner -> host.onBridgePageBackground(owner, color) }
+        withOwner { host, owner -> host.onBridgePageBackground(owner, color) }
     }
 
     fun clearPageBackground() {
-        dispatch { host, owner -> host.onBridgePageBackground(owner, null) }
+        withOwner { host, owner -> host.onBridgePageBackground(owner, null) }
     }
 
     fun pullGuard(blocked: Boolean) {
-        dispatch { host, owner -> host.onBridgePullGuard(owner, blocked) }
+        withOwner { host, owner -> host.onBridgePullGuard(owner, blocked) }
     }
 
     fun haptic(kind: Int) {
-        dispatch { host, owner -> host.onBridgeHaptic(owner, kind) }
+        withOwner { host, owner -> host.onBridgeHaptic(owner, kind) }
     }
 
     fun mediaState(
@@ -78,51 +78,24 @@ internal class BrowserJavascriptBridge(
             videoWidth = videoWidth,
             videoHeight = videoHeight
         )
-        dispatch { host, owner -> host.onBridgeMediaState(owner, info) }
+        withOwner { host, owner -> host.onBridgeMediaState(owner, info) }
     }
 
     /** PiP chỉ được xác nhận sau khi host xác minh user gesture và tab đang hoạt động. */
     fun requestPip(onResult: (Boolean) -> Unit) {
-        val owner = ownerRef.get()
-        if (owner == null) {
-            onResult(false)
-            return
-        }
-        owner.post {
-            val host = hostRef.get()
-            val currentOwner = ownerRef.get()
-            if (host == null || currentOwner == null || host.isBridgeHostDestroyed()) {
-                onResult(false)
-                return@post
-            }
-            onResult(host.onBridgePipRequest(currentOwner))
-        }
+        onResult(withOwner { host, owner -> host.onBridgePipRequest(owner) } == true)
     }
 
-    /** URL đã được xác thực HTTP(S), giới hạn chiều dài trước khi tới đây. */
     fun longPress(linkUrl: String, imageUrl: String, onResult: (Boolean) -> Unit) {
-        val owner = ownerRef.get()
-        if (owner == null) {
-            onResult(false)
-            return
-        }
-        owner.post {
-            val host = hostRef.get()
-            val currentOwner = ownerRef.get()
-            if (host == null || currentOwner == null || host.isBridgeHostDestroyed()) {
-                onResult(false)
-                return@post
-            }
-            onResult(host.onBridgeLongPress(currentOwner, linkUrl, imageUrl))
-        }
+        onResult(withOwner { host, owner -> host.onBridgeLongPress(owner, linkUrl, imageUrl) } == true)
     }
 
-    private fun dispatch(action: (BrowserJavascriptBridgeHost, WebView) -> Unit) {
-        val owner = ownerRef.get() ?: return
-        owner.post {
-            val host = hostRef.get() ?: return@post
-            val currentOwner = ownerRef.get() ?: return@post
-            if (!host.isBridgeHostDestroyed()) action(host, currentOwner)
-        }
+    // WebMessageListener delivers on the UI thread. Dispatch in that same turn so
+    // a queued message cannot acquire authority over a newly selected document.
+    private inline fun <T> withOwner(action: (BrowserJavascriptBridgeHost, WebView) -> T): T? {
+        val host = hostRef.get() ?: return null
+        val view = ownerRef.get() ?: return null
+        if (host.isBridgeHostDestroyed()) return null
+        return action(host, view)
     }
 }

@@ -81,6 +81,7 @@ object WebMediaHub {
 }
 
 /** Player "ảo": không tự phát gì, chỉ phản chiếu thẻ video/audio của trang và chuyển lệnh về trang. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class WebMediaPlayer : SimpleBasePlayer(Looper.getMainLooper()) {
     private var info = WebMediaInfo()
 

@@ -59,6 +59,15 @@ internal object ProtectedRecords {
         try { readLocked(sp, name) }
         catch (e: Exception) { markFailure(e); throw IllegalStateException("Dữ liệu cục bộ không đọc được") }
     }
+    fun readArray(sp: SharedPreferences, name: String): org.json.JSONArray = synchronized(lock) {
+        try {
+            org.json.JSONArray(readLocked(sp, name) ?: "[]")
+        } catch (e: Exception) {
+            // Keep the UI usable while blocking all record and sync writes for this process.
+            markFailure(e)
+            org.json.JSONArray()
+        }
+    }
     fun readable(sp: SharedPreferences, name: String): Boolean = try { read(sp, name); true } catch (_: Exception) { false }
 
     /** Keep related sync values atomic, like the original Store. Explicit removals are only for disconnect. */

@@ -2,6 +2,8 @@ package com.example.webedge
 
 import android.app.Activity
 import android.app.Dialog
+import androidx.activity.ComponentDialog
+import androidx.activity.addCallback
 import android.graphics.Outline
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -226,13 +228,11 @@ class BrowserBottomSheet(
             insets
         }
 
-        val dlg = object : Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar) {
-            @Deprecated("Deprecated in Java")
-            override fun onBackPressed() {
-                val gd = glassDialog
-                if (gd != null && gd.isShowing) gd.cancelCurrent()
-                else if (onCloseRequest?.invoke() != true) animateClose()
-            }
+        val dlg = ComponentDialog(activity, android.R.style.Theme_Translucent_NoTitleBar)
+        dlg.onBackPressedDispatcher.addCallback(dlg) {
+            val gd = glassDialog
+            if (gd != null && gd.isShowing) gd.cancelCurrent()
+            else if (onCloseRequest?.invoke() != true) animateClose()
         }
         dlg.setContentView(windowRoot)
         dlg.window?.let { window ->

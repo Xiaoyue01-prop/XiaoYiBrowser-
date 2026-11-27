@@ -9,7 +9,6 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
-import android.net.http.SslError
 import android.os.Bundle
 import android.os.SystemClock
 import android.os.Handler
@@ -19,7 +18,6 @@ import android.view.HapticFeedbackConstants
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.HttpAuthHandler
-import android.webkit.SslErrorHandler
 import android.webkit.WebStorage
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -108,7 +106,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
     private var orbController: OrbMenuController? = null
     private lateinit var suggestionController: SuggestionController
     private var isActivityDestroyed = false
-    private var lastUserInteractionAt = 0L
+    private var fullscreenTouchAt = 0L
     private val handler = Handler(Looper.getMainLooper())
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
     private var downloadPromptController: DownloadPromptController? = null
@@ -120,7 +118,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         webViewContext = { webViewContext(store.webDarkMode) },
         chromeClient = { sourceWebView ->
             val sourceIsPrivate = privateProfileManager.isPrivateProfile(sourceWebView)
-            createChromeClient { sourceIsPrivate }
+            createChromeClient(null) { sourceIsPrivate }
         },
         openExternal = { url, view -> handleSpecialUrl(url, view) },
         toast = { toast(it) },
@@ -196,17 +194,12 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         )
     }
 
-    override fun onUserInteraction() {
-        super.onUserInteraction()
-        lastUserInteractionAt = SystemClock.elapsedRealtime()
+    private fun hasRecentFullscreenTouch(maxAgeMs: Long = 2_500L): Boolean {
+        val age = SystemClock.elapsedRealtime() - fullscreenTouchAt
+        return fullscreenTouchAt != 0L && age in 0..maxAgeMs
     }
 
-    private fun hasRecentUserInteraction(maxAgeMs: Long = 2_500L): Boolean {
-        val age = SystemClock.elapsedRealtime() - lastUserInteractionAt
-        return age in 0..maxAgeMs
-    }
-
-    override fun isBridgeHostDestroyed(): Boolean = isActivityDestroyed
+    override fun isBridgeHostDestroyed(): Boolean = isActivityDestroyed || isLockUiActive()
 
     override fun onBridgeTopColor(owner: WebView, color: Int?) {
         topFadeController.recordColor(owner, color)
@@ -226,19 +219,20 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
     }
 
     override fun onBridgePipRequest(owner: WebView): Boolean {
-        if (owner !== web || isActivityDestroyed) return false
+        if (owner !== web || isActivityDestroyed || !hasWindowFocus() || deferBrowserAction()) return false
         val gestureFromWeb = contextMenuController?.consumeRecentBridgeGesture(owner) == true
         // Khi video đã tách thành custom fullscreen view, ACTION_DOWN không còn đi qua WebView;
         // Activity vẫn ghi nhận input vật lý, còn shim yêu cầu transient user activation trong frame.
-        val gestureFromFullscreen = fullscreenVideoController?.isShowing == true && hasRecentUserInteraction()
+        val gestureFromFullscreen = fullscreenVideoController?.isShowing == true && hasRecentFullscreenTouch()
         if (!gestureFromWeb && !gestureFromFullscreen) return false
         val controller = fullscreenVideoController ?: return false
+        fullscreenTouchAt = 0L
         controller.armPendingPip()
         return true
     }
 
     override fun onBridgeLongPress(owner: WebView, linkUrl: String, imageUrl: String): Boolean {
-        if (owner !== web || isActivityDestroyed) return false
+        if (owner !== web || isActivityDestroyed || !hasWindowFocus() || deferBrowserAction()) return false
         return contextMenuController?.showFromDom(owner, linkUrl, imageUrl) == true
     }
 
@@ -295,7 +289,14 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         override fun toast(msg: String) = this@MainActivity.toast(msg)
         override fun applyTextZoom(view: WebView, url: String) = textZoom.apply(view, url)
         override val webDarkMode: Boolean get() = store.webDarkMode
-        override fun forgetPageBackground(view: WebView) { pageBackgrounds.remove(view) }
+        override fun forgetPageBackground(view: WebView) {
+            pageBackgrounds.remove(view)
+            contextMenuController?.invalidateBridgeGesture(view)
+            if (this@MainActivity::web.isInitialized && view === web) {
+                fullscreenTouchAt = 0L
+                webPermissions.cancelAll()
+            }
+        }
         override fun clearWindowPageBackground(url: String?) {
             pillBackdropSampler?.reset()
             GlassSystem.setPageBackground(initialPageTone(url), window.decorView, resetPillSample = true)
@@ -314,8 +315,6 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
                 }
             }
         }
-        override fun confirmSslError(view: WebView, handler: SslErrorHandler, error: SslError) =
-            PageErrors.confirmSsl(this@MainActivity.glassDialog, handler, error)
         override fun requestHttpAuth(view: WebView, handler: HttpAuthHandler, host: String?, realm: String?) =
             PageErrors.promptHttpAuth(
                 this@MainActivity.glassDialog, handler, host, realm,
@@ -366,8 +365,8 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
     private val client: WebViewClient = BrowserWebViewClient(webClientHost)
 
     /** Tạo ChromeClient gắn với profile của WebView nguồn, kể cả popup đăng nhập. */
-    private fun createChromeClient(isPrivateSource: () -> Boolean): WebChromeClient =
-        BrowserChromeClient(chromeHost, isPrivateSource)
+    private fun createChromeClient(owner: WebView?, isPrivateSource: () -> Boolean): WebChromeClient =
+        BrowserChromeClient(chromeHost, owner, isPrivateSource)
 
     // ---------------- Tiện ích giao diện ----------------
 
@@ -1256,8 +1255,8 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         override val downloadPrompt: DownloadPromptController? get() = downloadPromptController
         override val contextMenu: ContextMenuController? get() = contextMenuController
         override val isUrlBarFocused: Boolean get() = urlBar.hasFocus()
-        override fun createChromeClient(isPrivateSource: () -> Boolean): WebChromeClient =
-            this@MainActivity.createChromeClient(isPrivateSource)
+        override fun createChromeClient(owner: WebView?, isPrivateSource: () -> Boolean): WebChromeClient =
+            this@MainActivity.createChromeClient(owner, isPrivateSource)
         override fun setBarHidden(hide: Boolean) = this@MainActivity.setBarHidden(hide)
         override fun setFindCount(text: String) = findBarController.setCount(text)
         override fun toast(msg: String) = this@MainActivity.toast(msg)
@@ -1291,6 +1290,9 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         val previous = if (::web.isInitialized) web else null
         val target = tabWebViewLifecycle.attach(tab, blurTarget, previous)
         if (previous !== target) {
+            webPermissions.cancelAll()
+            previous?.let { contextMenuController?.invalidateBridgeGesture(it) }
+            fullscreenTouchAt = 0L
             pillBackdropSampler?.reset()
             web = target
             // Media của tab cũ không còn điều khiển được; tab mới tự báo lại trạng thái của nó.
@@ -1545,6 +1547,12 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         if (isLockUiActive()) return super.dispatchTouchEvent(ev)
+        if (isFullscreenVideoShowing()) {
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> fullscreenTouchAt = SystemClock.elapsedRealtime()
+                android.view.MotionEvent.ACTION_CANCEL, android.view.MotionEvent.ACTION_POINTER_DOWN -> fullscreenTouchAt = 0L
+            }
+        }
         pullRefresh?.onTouch(ev)
         if (::tabSwipe.isInitialized) {
             when (tabSwipe.onTouch(ev)) {
@@ -1681,6 +1689,8 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
     }
 
     override fun onPause() {
+        fullscreenTouchAt = 0L
+        if (::web.isInitialized) contextMenuController?.invalidateBridgeGesture(web)
         if (::pipController.isInitialized) pipController.trace("onPause")
         pillBackdropSampler?.pause()
         downloadPromptController?.dismissAll()
@@ -1716,7 +1726,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
             return
         }
         if (findBarController.isShown) closeFind()
-                if (urlBar.hasFocus()) leaveEdit()
+        if (urlBar.hasFocus()) leaveEdit()
         WindowCompat.getInsetsController(window, root).hide(WindowInsetsCompat.Type.ime())
         suggestionController.hide()
         val sourceWeb = web
@@ -1806,7 +1816,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
             suggestBox.visibility = View.GONE
             topFadeController.view.visibility = View.VISIBLE
             bottomFade.visibility = View.VISIBLE
-                        setBarHidden(readerBarWasHidden)
+            setBarHidden(readerBarWasHidden)
             bar.visibility = if (toolbar.barPresent) View.VISIBLE else View.INVISIBLE
             if (toolbar.barPresent) {
                 bar.alpha = 0f

@@ -16,6 +16,8 @@ import java.util.UUID
  */
 class PrivateProfileManager {
     companion object {
+        // ProfileStore is process-wide. All lifecycle calls run on the UI thread.
+        private val liveProfiles = mutableSetOf<String>()
         private const val TAG = "PrivateProfile"
         private const val PROFILE_PREFIX = "summit_private_"
     }
@@ -34,7 +36,7 @@ class PrivateProfileManager {
         runCatching {
             val store = ProfileStore.getInstance()
             store.getAllProfileNames()
-                .filter { it.startsWith(PROFILE_PREFIX) }
+                .filter { it.startsWith(PROFILE_PREFIX) && it !in liveProfiles }
                 .forEach { name ->
                     runCatching { store.deleteProfile(name) }
                         .onFailure { Log.w(TAG, "Không dọn được phiên riêng tư cũ: $name", it) }
@@ -45,6 +47,7 @@ class PrivateProfileManager {
     private fun sessionName(): String {
         currentProfileName?.let { return it }
         return (PROFILE_PREFIX + UUID.randomUUID().toString().replace("-", "")).also {
+            liveProfiles.add(it)
             currentProfileName = it
         }
     }
@@ -139,6 +142,7 @@ class PrivateProfileManager {
     /** Call only after every WebView (including an authentication popup) has been destroyed. */
     fun endSession() {
         val name = currentProfileName ?: return
+        liveProfiles.remove(name)
         currentProfileName = null
         sessionCookieManager = null
         sessionWebStorage = null

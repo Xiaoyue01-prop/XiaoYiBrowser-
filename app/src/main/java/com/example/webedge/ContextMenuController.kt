@@ -81,14 +81,7 @@ class ContextMenuController(
     private var domTargetSequence = -1
     private var domTarget: DomTarget? = null
     private var lastShownAt = 0L
-    private data class BridgeGesture(
-        var downAt: Long,
-        val downX: Float,
-        val downY: Float,
-        var valid: Boolean = true,
-        var consumed: Boolean = false
-    )
-    private val bridgeGestures = WeakHashMap<WebView, BridgeGesture>()
+    private val bridgeGestures = WeakHashMap<WebView, BridgeTouch>()
     private val bridgeTouchSlop = ViewConfiguration.get(activity).scaledTouchSlop * 1.5f
     val isShowing: Boolean get() = layer != null
 
@@ -100,16 +93,16 @@ class ContextMenuController(
     )
 
 
+    fun invalidateBridgeGesture(view: WebView) {
+        bridgeGestures.remove(view)
+    }
+
     /** Attach to each WebView. Returning false from touch preserves native scrolling/selection. */
     fun attach(webView: WebView) {
         webView.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    bridgeGestures[webView] = BridgeGesture(
-                        downAt = android.os.SystemClock.uptimeMillis(),
-                        downX = event.x,
-                        downY = event.y
-                    )
+                    bridgeGestures[webView] = BridgeTouch(event.eventTime, event.x, event.y)
                     val sequence = ++touchSequence
                     domTargetSequence = sequence
                     domTarget = null
@@ -164,19 +157,12 @@ class ContextMenuController(
                         }
                     }
                 }
-                MotionEvent.ACTION_MOVE -> {
-                    val gesture = bridgeGestures[webView]
-                    if (gesture != null && gesture.valid) {
-                        val dx = event.x - gesture.downX
-                        val dy = event.y - gesture.downY
-                        if (dx * dx + dy * dy > bridgeTouchSlop * bridgeTouchSlop) {
-                            gesture.valid = false
-                        }
-                    }
+                MotionEvent.ACTION_MOVE -> bridgeGestures[webView]?.move(event.x, event.y, bridgeTouchSlop)
+                MotionEvent.ACTION_UP -> bridgeGestures[webView]?.apply {
+                    move(event.x, event.y, bridgeTouchSlop)
+                    release(event.eventTime)
                 }
-                MotionEvent.ACTION_POINTER_DOWN -> {
-                    bridgeGestures[webView]?.valid = false
-                }
+                MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> invalidateBridgeGesture(webView)
             }
             false
         }
@@ -249,10 +235,7 @@ class ContextMenuController(
         minAgeMs: Long = 0L
     ): Boolean {
         val gesture = bridgeGestures[webView] ?: return false
-        val age = android.os.SystemClock.uptimeMillis() - gesture.downAt
-        if (!gesture.valid || gesture.consumed || age !in minAgeMs..maxAgeMs) return false
-        gesture.consumed = true
-        return true
+        return gesture.consume(android.os.SystemClock.uptimeMillis(), minAgeMs, maxAgeMs)
     }
 
     /** Long press do script trong trang báo về (link/ảnh dưới ngón tay). Gọi trên luồng UI. */
