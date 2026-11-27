@@ -967,7 +967,7 @@ class MenuController(
             if (googleSync.busy) host.toast("Đang đồng bộ")
             else if (googleSync.enabled()) showGoogleSignOutConfirmation(account)
             else {
-                store.disableSync()
+                if (!store.disableSync()) host.toast("Không đọc được nhật ký; giữ dữ liệu và liên kết đồng bộ cũ")
                 googleAccount.signOut { showMainPage() }
             }
         })
@@ -996,7 +996,10 @@ class MenuController(
                 if (googleAccount.profile != account || tabManager.isPrivateMode) { close(); return@panelButton }
                 if (enable) showGoogleAccount(account, startSync = true)
                 else {
-                    store.disableSync()
+                    if (!store.disableSync()) {
+                        host.toast("Chưa tắt được đồng bộ; nhật ký được giữ nguyên")
+                        return@panelButton
+                    }
                     back()
                 }
             })
@@ -1016,7 +1019,7 @@ class MenuController(
         addButtons(p, panelButton("Hủy", accent) { back() }, panelButton("Đăng xuất", Theme.DANGER_RED) {
             if (googleSync.busy) { host.toast("Đang đồng bộ"); return@panelButton }
             if (googleAccount.profile != account || tabManager.isPrivateMode) { close(); return@panelButton }
-            store.disableSync()
+            if (!store.disableSync()) host.toast("Không đọc được nhật ký; giữ dữ liệu và liên kết đồng bộ cũ")
             googleAccount.signOut { showMainPage() }
         })
         showPanel(p)

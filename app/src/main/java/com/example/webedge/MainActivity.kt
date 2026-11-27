@@ -646,7 +646,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         pipController = PictureInPictureController(this)
         WebMediaHub.jsRunner = { js -> runOnUiThread { if (::web.isInitialized) web.evaluateJavascript(js, null) } }
 
-        store = Store(this)
+        store = Store.get(this)
         // Nền khởi động theo "Chế độ tối" của app, tránh nháy trắng trước khi trang chủ vẽ xong.
         window.setBackgroundDrawable(ColorDrawable(if (store.webDarkMode) 0xFF141416.toInt() else Color.WHITE))
         firstRunPermissions = FirstRunPermissions(this, store)

@@ -33,13 +33,17 @@ internal object ProtectedRecords {
         if (!enabled) check(names.none { sp.getString(it, null)?.startsWith(RecordCipher.PREFIX) == true })
         return enabled
     }
-    private fun key(sp: SharedPreferences): SecretKey {
+    private fun key(sp: SharedPreferences, verifyWrapper: Boolean = false): SecretKey {
         val envelope = checkNotNull(wrapped(sp))
-        cachedKey?.let { if (cachedWrap == envelope) return it }
+        if (!verifyWrapper) cachedKey?.let { if (cachedWrap == envelope) return it }
         val encoded = AdaptiveSecurity.unwrapRecordsKey(envelope)
         val bytes = Base64.getDecoder().decode(encoded)
         try {
             check(bytes.size == 32)
+            if (cachedWrap == envelope) cachedKey?.let { cached ->
+                val old = cached.encoded
+                try { check(old.contentEquals(bytes)) } finally { old.fill(0) }
+            }
             return SecretKeySpec(bytes, "AES").also { cachedKey = it; cachedWrap = envelope }
         } finally { bytes.fill(0) }
     }
@@ -56,33 +60,57 @@ internal object ProtectedRecords {
         return RecordCipher.open(key(sp), name, value)
     }
     fun read(sp: SharedPreferences, name: String): String? = synchronized(lock) {
-        try { readLocked(sp, name) }
+        try { readLocked(sp, name)?.also { RecordSchema.validate(name, it) } }
         catch (e: Exception) { markFailure(e); throw IllegalStateException("Dữ liệu cục bộ không đọc được") }
     }
-    fun readArray(sp: SharedPreferences, name: String): org.json.JSONArray = synchronized(lock) {
+    // Store always requests schema validation; the legacy low-level parser remains for existing probes.
+    fun readArray(sp: SharedPreferences, name: String, strictSchema: Boolean = false): org.json.JSONArray = synchronized(lock) {
         try {
-            org.json.JSONArray(readLocked(sp, name) ?: "[]")
+            val value = readLocked(sp, name)
+            if (value != null) {
+                if (strictSchema || active(sp)) RecordSchema.validate(name, value)
+                else RecordSchema.validateSyntax(value)
+            }
+            org.json.JSONArray(value ?: "[]")
         } catch (e: Exception) {
             // Keep the UI usable while blocking all record and sync writes for this process.
             markFailure(e)
             org.json.JSONArray()
         }
     }
-    fun readable(sp: SharedPreferences, name: String): Boolean = try { read(sp, name); true } catch (_: Exception) { false }
+    private fun validateSyncBinding(sp: SharedPreferences) {
+        check(sp.contains("sync_account_v1") == sp.contains("sync_state_v1"))
+        if (sp.contains("sync_account_v1")) check(!sp.getString("sync_account_v1", null).isNullOrBlank())
+    }
+    private fun validateExisting(sp: SharedPreferences, name: String) {
+        readLocked(sp, name)?.let { RecordSchema.validate(name, it) }
+    }
+    fun readable(sp: SharedPreferences, name: String): Boolean = synchronized(lock) {
+        try {
+            check(!failed)
+            if (active(sp)) key(sp, verifyWrapper = true)
+            validateExisting(sp, name)
+            true
+        } catch (e: Exception) { markFailure(e); false }
+    }
 
     /** Keep related sync values atomic, like the original Store. Explicit removals are only for disconnect. */
     fun write(sp: SharedPreferences, records: Map<String, String>, remove: Set<String> = emptySet(),
               extras: (SharedPreferences.Editor) -> Unit = {}): Boolean = synchronized(lock) {
         try {
-            check(!failed || (records.isEmpty() && remove == setOf("sync_state_v1")))
+            check(!failed)
             require(records.keys.all { it in names } && remove.all { it in names })
-            val enabled = if (records.isEmpty()) false else active(sp)
-            val dataKey = if (enabled) key(sp) else null
+            require(records.keys.intersect(remove).isEmpty())
+            validateSyncBinding(sp)
+            val enabled = active(sp)
+            val dataKey = if (enabled) key(sp, verifyWrapper = true) else null
+            // Validate every target before any replacement, explicit removal or metadata change.
+            for (name in records.keys + remove) validateExisting(sp, name)
             val editor = sp.edit()
             for ((name, value) in records) {
-                // Verify old data before replacement. A corrupt record is not an empty record.
-                readLocked(sp, name)
-                editor.putString(name, if (dataKey != null) RecordCipher.seal(dataKey, name, value) else value)
+                if (dataKey != null) RecordSchema.validate(name, value)
+                else RecordSchema.validateSyntax(value)
+                editor.putString(name, if (dataKey != null) RecordWritePolicy.sealVerified(dataKey, name, value) else value)
             }
             for (name in remove) editor.remove(name)
             extras(editor)
@@ -97,17 +125,18 @@ internal object ProtectedRecords {
             try {
                 check(!failed)
                 if (!active(sp)) {
+                    val legacyRecords = RecordWritePolicy.preflight(failed, {
+                        names.mapNotNull { name -> sp.getString(name, null)?.let { name to it } }.toMap()
+                    }, RecordSchema::validate)
+                    validateSyncBinding(sp)
                     val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
                     try {
                         val dataKey = SecretKeySpec(bytes, "AES")
                         val envelope = AdaptiveSecurity.wrapRecordsKey(context, Base64.getEncoder().encodeToString(bytes))
                         check(AdaptiveSecurity.unwrapRecordsKey(envelope) == Base64.getEncoder().encodeToString(bytes))
                         val editor = sp.edit().putString(WRAPPED, envelope)
-                        for (name in names) {
-                            val legacy = sp.getString(name, null) ?: continue
-                            val encrypted = RecordCipher.seal(dataKey, name, legacy)
-                            check(RecordCipher.open(dataKey, name, encrypted) == legacy)
-                            editor.putString(name, encrypted)
+                        for ((name, legacy) in legacyRecords) {
+                            editor.putString(name, RecordWritePolicy.sealVerified(dataKey, name, legacy))
                         }
                         // All records and wrapped key published together, after round-trip checks.
                         check(editor.commit())
@@ -120,10 +149,20 @@ internal object ProtectedRecords {
         }
     }
     private fun statusLocked(sp: SharedPreferences): Status {
-        if (!active(sp)) return Status(false, !failed, "Chưa bật", 0)
-        key(sp)
+        validateSyncBinding(sp)
+        if (!active(sp)) {
+            if (!failed) {
+                for (name in names) validateExisting(sp, name)
+            }
+            return Status(false, !failed, if (failed) "Lỗi lưu trữ" else "Chờ xác nhận", 0)
+        }
+        key(sp, verifyWrapper = true)
         var count = 0
-        for (name in names) if (readLocked(sp, name) != null) count++
+        for (name in names) {
+            val value = readLocked(sp, name) ?: continue
+            RecordSchema.validate(name, value)
+            count++
+        }
         return Status(true, !failed, AdaptiveSecurity.recordsKeyLevel(), count)
     }
     suspend fun status(context: Context): Status = withContext(Dispatchers.IO) {

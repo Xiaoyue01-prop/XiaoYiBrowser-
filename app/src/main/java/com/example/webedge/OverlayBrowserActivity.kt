@@ -108,7 +108,7 @@ class OverlayBrowserActivity : BiometricBrowserActivity() {
         overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
         overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
 
-        store = Store(this)
+        store = Store.get(this)
         AdBlocker.init(this)
         buildUi(startUrl)
 

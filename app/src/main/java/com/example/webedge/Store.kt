@@ -25,8 +25,13 @@ data class PersistedTab(
     val desktop: Boolean = false,
     val groupId: Long = TabManager.MAIN_GROUP_ID
 )
-class Store(context: Context) {
+class Store private constructor(context: Context) {
     companion object {
+        // All Activities in this process use the same caches and pending history writer.
+        private var instance: Store? = null
+        @Synchronized
+        fun get(context: Context): Store = instance ?: Store(context.applicationContext).also { instance = it }
+
         private const val TAG = "Store"
         private const val CLOSED_TABS_KEY = "closed_tabs"
         // Tab preview chỉ cần đủ nét để hiển thị trong lưới, không cần giữ ảnh gần full-resolution.
@@ -112,11 +117,13 @@ class Store(context: Context) {
         syncCache = data; syncLoaded = true
         return data
     }
-    internal fun disableSync() {
-        // Disconnect metadata even if the encrypted journal is unreadable; explicit user action.
-        if (ProtectedRecords.write(sp, emptyMap(), setOf("sync_state_v1")) {
+    internal fun disableSync(): Boolean {
+        // Preserve the journal and its account binding if protected storage cannot verify it.
+        if (!ProtectedRecords.write(sp, emptyMap(), setOf("sync_state_v1")) {
             it.remove("sync_account_v1").remove("sync_success_v1").remove("sync_failed_v1")
-        }) { syncCache = null; syncLoaded = false }
+        }) return false
+        syncCache = null; syncLoaded = false
+        return true
     }
     private fun mutateSync(change: (SyncData) -> SyncData) {
         if (syncAccount == null) return
@@ -254,7 +261,8 @@ class Store(context: Context) {
                     put(item.optLong("id"), item.optLong("thumbnailVersion", 0L))
                 }
             }
-        }.getOrDefault(emptyMap())
+        }.getOrElse { return }
+        if (ProtectedRecords.failed) return
 
         // Ghi các thumbnail mới trước metadata để JSON không trỏ tới ảnh chưa được tạo xong.
         val savedVersions = mutableMapOf<Long, Long>()
@@ -295,7 +303,7 @@ class Store(context: Context) {
         }
     }
     fun loadTabs(): List<PersistedTab> {
-        val arr = ProtectedRecords.readArray(sp, "saved_tabs")
+        val arr = ProtectedRecords.readArray(sp, "saved_tabs", strictSchema = true)
         val result = mutableListOf<PersistedTab>()
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
@@ -325,7 +333,7 @@ class Store(context: Context) {
     }
 
     fun loadTabGroups(): List<TabManager.Group> {
-        val arr = ProtectedRecords.readArray(sp, "tab_groups")
+        val arr = ProtectedRecords.readArray(sp, "tab_groups", strictSchema = true)
         val out = mutableListOf<TabManager.Group>()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
@@ -338,7 +346,7 @@ class Store(context: Context) {
     fun list(key: String): MutableList<Entry> {
         // ✅ Có trong cache thì lấy luôn, khỏi đọc lại từ ổ cứng
         listCache[key]?.let { return it }
-        val arr = ProtectedRecords.readArray(sp, key)
+        val arr = ProtectedRecords.readArray(sp, key, strictSchema = true)
         val out = mutableListOf<Entry>()
         for (i in 0 until arr.length()) {
             // ✅ optJSONObject thay getJSONObject: gặp item lỗi thì bỏ qua, không crash

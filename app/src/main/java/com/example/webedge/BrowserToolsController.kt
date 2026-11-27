@@ -469,13 +469,18 @@ class BrowserToolsController(
         lateinit var checkButton: TextView
         fun showStorage(status: ProtectedRecords.Status) {
             enabled = status.enabled
-            val label = when { !status.healthy -> "Lỗi · tạm ngừng ghi"; enabled -> "AES-256-GCM"; else -> "Chưa bật mã hóa" }
+            val label = when {
+                !status.healthy && enabled -> "Đã mã hóa · lỗi lưu trữ"
+                !status.healthy -> "Chưa bật · lỗi lưu trữ"
+                enabled -> "Đã mã hóa · AES-256-GCM"
+                else -> "Chưa bật · chờ xác nhận"
+            }
             set(recordState, label, enabled && status.healthy)
             set(journalState, label, enabled && status.healthy)
             set(keyState, if (enabled && status.healthy) "${status.protection} · ${status.encryptedCount} bản ghi" else status.protection,
                 enabled && status.healthy && status.protection in setOf("TEE", "StrongBox"))
             enableButton.visibility = if (enabled || !status.healthy) View.GONE else View.VISIBLE
-            if (!status.healthy) note.text = "Lưu trữ gặp lỗi. Summit giữ ciphertext cũ và tạm dừng ghi/đồng bộ; hãy khởi động lại để kiểm tra. Không xóa dữ liệu ứng dụng."
+            if (!status.healthy) note.text = "Lưu trữ gặp lỗi. Summit giữ bản ghi hiện có và tạm dừng ghi/đồng bộ; hãy khởi động lại để kiểm tra. Không xóa dữ liệu ứng dụng."
         }
         fun showReport(report: AdaptiveSecurity.Report, refreshSecrets: Boolean = false) {
             hardwareVerified = report.defaultProbe == "TEE · AES-GCM OK" || report.defaultProbe == "StrongBox · AES-GCM OK" || report.strongBoxProbe == "StrongBox · AES-GCM OK"
@@ -513,7 +518,7 @@ class BrowserToolsController(
         }
         enableButton = actionButton("Bật mã hóa dữ liệu trên máy", accent) {
             if (running || enabled || host == null) return@actionButton
-            sheet.confirm("Bật mã hóa dữ liệu?", "Lịch sử, dấu trang, tab, nhóm tab và nhật ký đồng bộ sẽ được mã hóa bằng khóa gắn với thiết bị. Không thể khôi phục bằng Android Backup hoặc đọc bằng bản Summit cũ. Hãy đồng bộ/sao lưu dữ liệu cần giữ trước. Không mã hóa dữ liệu trên Drive hay ảnh tab.", "Bật mã hóa") {
+            sheet.confirm("Bật mã hóa dữ liệu?", "Lịch sử, dấu trang, tab, nhóm tab và nhật ký đồng bộ sẽ được mã hóa bằng khóa gắn với thiết bị. Nếu mất khóa Keystore vĩnh viễn, dữ liệu đã mã hóa có thể không khôi phục được. Android Backup không lưu các bản ghi này; Drive chỉ đồng bộ lịch sử và dấu trang. Hãy sao lưu dữ liệu quan trọng trước. Không đọc được bằng Summit cũ; không mã hóa dữ liệu trên Drive hay ảnh tab.", "Bật mã hóa") {
                 if (running || enabled) return@confirm
                 busy(true)
                 enableButton.text = "Đang mã hóa…"
