@@ -41,7 +41,6 @@ internal class PageActions(
                 pageUrl = view.url
             )
             downloads.enqueue(request)
-            toast("Đang tải hình ảnh")
         }.onFailure { toast("Không thể tải hình ảnh này") }
     }
 }

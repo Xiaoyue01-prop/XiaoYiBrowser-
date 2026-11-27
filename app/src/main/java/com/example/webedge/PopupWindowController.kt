@@ -47,7 +47,7 @@ class PopupWindowController(
     private val activity: Activity,
     private val mainWebView: () -> WebView,
     private val chromeClient: (source: WebView) -> WebChromeClient,
-    private val openExternal: (String, WebView) -> Boolean,
+    private val openExternal: (String, WebView, Boolean) -> Boolean,
     private val toast: (String) -> Unit,
     /** Context dựng WebView popup; theo chế độ tối của web để popup đăng nhập cùng tông với tab. */
     private val webViewContext: () -> android.content.Context = { activity },
@@ -100,11 +100,12 @@ class PopupWindowController(
 
     @SuppressLint("ClickableViewAccessibility")
     fun create(resultMsg: Message?, sourceView: WebView? = null, isUserGesture: Boolean = false): Boolean {
+        if (!isUserGesture) return false
         if (activity.isFinishing || activity.isDestroyed || closing || !BrowserLockPolicy.allowBrowserWindow(activity)) return false
         if (webView != null) {
             // Keep the opener alive for window.opener, redirects and authentication callbacks.
             // Only a user-initiated request from the visible parent may open one child window.
-            if (!allowNested || !isUserGesture || sourceView !== webView || child?.webView != null) return false
+            if (!allowNested || sourceView !== webView || child?.webView != null) return false
             val nested = child ?: PopupWindowController(
                 activity, mainWebView, chromeClient, openExternal, toast,
                 webViewContext, isNight, configureWebViewForSource, attachDownloads,
@@ -256,13 +257,13 @@ class PopupWindowController(
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                if (!request.isForMainFrame) return false
-                return openExternal(request.url.toString(), view)
+                if (!request.isForMainFrame && isExternalUrlScheme(request.url.scheme)) return true
+                return openExternal(request.url.toString(), view, request.isForMainFrame && request.hasGesture())
             }
 
             @Deprecated("Deprecated in Java")
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
-                openExternal(url, view)
+                openExternal(url, view, false)
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) toast("Không tải được cửa sổ đăng nhập (${error.errorCode})")

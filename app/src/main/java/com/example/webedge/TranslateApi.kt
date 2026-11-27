@@ -12,7 +12,7 @@ import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
-import java.net.HttpURLConnection
+import javax.net.ssl.HttpsURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
@@ -180,8 +180,9 @@ object TranslateApi {
                     )
             )
 
-        val conn = URL("$BASE/$model:generateContent").openConnection() as HttpURLConnection
+        val conn = URL("$BASE/$model:generateContent").openConnection() as HttpsURLConnection
         try {
+            conn.instanceFollowRedirects = false
             conn.requestMethod = "POST"
             conn.connectTimeout = 10_000
             conn.readTimeout = 60_000

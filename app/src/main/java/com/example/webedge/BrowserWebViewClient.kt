@@ -26,7 +26,7 @@ internal interface BrowserWebViewHost {
     var currentUrl: String
     val isUrlBarFocused: Boolean
     val webDarkMode: Boolean
-    fun handleSpecialUrl(url: String, view: WebView): Boolean
+    fun handleSpecialUrl(url: String, view: WebView, hasGesture: Boolean): Boolean
     fun preparePageNavigation(view: WebView, url: String, isRedirect: Boolean): String?
     fun applyDesktopViewportFallback(view: WebView, url: String)
     fun toast(msg: String)
@@ -67,8 +67,10 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
     }
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        if (!request.isForMainFrame) return false
+        if (!request.isForMainFrame && isExternalUrlScheme(request.url.scheme)) return true
         var target = request.url.toString()
+        if (host.handleSpecialUrl(target, view, request.isForMainFrame && request.hasGesture())) return true
+        if (!request.isForMainFrame) return false
         var rewritten = false
         // Chỉ GET: POST/form không được tải lại bằng loadUrl mà không mất dữ liệu.
         if (request.method.equals("GET", ignoreCase = true)) {
@@ -91,12 +93,12 @@ internal class BrowserWebViewClient(private val host: BrowserWebViewHost) : WebV
             view.loadUrl(target)
             return true
         }
-        return host.handleSpecialUrl(target, view)
+        return false
     }
 
     @Deprecated("Deprecated in Java")
     override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
-        host.handleSpecialUrl(url, view)
+        host.handleSpecialUrl(url, view, false)
 
     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
         if (!request.isForMainFrame || host.isDestroyed) return

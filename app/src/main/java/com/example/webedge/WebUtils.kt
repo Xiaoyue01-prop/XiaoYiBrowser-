@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.webkit.WebSettingsCompat
@@ -98,14 +99,34 @@ fun desktopUserAgent(mobileUa: String): String {
 // Các scheme do WebView tự xử lý, không chuyển sang app khác. Tạo một lần thay vì mỗi lần mở link.
 private val INTERNAL_URL_SCHEMES = setOf("http", "https", "about", "javascript", "data", "blob", "file")
 
+internal fun isExternalUrlScheme(scheme: String?): Boolean =
+    scheme != null && scheme.lowercase(Locale.ROOT) !in INTERNAL_URL_SCHEMES
+
+// Shared by all WebView clients (called on the UI thread); no queued toasts.
+private const val EXTERNAL_URL_TOAST_INTERVAL_MS = 2_000L
+private var lastExternalUrlToastAt: Long? = null
+
+private fun showExternalUrlToast(message: String, showToast: (String) -> Unit) {
+    val now = SystemClock.elapsedRealtime()
+    val last = lastExternalUrlToastAt
+    if (last != null && now - last < EXTERNAL_URL_TOAST_INTERVAL_MS) return
+    lastExternalUrlToastAt = now
+    showToast(message)
+}
+
 /**
  * Link không phải web (intent:, tel:, mailto:, scheme của app khác) thì mở bằng app tương ứng.
  * Trả true nếu đã xử lý (WebView không tải link này nữa), false nếu để WebView tự tải.
  */
-fun Activity.openExternalUrl(url: String, fallbackView: WebView, toast: (String) -> Unit): Boolean {
+fun Activity.openExternalUrl(url: String, fallbackView: WebView, hasGesture: Boolean, showToast: (String) -> Unit): Boolean {
     val uri = try { Uri.parse(url) } catch (_: Exception) { return false }
     val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
     if (scheme in INTERNAL_URL_SCHEMES) return false
+    val toast: (String) -> Unit = { message -> showExternalUrlToast(message, showToast) }
+    if (!hasGesture) {
+        toast("Hãy chạm vào liên kết để mở ứng dụng bên ngoài")
+        return true
+    }
 
     val intent = try {
         if (scheme == "intent") Intent.parseUri(url, Intent.URI_INTENT_SCHEME)

@@ -14,6 +14,19 @@ require(googleWebClientId.isEmpty() || googleWebClientId.matches(Regex("[A-Za-z0
     "Set summitGoogleWebClientId to the Google OAuth Web Client ID."
 }
 
+// Keep release credentials outside source control. Blank values count as missing.
+fun releaseSigningValue(name: String): String? = providers.gradleProperty(name)
+    .filter { it.isNotBlank() }
+    .orElse(providers.environmentVariable(name).filter { it.isNotBlank() })
+    .orNull
+
+val releaseKeystorePath = releaseSigningValue("SUMMIT_RELEASE_KEYSTORE_PATH")
+val releaseKeystorePassword = releaseSigningValue("SUMMIT_RELEASE_KEYSTORE_PASSWORD")
+val releaseKeyAlias = releaseSigningValue("SUMMIT_RELEASE_KEY_ALIAS")
+val releaseKeyPassword = releaseSigningValue("SUMMIT_RELEASE_KEY_PASSWORD")
+val releaseSigningConfigured = listOf(releaseKeystorePath, releaseKeystorePassword,
+    releaseKeyAlias, releaseKeyPassword).all { it != null }
+
 abstract class GenerateReleaseEdgeScript : Exec() {
     @get:OutputDirectory
     abstract val assetsDir: DirectoryProperty
@@ -63,6 +76,17 @@ android {
         resValues = true
     }
 
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = rootProject.file(requireNotNull(releaseKeystorePath))
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -71,8 +95,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // App dùng cá nhân: ký bằng khóa debug để cài được trực tiếp, chưa cần keystore riêng.
-            signingConfig = signingConfigs.getByName("debug")
+            // Keep trial builds installable when any release credential is missing.
+            signingConfig = signingConfigs.getByName(if (releaseSigningConfigured) "release" else "debug")
         }
     }
 

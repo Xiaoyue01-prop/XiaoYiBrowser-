@@ -195,7 +195,9 @@ class WebMediaService : MediaSessionService() {
             .build()
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
+        if (controllerInfo.uid == applicationInfo.uid || controllerInfo.isTrusted) session else null
 
     // Người dùng vuốt app khỏi danh sách gần đây: nếu không còn phát thì dừng service.
     override fun onTaskRemoved(rootIntent: Intent?) {

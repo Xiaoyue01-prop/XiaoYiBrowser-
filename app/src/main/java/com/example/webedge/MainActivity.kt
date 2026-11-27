@@ -120,7 +120,12 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
             val sourceIsPrivate = privateProfileManager.isPrivateProfile(sourceWebView)
             createChromeClient(null) { sourceIsPrivate }
         },
-        openExternal = { url, view -> handleSpecialUrl(url, view) },
+        openExternal = { url, view, hasGesture ->
+            openExternalUrl(url, view, hasGesture) { message ->
+                // The popup is a separate dialog window above the Activity's toast banner.
+                android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        },
         toast = { toast(it) },
         isNight = { GlassSystem.isDarkPage() },
         configureWebViewForSource = { popupWebView, sourceWebView ->
@@ -259,8 +264,8 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
         view.evaluateJavascript("window.__summitMedia&&window.__summitMedia.report()", null)
     }
 
-    private fun handleSpecialUrl(url: String, fallbackView: WebView = web): Boolean =
-        openExternalUrl(url, fallbackView, ::toast)
+    private fun handleSpecialUrl(url: String, view: WebView, hasGesture: Boolean): Boolean =
+        openExternalUrl(url, view, hasGesture, ::toast)
 
     private fun exitFullscreenView() {
         fullscreenVideoController?.hide()
@@ -280,8 +285,8 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
             get() = this@MainActivity.currentUrl
             set(value) { this@MainActivity.currentUrl = value }
         override val isUrlBarFocused: Boolean get() = urlBar.hasFocus()
-        override fun handleSpecialUrl(url: String, view: WebView): Boolean =
-            this@MainActivity.handleSpecialUrl(url, view)
+        override fun handleSpecialUrl(url: String, view: WebView, hasGesture: Boolean): Boolean =
+            this@MainActivity.handleSpecialUrl(url, view, hasGesture)
         override fun preparePageNavigation(view: WebView, url: String, isRedirect: Boolean): String? =
             tabConfigurator.prepareNavigation(view, url, isRedirect)
         override fun applyDesktopViewportFallback(view: WebView, url: String) =

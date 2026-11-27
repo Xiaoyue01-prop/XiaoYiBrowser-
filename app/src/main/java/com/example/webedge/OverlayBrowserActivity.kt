@@ -348,6 +348,8 @@ class OverlayBrowserActivity : BiometricBrowserActivity() {
             }
 
             override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
+                if (!request.isForMainFrame && isExternalUrlScheme(request.url.scheme)) return true
+                if (openExternalUrl(request.url.toString(), v, request.isForMainFrame && request.hasGesture(), ::toast)) return true
                 if (!request.isForMainFrame) return false
                 if (request.method.equals("GET", ignoreCase = true)) {
                     HttpsFirst.upgrade(v, request.url.toString())?.let { secure ->
@@ -355,10 +357,12 @@ class OverlayBrowserActivity : BiometricBrowserActivity() {
                         return true
                     }
                 }
-                return this@OverlayBrowserActivity.openExternalUrl(request.url.toString(), v) { msg ->
-                    toast(msg)
-                }
+                return false
             }
+
+            @Deprecated("Deprecated in Java")
+            override fun shouldOverrideUrlLoading(v: WebView, url: String): Boolean =
+                openExternalUrl(url, v, false, ::toast)
         }
         // Tải xuống do MainActivity lo (có hộp xác nhận, DownloadManager, Live Update): chuyển link sang Summit.
         view.setDownloadListener { url, _, _, _, _ -> openInSummit(url) }

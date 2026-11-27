@@ -6,7 +6,7 @@ import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
-import java.net.HttpURLConnection
+import javax.net.ssl.HttpsURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -88,8 +88,9 @@ object FootballApi {
         }
 
     private fun request(key: String, path: String, query: String): JSONObject {
-        val conn = URL("$BASE/$path?$query").openConnection() as HttpURLConnection
+        val conn = URL("$BASE/$path?$query").openConnection() as HttpsURLConnection
         try {
+            conn.instanceFollowRedirects = false
             conn.connectTimeout = 10_000
             conn.readTimeout = 15_000
             conn.setRequestProperty("x-apisports-key", key)

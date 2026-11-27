@@ -57,8 +57,8 @@ class DownloadController(
         view.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             try {
                 val scheme = Uri.parse(url).scheme
-                if (scheme != "http" && scheme != "https") {
-                    toast("Chưa hỗ trợ tải file từ loại liên kết này")
+                if (scheme != "https") {
+                    toast("Chỉ hỗ trợ tải xuống qua HTTPS")
                     return@setDownloadListener
                 }
                 val pageUrl = view.url?.takeUnless { it.isBlank() || it == "about:blank" } ?: openerUrl
@@ -116,11 +116,16 @@ class DownloadController(
 
     fun enqueue(request: Request) {
         try {
+            val uri = Uri.parse(request.url)
+            if (uri.scheme != "https" || uri.host.isNullOrBlank()) {
+                toast("Chỉ hỗ trợ tải xuống qua HTTPS")
+                return
+            }
             val safeFileName = request.fileName
                 .replace('/', '_')
                 .replace('\\', '_')
                 .ifBlank { "download" }
-            val download = DownloadManager.Request(Uri.parse(request.url))
+            val download = DownloadManager.Request(uri)
             if (request.mimeType.isNotBlank()) download.setMimeType(request.mimeType)
             if (request.cookie.isNotBlank()) download.addRequestHeader("Cookie", request.cookie)
             if (request.userAgent.isNotBlank()) download.addRequestHeader("User-Agent", request.userAgent)

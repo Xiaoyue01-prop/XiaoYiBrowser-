@@ -12,3 +12,6 @@ code_dump.txt
 *.b4
 
 node_modules/
+
+*.jks
+*.keystore

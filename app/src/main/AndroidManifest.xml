@@ -80,7 +80,7 @@
         <!-- Media3 MediaSessionService: thông báo điều khiển media, màn hình khóa, nút trong PiP. -->
         <service
             android:name=".WebMediaService"
-            android:exported="true"
+            android:exported="false"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />

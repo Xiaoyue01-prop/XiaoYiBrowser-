@@ -50,11 +50,42 @@ Gradle Wrapper files are not included in this ZIP because an authentic wrapper J
 
 Mục tài khoản ở đầu menu ba chấm của tab thường. Summit lưu tên hiển thị và đường dẫn ảnh đại diện để hiện lại khi mở app. Nút **Đăng xuất** nằm trong trang tài khoản. Xem [hướng dẫn Google cho Android](https://codelabs.developers.google.com/sign-in-with-google-android) để tạo cấu hình OAuth.
 
-1. Trong cùng một dự án Google Cloud, cấu hình Google Auth Platform rồi tạo OAuth client loại **Android** với package `com.example.webedge` và SHA-1 của khóa ký APK sẽ cài. Dùng `./gradlew :app:signingReport` hoặc `gradle :app:signingReport` để xem SHA-1. Release thử nghiệm hiện dùng khóa debug.
+1. Trong cùng một dự án Google Cloud, cấu hình Google Auth Platform rồi tạo OAuth client loại **Android** với package `com.example.webedge` và SHA-1 của khóa ký APK sẽ cài. Dùng `./gradlew :app:signingReport` hoặc `gradle :app:signingReport` để xem SHA-1. Release thử nghiệm dùng khóa debug khi chưa cấu hình đầy đủ khóa release (xem mục ký APK bên dưới).
 2. Bản này đã có OAuth Web Client ID mặc định của Summit. Khi dùng dự án Google Cloud khác, đặt ID từ OAuth client loại **Web application** của dự án đó vào thuộc tính Gradle `summitGoogleWebClientId` hoặc biến môi trường `SUMMIT_GOOGLE_WEB_CLIENT_ID`.
 3. Khi build bằng GitHub Actions, giữ một khóa ký cố định để SHA-1 của APK khớp với OAuth client Android. Với khóa debug, đặt bản mã hóa Base64 của `debug.keystore` vào **Actions secrets** với tên `SUMMIT_DEBUG_KEYSTORE_BASE64`. Có thể đặt `SUMMIT_GOOGLE_WEB_CLIENT_ID` trong **Actions variables** để dùng một Web Client ID khác.
 
 Nếu màn hình đồng ý ở chế độ Testing, thêm tài khoản thử nghiệm vào dự án Google Cloud. Thử trên thiết bị Android có Google Play services. Bấm đăng nhập, chọn tài khoản, kiểm tra ảnh và tên sau khi mở lại app, rồi đăng xuất và thử chọn tài khoản khác. Kiểm tra cả trường hợp đóng hộp chọn tài khoản và ảnh đại diện tải lỗi.
+
+## Ký APK release tùy chọn (Security 2A)
+
+Mặc định vẫn dùng signing config `debug` cho APK release như trước. Chỉ khi đủ cả bốn giá trị không rỗng/không toàn khoảng trắng mới bật signing config `release`. Mỗi giá trị đọc từ Gradle property cùng tên trước, rồi tới biến môi trường. Với local build, đặt các property vào `~/.gradle/gradle.properties` (không đặt trong repo) hoặc truyền qua môi trường riêng của máy:
+
+| Biến môi trường / Gradle property | Giá trị |
+|---|---|
+| `SUMMIT_RELEASE_KEYSTORE_PATH` | Đường dẫn tuyệt đối đến keystore; đường dẫn tương đối tính từ root project |
+| `SUMMIT_RELEASE_KEYSTORE_PASSWORD` | Mật khẩu keystore |
+| `SUMMIT_RELEASE_KEY_ALIAS` | Alias của khóa ký |
+| `SUMMIT_RELEASE_KEY_PASSWORD` | Mật khẩu khóa ký |
+
+Tạo keystore riêng bằng JDK, ngoài repository (ví dụ trên Bash):
+
+```bash
+install -d -m 0700 "$HOME/.summit-signing"
+umask 077
+keytool -genkeypair -v -keystore "$HOME/.summit-signing/release.jks" \
+  -storetype JKS -alias summit-release -keyalg RSA -keysize 2048 -validity 10000
+```
+
+Nhập mật khẩu theo prompt, không đưa vào command line/history. Sao lưu keystore và mật khẩu an toàn, giữ nguyên khóa qua các lần cập nhật. Không commit keystore, Base64 hoặc mật khẩu (đã ignore `*.jks`, `*.keystore`).
+
+GitHub Actions: vào **Settings → Secrets and variables → Actions → New repository secret**, tạo bốn secrets:
+
+- `SUMMIT_RELEASE_KEYSTORE_BASE64`: Base64 của file keystore, ví dụ GNU/Linux hoặc Termux: `base64 -w 0 "$HOME/.summit-signing/release.jks"`; dán trực tiếp vào secret, không lưu vào repo, log hoặc chia sẻ chuỗi này (Base64 không phải mã hóa bảo mật).
+- `SUMMIT_RELEASE_KEYSTORE_PASSWORD`, `SUMMIT_RELEASE_KEY_ALIAS`, `SUMMIT_RELEASE_KEY_PASSWORD`: ba giá trị tương ứng bên trên.
+
+CI chỉ giải mã nếu đủ cả bốn secret, vào thư mục quyền riêng tư dưới `$RUNNER_TEMP`; đường dẫn `SUMMIT_RELEASE_KEYSTORE_PATH` được CI cấp tự động. Thiếu một secret bất kỳ thì bỏ qua restore và tiếp tục ký debug. Nếu đủ giá trị nhưng keystore sai đường dẫn, hỏng hoặc sai mật khẩu, build sẽ lỗi thay vì lặng lẽ ký bằng khóa khác. `SUMMIT_DEBUG_KEYSTORE_BASE64` vẫn độc lập và không thay đổi. Không in secret trong log.
+
+**Cảnh báo:** APK ký bằng khóa release khác khóa debug **KHÔNG cài đè được** lên bản debug đã cài. Phải gỡ rồi cài lại, sẽ mất dữ liệu cục bộ chưa đồng bộ. Hãy đồng bộ/sao lưu dữ liệu trước. Cập nhật SHA-1 của khóa release trong OAuth client Android nếu dùng Google sign-in. Khi muốn giữ dữ liệu và cập nhật bản đang cài bằng khóa debug, chưa bật khóa release mới.
 
 ## YouTube-only AdBlock MVP (2026-11-06)
 

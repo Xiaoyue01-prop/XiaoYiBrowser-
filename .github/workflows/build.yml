@@ -67,8 +67,30 @@ jobs:
             printf '%s' "$SUMMIT_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
           fi
 
+      - name: Restore Summit release signing key if configured
+        env:
+          SUMMIT_RELEASE_KEYSTORE_BASE64: ${{ secrets.SUMMIT_RELEASE_KEYSTORE_BASE64 }}
+          SUMMIT_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SUMMIT_RELEASE_KEYSTORE_PASSWORD }}
+          SUMMIT_RELEASE_KEY_ALIAS: ${{ secrets.SUMMIT_RELEASE_KEY_ALIAS }}
+          SUMMIT_RELEASE_KEY_PASSWORD: ${{ secrets.SUMMIT_RELEASE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${SUMMIT_RELEASE_KEYSTORE_BASE64//[[:space:]]/}" &&
+                -n "${SUMMIT_RELEASE_KEYSTORE_PASSWORD//[[:space:]]/}" &&
+                -n "${SUMMIT_RELEASE_KEY_ALIAS//[[:space:]]/}" &&
+                -n "${SUMMIT_RELEASE_KEY_PASSWORD//[[:space:]]/}" ]]; then
+            umask 077
+            signing_dir="$(mktemp -d "$RUNNER_TEMP/summit-release.XXXXXX")"
+            printf '%s' "$SUMMIT_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/release.keystore"
+            printf 'SUMMIT_RELEASE_KEYSTORE_PATH=%s\n' "$signing_dir/release.keystore" >> "$GITHUB_ENV"
+          fi
+
       - name: Run Summit Security Eval
-        run: bash security-eval/run.sh
+        run: |
+          bash security-eval/run.sh
+          python3 security-eval/PhaseOnePolicyTest.py
+          python3 security-eval/PhaseTwoAPolicyTest.py
 
       - name: Build debug APK and run Android lint
         env:
@@ -78,6 +100,9 @@ jobs:
       - name: Build trial APK
         env:
           SUMMIT_GOOGLE_WEB_CLIENT_ID: ${{ vars.SUMMIT_GOOGLE_WEB_CLIENT_ID }}
+          SUMMIT_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SUMMIT_RELEASE_KEYSTORE_PASSWORD }}
+          SUMMIT_RELEASE_KEY_ALIAS: ${{ secrets.SUMMIT_RELEASE_KEY_ALIAS }}
+          SUMMIT_RELEASE_KEY_PASSWORD: ${{ secrets.SUMMIT_RELEASE_KEY_PASSWORD }}
         run: ./gradlew --no-daemon --stacktrace assembleRelease
 
       - name: Print Google sign-in config (public values only)
