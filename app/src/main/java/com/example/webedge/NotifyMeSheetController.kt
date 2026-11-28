@@ -23,8 +23,8 @@ internal class NotifyMeSheetController(
     private val isPrivate: () -> Boolean,
     private val toast: (String) -> Unit
 ) {
-    // The segmented control is fixed below the title; do not overlay the header or blur the list.
-    private val sheet = BrowserBottomSheet(activity, density, isNight, foreground, accent, overlayHeader = false)
+    // Use the standard overlay header and top gradient, just like the other browser sheets.
+    private val sheet = BrowserBottomSheet(activity, density, isNight, foreground, accent)
     private val drafts = NotifyMeDrafts()
     private val tones = mutableListOf<(Int?) -> Unit>()
     private fun dp(value: Int) = (value * density + .5f).toInt()
@@ -186,17 +186,27 @@ internal class NotifyMeSheetController(
         var analyzed = draft?.let { drafts.find(it.url) != null } == true
         var expandedWatch: String? = null
         var tab = initialTab
-        val body = column()
+        // One scrollable column: the glass selector is a normal item above the section body.
+        // BrowserBottomSheet requires ScrollView to be the FIRST direct child to transfer
+        // the header inset into the viewport and install the shared top gradient correctly.
+        val scrollContent = column().apply {
+            clipChildren = false
+            clipToPadding = false
+        }
+        val body = column().apply {
+            clipChildren = false
+            clipToPadding = false
+        }
         val scroll = ScrollView(activity).apply {
-            isFillViewport = true
+            isFillViewport = false
             isVerticalScrollBarEnabled = false
-            addView(body, FrameLayout.LayoutParams(-1, -2))
+            clipToPadding = false
+            addView(scrollContent, FrameLayout.LayoutParams(-1, -2))
         }
         lateinit var control: GlassSystem.SegmentedControl
         fun render(resetScroll: Boolean = false) {
             tones.clear()
             body.removeAllViews()
-            if (resetScroll) scroll.scrollTo(0, 0)
             when (tab) {
                 0 -> {
                     val d = draft
@@ -289,6 +299,7 @@ internal class NotifyMeSheetController(
             add(body, card().apply {
                 add(this, label("Bản thử giao diện · dữ liệu chỉ lưu trong RAM. Chưa kết nối AI, Cloudflare hay WorkManager.", 12f, true))
             }, 12)
+            if (resetScroll) scroll.scrollTo(0, 0)
         }
         val dark = GlassSystem.isDarkPage()
         control = GlassSystem.SegmentedControl(
@@ -297,7 +308,9 @@ internal class NotifyMeSheetController(
             selectedColor = accent, normalColor = GlassSystem.pageSecondaryText(GlassSystem.currentPageBackground()),
             trackFill = GlassSystem.createSegmentedTrack(28, density, dark)
         ) { index -> if (allowed()) { tab = index; render(true) } }
-        page.addView(control.view, LinearLayout.LayoutParams(-1, dp(48)).apply { bottomMargin = dp(14) })
+        // Keep the selector attached while switching sections so its glass thumb can animate.
+        scrollContent.addView(control.view, LinearLayout.LayoutParams(-1, dp(48)).apply { bottomMargin = dp(14) })
+        scrollContent.addView(body, LinearLayout.LayoutParams(-1, -2))
         page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         render()
         page.requestFocus()
