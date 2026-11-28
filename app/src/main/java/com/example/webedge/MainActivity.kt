@@ -580,7 +580,9 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onResume() {
         super.onResume()
-        NotifyBackground.schedule(this)
+        try { NotifyBackground.schedule(this) }
+        catch (e: Exception) { android.util.Log.e("SummitNotifyBackground", "resume scheduling failed", e) }
+        catch (e: LinkageError) { android.util.Log.e("SummitNotifyBackground", "resume scheduling failed", e) }
         if (::pipController.isInitialized) pipController.trace("onResume")
         requestHighRefreshRate()
         if (isLockUiActive()) return

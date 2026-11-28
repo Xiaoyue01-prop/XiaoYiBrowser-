@@ -15,3 +15,8 @@
 -keep class com.google.android.libraries.identity.googleid.** { *; }
 -dontwarn androidx.credentials.**
 -dontwarn com.google.android.libraries.identity.googleid.**
+
+# WorkManager persists worker class names across app upgrades.
+-keep class com.example.webedge.NotifyReleaseWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}

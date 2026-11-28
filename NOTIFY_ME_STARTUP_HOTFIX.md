@@ -1,0 +1,5 @@
+# V0.3.4.1 startup hotfix (Android only)
+
+Observed: V0.3.4 crashes on launch on user device. No logcat stack trace was supplied, so root cause is not confirmed. V0.3.4 adds eager WorkManager initialization and synchronous unguarded scheduling in MainActivity.onResume. Disable only the WorkManager Startup metadata, provide lazy Configuration.Provider, and serialize scheduling and cancellation off the main thread with logged exception/linkage guards. Keep worker name stable across release minification. UPDATE can refresh previously persisted work without resetting periodic cadence. No changes to auth, D1 or Worker. Use the already deployed V0.3.4 server. No new data migration.
+
+Static source/XML checks only; Android SDK and Gradle unavailable here. Validate release build, cold start with signed-in account, scheduling, sign-out, reboot and event delivery. If failure persists, collect adb logcat -b crash -d, redacting private information. Scheduler errors use SummitNotifyBackground tag. Scheduling remains best effort, and asynchronous Worker internals may still fail independently.
