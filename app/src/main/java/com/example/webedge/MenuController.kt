@@ -840,7 +840,7 @@ class MenuController(
             item("Tải xuống", Icons.DOWNLOAD, true) { browserTools.showDownloads() }
             item("Privacy Dashboard", Icons.SHIELD, true) { browserTools.showPrivacy() }
             if (!tabManager.isPrivateMode && tabManager.getForWebView(host.web)?.isPrivate != true) {
-                item("Notify Me", Icons.BELL, true) { notifyMeSheet.showDashboard() }
+                item("Notify Me", Icons.BELL, true) { notifyMeSheet.showDashboard(host.currentUrl, host.web.title) }
             }
             item("Tỉ số bóng đá", Icons.FOOTBALL, true) { footballSheet.show() }
 

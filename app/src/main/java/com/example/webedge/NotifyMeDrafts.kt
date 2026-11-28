@@ -40,3 +40,16 @@ internal class NotifyMeDrafts {
     fun remove(url: String) { entries.remove(url) }
     fun clear() { entries.clear() }
 }
+
+
+/** Session-only sample inbox. Only the explicit Later action inserts an item. */
+internal data class NotifyMeLaterItem(val id: String, val title: String, val episode: String)
+internal object NotifyMePreviewLater {
+    private val entries = linkedMapOf<String, NotifyMeLaterItem>()
+    @Synchronized fun list() = entries.values.toList().asReversed()
+    @Synchronized fun saveDemo() {
+        val item = NotifyMeLaterItem("probe-129", "Đấu Phá Thương Khung", "Chương 129")
+        entries[item.id] = item
+    }
+    @Synchronized fun remove(id: String) { entries.remove(id) }
+}

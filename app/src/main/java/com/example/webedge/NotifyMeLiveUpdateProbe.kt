@@ -96,7 +96,8 @@ internal object NotifyMeLiveUpdateProbe {
 class NotifyMeProbeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != NotifyMeLiveUpdateProbe.ACTION_LATER) return
+        NotifyMePreviewLater.saveDemo()
         NotifyMeLiveUpdateProbe.cancel(context)
-        Toast.makeText(context, "DEMO: Xem sau – đã kết thúc thông báo", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "DEMO: Đã lưu vào Xem sau", Toast.LENGTH_SHORT).show()
     }
 }

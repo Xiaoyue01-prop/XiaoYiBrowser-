@@ -4,11 +4,8 @@ import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.text.InputFilter
-import android.text.InputType
 import android.view.Gravity
 import android.view.View
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -40,14 +37,9 @@ internal class NotifyMeSheetController(
         tones.clear()
         drafts.clear()
     }
-    fun showForPage(url: String, title: String?) {
-        if (!allowed()) return
-        val page = NotifyMeDraft.fromPage(url, title) ?: run {
-            toast("Hãy mở một trang web HTTP hoặc HTTPS trước")
-            return
-        }
-        showEditor(drafts.find(page.url) ?: page)
-    }
+    fun showForPage(url: String, title: String?) = showUnified(url, title, 0)
+    fun showDashboard(url: String, title: String?) = showUnified(url, title, 1)
+
     private fun begin(): LinearLayout {
         sheet.dismiss(immediate = true)
         tones.clear()
@@ -57,19 +49,6 @@ internal class NotifyMeSheetController(
             isFocusableInTouchMode = true
             requestFocus()
         }
-    }
-    private fun present(title: String, page: LinearLayout, body: LinearLayout) {
-        val scroll = ScrollView(activity).apply {
-            isFillViewport = true
-            isVerticalScrollBarEnabled = false
-            addView(body, FrameLayout.LayoutParams(-1, -2))
-        }
-        page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        // Focus the page rather than the editor so opening a sheet doesn't pop up the IME.
-        page.requestFocus()
-        sheet.show(title, page, onDismiss = { tones.clear() }, onPageToneChanged = { color ->
-            tones.toList().forEach { it(color) }
-        })
     }
     private fun column() = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
     private fun row() = LinearLayout(activity).apply {
@@ -144,46 +123,28 @@ internal class NotifyMeSheetController(
         r.addView(switch, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
         add(parent, r)
     }
-    private fun pageCard(draft: NotifyMeDraft, status: String): LinearLayout = card().apply {
+    private fun pageCard(draft: NotifyMeDraft, status: String, onTap: (() -> Unit)? = null): LinearLayout = card().apply {
         val r = row()
         r.addView(icon(Icons.BELL), LinearLayout.LayoutParams(dp(26), dp(26)).apply { marginEnd = dp(12) })
         val info = column()
-        add(info, label(draft.title, 17f, bold = true))
+        add(info, label(draft.title, 17f, bold = true).apply {
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
         add(info, label(draft.domain, 12f, true), 3)
         add(info, label(status, 12f, true), 5)
         r.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
+        if (onTap != null) {
+            r.addView(label("⌄", 20f), LinearLayout.LayoutParams(dp(24), -2))
+            r.setOnClickListener { if (allowed()) onTap() }
+            AnimationSystem.press(r, Constants.PRESS_SCALE_BTN)
+        }
         add(this, r)
     }
-    private fun showEditor(initial: NotifyMeDraft) {
-        if (!allowed()) return
-        val page = begin()
-        val body = column()
+
+    private fun settings(initial: NotifyMeDraft, onChange: (NotifyMeDraft) -> Unit): LinearLayout {
         var draft = initial
-        add(body, label("Chọn nội dung bạn muốn Summit theo dõi.", 15f, true))
-        add(body, pageCard(draft, "Chưa phân tích AI"), 14)
-        add(body, label("Theo dõi điều gì?", 15f, bold = true), 18)
-        val input = EditText(activity).apply {
-            textSize = 15f
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            filters = arrayOf(InputFilter.LengthFilter(300))
-            minLines = 2
-            maxLines = 4
-            gravity = Gravity.TOP or Gravity.START
-            hint = "Ví dụ: Báo khi có chương mới"
-            setText(draft.request)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            surface(this, 16)
-            val update: (Int?) -> Unit = { color ->
-                setTextColor(GlassSystem.pagePrimaryText(color)); setHintTextColor(GlassSystem.pageSecondaryText(color))
-            }
-            update(GlassSystem.currentPageBackground()); tones += update
-        }
-        add(body, input, 8)
-        val suggestions = row()
-        listOf("Chương mới" to "Thông báo khi có chương mới", "Tập mới" to "Thông báo khi có tập phim mới").forEach { (name, request) ->
-            suggestions.addView(button(name) { input.setText(request) }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4); marginStart = dp(4) })
-        }
-        add(body, suggestions, 8)
+        fun change(value: NotifyMeDraft) { draft = value; onChange(value) }
         val settings = card()
         val r = row()
         r.addView(label("Chu kỳ kiểm tra", 15f, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
@@ -194,7 +155,7 @@ internal class NotifyMeSheetController(
                 PopupMenu(activity, this).apply {
                     NotifyMeDraft.intervals.forEach { minutes -> menu.add(0, minutes, 0, intervalLabel(minutes)) }
                     setOnMenuItemClickListener { item ->
-                        draft = draft.copy(intervalMinutes = item.itemId)
+                        change(draft.copy(intervalMinutes = item.itemId))
                         text = intervalLabel(item.itemId) + "  ▾"
                         true
                     }
@@ -205,59 +166,146 @@ internal class NotifyMeSheetController(
         r.addView(interval, LinearLayout.LayoutParams(-2, -2))
         add(settings, r)
         divider(settings)
-        toggle(settings, "Hybrid", "Theo dõi dự phòng khi ngoại tuyến", draft.hybrid) { draft = draft.copy(hybrid = it) }
+        toggle(settings, "Hybrid", "Theo dõi dự phòng khi ngoại tuyến", draft.hybrid) { change(draft.copy(hybrid = it)) }
         divider(settings)
-        toggle(settings, "Live Update", "Ưu tiên hiển thị trên đảo", draft.liveUpdate) { draft = draft.copy(liveUpdate = it) }
+        toggle(settings, "Live Update", "Ưu tiên hiển thị trên đảo", draft.liveUpdate) { change(draft.copy(liveUpdate = it)) }
         divider(settings)
-        toggle(settings, "Instant Open", "Tải trước khi có nội dung mới", draft.instantOpen) { draft = draft.copy(instantOpen = it) }
-        add(body, settings, 14)
-        add(body, label("Bản thử giao diện: các tùy chọn chưa kích hoạt dịch vụ. Không gửi dữ liệu lên AI hoặc Cloudflare.", 12f, true), 12)
-        add(body, button("Lưu bản nháp", primary = true) {
-            if (drafts.save(draft.copy(request = input.text.toString()))) {
-                toast("Đã lưu bản nháp trong phiên này")
-                showDashboard()
-            } else toast("Nhập yêu cầu hợp lệ; tối đa 20 bản nháp")
-        }, 14)
-        add(body, button("Quản lý Notify Me") { showDashboard() }, 8)
-        present("Notify Me", page, body)
+        toggle(settings, "Instant Open", "Tải trước khi có nội dung mới", draft.instantOpen) { change(draft.copy(instantOpen = it)) }
+        return settings
     }
-    fun showDashboard() {
+
+    /** Both menu entry points use one dialog; changing sections only replaces its content. */
+    private fun showUnified(url: String, title: String?, initialTab: Int) {
         if (!allowed()) return
         val page = begin()
+        page.clipChildren = false; page.clipToPadding = false
+        val current = NotifyMeDraft.fromPage(url, title)
+        var draft = current?.let { drafts.find(it.url) ?: it }
+        var expanded = false
+        var analyzed = draft?.let { drafts.find(it.url) != null } == true
+        var expandedWatch: String? = null
+        var tab = initialTab
         val body = column()
-        val items = drafts.list()
-        val summary = card()
-        add(summary, label("0 đang theo dõi", 22f, bold = true))
-        add(summary, label("${items.size} bản nháp · 0 nội dung mới", 14f, true), 5)
-        add(summary, label("Chưa kết nối hệ thống theo dõi", 12f, true), 5)
-        add(body, summary)
-        add(body, label("Bản nháp", 16f, bold = true), 18)
-        if (items.isEmpty()) {
-            val empty = card()
-            add(empty, label("Chưa có bản nháp", 16f, bold = true))
-            add(empty, label("Mở một trang web rồi chọn Notify Me trong menu trang để tạo bản nháp.", 13f, true), 6)
-            add(body, empty, 8)
+        val scroll = ScrollView(activity).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            addView(body, FrameLayout.LayoutParams(-1, -2))
         }
-        items.forEach { draft ->
-            val item = pageCard(draft, "Bản nháp · ${intervalLabel(draft.intervalMinutes)}")
-            add(item, label(draft.request, 14f), 10)
-            val flags = listOfNotNull("Hybrid".takeIf { draft.hybrid }, "Live Update".takeIf { draft.liveUpdate }, "Instant Open".takeIf { draft.instantOpen })
-            add(item, label(flags.joinToString(" · ").ifBlank { "Không có tùy chọn bổ sung" }, 12f, true), 5)
-            val actions = row()
-            actions.addView(button("Chỉnh sửa") { showEditor(draft) }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
-            actions.addView(button("Xóa nháp") { drafts.remove(draft.url); showDashboard() }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(4) })
-            add(item, actions, 10)
-            add(body, item, 10)
+        lateinit var control: GlassSystem.SegmentedControl
+        fun render(resetScroll: Boolean = false) {
+            tones.clear()
+            body.removeAllViews()
+            if (resetScroll) scroll.scrollTo(0, 0)
+            when (tab) {
+                0 -> {
+                    val d = draft
+                    if (d == null) {
+                        add(body, card().apply {
+                            add(this, label("Chưa có trang web", 16f, bold = true))
+                            add(this, label("Mở một trang HTTP hoặc HTTPS để thiết lập theo dõi.", 13f, true), 6)
+                        })
+                    } else {
+                        val item = pageCard(d, if (analyzed) "Kết quả mẫu · Chương 128 (DEMO)" else "Chưa phân tích AI") {
+                            expanded = !expanded; render()
+                        }
+                        if (expanded) {
+                            divider(item)
+                            if (analyzed) {
+                                add(item, label("Tên nội dung (mẫu): ${d.title}", 15f, bold = true))
+                                add(item, label("Chương 128 · Dữ liệu giả lập, không phải kết quả AI", 13f, true), 5)
+                                add(item, button("Phân tích lại (DEMO)") { analyzed = false; render() }, 8)
+                            } else {
+                                add(item, label("Thử giao diện nhận diện. Không gửi dữ liệu đến AI.", 13f, true))
+                                add(item, button("AI phân tích (DEMO)", primary = true) { analyzed = true; render() }, 8)
+                            }
+                        }
+                        add(body, item)
+                        add(body, settings(d) { draft = it }, 14)
+                        val save = button(if (drafts.find(d.url) != null) "Cập nhật bản nháp" else "Lưu bản nháp", primary = true) {
+                            val value = draft
+                            if (value != null && analyzed && drafts.save(value)) {
+                                toast("Đã lưu bản nháp · chưa theo dõi thật")
+                                tab = 1; control.select(1); render(true)
+                            } else toast("Tối đa 20 bản nháp")
+                        }
+                        save.isEnabled = analyzed
+                        save.alpha = if (analyzed) 1f else .45f
+                        add(body, save, 14)
+                    }
+                }
+                1 -> {
+                    val items = drafts.list()
+                    add(body, card().apply {
+                        add(this, label("0 đang theo dõi", 20f, bold = true))
+                        add(this, label("${items.size} bản nháp · chưa kết nối dịch vụ", 13f, true), 4)
+                    })
+                    if (items.isEmpty()) add(body, card().apply {
+                        add(this, label("Chưa có nội dung theo dõi", 16f, bold = true))
+                        add(this, label("Vào Tổng quan để tạo bản nháp.", 13f, true), 6)
+                    }, 10)
+                    items.forEach { saved ->
+                        val item = pageCard(saved, "Bản nháp · ${intervalLabel(saved.intervalMinutes)}") {
+                            expandedWatch = if (expandedWatch == saved.url) null else saved.url
+                            render()
+                        }
+                        if (expandedWatch == saved.url) {
+                            divider(item)
+                            add(item, label("Chương 128 (DEMO) · Chưa kiểm tra thật", 13f, true))
+                            add(item, settings(saved) { updated ->
+                                drafts.save(updated)
+                                if (draft?.url == updated.url) draft = updated
+                            }, 8)
+                            add(item, button("Xóa bản nháp") {
+                                drafts.remove(saved.url)
+                                if (draft?.url == saved.url) { draft = current; analyzed = false }
+                                expandedWatch = null; render()
+                            }, 8)
+                        }
+                        add(body, item, 10)
+                    }
+                    add(body, button("Test Live Update (DEMO)") { toast(NotifyMeLiveUpdateProbe.post(activity)) }, 14)
+                }
+                2 -> {
+                    val items = NotifyMePreviewLater.list()
+                    if (items.isEmpty()) add(body, card().apply {
+                        add(this, label("Chưa có nội dung xem sau", 16f, bold = true))
+                        add(this, label("Chỉ lưu khi bạn bấm Xem sau trên thông báo.", 13f, true), 6)
+                    })
+                    items.forEach { item ->
+                        add(body, card().apply {
+                            add(this, label(item.title, 17f, bold = true))
+                            add(this, label(item.episode + " · DEMO", 13f, true), 5)
+                            val actions = row()
+                            actions.addView(button("Xem ngay (DEMO)") {
+                                NotifyMePreviewLater.remove(item.id); toast("DEMO: Đã mở mẫu, không điều hướng web"); render()
+                            }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
+                            actions.addView(button("Xóa") { NotifyMePreviewLater.remove(item.id); render() }, LinearLayout.LayoutParams(0, -2, 1f))
+                            add(this, actions, 8)
+                        }, 10)
+                    }
+                }
+            }
+            add(body, card().apply {
+                add(this, label("Bản thử giao diện · dữ liệu chỉ lưu trong RAM. Chưa kết nối AI, Cloudflare hay WorkManager.", 12f, true))
+            }, 12)
         }
-        add(body, label("Thông báo mới", 16f, bold = true), 18)
-        val events = card()
-        add(events, label("Chưa có sự kiện", 15f, bold = true))
-        add(events, label("Thông báo thật sẽ xuất hiện ở đây khi engine theo dõi được tích hợp.", 13f, true), 5)
-        add(body, events, 8)
-        add(body, button("Test Live Update (DEMO)") { toast(NotifyMeLiveUpdateProbe.post(activity)) }, 14)
-        add(body, label("Bản nháp chỉ tồn tại trong bộ nhớ của phiên này; không lưu xuống đĩa.", 12f, true), 12)
-        present("Notify Me", page, body)
+        val dark = GlassSystem.isDarkPage()
+        control = GlassSystem.SegmentedControl(
+            context = activity, density = density, isNight = dark,
+            labels = listOf("Tổng quan", "Following", "Xem sau"), initialIndex = tab,
+            selectedColor = accent, normalColor = GlassSystem.pageSecondaryText(GlassSystem.currentPageBackground()),
+            trackFill = GlassSystem.createSegmentedTrack(28, density, dark)
+        ) { index -> if (allowed()) { tab = index; render(true) } }
+        page.addView(control.view, LinearLayout.LayoutParams(-1, dp(48)).apply { bottomMargin = dp(14) })
+        page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        render()
+        page.requestFocus()
+        sheet.show("Notify Me", page, onDismiss = { tones.clear() }, onPageToneChanged = { color ->
+            control.applyPageTone(GlassSystem.isDarkPage(color), accent, GlassSystem.pageSecondaryText(color))
+            tones.toList().forEach { it(color) }
+        })
     }
+
     private fun intervalLabel(minutes: Int) = when (minutes) {
         30 -> "30 phút"
         60 -> "1 giờ"

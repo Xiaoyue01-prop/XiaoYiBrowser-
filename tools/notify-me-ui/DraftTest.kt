@@ -33,5 +33,13 @@ fun main() {
         val first = checkNotNull(d.find("https://example.com/1")); check(d.save(first.copy(instantOpen = false)))
         d.remove(first.url); check(d.list().size == 19); d.clear(); check(d.list().isEmpty())
     }
-    println("$passed/6 PASS")
+    test("later starts empty and saves only explicit sample action") {
+        check(NotifyMePreviewLater.list().isEmpty())
+        NotifyMePreviewLater.saveDemo(); NotifyMePreviewLater.saveDemo()
+        val item = NotifyMePreviewLater.list().single()
+        check(item.episode == "Chương 129")
+        NotifyMePreviewLater.remove(item.id)
+        check(NotifyMePreviewLater.list().isEmpty())
+    }
+    println("$passed/7 PASS")
 }
