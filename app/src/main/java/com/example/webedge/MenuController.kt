@@ -153,7 +153,7 @@ class MenuController(
     private val notifyMeSheet by lazy(LazyThreadSafetyMode.NONE) {
         NotifyMeSheetController(activity, d, isNight, fg, accent,
             isPrivate = { tabManager.isPrivateMode || tabManager.getForWebView(host.web)?.isPrivate == true },
-            toast = host::toast)
+            toast = host::toast, webView = { host.web })
     }
 
     private val footballSheet by lazy(LazyThreadSafetyMode.NONE) {

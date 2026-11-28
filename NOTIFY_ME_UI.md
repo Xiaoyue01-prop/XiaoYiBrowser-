@@ -30,3 +30,6 @@ Baseline: Summit-NotifyMe-UI-Preview.zip. This is a UI-only build; backend is un
 - Retains translucent sheet, solid cards, existing glass selector size/animation, draft and explicit Later semantics. Section changes reset the scroll position; expanding a card does not explicitly reset it.
 - Device checks: open from both menus; at all three detents confirm title and X never overlap the selector at rest; scroll the selector and cards behind the header and check the gradient; switch sections and expand/collapse cards; verify bottom actions are reachable; repeat with PiP and both page tones. A vertical gesture directly on the selector may be captured by its existing horizontal selection gesture; scroll from the surrounding content.
 - Verification: 7/7 JVM draft-model tests passed again. Static source check passed for first-child ScrollView, selector and body inside it, stable selector during render, default header and shared top fade. These are not Android rendering tests. Android SDK/Gradle unavailable; APK build and device visual checks remain pending.
+
+## V0.3 — integration
+See NOTIFY_ME_AI.md for current behavior; the UI-only descriptions above are historical. V0.2.2 scroll/header/gradient structure retained.

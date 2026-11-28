@@ -1,0 +1,14 @@
+PASS public health, missing token rejected, valid auth
+PASS blocked host, query token, IP and arbitrary selectors
+PASS authenticated config allowlist
+PASS AI preview verifies source but does not register or create events
+PASS tampered and missing ticket rejected
+PASS source changed after preview: no insert
+PASS explicit confirmation inserts verified watch, no extra AI, replay idempotent
+PASS local heartbeat schedules cloud fallback
+PASS new local release, duplicate and regression
+PASS cloud fallback and no duplicate checks before due
+PASS ack and delete
+PASS AI uncertainty and daily limit
+PASS authenticated AI health and budget enforcement
+13 test groups passed (local mock, not live Cloudflare).

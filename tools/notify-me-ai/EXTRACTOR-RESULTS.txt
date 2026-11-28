@@ -1,0 +1,3 @@
+PASS sorted candidates, cross-origin and query excluded
+PASS blocked password / query / HTTP
+PASS irrelevant links excluded

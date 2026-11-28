@@ -1,6 +1,23 @@
 package com.example.webedge
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.text.InputType
+import android.view.WindowManager
+import android.webkit.WebView
+import android.widget.EditText
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.resume
+import org.json.JSONObject
+import org.json.JSONTokener
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -13,7 +30,7 @@ import android.widget.PopupMenu
 import android.widget.ScrollView
 import android.widget.TextView
 
-/** Native UI preview; no AI, network, persistent data or background work is started here. */
+/** Owner-only AI integration; background scheduling and real event delivery are not active yet. */
 internal class NotifyMeSheetController(
     private val activity: Activity,
     private val density: Float,
@@ -21,11 +38,11 @@ internal class NotifyMeSheetController(
     foreground: Int,
     private val accent: Int,
     private val isPrivate: () -> Boolean,
-    private val toast: (String) -> Unit
+    private val toast: (String) -> Unit,
+    private val webView: () -> WebView
 ) {
     // Use the standard overlay header and top gradient, just like the other browser sheets.
     private val sheet = BrowserBottomSheet(activity, density, isNight, foreground, accent)
-    private val drafts = NotifyMeDrafts()
     private val tones = mutableListOf<(Int?) -> Unit>()
     private fun dp(value: Int) = (value * density + .5f).toInt()
     private fun allowed(): Boolean {
@@ -36,7 +53,6 @@ internal class NotifyMeSheetController(
     fun dismiss() {
         sheet.dismiss(immediate = true)
         tones.clear()
-        drafts.clear()
     }
     fun showForPage(url: String, title: String?) = showUnified(url, title, 0)
     fun showDashboard(url: String, title: String?) = showUnified(url, title, 1)
@@ -181,9 +197,101 @@ internal class NotifyMeSheetController(
         val page = begin()
         page.clipChildren = false; page.clipToPadding = false
         val current = NotifyMeDraft.fromPage(url, title)
-        var draft = current?.let { drafts.find(it.url) ?: it }
+        var draft = current
         var expanded = false
-        var analyzed = draft?.let { drafts.find(it.url) != null } == true
+        var preview: JSONObject? = null
+        var registered = emptyList<JSONObject>()
+        var listLoaded = false
+        var busy = false
+        var token: String? = null
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val source = webView()
+        var pendingDialog: AlertDialog? = null
+        lateinit var redraw: () -> Unit
+        fun active() = scope.isActive && !activity.isDestroyed && !activity.isFinishing && !isPrivate()
+        fun sourceOK(): Boolean = active() && source === webView() && source.url?.substringBefore('#') == current?.url
+        fun dialog(builder: AlertDialog.Builder) {
+            if (!active()) return
+            val dlg = builder.create()
+            pendingDialog = dlg
+            val host = activity as? BiometricBrowserActivity
+            host?.registerBrowserWindow(dlg) { dlg.dismiss() }
+            dlg.setOnDismissListener { host?.unregisterBrowserWindow(dlg); if (pendingDialog === dlg) pendingDialog = null }
+            dlg.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            dlg.show()
+            dlg.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        fun withToken(action: (String) -> Unit) {
+            if (!active() || busy) return
+            token?.let { action(it); return }
+            val input = EditText(activity).apply {
+                hint = "BETA_TOKEN (64 ký tự hex)"
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                isSingleLine = true
+                isSaveEnabled = false
+                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            }
+            dialog(AlertDialog.Builder(activity).setTitle("Kết nối Cloudflare cá nhân")
+                .setMessage("Nhập khóa BETA_TOKEN đã tạo. Chỉ giữ trong phiên Sheet, không ghi vào APK hay bộ nhớ lâu dài.")
+                .setView(input).setNegativeButton("Hủy", null).setPositiveButton("Kết nối") { _, _ ->
+                    val key = input.text.toString().trim()
+                    input.text.clear()
+                    if (!active()) return@setPositiveButton
+                    if (!key.matches(Regex("[0-9a-fA-F]{64}"))) toast("Cần khóa hex 64 ký tự")
+                    else { token = key; action(key) }
+                })
+        }
+        fun network(action: suspend () -> Unit) {
+            if (!active() || busy) return
+            busy = true; redraw()
+            scope.launch {
+                try { action() }
+                catch (e: kotlinx.coroutines.TimeoutCancellationException) { if (active()) toast("Quá thời gian đọc trang") }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) { if (active()) toast(NotifyMeCloud.message(e)) }
+                finally { busy = false; if (active()) redraw() }
+            }
+        }
+        fun replaceList(response: JSONObject) {
+            val a = response.getJSONArray("watches")
+            registered = (0 until a.length()).map { a.getJSONObject(it) }
+            listLoaded = true
+        }
+        fun refresh() = withToken { key -> network { replaceList(NotifyMeCloud.request("/v1/watches", key)) } }
+        fun previewPage() = withToken { key ->
+            if (!sourceOK()) { toast("Trang đã thay đổi, hãy mở lại Notify Me"); return@withToken }
+            val d = current ?: return@withToken
+            if (!d.url.startsWith("https://") || java.net.URI(d.url).rawQuery != null) { toast("Chỉ hỗ trợ trang HTTPS công khai không có query"); return@withToken }
+            network {
+                val config = NotifyMeCloud.request("/v1/config", key).getJSONArray("hosts")
+                if (!(0 until config.length()).any { config.optString(it) == d.domain }) throw NotifyMeCloud.Failure("url_not_allowed")
+                if (!sourceOK()) return@network
+                val script = activity.assets.open("notify_me_extract.js").bufferedReader().use { it.readText() }
+                val raw = withTimeout(10000L) {
+                    suspendCancellableCoroutine<String?> { continuation ->
+                        source.evaluateJavascript(script) { result -> if (continuation.isActive) continuation.resume(result) }
+                    }
+                }
+                if (!sourceOK()) return@network
+                val payload = runCatching { JSONTokener(raw ?: "null").nextValue() as JSONObject }.getOrNull()
+                if (payload == null || payload.has("error") || payload.optString("url") != d.url || !payload.has("groups")) {
+                    toast("Không tìm thấy danh sách tập/chương công khai phù hợp"); return@network
+                }
+                if (payload.toString().toByteArray(Charsets.UTF_8).size > 16000) {
+                    toast("Dữ liệu nhận diện quá lớn, bản thử này chưa hỗ trợ trang đó"); return@network
+                }
+                // The user reviews the actual payload before sending anything from the page.
+                dialog(AlertDialog.Builder(activity).setTitle("Gửi dữ liệu để AI phân tích?")
+                    .setMessage("Chỉ gửi dữ liệu dưới đây tới Cloudflare. Không gửi cookie hay nội dung phim/truyện.\n\n" + payload.toString(2))
+                    .setNegativeButton("Hủy", null).setPositiveButton("Phân tích") { _, _ ->
+                        if (!sourceOK()) { toast("Trang đã thay đổi"); return@setPositiveButton }
+                        network {
+                            val result = NotifyMeCloud.request("/v1/analyze", key, payload)
+                            if (sourceOK()) { result.getJSONObject("rule"); result.getJSONObject("ticket"); preview = result; expanded = true }
+                        }
+                    })
+            }
+        }
         var expandedWatch: String? = null
         var tab = initialTab
         // One scrollable column: the glass selector is a normal item above the section body.
@@ -216,61 +324,75 @@ internal class NotifyMeSheetController(
                             add(this, label("Mở một trang HTTP hoặc HTTPS để thiết lập theo dõi.", 13f, true), 6)
                         })
                     } else {
-                        val item = pageCard(d, if (analyzed) "Kết quả mẫu · Chương 128 (DEMO)" else "Chưa phân tích AI") {
+                        val rule = preview?.optJSONObject("rule")
+                        val unit = if (rule?.optString("kind") == "episode") "Tập" else "Chương"
+                        val shown = if (rule != null) d.copy(title = rule.optString("title", d.title)) else d
+                        val item = pageCard(shown, if (rule != null) "$unit ${rule.optString("latest")} · Đã xác minh trên server" else "Chưa phân tích AI") {
                             expanded = !expanded; render()
                         }
                         if (expanded) {
                             divider(item)
-                            if (analyzed) {
-                                add(item, label("Tên nội dung (mẫu): ${d.title}", 15f, bold = true))
-                                add(item, label("Chương 128 · Dữ liệu giả lập, không phải kết quả AI", 13f, true), 5)
-                                add(item, button("Phân tích lại (DEMO)") { analyzed = false; render() }, 8)
+                            if (rule != null) {
+                                add(item, label("Tên nội dung: ${rule.optString("title")}", 15f, bold = true))
+                                add(item, label("$unit ${rule.optString("latest")} · ${rule.optString("latest_url")}", 13f, true), 5)
+                                add(item, button("Phân tích lại") { if (!busy) { preview = null; previewPage(); redraw() } }.apply { isEnabled = !busy }, 8)
                             } else {
-                                add(item, label("Thử giao diện nhận diện. Không gửi dữ liệu đến AI.", 13f, true))
-                                add(item, button("AI phân tích (DEMO)", primary = true) { analyzed = true; render() }, 8)
+                                add(item, label("AI chọn danh sách tập/chương; server kiểm tra lại trang công khai.", 13f, true))
+                                add(item, button(if (busy) "Đang xử lý…" else "AI phân tích", primary = true) { previewPage() }.apply { isEnabled = !busy }, 8)
                             }
                         }
                         add(body, item)
                         add(body, settings(d) { draft = it }, 14)
-                        val save = button(if (drafts.find(d.url) != null) "Cập nhật bản nháp" else "Lưu bản nháp", primary = true) {
-                            val value = draft
-                            if (value != null && analyzed && drafts.save(value)) {
-                                toast("Đã lưu bản nháp · chưa theo dõi thật")
-                                tab = 1; control.select(1); render(true)
-                            } else toast("Tối đa 20 bản nháp")
+                        add(body, label("Công tắc và chu kỳ chỉ là xem trước. Bản này chưa chạy theo dõi tự động.", 12f, true), 8)
+                        val save = button("Đăng ký theo dõi trên server", primary = true) {
+                            val ticket = preview?.optJSONObject("ticket") ?: return@button
+                            if (!sourceOK()) { toast("Trang đã thay đổi, hãy phân tích lại"); return@button }
+                            withToken { key -> network {
+                                val saved = NotifyMeCloud.request("/v1/watches", key, JSONObject().put("ticket", ticket)).getJSONObject("watch")
+                                if (active()) {
+                                    registered = listOf(saved) + registered.filter { it.optString("id") != saved.optString("id") }
+                                    preview = null
+                                    toast("Đã đăng ký D1 · chưa chạy tự động")
+                                    tab = 1; control.select(1)
+                                }
+                            } }
                         }
-                        save.isEnabled = analyzed
-                        save.alpha = if (analyzed) 1f else .45f
+                        save.isEnabled = rule != null && !busy
+                        save.alpha = if (save.isEnabled) 1f else .45f
                         add(body, save, 14)
                     }
                 }
                 1 -> {
-                    val items = drafts.list()
                     add(body, card().apply {
-                        add(this, label("0 đang theo dõi", 20f, bold = true))
-                        add(this, label("${items.size} bản nháp · chưa kết nối dịch vụ", 13f, true), 4)
+                        add(this, label(if (listLoaded) "${registered.size} đã đăng ký" else "Danh sách trên Cloudflare", 20f, bold = true))
+                        add(this, label("Chưa có tác vụ kiểm tra tự động trong bản này.", 13f, true), 4)
+                        add(this, button(if (busy) "Đang tải…" else "Đồng bộ danh sách") { refresh() }.apply { isEnabled = !busy }, 8)
                     })
-                    if (items.isEmpty()) add(body, card().apply {
-                        add(this, label("Chưa có nội dung theo dõi", 16f, bold = true))
-                        add(this, label("Vào Tổng quan để tạo bản nháp.", 13f, true), 6)
+                    if (registered.isEmpty()) add(body, card().apply {
+                        add(this, label(if (listLoaded) "Chưa có nội dung đăng ký" else "Chưa tải danh sách", 16f, bold = true))
+                        add(this, label("Bấm Đồng bộ danh sách để đọc dữ liệu D1.", 13f, true), 6)
                     }, 10)
-                    items.forEach { saved ->
-                        val item = pageCard(saved, "Bản nháp · ${intervalLabel(saved.intervalMinutes)}") {
-                            expandedWatch = if (expandedWatch == saved.url) null else saved.url
+                    registered.forEach { saved ->
+                        val url = saved.optString("url")
+                        val rowDraft = NotifyMeDraft.fromPage(url, saved.optString("title")) ?: return@forEach
+                        val unit = if (saved.optString("kind") == "episode") "Tập" else "Chương"
+                        val item = pageCard(rowDraft, "$unit ${saved.optString("latest")} · ${saved.optString("status")}") {
+                            expandedWatch = if (expandedWatch == url) null else url
                             render()
                         }
-                        if (expandedWatch == saved.url) {
+                        if (expandedWatch == url) {
                             divider(item)
-                            add(item, label("Chương 128 (DEMO) · Chưa kiểm tra thật", 13f, true))
-                            add(item, settings(saved) { updated ->
-                                drafts.save(updated)
-                                if (draft?.url == updated.url) draft = updated
-                            }, 8)
-                            add(item, button("Xóa bản nháp") {
-                                drafts.remove(saved.url)
-                                if (draft?.url == saved.url) { draft = current; analyzed = false }
-                                expandedWatch = null; render()
-                            }, 8)
+                            add(item, label("Đã đăng ký trên D1 · chưa có WorkManager", 13f, true))
+                            add(item, button("Bỏ theo dõi") {
+                                dialog(AlertDialog.Builder(activity).setTitle("Bỏ theo dõi?").setMessage(rowDraft.title)
+                                    .setNegativeButton("Hủy", null).setPositiveButton("Xóa") { _, _ ->
+                                        withToken { key -> network {
+                                            NotifyMeCloud.request("/v1/watches/delete", key, JSONObject().put("id", saved.getString("id")))
+                                            registered = registered.filter { it.optString("id") != saved.optString("id") }
+                                            expandedWatch = null
+                                        } }
+                                    })
+                            }.apply { isEnabled = !busy }, 8)
                         }
                         add(body, item, 10)
                     }
@@ -297,7 +419,7 @@ internal class NotifyMeSheetController(
                 }
             }
             add(body, card().apply {
-                add(this, label("Bản thử giao diện · dữ liệu chỉ lưu trong RAM. Chưa kết nối AI, Cloudflare hay WorkManager.", 12f, true))
+                add(this, label("Bản thử cá nhân · AI và D1 thực. Chưa bật WorkManager, Cron, Push hay Instant Open. Xem sau vẫn là DEMO.", 12f, true))
             }, 12)
             if (resetScroll) scroll.scrollTo(0, 0)
         }
@@ -312,9 +434,10 @@ internal class NotifyMeSheetController(
         scrollContent.addView(control.view, LinearLayout.LayoutParams(-1, dp(48)).apply { bottomMargin = dp(14) })
         scrollContent.addView(body, LinearLayout.LayoutParams(-1, -2))
         page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        redraw = { render() }
         render()
         page.requestFocus()
-        sheet.show("Notify Me", page, onDismiss = { tones.clear() }, onPageToneChanged = { color ->
+        sheet.show("Notify Me", page, onDismiss = { scope.cancel(); token = null; pendingDialog?.dismiss(); tones.clear() }, onPageToneChanged = { color ->
             control.applyPageTone(GlassSystem.isDarkPage(color), accent, GlassSystem.pageSecondaryText(color))
             tones.toList().forEach { it(color) }
         })
