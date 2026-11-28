@@ -1638,6 +1638,8 @@ class MenuController(
         }
 
         addRow("Công cụ tìm kiếm", engines[store.searchEngine], fg) { chooseEngine() }
+        addRow("Test Live Update", "DEMO", fg) { showNotifyMeProbe() }
+
 
         val autofillLabel = autofillServiceLabel()
         addRow("Mật khẩu & tự điền", autofillLabel ?: "Chưa bật", fg) { openAutofillSettings() }
@@ -1673,6 +1675,26 @@ class MenuController(
         showPanel(p)
     }
 
+
+    private fun showNotifyMeProbe() {
+        android.app.AlertDialog.Builder(activity)
+            .setTitle("Notify Me – Live Update test")
+            .setMessage(NotifyMeLiveUpdateProbe.status(activity) +
+                "\n\nThông báo mẫu không tự hết hạn. Xem ngay/Xem sau đều kết thúc thông báo. Không dùng mạng.")
+            .setPositiveButton("Gửi mẫu") { _, _ ->
+                if (activity.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                    android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    activity.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4202)
+                    host.toast("Cấp quyền rồi bấm Gửi mẫu lại")
+                } else {
+                    host.toast(NotifyMeLiveUpdateProbe.post(activity))
+                    close()
+                }
+            }
+            .setNegativeButton("Đóng", null)
+            .setNeutralButton("Hủy mẫu") { _, _ -> NotifyMeLiveUpdateProbe.cancel(activity) }
+            .show()
+    }
 
     private fun chooseEngine() {
         val p = makePanel("Công cụ tìm kiếm", null, 340) { showSettings() }

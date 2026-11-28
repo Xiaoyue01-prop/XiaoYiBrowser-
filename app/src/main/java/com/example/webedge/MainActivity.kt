@@ -637,6 +637,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        NotifyMeLiveUpdateProbe.handleOpen(this, intent)
         // Fresh launcher only; never bypass an enabled biometric policy or initialize Store before restore.
         if (intent.action == Intent.ACTION_MAIN && !BrowserLockPolicy.enabled(this) && RecoveryArchiveActivity.shouldOffer(this)) {
             startActivity(Intent(this, RecoveryArchiveActivity::class.java).putExtra(RecoveryArchiveActivity.EXTRA_RESTORE, true))
@@ -1445,6 +1446,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
     private var pendingLockedLink: String? = null
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        NotifyMeLiveUpdateProbe.handleOpen(this, intent)
         setIntent(intent)
         if (!browserStarted) return // initializeBrowser consumes the most recent Intent.
         if (deferBrowserAction()) { pendingLockedLink = incomingLink(intent); return }
