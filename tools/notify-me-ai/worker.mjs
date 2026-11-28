@@ -239,8 +239,8 @@ async function record(env,w,found,now){
  if(found.number<w.latest||found.url!==w.latest_url)fail(422,'source_regressed');
  await env.DB.prepare("UPDATE notify_watches_v2 SET checked_at=?,next_check=?,status='ok',failures=0 WHERE account_id=? AND id=? AND revision=? AND checked_at<=?").bind(now,now+HOUR+GRACE,w.account_id,w.id,w.revision,now).run();
 }
-async function tick(env){
- const now=Date.now();const w=await env.DB.prepare('SELECT * FROM notify_watches_v2 WHERE next_check<=? ORDER BY next_check LIMIT 1').bind(now).first();if(!w)return;
+async function tick(env,accountId=null){
+ const now=Date.now();const w=accountId===null?await env.DB.prepare('SELECT * FROM notify_watches_v2 WHERE next_check<=? ORDER BY next_check LIMIT 1').bind(now).first():await env.DB.prepare('SELECT * FROM notify_watches_v2 WHERE account_id=? AND next_check<=? ORDER BY next_check LIMIT 1').bind(accountId,now).first();if(!w)return;
  try{const found=latest(await readLinks(env,w.url,w.selector),w.kind,w.url,env);if(!found)throw Error('selector_missing');await record(env,w,found,now)}catch{await env.DB.prepare("UPDATE notify_watches_v2 SET status='needs_review',failures=failures+1,next_check=? WHERE account_id=? AND id=? AND revision=? AND next_check<=?").bind(now+Math.min(6,2**Math.min(w.failures,3))*HOUR,w.account_id,w.id,w.revision,now).run()}
 }
 async function handler(req,env){
@@ -277,6 +277,7 @@ async function handler(req,env){
  if(principal.admin)fail(403,'account_required');
  if(path==='/v1/watches'&&method==='GET')return json({watches:(await env.DB.prepare('SELECT * FROM notify_watches_v2 WHERE account_id=? ORDER BY checked_at DESC').bind(accountId).all()).results});
  if(path==='/v1/config'&&method==='GET')return json({hosts:(env.ALLOWED_HOSTS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean),intervalMinutes:60});
+ if(path==='/v1/check'&&method==='POST'){await tick(env,accountId);return json({ok:true})}
  if(path==='/v1/analyze'&&method==='POST')return json(await analyze(env,await body(req),accountId));
  if(path==='/v1/watches'&&method==='POST')return json({watch:await confirm(env,await body(req),accountId)},201);
  if(path==='/v1/observe'&&method==='POST'){

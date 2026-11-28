@@ -324,7 +324,7 @@ internal class NotifyMeSheetController(
                         }
                         add(body, item)
                         add(body, settings(d) { draft = it }, 14)
-                        add(body, label("Công tắc và chu kỳ chỉ là xem trước. Bản này chưa chạy theo dõi tự động.", 12f, true), 8)
+                        add(body, label("Lịch nền cố định 1 giờ. Các tùy chọn bên trên vẫn là xem trước.", 12f, true), 8)
                         val save = button("Đăng ký theo dõi trên server", primary = true) {
                             val ticket = preview?.optJSONObject("ticket") ?: return@button
                             if (!sourceOK()) { toast("Trang đã thay đổi, hãy phân tích lại"); return@button }
@@ -333,7 +333,9 @@ internal class NotifyMeSheetController(
                                 if (active()) {
                                     registered = listOf(saved) + registered.filter { it.optString("id") != saved.optString("id") }
                                     preview = null
-                                    toast("Đã đăng ký D1 · chưa chạy tự động")
+                                    NotifyBackground.schedule(activity)
+                                    if (activity.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) activity.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 9041)
+                                    toast("Đã đăng ký D1 · đã yêu cầu lịch nền")
                                     tab = 1; control.select(1)
                                 }
                             }
@@ -346,7 +348,7 @@ internal class NotifyMeSheetController(
                 1 -> {
                     add(body, card().apply {
                         add(this, label(if (listLoaded) "${registered.size} đã đăng ký" else "Danh sách trên Cloudflare", 20f, bold = true))
-                        add(this, label("Chưa có tác vụ kiểm tra tự động trong bản này.", 13f, true), 4)
+                        add(this, label("Kiểm tra nền mỗi giờ · Android có thể trì hoãn.", 13f, true), 4)
                         add(this, button(if (busy) "Đang tải…" else "Đồng bộ danh sách") { refresh() }.apply { isEnabled = !busy }, 8)
                     })
                     if (registered.isEmpty()) add(body, card().apply {
@@ -363,7 +365,7 @@ internal class NotifyMeSheetController(
                         }
                         if (expandedWatch == url) {
                             divider(item)
-                            add(item, label("Đã đăng ký trên D1 · chưa có WorkManager", 13f, true))
+                            add(item, label("Đã đăng ký trên D1 · lịch nền mỗi giờ", 13f, true))
                             add(item, button("Bỏ theo dõi") {
                                 dialog(AlertDialog.Builder(activity).setTitle("Bỏ theo dõi?").setMessage(rowDraft.title)
                                     .setNegativeButton("Hủy", null).setPositiveButton("Xóa") { _, _ ->
@@ -400,7 +402,7 @@ internal class NotifyMeSheetController(
                 }
             }
             add(body, card().apply {
-                add(this, label("Bản thử cá nhân · AI và D1 thực. Chưa bật WorkManager, Cron, Push hay Instant Open. Xem sau vẫn là DEMO.", 12f, true))
+                add(this, label("Bản thử cá nhân · AI và D1 thực. WorkManager kiểm tra qua server; Cron cần bật trên Cloudflare. Push và Instant Open chưa bật. Xem sau vẫn là DEMO.", 12f, true))
             }, 12)
             if (resetScroll) scroll.scrollTo(0, 0)
         }

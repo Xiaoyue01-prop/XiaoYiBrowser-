@@ -580,6 +580,7 @@ class MainActivity : BiometricBrowserActivity(), BrowserJavascriptBridgeHost {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onResume() {
         super.onResume()
+        NotifyBackground.schedule(this)
         if (::pipController.isInitialized) pipController.trace("onResume")
         requestHighRefreshRate()
         if (isLockUiActive()) return

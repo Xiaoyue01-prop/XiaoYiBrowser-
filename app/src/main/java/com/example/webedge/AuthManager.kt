@@ -110,6 +110,7 @@ internal object AuthManager {
             retire(state)
             SummitAuthStore.write(c, state)
             if (!prefs(c).edit().clear().commit()) fail("session_storage_failed")
+            NotifyBackground.stop(c)
             AtomicFile(File(c.noBackupFilesDir, "notify_session_v1.enc")).delete()
             if (state.has("logout")) SummitLogoutJob.schedule(c)
             try {
@@ -136,12 +137,24 @@ internal object AuthManager {
         return result
     }
 
+    suspend fun backgroundRequest(c: Context, expected: String, path: String, body: JSONObject? = null): JSONObject {
+        require(path in setOf("/v1/check", "/v1/events", "/v1/events/ack"))
+        val token = access(c, expected, interactive = false)
+        checkAccount(c, expected)
+        val result = try { SummitCloud.request(path, token, body) } catch (e: SummitCloud.Failure) {
+            if (e.code !in setOf("session_expired", "session_ended", "unauthorized")) throw e
+            SummitCloud.request(path, access(c, expected, rejected = token, interactive = false), body)
+        }
+        checkAccount(c, expected)
+        return result
+    }
+
     suspend fun warm(activity: Activity, login: String) {
         try { access(activity, login, interactive = false) }
         catch (_: SummitCloud.Failure) { /* The next service request retries and reports the specific error. */ }
     }
 
-    private suspend fun access(activity: Activity, expected: String?, rejected: String? = null,
+    private suspend fun access(activity: Context, expected: String?, rejected: String? = null,
                                interactive: Boolean = true): String = requests.join(expected, rejected, interactive) {
         withContext(Dispatchers.IO) { lock.withLock {
             checkAccount(activity, expected)
@@ -168,7 +181,7 @@ internal object AuthManager {
             val cm = activity.getSystemService(ConnectivityManager::class.java)
             if (cm?.getNetworkCapabilities(cm.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) != true)
                 fail("network_error")
-            val g = google(activity)
+            val g = google(activity as? Activity ?: fail("google_token_missing"))
             if (g.uniqueId != sub) fail("google_account_mismatch")
             exchange(start(activity, state, login, g))
         } }

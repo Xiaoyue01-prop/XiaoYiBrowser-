@@ -67,8 +67,8 @@ android {
         minSdk = 36
         targetSdk = 36
         testInstrumentationRunner = "com.example.webedge.SecurityInstrumentation"
-        versionCode = 4
-        versionName = "0.3.3"
+        versionCode = 5
+        versionName = "0.3.4"
         resValue("string", "google_web_client_id", googleWebClientId)
     }
 
@@ -113,6 +113,7 @@ kotlin {
 }
 
 dependencies {
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")
     implementation("androidx.core:core-ktx:1.19.1")

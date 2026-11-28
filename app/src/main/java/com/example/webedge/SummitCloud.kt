@@ -9,7 +9,7 @@ import kotlinx.coroutines.withContext
 /** Summit service session obtained from the server after verified Google sign-in. */
 internal object SummitCloud {
     private const val BASE = "https://summit-notify.cestmalune.workers.dev"
-    private val routes = setOf("/v1/auth/google", "/v1/auth/refresh", "/v1/auth/logout", "/v1/account", "/v1/config", "/v1/analyze", "/v1/watches", "/v1/watches/delete")
+    private val routes = setOf("/v1/auth/google", "/v1/auth/refresh", "/v1/auth/logout", "/v1/account", "/v1/config", "/v1/analyze", "/v1/watches", "/v1/watches/delete", "/v1/check", "/v1/events", "/v1/events/ack")
     class Failure(val code: String) : Exception(code)
     fun validSession(token: String) = token.matches(Regex("nm3\\.[A-Za-z0-9_-]{43}\\.[0-9]{1,12}\\.[A-Za-z0-9_-]{43}"))
     suspend fun request(path: String, token: String?, body: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
