@@ -98,15 +98,16 @@ class RecoveryArchiveActivity : BiometricBrowserActivity() {
             setOnClickListener { if (!deferBrowserAction() && !busy && !pickerOpen && pendingUri == null) click() }
         }.also { page.addView(it) }
         label(if (restoreMode) getString(R.string.recovery_restore_title) else getString(R.string.recovery_export_title), 25f)
+        fun keyField() = EditText(this).apply {
+            hint = getString(R.string.recovery_key_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            isSingleLine = true; isSaveEnabled = false
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+            imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+        }.also { page.addView(it) }
         if (restoreMode) {
             label(getString(R.string.recovery_restore_intro), 15f)
-            keyInput = EditText(this).apply {
-                hint = getString(R.string.recovery_key_hint)
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-                isSingleLine = true; isSaveEnabled = false
-                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
-                imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
-            }.also { page.addView(it) }
+            keyInput = keyField()
             action = button(getString(R.string.recovery_select_file)) {
                 if (keyInput.text.toString().trim().length != 43) { status.text = getString(R.string.recovery_invalid_key); return@button }
                 pickerOpen = true
@@ -127,7 +128,14 @@ class RecoveryArchiveActivity : BiometricBrowserActivity() {
                     status.text = getString(R.string.recovery_key_copied)
                 } catch (_: Exception) { status.text = getString(R.string.recovery_copy_error) }
             }
+            label(getString(R.string.recovery_confirm_key), 15f)
+            keyInput = keyField()
             action = button(getString(R.string.recovery_create_file)) {
+                if (keyInput.text.toString().trim() != generated) {
+                    status.text = getString(R.string.recovery_confirm_mismatch)
+                    return@button
+                }
+                keyInput.text.clear()
                 pickerOpen = true
                 try { createDocument.launch("Summit-recovery-${System.currentTimeMillis()}.summit") }
                 catch (_: Exception) { pickerOpen = false; status.text = getString(R.string.recovery_picker_error) }
@@ -153,13 +161,14 @@ class RecoveryArchiveActivity : BiometricBrowserActivity() {
         status.text = if (restoreMode) getString(R.string.recovery_restoring) else getString(R.string.recovery_exporting)
         lifecycleScope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                val recorded = withContext(Dispatchers.IO) {
                     if (restoreMode) {
                         val archive = checkNotNull(contentResolver.openInputStream(uri)).use(RecoveryArchive::readBounded)
                         val entries = RecoveryArchive.open(archive, key)
                         RecoverySnapshotValidation.validate(entries)
                         // No cache, sync or WebView restore may have started on the destination.
                         Store.restoreBeforeStore(applicationContext, entries)
+                        true
                     } else {
                         val store = Store.get(applicationContext)
                         val entries = ProtectedRecords.snapshotForRecovery(applicationContext, store::syncHealthy)
@@ -168,6 +177,7 @@ class RecoveryArchiveActivity : BiometricBrowserActivity() {
                         checkNotNull(contentResolver.openOutputStream(uri, "wt")).use { it.write(archive); it.flush() }
                         val actual = checkNotNull(contentResolver.openInputStream(uri)).use(RecoveryArchive::readBounded)
                         check(actual.contentEquals(archive) && RecoveryArchive.open(actual, key) == entries)
+                        RecoveryReminder.recordVerified(applicationContext)
                     }
                 }
                 if (restoreMode) {
@@ -175,7 +185,7 @@ class RecoveryArchiveActivity : BiometricBrowserActivity() {
                     keyInput.text.clear()
                     status.text = getString(R.string.recovery_restore_success)
                     exit.text = getString(R.string.recovery_open_browser)
-                } else status.text = getString(R.string.recovery_export_success)
+                } else status.text = getString(if (recorded) R.string.recovery_export_success else R.string.recovery_export_status_error)
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) {
                 status.text = if (restoreMode) getString(R.string.recovery_restore_error)

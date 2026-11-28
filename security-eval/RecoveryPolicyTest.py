@@ -64,7 +64,12 @@ class RecoveryPolicyTest(unittest.TestCase):
 
     def test_opt_in_and_private_exclusion(self):
         self.assertNotIn('ProtectedRecords.enable(',source('MainActivity'))
-        self.assertIn('running || isPrivateMode()',source('BrowserToolsController'))
+        menu = source('MenuController')
+        entry = menu.split('private fun addRecoveryEntry',1)[1].split('private fun showGoogleAccount',1)[0]
+        self.assertIn('tabManager.isPrivateMode',entry)
+        self.assertIn('tabManager.getForWebView(host.web)?.isPrivate == true',entry)
+        self.assertIn('!BrowserLockPolicy.allowBrowserWindow(activity)',entry)
+        self.assertLess(entry.index('store.flush()'),entry.index('activity.startActivity'))
         self.assertIn('normalTabs.map',source('TabManager'))
         self.assertIn('const val PREFIX = "s2:"',source('RecordCipher'))
 

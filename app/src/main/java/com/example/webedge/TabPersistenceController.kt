@@ -23,6 +23,7 @@ class TabPersistenceController(
     /** Restores tab metadata before the initial WebView is created. */
     fun restore() {
         tabManager.restoreTabs(store.loadTabs(), store.loadTabGroups())
+        io.execute { store.migrateLegacyThumbnails() }
     }
 
     /** Coalesces rapid URL/title/thumbnail updates into one disk write. */

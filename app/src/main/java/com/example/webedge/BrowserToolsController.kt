@@ -535,16 +535,6 @@ class BrowserToolsController(
         }.apply { visibility = View.GONE }
         security.addView(checkButton, LinearLayout.LayoutParams(-1, dp(42)).apply { topMargin = dp(12) })
         security.addView(enableButton, LinearLayout.LayoutParams(-1, dp(42)).apply { topMargin = dp(8) })
-        val recoveryButton = actionButton(activity.getString(R.string.recovery_export_button), accent) {
-            if (running || isPrivateMode() || !BrowserLockPolicy.allowBrowserWindow(activity)) {
-                toast(activity.getString(R.string.recovery_export_blocked))
-                return@actionButton
-            }
-            store.flush()
-            activity.startActivity(Intent(activity, RecoveryArchiveActivity::class.java))
-        }
-        security.addView(recoveryButton, LinearLayout.LayoutParams(-1, dp(42)).apply { topMargin = dp(8) })
-        security.addView(styled(activity.getString(R.string.recovery_dashboard_description), 11f))
         line()
         section("KHÓA SINH TRẮC HỌC")
         val gateHost = activity as? BiometricBrowserActivity

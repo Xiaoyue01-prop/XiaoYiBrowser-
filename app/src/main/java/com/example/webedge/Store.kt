@@ -4,12 +4,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
-import android.util.AtomicFile
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
+import java.io.ByteArrayOutputStream
 
 enum class PermissionState { ASK, ALLOW, DENY }
 data class Entry(val title: String, val url: String, val time: Long, val desktop: Boolean = false)
@@ -56,13 +55,21 @@ class Store private constructor(context: Context) {
     private val sp = context.getSharedPreferences("edge", Context.MODE_PRIVATE)
     private val thumbnailDir = File(context.filesDir, "tab_thumbnails").apply { mkdirs() }
 
+    private val thumbnailStorage = ThumbnailStorage(thumbnailDir)
+
+    internal fun migrateLegacyThumbnails() {
+        // Release the Store monitor between images so ordinary saves can interleave.
+        val ids = runCatching { thumbnailStorage.ids() }.getOrDefault(emptyList())
+        for (id in ids) synchronized(this) { thumbnailStorage.migrateLegacy(id) }
+    }
+
     private fun thumbnailFile(tabId: Long) = File(thumbnailDir, "tab_$tabId.jpg")
 
     /** Đọc thumbnail ở kích thước vừa đủ cho lưới tab để tránh nạp hàng chục ảnh lớn vào RAM. */
     private fun loadThumbnail(tabId: Long): Bitmap? = runCatching {
-        val path = thumbnailFile(tabId).absolutePath
+        val jpeg = thumbnailStorage.load(tabId) ?: return@runCatching null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(path, bounds)
+        BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
 
         var sampleSize = 1
@@ -76,28 +83,19 @@ class Store private constructor(context: Context) {
             inScaled = false
             inSampleSize = sampleSize
         }
-        BitmapFactory.decodeFile(path, options)
+        BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, options)
     }.getOrNull()
 
     /** Ghi thumbnail ra file riêng, dùng AtomicFile để tránh ảnh hỏng nếu app bị kill giữa lúc lưu. */
     private fun saveThumbnail(tab: PersistedTab): Boolean {
         val bitmap = tab.thumbnail?.takeUnless { it.isRecycled } ?: return false
         return try {
-            val atomicFile = AtomicFile(thumbnailFile(tab.id))
-            var output: FileOutputStream? = null
-            try {
-                val stream = atomicFile.startWrite()
-                output = stream
-                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 82, stream)) {
-                    throw IllegalStateException("Bitmap.compress trả về false")
-                }
-                atomicFile.finishWrite(stream)
-                output = null
-                true
-            } catch (error: Exception) {
-                output?.let { atomicFile.failWrite(it) }
-                throw error
+            val jpeg = ByteArrayOutputStream().use { output ->
+                check(bitmap.compress(Bitmap.CompressFormat.JPEG, 82, output))
+                output.toByteArray()
             }
+            thumbnailStorage.save(tab.id, jpeg)
+            true
         } catch (error: Exception) {
             Log.w(TAG, "Không lưu được thumbnail cho tab ${tab.id}", error)
             false
@@ -315,6 +313,7 @@ class Store private constructor(context: Context) {
             if (id != null && id !in activeIds) file.delete()
         }
     }
+    @Synchronized
     fun loadTabs(): List<PersistedTab> {
         val arr = ProtectedRecords.readArray(sp, "saved_tabs", strictSchema = true)
         val result = mutableListOf<PersistedTab>()

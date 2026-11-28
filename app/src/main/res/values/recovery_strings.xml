@@ -24,7 +24,13 @@
     <string name="recovery_restore_error">Chưa xác nhận được phục hồi: khóa/file sai, dữ liệu không hợp lệ, máy không trống hoặc lỗi lưu trữ. Giữ nguyên file và khóa; không xóa dữ liệu ứng dụng.</string>
     <string name="recovery_export_error">Chưa xác nhận được bản sao. Có thể file ghi chưa hoàn chỉnh; giữ bản sao cũ và thử lại với tên file mới.</string>
     <string name="recovery_export_button">Tạo bản sao phục hồi</string>
-    <string name="recovery_export_blocked">Hãy mở tab thường và đợi kiểm tra bảo mật hoàn tất</string>
-    <string name="recovery_dashboard_description">Sao lưu mã hóa bằng khóa phục hồi riêng. Chỉ nhập vào Summit chưa có dữ liệu; không khôi phục đè lên bản đang dùng.</string>
+    <string name="recovery_export_blocked">Hãy mở tab thường và mở khóa Summit trước khi sao lưu</string>
+    <string name="recovery_dashboard_description">Sao lưu mã hóa bằng khóa riêng, không cần đăng nhập Google và không tự tải lên Drive. Chỉ phục hồi vào Summit chưa có dữ liệu.</string>
     <string name="recovery_copy_error">Không sao chép được khóa. Hãy ghi lại khóa hiển thị hoặc thử lại.</string>
+    <string name="recovery_confirm_key">Để xác nhận đã lưu khóa, hãy nhập lại toàn bộ khóa phục hồi.</string>
+    <string name="recovery_confirm_mismatch">Khóa xác nhận chưa khớp. Hãy kiểm tra bản khóa đã lưu.</string>
+    <string name="recovery_no_backup">Chưa có bản sao được xác minh trên thiết bị này.</string>
+    <string name="recovery_last_backup">Lần xác minh bản sao gần nhất: %1$s</string>
+    <string name="recovery_reminder_due">Nên tạo bản sao phục hồi mới (mỗi 7 ngày).</string>
+    <string name="recovery_export_status_error">Bản sao đã đọc lại thành công nhưng không lưu được thời điểm xác minh. Hãy giữ file và khóa.</string>
 </resources>

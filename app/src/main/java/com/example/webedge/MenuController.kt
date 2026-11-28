@@ -806,15 +806,18 @@ class MenuController(
         } else {
             if (!tabManager.isPrivateMode) {
                 val account = googleAccount.profile
-                box.addView(buildGoogleAccountRow(account) {
-                    if (account != null) {
-                        showGoogleAccount(account)
-                    } else {
-                        googleAccount.signIn {
-                            if (isOpen && kind == Kind.MAIN && menuBackAction == null) showMainPage(false)
-                        }
-                    }
+                box.addView(buildGoogleAccountRow(account, signedOutLabel = "Tài khoản Google") {
+                    showGoogleAccount(account)
                 })
+                if (RecoveryReminder.due(activity)) {
+                    box.addView(TextView(activity).apply {
+                        text = activity.getString(R.string.recovery_reminder_due)
+                        textSize = 12f
+                        styleSecondary(this)
+                        setPadding(dp(22), 0, dp(22), dp(8))
+                        setOnClickListener { showGoogleAccount(account) }
+                    })
+                }
                 gap()
             }
             item("Chế độ đọc", Icons.BOOK_OPEN, true) {
@@ -841,7 +844,11 @@ class MenuController(
         setMenuPage(page, 280, animate)
     }
 
-    private fun buildGoogleAccountRow(account: GoogleAccountProfile?, onClick: (() -> Unit)? = null): View {
+    private fun buildGoogleAccountRow(
+        account: GoogleAccountProfile?,
+        signedOutLabel: String? = null,
+        onClick: (() -> Unit)? = null
+    ): View {
         val row = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -879,7 +886,7 @@ class MenuController(
         row.addView(badge, LinearLayout.LayoutParams(dp(42), dp(42)))
 
         val name = TextView(activity).apply {
-            text = account?.name ?: "Đăng nhập bằng Google"
+            text = account?.name ?: signedOutLabel ?: "Đăng nhập bằng Google"
             textSize = 16f
             setSingleLine()
             ellipsize = TextUtils.TruncateAt.END
@@ -893,7 +900,7 @@ class MenuController(
             row.setOnClickListener { onClick() }
             row.isFocusable = true
             AnimationSystem.press(row, Constants.PRESS_SCALE_ROW)
-            if (account != null) {
+            if (account != null || signedOutLabel != null) {
                 val chevron = ImageView(activity).apply {
                     setImageDrawable(PathIcon(Icons.ARROW_FORWARD, GlassSystem.pageSecondaryText(Color.WHITE)))
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -904,8 +911,52 @@ class MenuController(
         return row
     }
 
-    private fun showGoogleAccount(account: GoogleAccountProfile, startSync: Boolean = false) {
+    private fun addRecoveryEntry(panel: Panel) {
+        val recoveryButton = panelButton(activity.getString(R.string.recovery_export_button), accent) {
+            if (tabManager.isPrivateMode || tabManager.getForWebView(host.web)?.isPrivate == true ||
+                !BrowserLockPolicy.allowBrowserWindow(activity)) {
+                host.toast(activity.getString(R.string.recovery_export_blocked))
+                return@panelButton
+            }
+            if (googleSync.busy) {
+                host.toast("Đang đồng bộ")
+                return@panelButton
+            }
+            store.flush()
+            close()
+            activity.startActivity(Intent(activity, RecoveryArchiveActivity::class.java))
+        }
+        panel.body.addView(recoveryButton, LinearLayout.LayoutParams(-1, dp(44)).apply {
+            setMargins(dp(16), dp(12), dp(16), 0)
+        })
+        panel.body.addView(TextView(activity).apply {
+            text = buildString {
+                append(RecoveryReminder.description(activity))
+                if (RecoveryReminder.due(activity)) append("\n").append(activity.getString(R.string.recovery_reminder_due))
+                append("\n").append(activity.getString(R.string.recovery_dashboard_description))
+            }
+            textSize = 12f
+            styleSecondary(this)
+            setPadding(dp(22), dp(8), dp(22), dp(8))
+        })
+    }
+
+    private fun showGoogleAccount(account: GoogleAccountProfile?, startSync: Boolean = false) {
+        if (tabManager.isPrivateMode) return
         val panel = makePanel("Tài khoản Google", null, 340) { showMainPage() }
+        if (account == null) {
+            panel.body.addView(buildGoogleAccountRow(null) {
+                googleAccount.signIn {
+                    if (isOpen && !tabManager.isPrivateMode &&
+                        menuCard?.let { it.getChildAt(it.childCount - 1) === panel.page } == true) {
+                        showGoogleAccount(googleAccount.profile)
+                    }
+                }
+            })
+            addRecoveryEntry(panel)
+            showPanel(panel)
+            return
+        }
         panel.body.addView(buildGoogleAccountRow(account))
 
         val row = LinearLayout(activity).apply {
@@ -940,6 +991,7 @@ class MenuController(
             setPadding(dp(22), 0, dp(22), dp(8))
         }
         panel.body.addView(status)
+        addRecoveryEntry(panel)
         lateinit var syncNow: View
         fun refreshAccount() {
             val card = menuCard as? ViewGroup ?: return
