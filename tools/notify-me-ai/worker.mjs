@@ -47,54 +47,114 @@ function latest(links,kind,base,env) {
  for(const l of links) {if(!l||typeof l!=='object')continue;const n=linkNumber(l.label,kind); if(n===null)continue; let u;try{u=allowedURL(l.url,env,base)}catch{continue} if(new URL(u).origin!==origin||u===base)continue; if(!best||n>best.number)best={number:n,url:u};}
  return best;
 }
-// Google sign-in; the admin secret never leaves Cloudflare.
-const GOOGLE_CLIENT_DEFAULT='630194752242-s02r0s4kp7dl0uktp0iprkgac4i50nf4.apps.googleusercontent.com';
-const SESSION_TTL=7*24*3600;
-const b64u=b=>btoa(String.fromCharCode(...b)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-function unb64(s){if(typeof s!=='string'||!s.length||!/^[A-Za-z0-9_-]+$/.test(s))throw Error('base64');return Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0))}
-const decodePart=s=>JSON.parse(new TextDecoder().decode(unb64(s)));
-function configured(env){if(typeof env.BETA_TOKEN!=='string'||env.BETA_TOKEN.length<32)fail(503,'beta_not_configured')}
-let googleKeys=null,googleKeysUntil=0,googleKeysRefresh=0;
-async function googleKey(kid){
- const now=Date.now();let hit=googleKeys?.find(k=>k.kid===kid);
- if(!googleKeys||now>=googleKeysUntil||(!hit&&now>=googleKeysRefresh)){
-  googleKeysRefresh=now+60000;
-  const r=await fetch('https://www.googleapis.com/oauth2/v3/certs',{redirect:'error',signal:AbortSignal.timeout(8000)});
-  if(!r.ok)throw Error('google_keys');const j=await r.json();if(!Array.isArray(j.keys)||j.keys.length>30)throw Error('google_keys');
-  googleKeys=j.keys;googleKeysUntil=now+300000;hit=googleKeys.find(k=>k.kid===kid);
- }
- if(!hit||hit.kty!=='RSA'||hit.alg!=='RS256'||hit.use!=='sig')throw Error('google_key');
- return crypto.subtle.importKey('jwk',hit,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);
+// Opaque refresh authority and signed access tokens share a revocable D1 session.
+// The client creates a separate random logout capability before the first exchange.
+const ACCESS_SECONDS = 3600;
+const FAMILY_SECONDS = 30 * 86400;
+const encoder = new TextEncoder();
+const b64u = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function unb64(value) {
+ if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) throw Error('encoding');
+ return Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')), c => c.charCodeAt(0));
 }
-async function verifyGoogle(env,token){
- if(typeof token!=='string'||token.length>6000)fail(401,'google_invalid');
- let h,p,parts;const now=Math.floor(Date.now()/1000);
- try{parts=token.split('.');if(parts.length!==3)throw Error();h=decodePart(parts[0]);p=decodePart(parts[1]);
-  if(h.alg!=='RS256'||typeof h.kid!=='string'||h.kid.length>128||h.crit||!['accounts.google.com','https://accounts.google.com'].includes(p.iss)||p.aud!==(env.GOOGLE_CLIENT_ID||GOOGLE_CLIENT_DEFAULT)||!Number.isInteger(p.exp)||p.exp<=now||!Number.isInteger(p.iat)||p.iat>now+60||typeof p.sub!=='string'||!p.sub||p.sub.length>255||!/^[A-Za-z0-9_-]+$/.test(p.sub))throw Error();
- }catch{fail(401,'google_invalid')}
- try{const k=await googleKey(h.kid);if(!await crypto.subtle.verify('RSASSA-PKCS1-v1_5',k,unb64(parts[2]),new TextEncoder().encode(parts[0]+'.'+parts[1])))throw Error()}catch{fail(401,'google_invalid')}
+const decodePart = s => JSON.parse(new TextDecoder().decode(unb64(s)));
+const nowSeconds = () => Math.floor(Date.now()/1000);
+const capability = s => typeof s === 'string' && /^[A-Za-z0-9_-]{43}$/.test(s);
+const digest = async s => b64u(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(s))));
+function configured(env) {
+ if (!env.DB || typeof env.BETA_TOKEN !== 'string' || env.BETA_TOKEN.length < 32) fail(503,'server_config');
+}
+let certs, certsUntil = 0, retryAfter = 0, loadingKeys;
+async function googleKey(kid) {
+ const now = Date.now();
+ if ((now >= certsUntil || !certs?.some(k => k.kid === kid)) && now >= retryAfter && !loadingKeys) {
+  retryAfter = now + 30000;
+  loadingKeys = (async () => {
+   // workerd accepts manual/follow only. A redirect is a failed key lookup.
+   const r = await fetch('https://www.googleapis.com/oauth2/v3/certs', {redirect:'manual',signal:AbortSignal.timeout(8000)});
+   if (r.status !== 200) { await r.body?.cancel(); throw Error(); }
+   const {keys} = await r.json();
+   if (!Array.isArray(keys) || !keys.length || keys.length > 30) throw Error();
+   certs = keys;
+   certsUntil = now + 300000;
+  })().finally(() => { loadingKeys = null; });
+ }
+ try { await loadingKeys; } catch { fail(503,'google_keys_unavailable'); }
+ if (!certs || now >= certsUntil) fail(503,'google_keys_unavailable');
+ const key = certs.find(k => k.kid === kid && k.kty === 'RSA' && k.alg === 'RS256' && k.use === 'sig');
+ if (!key) fail(401,'google_invalid');
+ try { return await crypto.subtle.importKey('jwk',key,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']); }
+ catch { fail(503,'google_keys_unavailable'); }
+}
+async function verifyGoogle(env,token) {
+ if (typeof env.GOOGLE_CLIENT_ID !== 'string' || !/^[0-9]+-[\w-]+\.apps\.googleusercontent\.com$/.test(env.GOOGLE_CLIENT_ID)) fail(503,'google_client_config');
+ if (typeof token !== 'string' || !token) fail(400,'google_token_missing');
+ if (token.length > 12000) fail(401,'google_invalid');
+ const parts = token.split('.');
+ let h,p,signature;
+ try {
+  if (parts.length !== 3) throw Error();
+  h = decodePart(parts[0]); p = decodePart(parts[1]); signature = unb64(parts[2]);
+  if (!obj(h) || !obj(p) || h.alg !== 'RS256' || typeof h.kid !== 'string' || !h.kid || h.kid.length > 128 || h.crit !== undefined) throw Error();
+ } catch { fail(401,'google_invalid'); }
+ const key = await googleKey(h.kid);
+ if (!await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,signature,encoder.encode(parts[0]+'.'+parts[1]))) fail(401,'google_invalid');
+ if (!['https://accounts.google.com','accounts.google.com'].includes(p.iss) ||
+     typeof p.sub !== 'string' || !/^[A-Za-z0-9_-]{1,255}$/.test(p.sub) ||
+     !Number.isSafeInteger(p.exp) || !Number.isSafeInteger(p.iat) || p.iat > nowSeconds()+60) fail(401,'google_invalid');
+ if (p.aud !== env.GOOGLE_CLIENT_ID) fail(401,'google_audience');
+ if (p.exp <= nowSeconds()) fail(401,'google_expired');
  return p.sub;
 }
-async function sessionMac(env){return crypto.subtle.importKey('raw',new TextEncoder().encode(env.BETA_TOKEN),{name:'HMAC',hash:'SHA-256'},false,['sign','verify'])}
-async function issueSession(env,sub){
- const expires=Math.floor(Date.now()/1000)+SESSION_TTL;
- const data=b64u(new TextEncoder().encode(JSON.stringify({sub,exp:expires,aud:'summit-services'})));
- const signed='nm2.'+data;
- const mac=b64u(new Uint8Array(await crypto.subtle.sign('HMAC',await sessionMac(env),new TextEncoder().encode('summit-session-v2:'+signed))));
- return {token:signed+'.'+mac,expires,sub};
+async function sessionKey(env) {
+ return crypto.subtle.importKey('raw',encoder.encode(env.BETA_TOKEN),{name:'HMAC',hash:'SHA-256'},false,['sign','verify']);
 }
-async function verifySession(env,token){try{
- const parts=token.split('.');if(parts.length!==3||parts[0]!=='nm2')return null;
- if(!await crypto.subtle.verify('HMAC',await sessionMac(env),unb64(parts[2]),new TextEncoder().encode('summit-session-v2:'+parts[0]+'.'+parts[1])))return null;
- const p=decodePart(parts[1]);if(p.aud!=='summit-services'||typeof p.sub!=='string'||!p.sub||p.sub.length>255||!/^[A-Za-z0-9_-]+$/.test(p.sub)||!Number.isInteger(p.exp)||p.exp<=Date.now()/1000)return null;
- return {accountId:'google:'+p.sub,admin:false};
-}catch{return null}}
-async function authenticate(req,env){
+async function mint(env,session) {
+ const expires = Math.min(nowSeconds()+ACCESS_SECONDS,session.expires);
+ const key = await sessionKey(env);
+ async function sign(data) {
+  return data+'.'+b64u(new Uint8Array(await crypto.subtle.sign('HMAC',key,encoder.encode(data))));
+ }
+ return {token:await sign('nm3.'+session.sid+'.'+expires), expires, sub:session.google_sub,
+         refresh:await sign('sr3.'+session.sid), refreshExpires:session.expires};
+}
+async function openSession(env,b) {
+ const sub = await verifyGoogle(env,b.idToken);
+ if (!capability(b.revokeKey)) fail(400,'invalid_revoke_key');
+ const sid = await digest(b.revokeKey);
+ // Hash the signed input. Equivalent encodings of the signature cannot defeat replay protection.
+ const fingerprint = await digest(b.idToken.slice(0,b.idToken.lastIndexOf('.')));
+ const now = nowSeconds();
+ await env.DB.prepare('DELETE FROM summit_sessions WHERE sid IN (SELECT sid FROM summit_sessions WHERE expires <= ? LIMIT 64)').bind(now).run();
+ await env.DB.prepare('INSERT OR IGNORE INTO summit_sessions(sid,credential_hash,google_sub,expires) VALUES(?,?,?,?)')
+   .bind(sid,fingerprint,sub,now+FAMILY_SECONDS).run();
+ const session = await env.DB.prepare('SELECT * FROM summit_sessions WHERE sid=? AND credential_hash=? AND google_sub=? AND revoked=0 AND expires>?')
+   .bind(sid,fingerprint,sub,now).first();
+ if (!session) fail(401,'credential_used');
+ return mint(env,session);
+}
+async function sessionFor(env,token,refresh=false) {
+ const pattern = refresh ? /^sr3\.([\w-]{43})\.([\w-]{43})$/ : /^nm3\.([\w-]{43})\.(\d{1,12})\.([\w-]{43})$/;
+ const parts = typeof token === 'string' && token.match(pattern);
+ if (!parts || !await crypto.subtle.verify('HMAC',await sessionKey(env),unb64(parts.at(-1)),encoder.encode(token.slice(0,token.lastIndexOf('.'))))) fail(401,'unauthorized');
+ if (!refresh && Number(parts[2]) <= nowSeconds()) fail(401,'session_expired');
+ const session = await env.DB.prepare('SELECT * FROM summit_sessions WHERE sid=? AND revoked=0 AND expires>?').bind(parts[1],nowSeconds()).first();
+ if (!session) fail(401,'session_ended');
+ return session;
+}
+async function authenticate(req,env) {
  configured(env);
- const h=req.headers.get('Authorization')||'';if(!h.startsWith('Bearer ')||h.length>2048)fail(401,'unauthorized');
- const token=h.slice(7);if(token.startsWith('nm2.')){const principal=await verifySession(env,token);if(principal)return principal;fail(401,'unauthorized')}
- const digest=async s=>new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)));
- const [a,b]=await Promise.all([digest(token),digest(env.BETA_TOKEN)]);let d=0;for(let i=0;i<a.length;i++)d|=a[i]^b[i];if(d)fail(401,'unauthorized');
+ const h = req.headers.get('Authorization') || '';
+ if (!h.startsWith('Bearer ') || h.length > 2048) fail(401,'unauthorized');
+ const token = h.slice(7);
+ if (token.startsWith('nm3.')) {
+  const session = await sessionFor(env,token);
+  return {accountId:'google:'+session.google_sub, admin:false};
+ }
+ // Keep the existing server-side health credential independent of account routes.
+ const a = await digest(token), b = await digest(env.BETA_TOKEN);
+ let diff=0; for(let i=0;i<a.length;i++) diff |= a.charCodeAt(i)^b.charCodeAt(i);
+ if(diff) fail(401,'unauthorized');
  return {accountId:null,admin:true};
 }
 async function body(req){
@@ -185,9 +245,27 @@ async function tick(env){
 }
 async function handler(req,env){
  const path=new URL(req.url).pathname,method=req.method;
- if(path==='/'&&method==='GET')return json({service:'summit-notify',version:'0.2.2-google-multi'});
- if(path==='/v1/auth/google'&&method==='POST'){configured(env);const b=await body(req);return json(await issueSession(env,await verifyGoogle(env,b.idToken)))}
- const principal=await authenticate(req,env),accountId=principal.accountId;if(!env.DB||!env.AI)fail(503,'bindings_missing');
+ if(path==='/'&&method==='GET')return json({service:'summit-notify',version:'0.3.3-unified-auth'});
+ if (method === 'POST' && path.startsWith('/v1/auth/')) {
+  configured(env);
+  if (typeof env.AUTH_LIMIT?.limit !== 'function') fail(503,'auth_limit_config');
+  // Cloudflare sets this header on ingress. Never use a client-supplied account or email as the key.
+  const bucket = req.headers.get('CF-Connecting-IP') || 'unknown';
+  if (!(await env.AUTH_LIMIT.limit({key:bucket})).success) fail(429,'auth_rate_limit');
+  const data = await body(req);
+  if (path === '/v1/auth/google') return json(await openSession(env,data));
+  if (path === '/v1/auth/refresh') return json(await mint(env,await sessionFor(env,data.refresh,true)));
+  if (path === '/v1/auth/logout') {
+   if (!capability(data.revokeKey)) fail(400,'invalid_revoke_key');
+   const row = await env.DB.prepare('UPDATE summit_sessions SET revoked=1 WHERE sid=? RETURNING sid').bind(await digest(data.revokeKey)).first();
+   return json({revoked:Boolean(row)});
+  }
+  fail(404,'not_found');
+ }
+ const principal=await authenticate(req,env),accountId=principal.accountId;
+ if(path==='/v1/account' && method==='GET' && !principal.admin)
+  return json({authenticated:true,plan:'preview',services:{notifyMe:true},billingEnabled:false});
+ if(!env.AI)fail(503,'bindings_missing');
  if(path==='/v1/health'&&method==='GET'){await env.DB.prepare('SELECT COUNT(*) AS n FROM notify_watches_v2').first();return json({db:true,aiBinding:true,aiTested:false})}
  if(path==='/v1/health/ai'&&method==='POST'){
   if(!principal.admin)fail(403,'admin_only');
@@ -197,7 +275,6 @@ async function handler(req,env){
   return json({ai:true,model:MODEL});
  }
  if(principal.admin)fail(403,'account_required');
- if(path==='/v1/account'&&method==='GET')return json({authenticated:true,plan:'preview',services:{notifyMe:true},billingEnabled:false});
  if(path==='/v1/watches'&&method==='GET')return json({watches:(await env.DB.prepare('SELECT * FROM notify_watches_v2 WHERE account_id=? ORDER BY checked_at DESC').bind(accountId).all()).results});
  if(path==='/v1/config'&&method==='GET')return json({hosts:(env.ALLOWED_HOSTS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean),intervalMinutes:60});
  if(path==='/v1/analyze'&&method==='POST')return json(await analyze(env,await body(req),accountId));

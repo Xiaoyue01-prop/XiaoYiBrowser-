@@ -67,8 +67,8 @@ android {
         minSdk = 36
         targetSdk = 36
         testInstrumentationRunner = "com.example.webedge.SecurityInstrumentation"
-        versionCode = 3
-        versionName = "1.1"
+        versionCode = 4
+        versionName = "0.3.3"
         resValue("string", "google_web_client_id", googleWebClientId)
     }
 
@@ -113,6 +113,8 @@ kotlin {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.activity:activity-ktx:1.13.0")
     // API 36+ already provides the native Credential Manager.

@@ -88,6 +88,11 @@ jobs:
 
       - name: Run Summit Security Eval
         run: |
+          node tools/notify-me-ai/auth-test.mjs
+          npm install --prefix "$RUNNER_TEMP/summit-runtime-test" --no-audit --no-fund miniflare@4.20260730.0
+          NODE_PATH="$RUNNER_TEMP/summit-runtime-test/node_modules" node tools/notify-me-ai/workerd-test.mjs
+          node tools/notify-me-ai/test.mjs
+          node tools/notify-me-ai/extractor-test.mjs
           bash security-eval/run.sh
           python3 security-eval/PhaseOnePolicyTest.py
           python3 security-eval/PhaseTwoAPolicyTest.py
@@ -95,7 +100,7 @@ jobs:
       - name: Build debug APK and run Android lint
         env:
           SUMMIT_GOOGLE_WEB_CLIENT_ID: ${{ vars.SUMMIT_GOOGLE_WEB_CLIENT_ID }}
-        run: ./gradlew --no-daemon --stacktrace assembleDebug assembleDebugAndroidTest lintDebug
+        run: ./gradlew --no-daemon --stacktrace assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug
 
       - name: Build trial APK
         env:

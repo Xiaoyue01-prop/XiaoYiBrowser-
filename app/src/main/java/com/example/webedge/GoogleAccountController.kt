@@ -3,20 +3,8 @@ package com.example.webedge
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
-import android.util.Log
 import androidx.activity.ComponentActivity
-import androidx.credentials.ClearCredentialStateRequest
-import androidx.credentials.CredentialManager
-import androidx.credentials.CustomCredential
-import androidx.credentials.GetCredentialRequest
-import androidx.credentials.exceptions.ClearCredentialException
-import androidx.credentials.exceptions.GetCredentialCancellationException
-import androidx.credentials.exceptions.GetCredentialException
-import androidx.credentials.exceptions.NoCredentialException
 import androidx.lifecycle.lifecycleScope
-import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
-import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
-import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -32,91 +20,60 @@ internal class GoogleAccountController(
     private val activity: ComponentActivity,
     private val toast: (String) -> Unit
 ) {
-    private val clientId = activity.getString(R.string.google_web_client_id)
     private val preferences = activity.getSharedPreferences("google_account", Context.MODE_PRIVATE)
-    private val credentials by lazy { CredentialManager.create(activity) }
+    init {
+        activity.lifecycleScope.launch {
+            try { AuthManager.resumeLogout(activity) } catch (_: SummitCloud.Failure) { }
+        }
+    }
     private var busy = false
     private var avatar: Bitmap? = null
 
-    var profile: GoogleAccountProfile? = preferences.getString("name", null)?.let { name ->
-        GoogleAccountProfile(name, preferences.getString("avatar_url", null),
-            preferences.getString("email", null), preferences.getString("subject", null))
-    }
-        private set
+    private var avatarOwner: GoogleAccountProfile? = null
+    val profile: GoogleAccountProfile?
+        get() = preferences.all.let { data ->
+            (data["name"] as? String)?.let { name -> GoogleAccountProfile(name,
+                data["avatar_url"] as? String, data["email"] as? String, data["subject"] as? String) }
+        }
 
     fun signIn(onSignedIn: () -> Unit) {
         if (busy || profile != null) return
-        if (clientId.isBlank()) {
-            toast("Bản Summit này chưa cấu hình đăng nhập Google")
-            return
-        }
-
         busy = true
         activity.lifecycleScope.launch {
             try {
-                val option = GetSignInWithGoogleOption.Builder(clientId).build()
-                val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
-                val credential = credentials.getCredential(activity, request).credential
-                if (credential !is CustomCredential ||
-                    credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
-                ) {
-                    toast("Không nhận được thông tin tài khoản Google")
-                    return@launch
-                }
-
-                val google = GoogleIdTokenCredential.createFrom(credential.data)
-                // Save account identifiers, not OAuth or ID tokens. Drive authorization is a separate user action.
-                val name = google.displayName?.takeIf { it.isNotBlank() }
-                    ?: google.givenName?.takeIf { it.isNotBlank() }
-                    ?: "Tài khoản Google"
-                val account = GoogleAccountProfile(name, google.profilePictureUri?.toString(), google.email, google.uniqueId)
-                preferences.edit().putString("name", account.name).putString("avatar_url", account.avatarUrl)
-                    .putString("email", account.email).putString("subject", account.subject).apply()
-                profile = account
+                val login = AuthManager.signIn(activity)
                 onSignedIn()
-            } catch (e: GetCredentialCancellationException) {
-                Log.e("SummitGoogle", "Cancelled type=${e.type} msg=${e.message}", e)
-                showError("Cancelled (Google đóng hộp chọn tài khoản)\n${e.type}\n${e.message}")
-            } catch (e: NoCredentialException) {
-                Log.e("SummitGoogle", "NoCredential type=${e.type} msg=${e.message}", e)
-                showError("NoCredentialException\n${e.type}\n${e.message}")
-            } catch (e: GetCredentialException) {
-                Log.e("SummitGoogle", "GetCredential type=${e.type} msg=${e.message}", e)
-                showError("${e.javaClass.simpleName}\n${e.type}\n${e.message}")
-            } catch (e: GoogleIdTokenParsingException) {
-                Log.e("SummitGoogle", "Parse failed", e)
-                showError("Parse: ${e.message}")
-            } finally {
-                busy = false
-            }
+                activity.lifecycleScope.launch { AuthManager.warm(activity, login) }
+            } catch (e: SummitCloud.Failure) {
+                showError(SummitCloud.message(e))
+            } finally { busy = false }
         }
     }
 
     fun signOut(onSignedOut: () -> Unit) {
         if (busy || profile == null) return
         busy = true
-        profile = null
-        avatar = null
-        preferences.edit().clear().apply()
-        NotifyMeAuth.clear(activity)
-        onSignedOut()
+        val login = AuthManager.account(activity)
         activity.lifecycleScope.launch {
             try {
-                credentials.clearCredentialState(ClearCredentialStateRequest())
-            } catch (_: ClearCredentialException) {
-                // The local profile is already signed out.
-            } finally {
-                busy = false
-            }
+                AuthManager.signOut(activity, login)
+                avatar = null
+                avatarOwner = null
+                onSignedOut()
+                // JobScheduler also retries the durable outbox after disconnection or reboot.
+                launch { try { AuthManager.drainLogout(activity) } catch (_: SummitCloud.Failure) { } }
+            } catch (e: SummitCloud.Failure) { showError(SummitCloud.message(e)) }
+            finally { busy = false }
         }
     }
 
     suspend fun loadAvatar(account: GoogleAccountProfile): Bitmap? {
         if (account != profile) return null
-        avatar?.let { return it }
+        avatar?.takeIf { avatarOwner == account }?.let { return it }
         val address = account.avatarUrl ?: return null
         val bitmap = withContext(Dispatchers.IO) { downloadAvatar(address) }
         if (account != profile) return null
+        avatarOwner = account
         avatar = bitmap
         return bitmap
     }
@@ -153,10 +110,9 @@ internal class GoogleAccountController(
     }
 
     private fun showError(detail: String) {
-        val text = "$detail\n\nClient ID: ${clientId.take(24)}…${clientId.takeLast(32)}"
         val dialog = android.app.AlertDialog.Builder(activity)
             .setTitle("Đăng nhập Google chưa hoàn tất")
-            .setMessage(text)
+            .setMessage(detail)
             .setPositiveButton("Đóng", null)
             .show()
         dialog.findViewById<android.widget.TextView>(android.R.id.message)?.setTextIsSelectable(true)

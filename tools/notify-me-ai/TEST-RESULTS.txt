@@ -24,4 +24,9 @@ PASS identity is verified sub, not email or owner setting
 PASS tampered session and admin rotation rejected, owner setting irrelevant
 PASS expired session rejected even with valid MAC
 PASS legacy session rejected, wrong audience session rejected
-7 authentication test groups passed (local signed JWT fixtures).
+PASS retry after lost exchange response returns the same family; replay on another device rejected
+PASS refresh, offline retry and logout affect only the selected session
+PASS diagnostic codes distinguish provider, audience, expiry, signature and server config
+PASS repeat additive migration preserves legacy and account rows
+PASS rate-limited auth stops before credential exchange; absent binding fails closed
+12 authentication test groups passed.

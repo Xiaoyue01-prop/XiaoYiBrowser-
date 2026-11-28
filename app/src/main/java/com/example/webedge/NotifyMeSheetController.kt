@@ -203,10 +203,10 @@ internal class NotifyMeSheetController(
         var busy = false
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val source = webView()
-        val sheetAccount = NotifyMeAuth.profileSub(activity)
+        val sheetAccount = AuthManager.account(activity)
         var pendingDialog: AlertDialog? = null
         lateinit var redraw: () -> Unit
-        fun active() = scope.isActive && !activity.isDestroyed && !activity.isFinishing && !isPrivate() && NotifyMeAuth.profileSub(activity) == sheetAccount
+        fun active() = scope.isActive && !activity.isDestroyed && !activity.isFinishing && !isPrivate() && AuthManager.account(activity) == sheetAccount
         fun sourceOK(): Boolean = active() && source === webView() && source.url?.substringBefore('#') == current?.url
         fun dialog(builder: AlertDialog.Builder) {
             if (!active()) return
@@ -219,18 +219,6 @@ internal class NotifyMeSheetController(
             dlg.show()
             dlg.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
-        fun withToken(action: (String) -> Unit) {
-            if (!active() || busy) return
-            busy = true; redraw()
-            scope.launch {
-                var key: String? = null
-                try { key = NotifyMeAuth.token(activity) }
-                catch (e: CancellationException) { throw e }
-                catch (e: Exception) { if (active()) toast(NotifyMeCloud.message(e)) }
-                finally { busy = false; if (active()) redraw() }
-                if (active()) key?.let(action)
-            }
-        }
         fun network(action: suspend () -> Unit) {
             if (!active() || busy) return
             busy = true; redraw()
@@ -239,10 +227,7 @@ internal class NotifyMeSheetController(
                 catch (e: kotlinx.coroutines.TimeoutCancellationException) { if (active()) toast("Quá thời gian đọc trang") }
                 catch (e: CancellationException) { throw e }
                 catch (e: Exception) {
-                    if (active() && (e as? NotifyMeCloud.Failure)?.code == "unauthorized") {
-                        NotifyMeAuth.clear(activity); preview = null; registered = emptyList(); listLoaded = false
-                    }
-                    if (active()) toast(NotifyMeCloud.message(e))
+                    if (active()) toast(SummitCloud.message(e))
                 }
                 finally { busy = false; if (active()) redraw() }
             }
@@ -252,14 +237,15 @@ internal class NotifyMeSheetController(
             registered = (0 until a.length()).map { a.getJSONObject(it) }
             listLoaded = true
         }
-        fun refresh() = withToken { key -> network { replaceList(NotifyMeCloud.request("/v1/watches", key)) } }
-        fun previewPage() = withToken { key ->
-            if (!sourceOK()) { toast("Trang đã thay đổi, hãy mở lại Notify Me"); return@withToken }
-            val d = current ?: return@withToken
-            if (!d.url.startsWith("https://") || java.net.URI(d.url).rawQuery != null) { toast("Chỉ hỗ trợ trang HTTPS công khai không có query"); return@withToken }
+        fun refresh() = network { replaceList(AuthManager.request(activity, sheetAccount, "/v1/watches")) }
+        fun previewPage() {
+            if (!active() || busy) return
+            if (!sourceOK()) { toast("Trang đã thay đổi, hãy mở lại Notify Me"); return }
+            val d = current ?: return
+            if (!d.url.startsWith("https://") || java.net.URI(d.url).rawQuery != null) { toast("Chỉ hỗ trợ trang HTTPS công khai không có query"); return }
             network {
-                val config = NotifyMeCloud.request("/v1/config", key).getJSONArray("hosts")
-                if (!(0 until config.length()).any { config.optString(it) == d.domain }) throw NotifyMeCloud.Failure("url_not_allowed")
+                val config = AuthManager.request(activity, sheetAccount, "/v1/config").getJSONArray("hosts")
+                if (!(0 until config.length()).any { config.optString(it) == d.domain }) throw SummitCloud.Failure("url_not_allowed")
                 if (!sourceOK()) return@network
                 val script = activity.assets.open("notify_me_extract.js").bufferedReader().use { it.readText() }
                 val raw = withTimeout(10000L) {
@@ -281,7 +267,7 @@ internal class NotifyMeSheetController(
                     .setNegativeButton("Hủy", null).setPositiveButton("Phân tích") { _, _ ->
                         if (!sourceOK()) { toast("Trang đã thay đổi"); return@setPositiveButton }
                         network {
-                            val result = NotifyMeCloud.request("/v1/analyze", key, payload)
+                            val result = AuthManager.request(activity, sheetAccount, "/v1/analyze", payload)
                             if (sourceOK()) { result.getJSONObject("rule"); result.getJSONObject("ticket"); preview = result; expanded = true }
                         }
                     })
@@ -342,15 +328,15 @@ internal class NotifyMeSheetController(
                         val save = button("Đăng ký theo dõi trên server", primary = true) {
                             val ticket = preview?.optJSONObject("ticket") ?: return@button
                             if (!sourceOK()) { toast("Trang đã thay đổi, hãy phân tích lại"); return@button }
-                            withToken { key -> network {
-                                val saved = NotifyMeCloud.request("/v1/watches", key, JSONObject().put("ticket", ticket)).getJSONObject("watch")
+                            network {
+                                val saved = AuthManager.request(activity, sheetAccount, "/v1/watches", JSONObject().put("ticket", ticket)).getJSONObject("watch")
                                 if (active()) {
                                     registered = listOf(saved) + registered.filter { it.optString("id") != saved.optString("id") }
                                     preview = null
                                     toast("Đã đăng ký D1 · chưa chạy tự động")
                                     tab = 1; control.select(1)
                                 }
-                            } }
+                            }
                         }
                         save.isEnabled = rule != null && !busy
                         save.alpha = if (save.isEnabled) 1f else .45f
@@ -381,11 +367,11 @@ internal class NotifyMeSheetController(
                             add(item, button("Bỏ theo dõi") {
                                 dialog(AlertDialog.Builder(activity).setTitle("Bỏ theo dõi?").setMessage(rowDraft.title)
                                     .setNegativeButton("Hủy", null).setPositiveButton("Xóa") { _, _ ->
-                                        withToken { key -> network {
-                                            NotifyMeCloud.request("/v1/watches/delete", key, JSONObject().put("id", saved.getString("id")))
+                                        network {
+                                            AuthManager.request(activity, sheetAccount, "/v1/watches/delete", JSONObject().put("id", saved.getString("id")))
                                             registered = registered.filter { it.optString("id") != saved.optString("id") }
                                             expandedWatch = null
-                                        } }
+                                        }
                                     })
                             }.apply { isEnabled = !busy }, 8)
                         }
@@ -432,7 +418,14 @@ internal class NotifyMeSheetController(
         redraw = { render() }
         render()
         page.requestFocus()
-        sheet.show("Notify Me", page, onDismiss = { scope.cancel(); pendingDialog?.dismiss(); tones.clear() }, onPageToneChanged = { color ->
+        val stopObserving = AuthManager.observeAccount(activity) {
+            if (AuthManager.account(activity) != sheetAccount) {
+                page.visibility = View.INVISIBLE
+                pendingDialog?.dismiss()
+                sheet.dismiss(immediate = true)
+            }
+        }
+        sheet.show("Notify Me", page, onDismiss = { stopObserving(); scope.cancel(); pendingDialog?.dismiss(); tones.clear() }, onPageToneChanged = { color ->
             control.applyPageTone(GlassSystem.isDarkPage(color), accent, GlassSystem.pageSecondaryText(color))
             tones.toList().forEach { it(color) }
         })

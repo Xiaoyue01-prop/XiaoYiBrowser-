@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
-import {DatabaseSync} from 'node:sqlite';
-import {readFileSync} from 'node:fs';
 import worker from './worker.mjs';
-const sql=new DatabaseSync(':memory:');sql.exec(readFileSync(new URL('./schema.sql',import.meta.url),'utf8'));sql.exec(readFileSync(new URL('./migration-v2.sql',import.meta.url),'utf8'));sql.exec('PRAGMA foreign_keys=ON');
-function stmt(q,args=[]){return {bind(...a){return stmt(q,a)},async first(){return sql.prepare(q).get(...args)||null},async all(){return {results:sql.prepare(q).all(...args)}},async run(){return sql.prepare(q).run(...args)},q,args};}
-const DB={prepare:stmt,async batch(stmts){sql.exec('BEGIN');try{for(const s of stmts)await s.run();sql.exec('COMMIT')}catch(e){sql.exec('ROLLBACK');throw e}}};
+import {database,clientId,jwk,signed,post,randomKey} from './auth-fixtures.mjs';
+const {sql,DB}=database();
 let calls=0,mode='good',chapter=128,fetchCount=0;
-const env={DB,ENABLE_NOTIFY_CRON:'true',BETA_TOKEN:'test-only-secret-'.repeat(3),ALLOWED_HOSTS:'example.com',AI:{async run(_model,opts){calls++;if(opts.messages[1].content==='Health check')return {response:{ok:true}};return {response:mode==='good'?'{"group":0,"kind":"chapter"}':'{"group":9,"kind":"chapter"}'}}}};
+const env={AUTH_LIMIT:{async limit(){return {success:true}}},DB,GOOGLE_CLIENT_ID:clientId,ENABLE_NOTIFY_CRON:'true',BETA_TOKEN:'test-only-secret-'.repeat(3),ALLOWED_HOSTS:'example.com',AI:{async run(_model,opts){calls++;if(opts.messages[1].content==='Health check')return {response:{ok:true}};return {response:mode==='good'?'{"group":0,"kind":"chapter"}':'{"group":9,"kind":"chapter"}'}}}};
 // Mock HTMLRewriter behavior only. Real parser / CPU quota need Cloudflare integration test.
-globalThis.fetch=async (url,opts)=>{fetchCount++;assert.equal(opts.redirect,'manual');assert.equal(new URL(url).hostname,'example.com');return new Response('fixture',{headers:{'content-type':'text/html'}})};
+globalThis.fetch=async (url,opts)=>{if(url==="https://www.googleapis.com/oauth2/v3/certs")return Response.json({keys:[jwk]});fetchCount++;assert.equal(opts.redirect,'manual');assert.equal(new URL(url).hostname,'example.com');return new Response('fixture',{headers:{'content-type':'text/html'}})};
 globalThis.HTMLRewriter=class {on(s,h){assert.equal(s,'.chapters a');this.h=h;return this} transform(r){const h=this.h;let end;h.element({getAttribute:()=>`/c${chapter}`,onEndTag:f=>{end=f}});h.text({text:`Chương ${chapter}`});end();return r}};
-async function session(sub){const data='nm2.'+Buffer.from(JSON.stringify({sub,exp:Math.floor(Date.now()/1000)+3600,aud:'summit-services'})).toString('base64url');const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(env.BETA_TOKEN),{name:'HMAC',hash:'SHA-256'},false,['sign']);return data+'.'+Buffer.from(await crypto.subtle.sign('HMAC',k,new TextEncoder().encode('summit-session-v2:'+data))).toString('base64url')}
+async function session(sub) {
+ const now=Math.floor(Date.now()/1000);
+ const idToken=await signed({iss:'accounts.google.com',aud:clientId,iat:now,exp:now+3600,sub});
+ const r=await post(worker,'google',{idToken,revokeKey:randomKey(),email:'untrusted',pro:true},env);
+ assert.equal(r.status,200);
+ return (await r.json()).token;
+}
 const tokenA=await session('accountA'),tokenB=await session('accountB');
 async function req(path,method='GET',body,token=tokenA){return worker.fetch(new Request('https://worker.example'+path,{method,headers:{...(token?{Authorization:'Bearer '+token}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env)}
 const payload={url:'https://example.com/book',title:'Book',metadata:'novel',groups:[{selector:'.chapters a',links:[{label:'Chương 128',url:'https://example.com/c128'}]}]};
