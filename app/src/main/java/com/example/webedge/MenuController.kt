@@ -150,6 +150,12 @@ class MenuController(
         )
     }
 
+    private val notifyMeSheet by lazy(LazyThreadSafetyMode.NONE) {
+        NotifyMeSheetController(activity, d, isNight, fg, accent,
+            isPrivate = { tabManager.isPrivateMode || tabManager.getForWebView(host.web)?.isPrivate == true },
+            toast = host::toast)
+    }
+
     private val footballSheet by lazy(LazyThreadSafetyMode.NONE) {
         FootballSheetController(
             activity = activity,
@@ -577,6 +583,7 @@ class MenuController(
         browserTools.dismiss()
         entrySheet.dismiss()
         footballSheet.dismiss()
+        notifyMeSheet.dismiss()
     }
 
     /** Deep links from the in-app Live Activity card (not from Android notifications). */
@@ -797,6 +804,10 @@ class MenuController(
 
             gap()
             item("Tìm trong trang", Icons.SEARCH, true) { host.openFind() }
+            if (!tabManager.isPrivateMode && tabManager.getForWebView(host.web)?.isPrivate != true &&
+                NotifyMeDraft.fromPage(host.currentUrl, null) != null) {
+                item("Notify Me", Icons.BELL, true) { notifyMeSheet.showForPage(host.currentUrl, host.web.title) }
+            }
             item("Trang web máy tính", if (host.isDesktopMode()) Icons.CHECK else null, true) {
                 host.toggleDesktopMode()
             }
@@ -828,6 +839,9 @@ class MenuController(
             item("Lịch sử", Icons.HISTORY, true) { entrySheet.show("Lịch sử", "history") }
             item("Tải xuống", Icons.DOWNLOAD, true) { browserTools.showDownloads() }
             item("Privacy Dashboard", Icons.SHIELD, true) { browserTools.showPrivacy() }
+            if (!tabManager.isPrivateMode && tabManager.getForWebView(host.web)?.isPrivate != true) {
+                item("Notify Me", Icons.BELL, true) { notifyMeSheet.showDashboard() }
+            }
             item("Tỉ số bóng đá", Icons.FOOTBALL, true) { footballSheet.show() }
 
             gap()

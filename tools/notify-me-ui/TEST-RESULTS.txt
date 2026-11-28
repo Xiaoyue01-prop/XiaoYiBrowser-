@@ -1,0 +1,7 @@
+PASS public URL and title
+PASS invalid/internal schemes and credential URLs blocked
+PASS title fallback and cap
+PASS save/update without duplicates
+PASS invalid request or interval not saved
+PASS cap, update at cap, delete, clear
+6/6 PASS
