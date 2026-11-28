@@ -11,4 +11,17 @@ PASS cloud fallback and no duplicate checks before due
 PASS ack and delete
 PASS AI uncertainty and daily limit
 PASS authenticated AI health and budget enforcement
-13 test groups passed (local mock, not live Cloudflare).
+PASS legacy records remain untouched and invisible
+PASS two accounts may follow same URL; tickets cannot cross accounts
+PASS cross-account observe, delete, event listing and ack blocked
+PASS individual AI cap and global cap independent; preview plan open
+PASS cron disabled by default even with due records
+18 test groups passed (SQLite + mock AI/HTML, not live Cloudflare).
+PASS owner login yields session, health succeeds, admin token unchanged
+PASS second Google account allowed without owner config
+PASS bad signature, algorithm, issuer, audience, expiry rejected
+PASS identity is verified sub, not email or owner setting
+PASS tampered session and admin rotation rejected, owner setting irrelevant
+PASS expired session rejected even with valid MAC
+PASS legacy session rejected, wrong audience session rejected
+7 authentication test groups passed (local signed JWT fixtures).

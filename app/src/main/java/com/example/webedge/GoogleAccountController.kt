@@ -98,6 +98,7 @@ internal class GoogleAccountController(
         profile = null
         avatar = null
         preferences.edit().clear().apply()
+        NotifyMeAuth.clear(activity)
         onSignedOut()
         activity.lifecycleScope.launch {
             try {

@@ -1,3 +1,7 @@
+> V0.3.2 update: for deployment and Google authentication use NOTIFY_ME_GOOGLE_AUTH.md. Older instructions below are historical.
+
+> V0.3.1: Authentication/deploy instructions in this historical V0.3 note are superseded by NOTIFY_ME_GOOGLE_AUTH.md. Do not enter BETA_TOKEN in the app.
+
 # Notify Me V0.3 — real AI + confirmed registration (private integration test)
 Baseline: Summit-NotifyMe-Unified-UI-V0.2.2.zip. Worker V0.2.0 replaces V0.1.1.
 

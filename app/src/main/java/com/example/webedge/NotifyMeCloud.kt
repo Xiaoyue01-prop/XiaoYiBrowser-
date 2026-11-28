@@ -6,20 +6,21 @@ import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** Private owner test only. The bearer is supplied by the owner at runtime and never stored. */
+/** Summit service session obtained from the server after verified Google sign-in. */
 internal object NotifyMeCloud {
     private const val BASE = "https://summit-notify.cestmalune.workers.dev"
-    private val routes = setOf("/v1/config", "/v1/analyze", "/v1/watches", "/v1/watches/delete")
+    private val routes = setOf("/v1/auth/google", "/v1/account", "/v1/config", "/v1/analyze", "/v1/watches", "/v1/watches/delete")
     class Failure(val code: String) : Exception(code)
-    suspend fun request(path: String, token: String, body: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
-        require(path in routes && token.matches(Regex("[0-9a-fA-F]{64}")))
+    fun validSession(token: String): Boolean = token.length <= 2041 && token.matches(Regex("nm2\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"))
+    suspend fun request(path: String, token: String?, body: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
+        require(path in routes && (if (path == "/v1/auth/google") token == null && body != null else token != null && validSession(token)))
         val c = URL(BASE + path).openConnection() as HttpURLConnection
         try {
             c.instanceFollowRedirects = false
             c.connectTimeout = 15000; c.readTimeout = 90000
             c.useCaches = false
             c.requestMethod = if (body == null) "GET" else "POST"
-            c.setRequestProperty("Authorization", "Bearer $token")
+            if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
             c.setRequestProperty("Accept", "application/json")
             if (body != null) {
                 val bytes = body.toString().toByteArray(Charsets.UTF_8)
@@ -42,13 +43,20 @@ internal object NotifyMeCloud {
         } finally { c.disconnect() }
     }
     fun message(error: Throwable): String = when ((error as? Failure)?.code) {
-        "unauthorized" -> "Token không đúng. Đóng Sheet rồi nhập lại."
+        "unauthorized" -> "Phiên Notify Me hết hạn. Bấm lại để kết nối Google."
+        "google_sign_in_required" -> "Đăng nhập tài khoản Google trong Menu Summit trước."
+        "google_account_mismatch" -> "Chọn đúng tài khoản Google đang đăng nhập trong Summit."
+        "google_cancelled" -> "Đã hủy kết nối Google."
+        "google_invalid", "google_login_failed", "google_client_missing" -> "Không xác minh được tài khoản Google. Kiểm tra cấu hình đăng nhập."
+        "session_storage_failed" -> "Không thể lưu phiên mã hóa trên máy."
         "url_not_allowed" -> "Tên miền chưa được cho phép trong ALLOWED_HOSTS."
         "ai_uncertain", "no_numbered_release" -> "AI chưa xác định được tập/chương."
         "selector_mismatch", "cloud_source_unavailable" -> "Server chưa xác minh được danh sách tập/chương công khai."
-        "daily_ai_limit" -> "Đã đạt giới hạn AI hôm nay."
+        "daily_ai_limit" -> "Máy chủ đã đạt hạn mức AI thử nghiệm hôm nay."
+        "account_ai_limit" -> "Tài khoản đã đạt hạn mức AI thử nghiệm hôm nay."
+        "ticket_account_mismatch" -> "Kết quả thuộc tài khoản khác. Hãy phân tích lại."
         "already_following" -> "Trang này đã đăng ký. Xem trong Following."
-        "watch_limit" -> "Đã đạt giới hạn bản thử cá nhân."
+        "watch_limit" -> "Đã đạt giới hạn an toàn của bản thử nghiệm."
         "ticket_expired", "preview_changed" -> "Kết quả đã hết hạn hoặc trang thay đổi. Hãy phân tích lại."
         else -> "Không hoàn thành yêu cầu (${(error as? Failure)?.code?.takeIf { it.matches(Regex("[a-z0-9_]+")) } ?: "network_or_response"})."
     }

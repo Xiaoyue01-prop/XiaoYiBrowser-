@@ -2,10 +2,8 @@ package com.example.webedge
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.text.InputType
 import android.view.WindowManager
 import android.webkit.WebView
-import android.widget.EditText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,7 +28,7 @@ import android.widget.PopupMenu
 import android.widget.ScrollView
 import android.widget.TextView
 
-/** Owner-only AI integration; background scheduling and real event delivery are not active yet. */
+/** Multi-account AI integration; background scheduling and real event delivery are not active yet. */
 internal class NotifyMeSheetController(
     private val activity: Activity,
     private val density: Float,
@@ -203,12 +201,12 @@ internal class NotifyMeSheetController(
         var registered = emptyList<JSONObject>()
         var listLoaded = false
         var busy = false
-        var token: String? = null
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val source = webView()
+        val sheetAccount = NotifyMeAuth.profileSub(activity)
         var pendingDialog: AlertDialog? = null
         lateinit var redraw: () -> Unit
-        fun active() = scope.isActive && !activity.isDestroyed && !activity.isFinishing && !isPrivate()
+        fun active() = scope.isActive && !activity.isDestroyed && !activity.isFinishing && !isPrivate() && NotifyMeAuth.profileSub(activity) == sheetAccount
         fun sourceOK(): Boolean = active() && source === webView() && source.url?.substringBefore('#') == current?.url
         fun dialog(builder: AlertDialog.Builder) {
             if (!active()) return
@@ -223,23 +221,15 @@ internal class NotifyMeSheetController(
         }
         fun withToken(action: (String) -> Unit) {
             if (!active() || busy) return
-            token?.let { action(it); return }
-            val input = EditText(activity).apply {
-                hint = "BETA_TOKEN (64 ký tự hex)"
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-                isSingleLine = true
-                isSaveEnabled = false
-                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            busy = true; redraw()
+            scope.launch {
+                var key: String? = null
+                try { key = NotifyMeAuth.token(activity) }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) { if (active()) toast(NotifyMeCloud.message(e)) }
+                finally { busy = false; if (active()) redraw() }
+                if (active()) key?.let(action)
             }
-            dialog(AlertDialog.Builder(activity).setTitle("Kết nối Cloudflare cá nhân")
-                .setMessage("Nhập khóa BETA_TOKEN đã tạo. Chỉ giữ trong phiên Sheet, không ghi vào APK hay bộ nhớ lâu dài.")
-                .setView(input).setNegativeButton("Hủy", null).setPositiveButton("Kết nối") { _, _ ->
-                    val key = input.text.toString().trim()
-                    input.text.clear()
-                    if (!active()) return@setPositiveButton
-                    if (!key.matches(Regex("[0-9a-fA-F]{64}"))) toast("Cần khóa hex 64 ký tự")
-                    else { token = key; action(key) }
-                })
         }
         fun network(action: suspend () -> Unit) {
             if (!active() || busy) return
@@ -248,7 +238,12 @@ internal class NotifyMeSheetController(
                 try { action() }
                 catch (e: kotlinx.coroutines.TimeoutCancellationException) { if (active()) toast("Quá thời gian đọc trang") }
                 catch (e: CancellationException) { throw e }
-                catch (e: Exception) { if (active()) toast(NotifyMeCloud.message(e)) }
+                catch (e: Exception) {
+                    if (active() && (e as? NotifyMeCloud.Failure)?.code == "unauthorized") {
+                        NotifyMeAuth.clear(activity); preview = null; registered = emptyList(); listLoaded = false
+                    }
+                    if (active()) toast(NotifyMeCloud.message(e))
+                }
                 finally { busy = false; if (active()) redraw() }
             }
         }
@@ -437,7 +432,7 @@ internal class NotifyMeSheetController(
         redraw = { render() }
         render()
         page.requestFocus()
-        sheet.show("Notify Me", page, onDismiss = { scope.cancel(); token = null; pendingDialog?.dismiss(); tones.clear() }, onPageToneChanged = { color ->
+        sheet.show("Notify Me", page, onDismiss = { scope.cancel(); pendingDialog?.dismiss(); tones.clear() }, onPageToneChanged = { color ->
             control.applyPageTone(GlassSystem.isDarkPage(color), accent, GlassSystem.pageSecondaryText(color))
             tones.toList().forEach { it(color) }
         })
