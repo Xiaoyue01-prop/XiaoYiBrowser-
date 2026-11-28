@@ -16,3 +16,10 @@ Baseline: Summit-NotifyMe-UI-Preview.zip. This is a UI-only build; backend is un
 ## Verification
 - Kotlin model tests: 7/7 groups passed (tools/notify-me-ui/TEST-RESULTS.txt).
 - No Android SDK/Gradle available; no APK build, lint, visual device test or notification action test on Android performed.
+
+## UI 0.2.1 — header overlap and blurred first card
+- Reported on device: the fixed segmented control overlapped the title/close button, and the top of Following was blurred at rest.
+- BrowserBottomSheet now has an opt-in fixed-header layout (`overlayHeader = false`). It reserves the actual drag handle/header height above content and skips the scroll top-fade in that layout. Notify Me alone opts in; existing sheets retain their original default layout and fade.
+- Keeps the translucent sheet, solid cards, segmented glass control, animation, and scrollable body. No backend or storage changes.
+- Device regression: at all three sheet heights verify title and X are above the segmented control, first card is sharp, all sections switch and scroll, close/drag still work, and other sheets are unchanged. Repeat with PiP active and in light/dark page tones.
+- Re-ran 7/7 Kotlin model checks; they do not exercise Android rendering. Android build and on-device visual verification remain pending.

@@ -23,7 +23,8 @@ internal class NotifyMeSheetController(
     private val isPrivate: () -> Boolean,
     private val toast: (String) -> Unit
 ) {
-    private val sheet = BrowserBottomSheet(activity, density, isNight, foreground, accent)
+    // The segmented control is fixed below the title; do not overlay the header or blur the list.
+    private val sheet = BrowserBottomSheet(activity, density, isNight, foreground, accent, overlayHeader = false)
     private val drafts = NotifyMeDrafts()
     private val tones = mutableListOf<(Int?) -> Unit>()
     private fun dp(value: Int) = (value * density + .5f).toInt()

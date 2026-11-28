@@ -26,7 +26,9 @@ class BrowserBottomSheet(
     private val density: Float,
     private val isNight: () -> Boolean,
     private val foreground: Int,
-    private val accent: Int
+    private val accent: Int,
+    // Fixed controls (e.g. Notify Me segments) need their own space below the header.
+    private val overlayHeader: Boolean = true
 ) {
     private var dialog: Dialog? = null
     private var sheetView: View? = null
@@ -167,18 +169,21 @@ class BrowserBottomSheet(
         // Nội dung phủ kín sheet và cuộn xuống DƯỚI tiêu đề (tiêu đề trong suốt nằm đè lên trên),
         // để phần nội dung sát mép tiêu đề bị mờ dần như header menu Tab.
         (content.parent as? ViewGroup)?.removeView(content)
+        val contentLp = FrameLayout.LayoutParams(-1, -1).apply {
+            if (!overlayHeader) topMargin = dp(8) + dp(5) + dp(56)
+        }
         if (onChromeReady != null) {
             contentTarget.addView(content, FrameLayout.LayoutParams(-1, -1))
-            sheet.addView(contentTarget, FrameLayout.LayoutParams(-1, -1))
+            sheet.addView(contentTarget, contentLp)
         } else {
-            sheet.addView(content, FrameLayout.LayoutParams(-1, -1))
+            sheet.addView(content, contentLp)
         }
         sheet.addView(dragZone, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
         onChromeReady?.invoke(Chrome(sheet, header, titleView, closeButton, contentTarget))
 
         // Giống menu Tab: vùng mờ = chiều cao tiêu đề + 24dp; mép dưới (thanh điều hướng) để nguyên nội dung.
         val headerPx = dp(BrowserSheetMotion.HEADER_HEIGHT_DP)
-        findScrollViews(content).forEach { scroll ->
+        if (overlayHeader) findScrollViews(content).forEach { scroll ->
             val first = (content as? ViewGroup)?.getChildAt(0) === scroll
             if (first) {
                 // Khoảng đệm trên của trang chuyển xuống ScrollView, cộng thêm chiều cao tiêu đề để lúc nghỉ
