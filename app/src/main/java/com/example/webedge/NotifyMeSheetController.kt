@@ -219,6 +219,85 @@ internal class NotifyMeSheetController(
             dlg.show()
             dlg.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
+        fun consent(payload: JSONObject, onAllow: () -> Unit) {
+            if (!active()) return
+            val dark = GlassSystem.isDarkPage()
+            val fg = if (dark) Color.WHITE else Color.rgb(25, 26, 30)
+            val muted = if (dark) Color.rgb(185, 185, 192) else Color.rgb(95, 96, 105)
+            fun rounded(color: Int, radius: Int) = GradientDrawable().apply {
+                setColor(color); cornerRadius = dp(radius).toFloat()
+            }
+            fun text(value: String, size: Float, color: Int, bold: Boolean = false) = TextView(activity).apply {
+                this.text = value; textSize = size; setTextColor(color); gravity = Gravity.CENTER
+                if (bold) typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            }
+            val panel = column().apply {
+                setPadding(dp(20), dp(18), dp(20), dp(18))
+                background = rounded(if (dark) Color.rgb(30, 31, 36) else Color.WHITE, 28)
+            }
+            add(panel, text("✦", 32f, accent))
+            add(panel, text("Phân tích bằng AI", 20f, fg, true), 6)
+            add(panel, text("Cho phép gửi dữ liệu trang cần thiết đến Cloudflare AI để nhận diện nội dung mới", 15f, muted), 10)
+            val detail = ScrollView(activity).apply {
+                visibility = View.GONE
+                background = rounded(if (dark) Color.rgb(43, 45, 52) else Color.rgb(244, 244, 247), 14)
+                addView(text(payload.toString(2), 12f, fg).apply {
+                    gravity = Gravity.START; setPadding(dp(10), dp(10), dp(10), dp(10))
+                    setTextIsSelectable(true)
+                })
+            }
+            val toggle = text("Xem dữ liệu gửi đi", 14f, accent, true).apply {
+                minHeight = dp(48)
+                setOnClickListener {
+                    val show = detail.visibility != View.VISIBLE
+                    detail.visibility = if (show) View.VISIBLE else View.GONE
+                    this.text = if (show) "Ẩn dữ liệu gửi đi" else "Xem dữ liệu gửi đi"
+                }
+            }
+            add(panel, toggle, 4)
+            panel.addView(detail, LinearLayout.LayoutParams(-1, dp(140)))
+            val actions = row()
+            val dlg = AlertDialog.Builder(activity).create()
+            var closing = false
+            fun close(allow: Boolean) {
+                if (closing) return
+                closing = true
+                AnimationSystem.exit(panel, toScale = 0.94f) {
+                    if (dlg.isShowing) {
+                        dlg.dismiss()
+                        if (allow && active()) onAllow()
+                    }
+                }
+            }
+            fun action(value: String, primary: Boolean) = text(value, 15f, if (primary) Color.WHITE else fg, true).apply {
+                minHeight = dp(48)
+                background = rounded(if (primary) Color.rgb(40, 120, 239) else if (dark) Color.rgb(48, 49, 56) else Color.rgb(239, 240, 244), 28)
+                setOnClickListener { close(primary) }
+                AnimationSystem.press(this, Constants.PRESS_SCALE_BTN)
+            }
+            actions.addView(action("Hủy", false), LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(8) })
+            actions.addView(action("Cho phép", true), LinearLayout.LayoutParams(0, -2, 1f))
+            add(panel, actions, 10)
+            val viewport = ScrollView(activity).apply { addView(panel); isVerticalScrollBarEnabled = false }
+            dlg.setView(viewport, 0, 0, 0, 0)
+            pendingDialog?.dismiss()
+            pendingDialog = dlg
+            val host = activity as? BiometricBrowserActivity
+            host?.registerBrowserWindow(dlg) { dlg.dismiss() }
+            dlg.setOnDismissListener {
+                AnimationSystem.cancel(panel)
+                host?.unregisterBrowserWindow(dlg)
+                if (pendingDialog === dlg) pendingDialog = null
+            }
+            dlg.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            dlg.show()
+            dlg.window?.apply {
+                addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+                setLayout(minOf(dp(340), (activity.resources.displayMetrics.widthPixels - dp(32)).coerceAtLeast(dp(160))), -2)
+            }
+            AnimationSystem.enter(panel, fromScale = 0.94f)
+        }
         fun network(action: suspend () -> Unit) {
             if (!active() || busy) return
             busy = true; redraw()
@@ -261,16 +340,14 @@ internal class NotifyMeSheetController(
                 if (payload.toString().toByteArray(Charsets.UTF_8).size > 16000) {
                     toast("Dữ liệu nhận diện quá lớn, bản thử này chưa hỗ trợ trang đó"); return@network
                 }
-                // The user reviews the actual payload before sending anything from the page.
-                dialog(AlertDialog.Builder(activity).setTitle("Gửi dữ liệu để AI phân tích?")
-                    .setMessage("Chỉ gửi dữ liệu dưới đây tới Cloudflare. Không gửi cookie hay nội dung phim/truyện.\n\n" + payload.toString(2))
-                    .setNegativeButton("Hủy", null).setPositiveButton("Phân tích") { _, _ ->
-                        if (!sourceOK()) { toast("Trang đã thay đổi"); return@setPositiveButton }
-                        network {
-                            val result = AuthManager.request(activity, sheetAccount, "/v1/analyze", payload)
-                            if (sourceOK()) { result.getJSONObject("rule"); result.getJSONObject("ticket"); preview = result; expanded = true }
-                        }
-                    })
+                // Consent is explicit; the exact payload remains available in expandable details.
+                consent(payload) {
+                    if (!sourceOK()) { toast("Trang đã thay đổi"); return@consent }
+                    network {
+                        val result = AuthManager.request(activity, sheetAccount, "/v1/analyze", payload)
+                        if (sourceOK()) { result.getJSONObject("rule"); result.getJSONObject("ticket"); preview = result; expanded = true }
+                    }
+                }
             }
         }
         var expandedWatch: String? = null

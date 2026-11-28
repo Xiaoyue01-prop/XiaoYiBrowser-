@@ -67,8 +67,8 @@ android {
         minSdk = 36
         targetSdk = 36
         testInstrumentationRunner = "com.example.webedge.SecurityInstrumentation"
-        versionCode = 6
-        versionName = "0.3.4.1"
+        versionCode = 7
+        versionName = "0.3.4.2"
         resValue("string", "google_web_client_id", googleWebClientId)
     }
 
